@@ -17,7 +17,8 @@ use super::evidence::{CellRow, ensure_cell_in_txn};
 use super::project::project_cell_in_txn;
 
 /// A cell's stored prior. Key: the cell digest.
-const PRIOR: SideTable<[u8; 32], Prior, Named> = SideTable::new(&side_table::LEARNING_PRIOR);
+pub(crate) const PRIOR: SideTable<[u8; 32], Prior, Named> =
+    SideTable::new(&side_table::LEARNING_PRIOR);
 
 /// Stores the prior `cell` starts from and re-projects it.
 ///

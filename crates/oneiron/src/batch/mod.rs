@@ -22,6 +22,8 @@ mod lexical_query_hints;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
+pub(crate) mod phonetic_codes;
+pub use self::phonetic_codes::generate_phonetic_codes;
 mod prepared_index;
 mod put_apply;
 pub(crate) use person_substrate::sweep_scope_stamps;
