@@ -31,8 +31,7 @@ pub struct AxisScores {
 
 /// The scorer sees the same held-out receipt identities for both versions.
 /// Human minutes are a cost (lower is better), not an inferred quality score.
-pub trait GoalAxisScorer {
-    fn offline_score(&self, axis: &str, case: &HeldOutReplayCase<'_>) -> Result<f64>;
+pub trait GoalAxisScorer: super::HeldOutReplayScorer {
     fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64>;
 }
 
@@ -262,13 +261,14 @@ pub fn measure_goal_axes(
     }
     let before_case = replay_case(skill, incumbent, &held_out);
     let after_case = replay_case(skill, candidate, &held_out);
+    let replay: &dyn super::HeldOutReplayScorer = scorer;
     let mut offline = Vec::with_capacity(plan.offline.len());
     for axis in &plan.offline {
         offline.push((
             axis.clone(),
             AxisScores {
-                before: score(scorer.offline_score(axis, &before_case)?)?,
-                after: score(scorer.offline_score(axis, &after_case)?)?,
+                before: score(f64::from(replay.score_named_axis(&before_case, axis)?))?,
+                after: score(f64::from(replay.score_named_axis(&after_case, axis)?))?,
             },
         ));
     }

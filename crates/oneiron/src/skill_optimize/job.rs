@@ -178,6 +178,16 @@ fn run_skill_optimize_bound(
     owner: Option<crate::write_envelope::WriteActor>,
     resident: Option<EntityId>,
 ) -> Result<SkillOptimizeOutcome> {
+    let authority = vault.dreamer_attempt_authority(attempt)?.ok_or(invalid(
+        "skill optimization requires an admitted Coach attempt",
+    ))?;
+    if authority.facet != crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+        || authority.actor != vault.coach_authority()?.entity_ref()
+    {
+        return Err(invalid(
+            "skill optimization must run under the Coach authority",
+        ));
+    }
     let candidates = match resident {
         Some(resident) => super::selection::optimize_candidates_for_resident(vault, &resident)?,
         None => optimize_candidates(vault)?,

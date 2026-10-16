@@ -62,6 +62,13 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Replay scores, independent judge audits, blind preferences and skill tradeoffs.
+pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
+    name: "skill_optimize.judgment",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which label one changed hunk of an attribution takes (one region for an outcome with no
 /// edit). Keyed by lane and hunk position.
 pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
@@ -106,6 +113,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
     CRITIC_REVIEW,
     FANOUT_ASK,
+    SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
     CAMPAIGN_TASTE,
     SEAT_PICK,

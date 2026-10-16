@@ -208,7 +208,7 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Enqueues a SKILL-OPT attempt in a caller-owned write transaction, so a
     /// wake that registers one lands it as a durable fact of the wake.
-    fn enqueue_skill_optimize_in_txn(
+    pub(crate) fn enqueue_skill_optimize_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueDreamerSkillOptimizeAttempt,

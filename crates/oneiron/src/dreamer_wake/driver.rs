@@ -105,6 +105,7 @@ pub struct DreamerWakeDriver<'a> {
     pub(super) wrap_notice_fired: bool,
     pub(super) finalize_entered: bool,
     pub(super) steering: Vec<BudgetSteeringSignal>,
+    skill_optimizer: Option<crate::dreamer_runner::maintenance::CoachSkillOptimizer<'a>>,
     tournament_candidate: Option<(
         crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
         DreamerClaimAuthoringAdmission,
@@ -127,10 +128,20 @@ impl<'a> DreamerWakeDriver<'a> {
             wrap_notice_fired: false,
             finalize_entered: false,
             steering: Vec::new(),
+            skill_optimizer: None,
             tournament_candidate: None,
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// Attach the Coach's author and independent typed-decision replay judge.
+    pub fn with_skill_optimizer(
+        mut self,
+        optimizer: crate::dreamer_runner::maintenance::CoachSkillOptimizer<'a>,
+    ) -> Self {
+        self.skill_optimizer = Some(optimizer);
+        self
     }
 
     /// Loads the evaluated configuration and fresh per-claim metadata. The
@@ -322,6 +333,20 @@ impl<'a> DreamerWakeDriver<'a> {
                 DreamerAdmissionOutcome::Empty
             };
             let priority = match cleanup {
+                DreamerAdmissionOutcome::Empty => {
+                    self.store.admit_next_skill_optimize(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
+            let priority = match priority {
                 DreamerAdmissionOutcome::Empty => {
                     self.store.admit_next_maintenance(AdmitDreamerAttempt {
                         lease_owner: input.lease_owner.clone(),
@@ -536,6 +561,14 @@ impl<'a> DreamerWakeDriver<'a> {
                     {
                         crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
                         Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    } else if admitted.status.attempt.kind
+                        == crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+                    {
+                        crate::dreamer_runner::maintenance::optimize::execute(
+                            &admitted,
+                            &ctx,
+                            self.skill_optimizer.as_ref(),
+                        )
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
                     {
