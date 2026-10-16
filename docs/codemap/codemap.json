@@ -658,7 +658,7 @@
      "path": "src/agent_dispatch/codec.rs",
      "purpose": "Pinned-key MessagePack codec plus payload/status decode helpers",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -770,7 +770,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 12
      }
     },
@@ -942,9 +942,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 7,
-      "fn": 23,
+      "fn": 24,
       "struct": 9
      }
     },
@@ -24586,7 +24586,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 187,
+      "mod": 188,
       "re-export": 74
      }
     },
@@ -32890,7 +32890,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "fn": 15,
+      "fn": 18,
       "struct": 1
      }
     },
@@ -32937,10 +32937,10 @@
      "path": "src/receipt/kernel.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
+      "const": 6,
       "crate-vis": 93,
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 6
      }
     },
@@ -40948,6 +40948,51 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "DecisionAxis",
+      "DecisionObservation",
+      "PromotionOutcome",
+      "SeedTaskType",
+      "SplitCandidate",
+      "SplitDecision",
+      "TaskTypeNode",
+      "TaskTypeRef",
+      "TaskTypeTree",
+      "TreeScope",
+      "TypeTree"
+     ],
+     "path": "src/task_type/mod.rs",
+     "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree",
+     "surface": {
+      "const": 9,
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 52,
+      "re-export": 2,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeuristicPlacer",
+      "PlacementOutcome",
+      "PlacementRequest",
+      "TaskTypePlacer"
+     ],
+     "path": "src/task_type/placement.rs",
+     "purpose": "Routed placement (OF-543): a task is placed once, at spawn",
+     "surface": {
+      "const": 3,
+      "fn": 7,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -41355,7 +41400,7 @@
      "path": "src/task_verb/consult_result.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "struct": 6
      }
@@ -41381,7 +41426,7 @@
      "path": "src/task_verb/create_spec.rs",
      "purpose": "—",
      "surface": {
-      "fn": 6,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -42061,7 +42106,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -47176,6 +47221,13 @@
      "layout": "dir",
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
+    "task_type": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
+    },
     "task_verb": {
      "files": 92,
      "impl_vault": true,
@@ -47331,9 +47383,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 78,
+   "over_bar": 79,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2851,
+   "source_files": 2853,
    "test_files": 903
   },
   "oneiron-android": {
