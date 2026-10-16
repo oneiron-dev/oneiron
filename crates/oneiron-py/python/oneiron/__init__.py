@@ -1,9 +1,10 @@
 """oneiron — memory for agents.
 
-Four calls are the whole quickstart: witness a turn, claim a fact, recall it,
-read the receipts. ``Oneiron.open()`` gives you an embedded vault bound to a
-local owner actor; ``Oneiron.connect(url, key)`` gives you the same handle
-against a running ``oneiron-server``, where ``key`` is the credential
+Four calls are the whole quickstart: witness a turn (``vault.witness``), claim
+a fact (``vault.claims.upsert``), recall it (``vault.recall``), read the
+receipts (``vault.receipts``). ``Oneiron.open()`` gives you an embedded vault
+bound to a local owner actor; ``Oneiron.connect(url, key)`` gives you the same
+handle against a running ``oneiron-server``, where ``key`` is the credential
 ``Oneiron.pair(link)`` returned once. The two differ by one line.
 
 Every method below is a one-line delegate to the private native client. There
