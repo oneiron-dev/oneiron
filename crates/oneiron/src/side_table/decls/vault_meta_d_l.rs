@@ -180,6 +180,9 @@ side_tables! {
     DREAMER_WATERMARK: VaultMeta b"dreamer:watermark:v1:" Raw;
     /// Committed weave-recipe result bound to its pin, evidence and claim. Key: id16(attempt).
     DREAMER_WEAVE_RECIPE_RESULT: VaultMeta b"dreamer:weave:result:v1:" LegacyJson;
+    /// One compiled acting revision (a charter or brief revision compiled from one principal's
+    /// approved preferences) and its answer. Key: string (revision id, 64 hex).
+    EDIT_DISTANCE_ACTING_REVISION: VaultMeta b"edit_distance/acting_revision/v1\0" Named;
     /// Write-once Δ side-ledger row for one receipt: a captured edit-distance measurement (canonical
     /// JSON), or the literal marker "uncaptured" when capture was attempted and failed. Key: string.
     EDIT_DISTANCE_AMENDMENT_DELTA: VaultMeta b"edit_distance/amendment_delta/v1\0" Raw;
@@ -303,6 +306,9 @@ side_tables! {
     FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// The owner's confidence scale for claims one federation peer sends, this device's local
+    /// truth (OF-149). Key: id16(peer principal).
+    FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
     FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
