@@ -8,7 +8,7 @@
 //! The notice is a fact, not a message: it carries no text. The host renders
 //! its own fixed check-in wording for it, the same every time.
 
-use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,16 +39,20 @@ const FIRES: SideTable<EntityId, TrustedContactNotice, Named> =
     SideTable::new(&side_table::TRUSTED_CONTACT_FIRE);
 
 /// Orders a send's last consent read and its transport against revocation
-/// and re-naming, in this process: a revocation waits for a send already
-/// under way, and no send starts once it has returned.
-static SEND_ORDER: RwLock<()> = RwLock::new(());
-
-pub(super) fn consent_change_guard() -> RwLockWriteGuard<'static, ()> {
-    SEND_ORDER.write().unwrap_or_else(PoisonError::into_inner)
+/// and re-naming on this vault: a revocation waits for a send already under
+/// way, and no send starts once it has returned.
+pub(super) fn consent_change_guard(vault: &Vault) -> RwLockWriteGuard<'_, ()> {
+    vault
+        .trusted_contact_send_order
+        .write()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
-fn send_guard() -> RwLockReadGuard<'static, ()> {
-    SEND_ORDER.read().unwrap_or_else(PoisonError::into_inner)
+fn send_guard(vault: &Vault) -> RwLockReadGuard<'_, ()> {
+    vault
+        .trusted_contact_send_order
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Everything the host needs to send one notice, and nothing from the turn,
@@ -349,8 +353,8 @@ impl Vault {
 }
 
 /// The host's transport, behind one last read of the contact's consent and
-/// of the notice's lease, held under [`SEND_ORDER`] until the transport
-/// returns.
+/// of the notice's lease, held under the vault's send order until the
+/// transport returns.
 struct LiveConsentSink<'a, S> {
     vault: &'a Vault,
     attempt: &'a AttemptRecord,
@@ -360,7 +364,7 @@ struct LiveConsentSink<'a, S> {
 
 impl<S: OutboundExecutionSink> OutboundExecutionSink for LiveConsentSink<'_, S> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        let _order = send_guard();
+        let _order = send_guard(self.vault);
         let live = self
             .vault
             .leased_trusted_contact_notice(self.attempt)

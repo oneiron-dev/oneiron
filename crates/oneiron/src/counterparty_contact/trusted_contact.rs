@@ -175,7 +175,7 @@ impl Vault {
         now: u64,
     ) -> Result<TrustedContact> {
         validate_reach(&reach)?;
-        let _order = consent_change_guard();
+        let _order = consent_change_guard(self);
         self.with_write_txn(|wtxn| {
             let person = person.revalidate_person_in_txn(self, wtxn)?;
             if contact == person || !crate::consent::person_is_live_in_txn(self, wtxn, &contact)? {
@@ -236,7 +236,7 @@ impl Vault {
         contact: EntityId,
         now: u64,
     ) -> Result<TrustedContact> {
-        let _order = consent_change_guard();
+        let _order = consent_change_guard(self);
         self.with_write_txn(|wtxn| {
             let actor = party.revalidate_person_in_txn(self, wtxn)?;
             let by = if actor == person {
