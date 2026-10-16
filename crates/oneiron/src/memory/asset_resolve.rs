@@ -380,7 +380,7 @@ pub(crate) fn asset_forms_in_lane(
         omitted: false,
         rung,
     };
-    if !derived.is_empty() && !(images_only && forms.image.is_none()) {
+    if !(derived.is_empty() || (images_only && forms.image.is_none())) {
         let reads: Vec<_> = derived.iter().map(|id| PointRead::id(*id)).collect();
         let texts = lane.read(&reads, None)?;
         let mut rows: Vec<_> = texts
