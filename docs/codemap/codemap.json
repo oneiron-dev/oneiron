@@ -43311,7 +43311,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 124
+      "fn": 128
      }
     },
     {
@@ -51095,34 +51095,47 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "BatchInput",
+      "BatchOutput",
+      "BatchStep",
       "BrowserDriver",
       "BrowserError",
       "ClickInput",
+      "CropInput",
+      "EffectReceipt",
       "ExpectInput",
       "ExpectOutput",
       "FindInput",
       "FindOutput",
+      "ImageOutput",
       "Observation",
       "ObserveInput",
       "OpenInput",
+      "PressMode",
       "Row",
       "ScreenshotInput",
       "ScreenshotOutput",
+      "ScreenshotTrigger",
       "SelectInput",
+      "SendPolicy",
+      "SubgoalStatus",
       "TypeInput",
+      "ViewInput",
       "WaitForInput",
-      "WaitForOutput"
+      "WaitForOutput",
+      "ZoomInput"
      ],
      "path": "src/lib.rs",
      "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
-      "enum": 1,
-      "fn": 4,
+      "const": 7,
+      "enum": 5,
+      "fn": 8,
       "re-export": 2,
-      "struct": 15,
+      "struct": 23,
       "trait": 1
      }
     },
@@ -51137,7 +51150,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BrowserGuest",
@@ -51146,7 +51159,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
-      "fn": 5,
+      "fn": 8,
       "struct": 2
      }
     }
@@ -51176,7 +51189,7 @@
     "session": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…"
     }
