@@ -851,6 +851,29 @@ Answer with `POST /v1/ai/quota/{id}`
   where it runs. Setting it is the permission, paid models included. Once the
   offer is back, calls use it again.
 
+### When a provider is down
+
+A rung whose provider is down hands the call to the next rung, and its offer
+rests for its health in memory. A server error, a timeout, a cut stream and an
+empty answer all count as down. The rest is 5 s, doubling with each failure
+in a row up to 60 s, with jitter. A restart starts every offer healthy. While
+every rung the call may use rests, the call waits for the first one back
+within the same wait budget as for limits, then tries the chain again. A call
+that runs out of wait ends with the provider's own failure, not
+`rate_limited`.
+
+When an offer's rest ends it is on probation: a failure rests it again with
+one more strike. A stable recovery is three answers in a row over at least
+30 s. It clears the strikes, and the memory work the outage stopped resumes:
+
+- the attempts this server's Dreamer parked on an executor error are
+  requeued, as a restart requeues them;
+- a media backfill that was backing off tries its failing spaces again at
+  once.
+
+Work parked on a signal (a budget or consent trap, a wait) is never resumed
+by a recovery.
+
 On raw `/v1/llm/stream`, a stream that fails after it has started ends with
 one last line carrying the same typed body as a refusal before it:
 `{"error": {"code": "quota_spent", "llm": …, "quota": {…}}}` when credit or a
