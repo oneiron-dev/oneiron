@@ -4,6 +4,7 @@ use crate::{
     entity_id::EntityId,
     error::{ArtifactError, Error, Result},
     registry::ENTITY_TYPE_SKILL,
+    skill_hub::pack_catalog::PackInstallReceipt,
     vault::{LiveEntityRow, live_entity_row_in_txn},
 };
 
@@ -56,18 +57,33 @@ impl Vault {
             return Ok(true);
         };
         let txn = self.store.env.read_txn()?;
-        let Some(install) = self.mounted_pack_in_txn(&txn, pack_name)? else {
-            return Ok(false);
+        Ok(self
+            .live_pack_skill_in_txn(&txn, pack_name, skill_id)?
+            .is_some())
+    }
+
+    /// The installation a pack lens slot rests on, in `txn`: the pack is
+    /// installed with a live source, `skill_id` is one of its skills, and that
+    /// skill still loads. `None` when any of those fails. A proposed or
+    /// selected generated lens takes the same check as a host code lens.
+    pub(super) fn live_pack_skill_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pack_name: &str,
+        skill_id: &EntityId,
+    ) -> Result<Option<PackInstallReceipt>> {
+        let Some(install) = self.mounted_pack_in_txn(txn, pack_name)? else {
+            return Ok(None);
         };
         if !install.skills.iter().any(|id| id == &skill_id.to_hex()) {
-            return Ok(false);
+            return Ok(None);
         }
         // A soft erase leaves a valid type-7 header without a SKILL body.
         // Resolve deletion before decoding, in the same snapshot as the pack.
         let LiveEntityRow::Live { entity_type, body } =
-            live_entity_row_in_txn(&self.store, &txn, skill_id)?
+            live_entity_row_in_txn(&self.store, txn, skill_id)?
         else {
-            return Ok(false);
+            return Ok(None);
         };
         if entity_type != ENTITY_TYPE_SKILL {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
@@ -76,8 +92,9 @@ impl Vault {
         }
         // H355: the skill must still LOAD (Active and approved), the same
         // invariant the load door applies; a rejected skill keeps no lens.
-        Ok(crate::skill::skill_loadable(
-            &crate::skill::decode_skill_record(&body)?,
-        ))
+        Ok(
+            crate::skill::skill_loadable(&crate::skill::decode_skill_record(&body)?)
+                .then_some(install),
+        )
     }
 }

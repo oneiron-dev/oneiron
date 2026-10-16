@@ -310,10 +310,14 @@ list; `index.md` files list each folder. It is lossy by design and says so in it
 confidence, approval and lifecycle, typed edge values, run results, source packages and every
 custody secret, and it does not re-import as a vault. The archive is the full copy.
 
-A diary is exported as a read of it (OF-490): only diaries the owner's grant covers, logged on the
-receipt with the reason `export`. An agent that reviews each read of its diary first (its
-OF-490 review setting, on for Eiri) has its diaries held out of the archive, and the manifest's
-`diary_holds` names it.
+A diary is exported as a read of it (OF-490), through the diary door with the reason `export`:
+only the entries the exporter's `diary.read` Grant covers (`POST /v1/owner/diary/grants`) are
+read. Each agent's read is logged in its own read log, where it sees it, and on the export
+receipt. An agent that reviews each read first (on for Eiri) gets a pending review and its
+entries stay out until it says yes; one yes admits one export. Every held entry is named in the
+manifest's `diary_holds` (`not_covered_by_grant`, `agent_review_pending`, `declined`, or
+`read_log_unavailable` when the read log could not be written). An export-first removal reads as
+the removed owner, under their own Grants.
 
 On a running server, `POST /v1/core/facade/vault.export` with `{}` (or `{"format": "archive"}`)
 and an owner credential; the reply's `archive` is the ZIP in standard base64. Each export tries to
@@ -331,6 +335,10 @@ oneiron secret-scan on
 ```
 
 Routes: `GET /v1/owner/secret-scan` and `POST /v1/owner/secret-scan` with `{"mode": "off"}`.
+With the scan `on`, a secret the write door can place in text or in a field goes to secret
+custody, and the record keeps its handle in its place: `[secret sc12]` inside text, or `sc12` as a
+field's whole value. The rest of the write lands. A recovery phrase, a key inside a binary file
+and anything else the door finds but cannot place still refuse the whole write.
 `off` skips the write-door scan on ingest. Serve and export still redact credentials either
 way. Each change is receipted with its revision, the owner who made it and the previous
 setting. Only a live owner of the vault can switch it.

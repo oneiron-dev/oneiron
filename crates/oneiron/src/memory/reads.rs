@@ -577,6 +577,16 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::claim_view`] for a lens that serves claims it admitted
+    /// itself: the weave report (OF-499).
+    pub(crate) fn served_claim_view(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> MemoryResult<ClaimView> {
+        self.claim_view(id, body)
+    }
+
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
         // A claim whose parts read as a secret together serves none of them.
         let secret = crate::batch::export::claim_reads_as_secret(body);

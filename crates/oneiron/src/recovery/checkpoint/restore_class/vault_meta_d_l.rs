@@ -214,6 +214,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LEARNING_SETTING, LIVE),
     (&t::LEARNING_SETTING_FIT, CONTENT),
     (&t::LENS_INTENT, CONTENT),
+    (&t::LENS_PROPOSAL, CONTENT),
+    (&t::LENS_SLOT, LIVE),
     (&t::LINEAR_ISSUE_REVERSE, CONTENT),
     (&t::LINEAR_PULL_CURSOR, CONTENT),
     (&t::LINEAR_TASK_DIRTY, CONTENT),

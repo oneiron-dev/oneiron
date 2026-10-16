@@ -256,7 +256,14 @@ pub(super) fn hydrate_entity(
     // The clamp's sweeps judge a claim on the body the gate read or on its
     // live row, and a pin may serve another: the body served is judged too.
     if let (Some(clamp), Some(body)) = (options.clamp, gated_claim_body)
-        && !clamp.admits(store.base(), rtxn, &id, ENTITY_TYPE_CLAIM, Some(body))?
+        && !super::retained_copies::clamp_admits(
+            clamp,
+            store.base(),
+            rtxn,
+            &id,
+            ENTITY_TYPE_CLAIM,
+            Some(body),
+        )?
     {
         return Ok(None);
     }

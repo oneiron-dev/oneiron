@@ -17,6 +17,22 @@ const CHECKPOINT_HEAD: SideTable<(), AuthorityEntryHash, Raw> =
 const CHECKPOINT_ROW: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ROW);
 
+/// The local checkpoint head and the entry hashes its row names, read without
+/// trusting it: naming a hash as covered history to fetch is not trust.
+pub(super) fn checkpoint_head_coverage_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<(AuthorityEntryHash, Vec<AuthorityEntryHash>)>> {
+    let Some(head) = CHECKPOINT_HEAD.get(store, txn, &())? else {
+        return Ok(None);
+    };
+    let covered = match CHECKPOINT_ROW.get(store, txn, &head)? {
+        Some(bytes) => decode_authority_checkpoint(&bytes)?.entry_hashes,
+        None => Vec::new(),
+    };
+    Ok(Some((head, covered)))
+}
+
 /// A signed roster summary at a closed authority-history horizon.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityCheckpoint {

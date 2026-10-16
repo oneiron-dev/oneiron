@@ -155,8 +155,17 @@ pub(crate) fn brief_travel_in_txn(
     txn: &heed::RoTxn<'_>,
     share_id: &EntityId,
 ) -> Result<TravelChoice> {
+    brief_travel_for_store_in_txn(&vault.store, txn, share_id)
+}
+
+/// [`brief_travel_in_txn`] over a bare store, for the share admission check.
+pub(crate) fn brief_travel_for_store_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    share_id: &EntityId,
+) -> Result<TravelChoice> {
     Ok(BRIEF_TRAVEL
-        .get(&vault.store, txn, share_id)?
+        .get(store, txn, share_id)?
         .unwrap_or_else(|| TravelChoice::default_for(TravelKind::Brief)))
 }
 
