@@ -129,6 +129,9 @@ pub struct SyncServer {
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// Where the owner's feedback goes; `None` until configured.
     pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
+    /// The port of the artifact-only listener on the API's host, set by the
+    /// serve path once it is bound. `None` where none serves.
+    artifact_port: Option<u16>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -240,9 +243,15 @@ impl SyncServer {
             &broadcast_tx,
             &config,
         );
+        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
-            wire_telemetry: crate::wire_telemetry::WireTelemetry::new(vault.clone()),
+            transfers: crate::api::Transfers::new(
+                &config.limits,
+                Arc::clone(wire_telemetry.limit_questions()),
+                &vault,
+            )?,
+            wire_telemetry,
             vault,
             root_doc,
             ephemeral_store,
@@ -258,7 +267,6 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
-            transfers: crate::api::Transfers::new(&config.limits),
             config,
             managed_issuer: None,
             mcp_registry,
@@ -275,6 +283,7 @@ impl SyncServer {
             extraction_egress: None,
             owner_host: None,
             feedback: None,
+            artifact_port: None,
             #[cfg(test)]
             booking_test_now_secs: None,
         })
@@ -326,6 +335,7 @@ impl SyncServer {
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
             runs,
+            Arc::clone(self.wire_telemetry.limit_questions()),
         )));
         self
     }
@@ -446,6 +456,20 @@ impl SyncServer {
     ) -> Self {
         self.feedback = host.map(Arc::new);
         self
+    }
+
+    /// Records that the artifact-only router ([`crate::build_artifact_app`])
+    /// serves this server's `/a/` on `port` of the API's host. Health then
+    /// advertises the port, and the API's own `/a/` sandboxes code bundles,
+    /// whose scripts would otherwise run on the API's origin.
+    #[must_use]
+    pub fn with_artifact_listener(mut self, port: u16) -> Self {
+        self.artifact_port = Some(port);
+        self
+    }
+
+    pub(crate) fn artifact_port(&self) -> Option<u16> {
+        self.artifact_port
     }
 
     /// Returns the vault backing this server (used by integration tests to

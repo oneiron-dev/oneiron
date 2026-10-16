@@ -200,15 +200,14 @@ impl HostSelfDispatcher<'_> {
         }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault
-                .put_claim_candidate_without_lexical_query_reconcile(
-                    &call.id,
-                    candidate,
-                    &envelope,
-                    call.occurred,
-                    call.learned_at,
-                    |_| Ok(()),
-                )?,
+            ExecutorStorage::Canonical(vault) => vault.put_claim_candidate_with_landing(
+                &call.id,
+                candidate,
+                &envelope,
+                call.occurred,
+                call.learned_at,
+                |_| Ok(()),
+            )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
                 &call.id,
@@ -237,10 +236,11 @@ impl HostSelfDispatcher<'_> {
                     "Dreamer rules require an admitted resident claim".into(),
                 ));
             }
-            let record = crate::dreamer_consolidation::resident_record(self.actor, &json)?;
+            let record =
+                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&call.id))?;
             match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
-                    vault.set_dreamer_failure_rules(self.actor, &json)?;
+                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &call.id)?;
                 }
                 ExecutorStorage::Session(binding) => {
                     binding.session.side_table_put_routed(
