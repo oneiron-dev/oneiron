@@ -40,7 +40,9 @@ pub use self::trusted_contact::{
     TrustedContactDial, TrustedContactParty, TrustedContactReach, TrustedContactRevocation,
     TrustedContactTier,
 };
-pub use self::trusted_contact_notice::{TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TrustedContactNotice};
+pub use self::trusted_contact_notice::{
+    TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TRUSTED_CONTACT_NOTICE_CONTENT_REF, TrustedContactNotice,
+};
 pub use self::types::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
     COUNTERPARTY_CONTACT_SCHEMA_VERSION, CounterpartyContactRecord, CounterpartyContactStatus,
