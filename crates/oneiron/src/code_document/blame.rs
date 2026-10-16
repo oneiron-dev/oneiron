@@ -51,6 +51,33 @@ impl Vault {
             .collect()
     }
 
+    /// The operations a tested state holds that an older state of the same
+    /// document does not, in sequence order. With no older state: every
+    /// operation the newer state holds.
+    pub fn code_document_ops_between(
+        &self,
+        before: Option<&CodeDocumentFrontier>,
+        after: &CodeDocumentFrontier,
+    ) -> Result<Vec<CodeOpAttribution>> {
+        if before.is_some_and(|before| before.document_id != after.document_id) {
+            return Err(invalid());
+        }
+        let rtxn = self.store.env.read_txn()?;
+        if let Some(before) = before {
+            load_frontier(&self.store, &rtxn, before)?;
+        }
+        load_frontier(&self.store, &rtxn, after)?;
+        let head = load_head(&self.store, &rtxn, &after.document_id)?.ok_or_else(invalid)?;
+        head.receipts
+            .iter()
+            .filter(|row| {
+                row.within(&after.version)
+                    && before.is_none_or(|before| row.after_version(&before.version))
+            })
+            .map(|row| row.attribution())
+            .collect()
+    }
+
     /// For each range pair, the operations made after `before` and held by
     /// `after` that wrote surviving text of the newer range or deleted text of
     /// the older range. Deletions are read from each operation's own observed

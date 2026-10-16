@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 13] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 15] = [
     "schema_version",
     "target",
     "agent_def",
@@ -43,6 +43,8 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 13] = [
     "spawn_intent",
     "scope",
     "healer_case",
+    "budget",
+    "launch",
     "origin_conversation",
 ];
 
@@ -65,8 +67,10 @@ pub(super) const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 pub(super) const KEY_PROJECT_REF: &str = AGENT_DISPATCH_INPUT_KEYS[8];
 pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
 pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
+pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[12];
+pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[13];
 /// OF-221: the conversation a root dispatch's host stamped as its origin.
-pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[12];
+pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[14];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -132,6 +136,13 @@ pub struct AgentDispatchInput {
     /// Exact branch-resource restriction, never a replacement for live authority.
     /// An absent value grants no branch-resource access.
     pub scope: Option<crate::llm::Scope>,
+    /// The spawn's requested `budget` (OF-532): a hard carve under the parent's
+    /// cap, in the parent scope's unit.
+    pub budget: Option<u64>,
+    /// The launch statement frozen at launch (OF-532): agent count, expected
+    /// spend and cap, as the caller saw them. The cost part of the spawn
+    /// receipt.
+    pub launch: Option<super::LaunchStatement>,
 }
 
 impl AgentDispatchInput {
@@ -148,6 +159,8 @@ impl AgentDispatchInput {
             project_ref: None,
             spawn_intent: None,
             scope: None,
+            budget: None,
+            launch: None,
         }
     }
 }
@@ -169,6 +182,13 @@ pub struct AgentSpawnContext {
     /// None inherits the stored parent's resource restriction. A root with
     /// None has deny-all resource scope; ordinary non-resource calls still run.
     pub scope: Option<crate::llm::Scope>,
+    /// The canon spawn table's `budget` (optional; set = pin): a hard carve
+    /// under the parent's cap the child can never pass. Unset, the child holds
+    /// its calibrated expected spend and may top up to the ancestor's cap.
+    pub budget: Option<u64>,
+    /// A ROOT launch's spend scope. A child spends under its parent's and
+    /// never names one. A root without one runs unmetered by any lease tree.
+    pub spend: Option<super::SpawnSpend>,
     /// OF-221: the conversation whose request starts this work, stamped by
     /// the host at its admission boundary. Read for a root only; a child
     /// always inherits its parent's stored origin, so a spawning agent can
@@ -197,6 +217,18 @@ impl AgentSpawnContext {
 
     pub const fn with_depth_remaining(mut self, depth_remaining: u8) -> Self {
         self.depth_remaining = Some(depth_remaining);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_budget(mut self, budget: u64) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
+    #[must_use]
+    pub fn with_spend(mut self, spend: super::SpawnSpend) -> Self {
+        self.spend = Some(spend);
         self
     }
 
@@ -274,6 +306,21 @@ pub enum AgentDispatchOutcome {
     ProposedWiden(Box<super::ContextWidenProposal>),
     WorkflowDispatched(Box<super::WorkflowDispatchStatus>),
     WorkflowExisting(Box<super::WorkflowDispatchStatus>),
+}
+
+impl AgentDispatchOutcome {
+    /// The launch statement frozen at launch: what the caller is told before
+    /// the work runs. `None` for a parked widening, which launched nothing.
+    #[must_use]
+    pub fn launch(&self) -> Option<&super::LaunchStatement> {
+        match self {
+            Self::Dispatched(status) | Self::Existing(status) => status.input.launch.as_ref(),
+            Self::WorkflowDispatched(status) | Self::WorkflowExisting(status) => {
+                status.launch.as_ref()
+            }
+            Self::ProposedWiden(_) => None,
+        }
+    }
 }
 
 /// The lease a killing attempt holds: what its claim returned. A spawner

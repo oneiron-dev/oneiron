@@ -91,9 +91,13 @@ impl Vault {
         // A provider name identifies one channel actor. A second claimant may
         // not steal the existing actor's reputation or key lineage.
         for kind in [crate::registry::ENTITY_TYPE_PERSON] {
-            for row in self.store.type_index.prefix_iter(&txn, &[kind])? {
-                let (key, _) = row?;
-                let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                &self.store,
+                &txn,
+                kind,
+                None,
+            )? {
+                let id = row?;
                 let Some(raw) =
                     crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
                 else {

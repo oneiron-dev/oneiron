@@ -1,0 +1,603 @@
+//! The artifact family's public HTTP surface (ARCH-0078, OF-511): one
+//! contract over every blob kind. Create an artifact and append versions with
+//! their made_by receipt; read the family view, born-from and a version's
+//! export file; propose a native deck transaction or an organ's output; and
+//! keep, discard or undo a proposal. Serving a pinned version stays on `/a/`.
+//!
+//! Keep, Discard and Undo are the owner's consent and take the owner door;
+//! the other writes take `core:write` and act as the caller.
+
+use std::sync::Arc;
+
+use axum::{
+    Json, Router,
+    body::Body,
+    extract::{DefaultBodyLimit, Path, Query, State, rejection::JsonRejection},
+    http::{
+        HeaderValue, Response, StatusCode,
+        header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE},
+    },
+    routing::{get, post},
+};
+use base64::Engine as _;
+use oneiron::EntityId;
+use oneiron::blob_artifact::{
+    ArtifactVersionView, BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance,
+    BornFromSource,
+};
+use oneiron::edge::EdgeActorClass;
+use oneiron::edit_roundtrip::{DeckEditContext, EditOutcome};
+use oneiron::edit_settle::{NativeOutput, SettleConsent};
+use oneiron::provenance::made_by::{MadeBy, MadeByTrigger};
+use oneiron::write_envelope::WriteActor;
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use super::conversation_members::actor;
+use super::{core_engine_error, json_payload, parse_entity_id_param};
+use crate::auth::{CoreAuth, CoreScope};
+use crate::error::{ApiError, EnvelopedApiError};
+use crate::server::SyncServer;
+
+/// The largest JSON body these routes take: a file travels base64 inside it.
+const ARTIFACT_BODY_LIMIT: usize = 96 * 1024 * 1024;
+
+pub(super) fn routes() -> Router<Arc<SyncServer>> {
+    Router::new()
+        .route("/v1/core/artifacts", post(create))
+        .route("/v1/core/artifacts/born-from", get(born_from))
+        .route("/v1/core/artifacts/{artifact}", get(view))
+        .route("/v1/core/artifacts/{artifact}/versions", post(append))
+        .route("/v1/core/artifacts/{artifact}/export", get(export_head))
+        .route(
+            "/v1/core/artifacts/{artifact}/versions/{version}/export",
+            get(export_version),
+        )
+        .route("/v1/core/artifacts/{artifact}/proposals", get(proposals))
+        .route(
+            "/v1/core/artifacts/{artifact}/deck/proposals",
+            post(propose_deck),
+        )
+        .route(
+            "/v1/core/artifacts/{artifact}/outputs",
+            post(propose_output),
+        )
+        .route(
+            "/v1/core/artifacts/{artifact}/proposals/{proposal}/keep",
+            post(keep),
+        )
+        .route(
+            "/v1/core/artifacts/{artifact}/proposals/{proposal}/discard",
+            post(discard),
+        )
+        .route(
+            "/v1/core/artifacts/{artifact}/proposals/{proposal}/undo",
+            post(undo),
+        )
+        .layer(DefaultBodyLimit::max(ARTIFACT_BODY_LIMIT))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CreateArtifact {
+    name: String,
+    media_type: String,
+    content_base64: String,
+    #[serde(default)]
+    run_ref: Option<String>,
+    #[serde(default)]
+    made_by: Option<MadeBy>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AppendVersion {
+    content_base64: String,
+    /// Any earlier version to fork from; absent appends on the head.
+    #[serde(default)]
+    fork_parent: Option<u64>,
+    #[serde(default)]
+    run_ref: Option<String>,
+    #[serde(default)]
+    made_by: Option<MadeBy>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProposeDeck {
+    /// The deck transaction: a JSON object, or its exact canonical text.
+    transaction: Value,
+    run_ref: String,
+    #[serde(default)]
+    context: DeckEditContext,
+    /// The envelope Keep gives the version, with the task or ask it answers.
+    #[serde(default)]
+    made_by: Option<MadeBy>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProposeOutput {
+    run_ref: String,
+    name: String,
+    media_type: String,
+    content_base64: String,
+    #[serde(default)]
+    report: Value,
+    #[serde(default)]
+    made_by: Option<MadeBy>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Settle {
+    #[serde(default)]
+    brief_ref: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BornFromQuery {
+    #[serde(default)]
+    task: Option<String>,
+    #[serde(default)]
+    ask: Option<String>,
+    #[serde(default)]
+    run: Option<String>,
+    #[serde(default)]
+    skill: Option<String>,
+    #[serde(default)]
+    agent_run: Option<String>,
+}
+
+async fn blocking<T: Send + 'static>(
+    message: &'static str,
+    work: impl FnOnce() -> oneiron::Result<T> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ApiError::internal_server_error("artifact task failed"))?
+        .map_err(|error| core_engine_error(message, error))
+}
+
+fn decode_content(content: &str) -> Result<Vec<u8>, ApiError> {
+    base64::engine::general_purpose::STANDARD
+        .decode(content)
+        .map_err(|_| ApiError::bad_request("content must be base64", Some("content_base64")))
+}
+
+/// A person's upload is theirs; an agent's version names the run that made it.
+fn provenance(
+    actor: WriteActor,
+    run_ref: Option<String>,
+) -> Result<BlobVersionProvenance, ApiError> {
+    match run_ref {
+        Some(run_ref) => Ok(BlobVersionProvenance::AgentRun { run_ref }),
+        None if actor.actor_class() == EdgeActorClass::Human => {
+            Ok(BlobVersionProvenance::UserUpload)
+        }
+        None => Err(ApiError::bad_request(
+            "an agent's version names its run_ref",
+            Some("run_ref"),
+        )),
+    }
+}
+
+fn version_json(version: &BlobArtifactVersion) -> Value {
+    json!(ArtifactVersionView::from(version))
+}
+
+fn moment(server: &SyncServer) -> (oneiron::TimeRange, u64) {
+    let now = server.vault().now_recorded_at();
+    (
+        oneiron::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    )
+}
+
+fn owner_actor(auth: &CoreAuth, server: &SyncServer) -> Result<WriteActor, ApiError> {
+    super::owner_routes::owner(auth, server)?;
+    actor(auth, None)
+}
+
+pub(super) async fn create(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CreateArtifact>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let actor = actor(&auth, None)?;
+    let request = json_payload(payload)?;
+    let bytes = decode_content(&request.content_base64)?;
+    let provenance = provenance(actor, request.run_ref)?;
+    let view = blocking("artifact create failed", move || {
+        let vault = server.vault();
+        let (occurred, now) = moment(&server);
+        let id = vault.new_entity_id()?;
+        vault.put_blob_artifact(
+            &id,
+            &BlobArtifactBody::new(request.name, request.media_type),
+            occurred,
+            now,
+        )?;
+        match &request.made_by {
+            Some(made_by) => vault.append_blob_artifact_version_made_by(
+                &id,
+                None,
+                &bytes,
+                &provenance,
+                made_by,
+                actor,
+                occurred,
+                now,
+            )?,
+            None => vault.append_blob_artifact_version(
+                &id,
+                &bytes,
+                &provenance,
+                actor,
+                occurred,
+                now,
+            )?,
+        };
+        vault.blob_artifact_view(&id)
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(json!(view))))
+}
+
+pub(super) async fn view(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let view = blocking("artifact read failed", move || {
+        server.vault().blob_artifact_view(&id)
+    })
+    .await?
+    .ok_or_else(|| ApiError::not_found("artifact", Some(artifact.as_str())))?;
+    Ok(Json(json!(view)))
+}
+
+pub(super) async fn append(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+    payload: Result<Json<AppendVersion>, JsonRejection>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let actor = actor(&auth, None)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let request = json_payload(payload)?;
+    let bytes = decode_content(&request.content_base64)?;
+    let provenance = provenance(actor, request.run_ref)?;
+    let version = blocking("artifact version append failed", move || {
+        let vault = server.vault();
+        let (occurred, now) = moment(&server);
+        match (&request.made_by, request.fork_parent) {
+            (Some(made_by), fork_parent) => vault.append_blob_artifact_version_made_by(
+                &id,
+                fork_parent,
+                &bytes,
+                &provenance,
+                made_by,
+                actor,
+                occurred,
+                now,
+            ),
+            (None, Some(parent)) => vault.fork_blob_artifact_version(
+                &id,
+                parent,
+                &bytes,
+                &provenance,
+                actor,
+                occurred,
+                now,
+            ),
+            (None, None) => {
+                vault.append_blob_artifact_version(&id, &bytes, &provenance, actor, occurred, now)
+            }
+        }
+    })
+    .await?;
+    Ok(Json(version_json(&version)))
+}
+
+async fn export(
+    auth: CoreAuth,
+    server: Arc<SyncServer>,
+    artifact: String,
+    version: Option<u64>,
+) -> Result<Response<Body>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let file = blocking("artifact export failed", move || {
+        server.vault().export_blob_artifact(&id, version)
+    })
+    .await?
+    .ok_or_else(|| ApiError::not_found("artifact version", Some(artifact.as_str())))?;
+    // A download, never a page on the API origin: attachment, sandboxed.
+    let disposition = format!(
+        "attachment; filename=\"{}\"",
+        file.name
+            .chars()
+            .filter(|c| c.is_ascii_graphic() && *c != '"' && *c != '\\' || *c == ' ')
+            .collect::<String>()
+    );
+    let mut response = Response::new(Body::from(file.bytes));
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_str(&file.media_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        CONTENT_DISPOSITION,
+        HeaderValue::from_str(&disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+    );
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    headers.insert(
+        CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox; default-src 'none'"),
+    );
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&file.version.to_string()) {
+        headers.insert("x-oneiron-artifact-version", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(file.kind.as_str()) {
+        headers.insert("x-oneiron-artifact-kind", value);
+    }
+    Ok(response)
+}
+
+pub(super) async fn export_head(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+) -> Result<Response<Body>, EnvelopedApiError> {
+    export(auth, server, artifact, None).await
+}
+
+pub(super) async fn export_version(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((artifact, version)): Path<(String, u64)>,
+) -> Result<Response<Body>, EnvelopedApiError> {
+    export(auth, server, artifact, Some(version)).await
+}
+
+pub(super) async fn born_from(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Query(query): Query<BornFromQuery>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let trigger = |value: &str, field: &'static str, make: fn(EntityId) -> MadeByTrigger| {
+        parse_entity_id_param(value, field).map(make)
+    };
+    let source = match (
+        query.task.as_deref(),
+        query.ask.as_deref(),
+        query.run.as_deref(),
+        query.skill.as_deref(),
+        query.agent_run,
+    ) {
+        (Some(task), None, None, None, None) => {
+            BornFromSource::Trigger(trigger(task, "task", MadeByTrigger::Task)?)
+        }
+        (None, Some(ask), None, None, None) => {
+            BornFromSource::Trigger(trigger(ask, "ask", MadeByTrigger::Ask)?)
+        }
+        (None, None, Some(run), None, None) => {
+            BornFromSource::Trigger(trigger(run, "run", MadeByTrigger::Run)?)
+        }
+        (None, None, None, Some(skill), None) => {
+            BornFromSource::Trigger(trigger(skill, "skill", MadeByTrigger::Skill)?)
+        }
+        (None, None, None, None, Some(run_ref)) => BornFromSource::AgentRun(run_ref),
+        _ => {
+            return Err(ApiError::bad_request(
+                "name exactly one of task, ask, run, skill or agent_run",
+                None,
+            )
+            .into());
+        }
+    };
+    let (born, versions) = blocking("born-from read failed", move || {
+        let vault = server.vault();
+        let born = match &source {
+            BornFromSource::Trigger(trigger) => vault.rows_born_from(&trigger.row())?,
+            BornFromSource::AgentRun(_) => Vec::new(),
+        };
+        Ok((born, vault.artifacts_born_from(&source)?))
+    })
+    .await?;
+    Ok(Json(json!({ "born": born, "versions": versions })))
+}
+
+pub(super) async fn proposals(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let pending = blocking("proposal list failed", move || {
+        server.vault().pending_proposals(&id)
+    })
+    .await?;
+    Ok(Json(json!({ "proposals": pending })))
+}
+
+pub(super) async fn propose_deck(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+    payload: Result<Json<ProposeDeck>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let actor = actor(&auth, None)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let request = json_payload(payload)?;
+    let transaction = match request.transaction {
+        Value::String(text) => text,
+        other => other.to_string(),
+    };
+    let outcome = blocking("deck proposal failed", move || {
+        let vault = server.vault();
+        match vault.propose_blob_artifact_deck_edit(
+            &id,
+            &transaction,
+            &request.run_ref,
+            request.context,
+        )? {
+            EditOutcome::Proposed(proposal) => {
+                let now = vault.now_recorded_at();
+                vault
+                    .retain_edit_proposal(&id, &proposal, request.made_by.as_ref(), actor, now)
+                    .map(|pending| Ok(json!(pending)))
+            }
+            EditOutcome::Rejected { inspection, report } => {
+                Ok(Err(json!({ "inspection": inspection, "report": report })))
+            }
+        }
+    })
+    .await?;
+    Ok(match outcome {
+        Ok(pending) => (StatusCode::CREATED, Json(json!({ "proposed": pending }))),
+        Err(rejected) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "rejected": rejected })),
+        ),
+    })
+}
+
+pub(super) async fn propose_output(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+    payload: Result<Json<ProposeOutput>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let actor = actor(&auth, None)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let request = json_payload(payload)?;
+    let output = NativeOutput {
+        bytes: decode_content(&request.content_base64)?,
+        run_ref: request.run_ref,
+        name: request.name,
+        media_type: request.media_type,
+        report: request.report,
+        made_by: request.made_by,
+    };
+    let pending = blocking("native output proposal failed", move || {
+        let vault = server.vault();
+        vault.propose_native_output(&id, &output, actor, vault.now_recorded_at())
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(json!({ "proposed": pending }))))
+}
+
+fn settle_request(payload: Option<Json<Settle>>) -> Settle {
+    payload.map(|Json(settle)| settle).unwrap_or_default()
+}
+
+pub(super) async fn keep(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((artifact, proposal)): Path<(String, String)>,
+    payload: Option<Json<Settle>>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    let actor = owner_actor(&auth, &server)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let request = settle_request(payload);
+    let outcome = blocking("keep failed", move || {
+        let (occurred, now) = moment(&server);
+        server.vault().keep_pending_proposal(
+            &id,
+            &proposal,
+            &SettleConsent::OwnerConsent {
+                brief_ref: request.brief_ref,
+            },
+            actor,
+            occurred,
+            now,
+        )
+    })
+    .await?;
+    Ok(Json(json!({
+        "version": version_json(&outcome.version),
+        "stranded": outcome.stranded_proposal.is_some(),
+        "remapped": outcome.reanchor.remapped.len(),
+        "drifted": outcome.reanchor.drifted.len(),
+        "receipt": outcome.receipt,
+    })))
+}
+
+pub(super) async fn discard(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((artifact, proposal)): Path<(String, String)>,
+    payload: Option<Json<Settle>>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    let actor = owner_actor(&auth, &server)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let request = settle_request(payload);
+    let outcome = blocking("discard failed", move || {
+        let vault = server.vault();
+        vault.discard_pending_proposal(
+            &id,
+            &proposal,
+            &SettleConsent::OwnerConsent {
+                brief_ref: request.brief_ref,
+            },
+            actor,
+            request.reason.as_deref().unwrap_or_default(),
+            vault.now_recorded_at(),
+        )
+    })
+    .await?;
+    Ok(Json(json!({ "receipt": outcome.receipt })))
+}
+
+pub(super) async fn undo(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((artifact, proposal)): Path<(String, String)>,
+    payload: Option<Json<Settle>>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    let actor = owner_actor(&auth, &server)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let request = settle_request(payload);
+    let outcome = blocking("undo failed", move || {
+        let (occurred, now) = moment(&server);
+        server.vault().undo_kept_proposal(
+            &id,
+            &proposal,
+            &SettleConsent::OwnerConsent {
+                brief_ref: request.brief_ref,
+            },
+            actor,
+            occurred,
+            now,
+        )
+    })
+    .await?;
+    Ok(Json(json!({
+        "undo": outcome.undo,
+        "version": version_json(&outcome.version),
+        "remapped": outcome.reanchor.remapped.len(),
+        "drifted": outcome.reanchor.drifted.len(),
+    })))
+}

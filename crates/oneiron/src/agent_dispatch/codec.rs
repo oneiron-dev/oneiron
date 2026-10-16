@@ -15,10 +15,10 @@ use crate::write_envelope::WriteActor;
 
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
-    AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_CONTEXT_FROM,
-    KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_ORIGIN_CONVERSATION, KEY_PRESET,
-    KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, TARGET_CUSTOM,
-    TARGET_SYSTEM,
+    AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
+    KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
+    KEY_ORIGIN_CONVERSATION, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
+    KEY_SPAWN_INTENT, KEY_TARGET, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
 
@@ -96,6 +96,17 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             .map_err(|_| Error::InvalidConfig("healer case encode".into()))?;
         entries.push((Value::from("healer_case"), Value::Binary(bytes)));
     }
+    if let Some(budget) = input.budget {
+        entries.push((Value::from(KEY_BUDGET), Value::from(budget)));
+    }
+    if let Some(launch) = &input.launch {
+        let json = serde_json::to_string(launch).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "launch statement must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_LAUNCH), Value::from(json)));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -122,6 +133,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut spawn_intent = None;
     let mut scope = None;
     let mut healer_case = None;
+    let mut budget = None;
+    let mut launch = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -286,6 +299,23 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                 super::healer_context::validate(&case)?;
                 healer_case = Some(case);
             }
+            KEY_BUDGET => {
+                budget = Some(value.as_u64().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput("budget must be an integer"),
+                ))?);
+            }
+            KEY_LAUNCH => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "launch must be a serialized launch statement",
+                    ),
+                ))?;
+                launch = Some(serde_json::from_str(json).map_err(|_| {
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "launch must decode as a launch statement",
+                    ))
+                })?);
+            }
             KEY_DEPTH_REMAINING => {
                 let depth = value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
@@ -368,6 +398,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         project_ref,
         spawn_intent,
         scope,
+        budget,
+        launch,
     })
 }
 

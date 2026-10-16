@@ -18,7 +18,7 @@ pub use graph_ask::{
     GraphTypeSelection, GraphUnitContext, run_graph_ask, run_graph_ask_by_type,
     select_graph_units_by_type,
 };
-pub use outcomes::{calibration_pairs, project_bound_outcomes};
+pub use outcomes::{calibration_pairs, person_changed_pairs, project_bound_outcomes};
 pub use records::*;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions, refresh_question,

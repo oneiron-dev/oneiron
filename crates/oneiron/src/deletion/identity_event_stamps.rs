@@ -36,17 +36,14 @@ impl Vault {
         touched: &BTreeSet<EntityId>,
     ) -> Result<Vec<EntityId>> {
         let mut targets = Vec::new();
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(&*wtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-        {
-            let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let raw = self
-                .store
-                .entities
-                .get(&*wtxn, id.as_bytes())?
+        for entry in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            &*wtxn,
+            ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            None,
+        )? {
+            let id = entry?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, &id)?
                 .ok_or(Error::CorruptedIndex("identity topology event index"))?;
             if raw.len() < ENTITY_METADATA_HEADER_LEN {
                 return Err(Error::CorruptedIndex("identity topology event header"));
