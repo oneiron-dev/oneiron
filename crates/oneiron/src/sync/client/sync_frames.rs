@@ -399,6 +399,23 @@ impl SyncClient {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .remove(&key);
             frames.push(frame);
+            // A private world's rows never ride the plain exchange: ask the
+            // home for its sealed packets in the same pass, stating this
+            // machine's sealing-mirror vector.
+            if let Some(world) = key.world() {
+                let since = self
+                    .manager
+                    .sealed_mirror_version_vector(world, &key)
+                    .unwrap_or_default();
+                frames.push(
+                    transport::encode_window_sync(
+                        key.as_str(),
+                        window_sub_tags::SEALED_REQUEST,
+                        &since,
+                    )
+                    .into_result()?,
+                );
+            }
         }
         self.root_bootstrapped = true;
         Ok(frames)

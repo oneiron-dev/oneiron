@@ -40,6 +40,8 @@ pub use self::content::{
     OpenedSealedContent, SEALED_RETENTION_SECS, SealedContentBinding, SealedContentId,
     SealedContentKind, SealedResidenceContent,
 };
+#[cfg(feature = "sync")]
+pub use self::content_window::SealedTake;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub(crate) use self::machine::{keystore_error, slot_seed};

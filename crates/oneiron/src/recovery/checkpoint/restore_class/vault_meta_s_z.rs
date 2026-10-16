@@ -242,4 +242,5 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
     (&t::WORLD_KEY_SEALED_RETIRED, LIVE),
     (&t::WORLD_KEY_SEALED, LIVE),
+    (&t::WORLD_KEY_SEALED_WINDOW, LIVE),
 ];
