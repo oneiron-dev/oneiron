@@ -433,6 +433,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ScreenshotInput>(),
             ),
             (
+                "self.browser.view",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ViewInput>(),
+            ),
+            (
+                "self.browser.crop",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::CropInput>(),
+            ),
+            (
+                "self.browser.zoom",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ZoomInput>(),
+            ),
+            (
+                "self.browser.batch",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::BatchInput>(),
+            ),
+            (
                 "vault.commit",
                 crate::code_run::vault_read::request_schema::<CommitRequest>(),
             ),
@@ -1689,6 +1705,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.screenshot" => {
             let _input: oneiron_browser::ScreenshotInput = decode(value.clone())?;
         }
+        "self.browser.view" => {
+            let _input: oneiron_browser::ViewInput = decode(value.clone())?;
+        }
+        "self.browser.crop" => {
+            let _input: oneiron_browser::CropInput = decode(value.clone())?;
+        }
+        "self.browser.zoom" => {
+            let _input: oneiron_browser::ZoomInput = decode(value.clone())?;
+        }
+        "self.browser.batch" => {
+            let _input: oneiron_browser::BatchInput = decode(value.clone())?;
+        }
         "vault.commit" => {
             let input: CommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -1970,6 +1998,22 @@ pub fn invoke_browser(
             serde_json::from_value(value).map_err(invalid)?,
         )?),
         "self.browser.screenshot" => serde_json::to_value(self_browser_screenshot(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.view" => serde_json::to_value(self_browser_view(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.crop" => serde_json::to_value(self_browser_crop(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.zoom" => serde_json::to_value(self_browser_zoom(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.batch" => serde_json::to_value(self_browser_batch(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -2729,6 +2773,30 @@ pub fn self_browser_screenshot(
     input: oneiron_browser::ScreenshotInput,
 ) -> Result<oneiron_browser::ScreenshotOutput, oneiron_browser::BrowserError> {
     driver.screenshot(input)
+}
+pub fn self_browser_view(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ViewInput,
+) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
+    driver.view(input)
+}
+pub fn self_browser_crop(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::CropInput,
+) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
+    driver.crop(input)
+}
+pub fn self_browser_zoom(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ZoomInput,
+) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
+    driver.zoom(input)
+}
+pub fn self_browser_batch(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::BatchInput,
+) -> Result<oneiron_browser::BatchOutput, oneiron_browser::BrowserError> {
+    driver.batch(input)
 }
 pub fn vault_commit(
     memory: &Memory<'_>,
