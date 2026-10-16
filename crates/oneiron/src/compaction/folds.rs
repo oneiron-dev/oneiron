@@ -15,14 +15,50 @@ use serde_json::{Value, json};
 /// `self.fold`: marks steps `from..=through` of this run's log. The mark
 /// waits as pending; the log does not change until `self.compact`, or the
 /// next compaction breakpoint, folds it.
+///
+/// The guest call is positional, `self.fold(span, {note?})` (ARCH-0067
+/// #folds, Docs Q25): its wire input is the span alone, `[from, through]`, or
+/// the span and its options, `[[from, through], {note?}]`. This struct is the
+/// normalized mark both decode into.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "FoldMarkWire")]
 pub struct FoldMarkInput {
     pub from: u64,
     pub through: u64,
     /// What the fold's summary must keep.
     #[serde(default)]
     pub note: Option<String>,
+}
+
+/// The two positional wire spellings of one `self.fold` call.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FoldMarkWire {
+    Span([u64; 2]),
+    SpanWithOptions([u64; 2], FoldMarkOptions),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FoldMarkOptions {
+    #[serde(default)]
+    note: Option<String>,
+}
+
+impl TryFrom<FoldMarkWire> for FoldMarkInput {
+    type Error = std::convert::Infallible;
+
+    fn try_from(wire: FoldMarkWire) -> std::result::Result<Self, Self::Error> {
+        let ([from, through], note) = match wire {
+            FoldMarkWire::Span(span) => (span, None),
+            FoldMarkWire::SpanWithOptions(span, options) => (span, options.note),
+        };
+        Ok(Self {
+            from,
+            through,
+            note,
+        })
+    }
 }
 
 /// `self.compact`: folds every pending mark in one batch, and compacts the

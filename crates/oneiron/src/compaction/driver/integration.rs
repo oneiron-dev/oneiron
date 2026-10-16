@@ -88,6 +88,48 @@ impl CompactionDriver {
         })
     }
 
+    /// A session-bound run's landing, on the `route` it captured at entry
+    /// (Docs Q17, agent-runtime-v1 #d7). An off-record room's summary lands
+    /// in its overlay ([`Self::integrate_in_overlay`]). A room already on
+    /// record at entry lands its summary in base under the room's saver, the
+    /// way the run's other base writes land, born at the run's `placement`.
+    /// An anonymous room keeps nothing: its route refuses.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the overlay landing's arguments plus the base birth placement"
+    )]
+    pub(crate) fn integrate_in_session(
+        &mut self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        route: &crate::session_overlay::SessionWriteRoute,
+        byline: WriteActor,
+        placement: crate::compaction::EpochPlacement,
+        gated: GatedCompaction,
+        accumulated: &[CompactionWindowMessage],
+        span: &crate::code_run::ExecutorOutputSpan,
+    ) -> Result<SwapPlan> {
+        if route.target() == crate::session_overlay::RouteTarget::Overlay {
+            return self.integrate_in_overlay(session, route, byline, gated, accumulated, span);
+        }
+        let session_ref = gated.request.session_ref;
+        session.executor_land_base_epoch(route, |vault, landing| {
+            self.integrate_inner(gated, accumulated, |request, product| {
+                mint_epoch_summary_guarded(
+                    vault,
+                    &session_ref,
+                    byline,
+                    request,
+                    product,
+                    landing,
+                    |txn, mint| {
+                        vault.put_code_run_compaction_coverage_in_txn(txn, span, mint)?;
+                        placement.settle_in(&vault.store, txn, mint.summary_id())
+                    },
+                )
+            })
+        })
+    }
+
     /// Integrates a finished compaction: mints the epoch summary and returns
     /// the swap plan.
     ///

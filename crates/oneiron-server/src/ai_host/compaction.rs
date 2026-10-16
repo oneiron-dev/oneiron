@@ -227,12 +227,15 @@ impl CodeModeCompaction {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
         };
-        match CompactionDriver::for_profile(&live.run_profile(byline), &live.registry) {
+        let profile = live.run_profile(byline);
+        // Docs Q13: the agent's own hot window, when its profile names one.
+        let hot_steps = profile.hot_steps.unwrap_or(live.hot_steps);
+        match CompactionDriver::for_profile(&profile, &live.registry) {
             Ok(Some(driver)) => RunCompaction::live(
                 driver,
                 live.policy,
                 byline,
-                live.hot_steps,
+                hot_steps,
                 Arc::new(ThreadSpawn {
                     passes: Arc::clone(&live.passes),
                     credential: credential.to_owned(),

@@ -6,8 +6,11 @@ use super::types::{
     AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES, AGENT_VERSION_MAX_BYTES, AgentDefinition,
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, KEY_DEP_MIN_VERSION,
     KEY_DEP_SKILL_ID, KEY_MCP_KEY, KEY_MCP_MIN_VERSION, KEY_PROFILE_BUDGET_SPLIT,
-    KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_OPTIONAL_MEMORY,
-    KEY_PROFILE_WINDOW_TOKEN_BUDGET, MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
+    KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS,
+    KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS,
+    KEY_PROFILE_WINDOW_TOKEN_BUDGET, MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES,
+    MAX_MEMORY_PROFILE_VERBATIM_PINS, MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
+    OUTPUT_DECAY_KEYS,
 };
 use crate::claim::ClaimSource;
 use crate::error::{ArtifactError, Error, Result};
@@ -30,6 +33,9 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
     let mut budget_split = None;
     let mut compaction_backend = None;
     let mut compaction = None;
+    let mut hot_steps = None;
+    let mut output_decay = None;
+    let mut verbatim_pins = Vec::new();
     let mut optional_memory = None;
     let mut seen = [false; MEMORY_PROFILE_KEYS.len()];
 
@@ -88,6 +94,32 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
                         )))?;
                 compaction = Some(CompactionOwnership::parse(text)?);
             }
+            KEY_PROFILE_HOT_STEPS => {
+                hot_steps = Some(value.as_u64().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDefBody(
+                        "memory_profile hot_steps must be an unsigned integer",
+                    ),
+                ))?);
+            }
+            KEY_PROFILE_OUTPUT_DECAY => {
+                output_decay = Some(decode_output_decay(value)?);
+            }
+            KEY_PROFILE_VERBATIM_PINS => {
+                let Value::Array(pins) = value else {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                        "memory_profile verbatim_pins must be an array of strings",
+                    )));
+                };
+                for pin in pins {
+                    verbatim_pins.push(
+                        pin.as_str()
+                            .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                                "memory_profile verbatim_pins must be an array of strings",
+                            )))?
+                            .to_owned(),
+                    );
+                }
+            }
             KEY_PROFILE_OPTIONAL_MEMORY => {
                 optional_memory = Some(super::optional_memory::decode_optional_memory_profile(
                     value,
@@ -112,7 +144,40 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
         compaction: compaction.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required memory_profile key compaction",
         )))?,
+        hot_steps,
+        output_decay,
+        verbatim_pins,
         optional_memory,
+    })
+}
+
+/// Strict `output_decay` sub-map decode: both pinned keys, unsigned, nothing
+/// else.
+fn decode_output_decay(value: &Value) -> Result<crate::compaction::output::OutputDecayPolicy> {
+    let invalid = || {
+        Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "memory_profile output_decay must map overview_after_turns and stub_after_turns to unsigned integers",
+        ))
+    };
+    let Value::Map(entries) = value else {
+        return Err(invalid());
+    };
+    let mut overview = None;
+    let mut stub = None;
+    for (key, value) in entries {
+        let slot = match key.as_str() {
+            Some(key) if key == OUTPUT_DECAY_KEYS[0] => &mut overview,
+            Some(key) if key == OUTPUT_DECAY_KEYS[1] => &mut stub,
+            _ => return Err(invalid()),
+        };
+        if slot.is_some() {
+            return Err(invalid());
+        }
+        *slot = Some(value.as_u64().ok_or_else(invalid)?);
+    }
+    Ok(crate::compaction::output::OutputDecayPolicy {
+        overview_after_turns: overview.ok_or_else(invalid)?,
+        stub_after_turns: stub.ok_or_else(invalid)?,
     })
 }
 
@@ -470,6 +535,30 @@ fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
         if (sum - 1.0).abs() > 1e-6 {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "memory_profile budget_split fractions must sum to 1.0",
+            )));
+        }
+    }
+    if let Some(decay) = profile.output_decay
+        && decay.overview_after_turns > decay.stub_after_turns
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "memory_profile output_decay overview_after_turns must not exceed stub_after_turns",
+        )));
+    }
+    if profile.verbatim_pins.len() > MAX_MEMORY_PROFILE_VERBATIM_PINS {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "memory_profile verbatim_pins holds at most 64 pins",
+        )));
+    }
+    for (index, pin) in profile.verbatim_pins.iter().enumerate() {
+        validate_text_field(
+            pin,
+            MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES,
+            "memory_profile verbatim_pins entries must be non-empty UTF-8 strings at most 1024 bytes",
+        )?;
+        if profile.verbatim_pins[..index].contains(pin) {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "memory_profile verbatim_pins must not repeat",
             )));
         }
     }
