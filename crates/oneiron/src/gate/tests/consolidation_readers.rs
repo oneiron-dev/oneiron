@@ -132,6 +132,7 @@ fn seed_question_answer(
                     model: "fixture".into(),
                     version: "one".into(),
                 }],
+                paired: Vec::new(),
             })
         },
     )?;
