@@ -38,6 +38,7 @@ use crate::owner::{
 };
 use crate::server::SyncServer;
 mod history_routes;
+mod peer_confidence_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -77,6 +78,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(history_routes::routes())
+        .merge(peer_confidence_routes::routes())
         .merge(super::owner_origin::routes())
 }
 
