@@ -18,6 +18,7 @@ pub enum AgentVerb {
     VaultRecall,
     VaultExport,
     VaultReceipts,
+    VaultImagesView,
     VaultReceiptsGet,
     VaultKvGet,
     VaultKvPut,
@@ -29,6 +30,8 @@ pub enum AgentVerb {
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
+    VaultArtifactsWaits,
+    VaultArtifactsReleaseWait,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -120,6 +123,7 @@ impl AgentVerb {
         Self::VaultRecall,
         Self::VaultExport,
         Self::VaultReceipts,
+        Self::VaultImagesView,
         Self::VaultReceiptsGet,
         Self::VaultKvGet,
         Self::VaultKvPut,
@@ -131,6 +135,8 @@ impl AgentVerb {
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
+        Self::VaultArtifactsWaits,
+        Self::VaultArtifactsReleaseWait,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -225,6 +231,7 @@ impl AgentVerb {
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
             Self::VaultReceipts => "vault.receipts",
+            Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
             Self::VaultKvGet => "vault.kv.get",
             Self::VaultKvPut => "vault.kv.put",
@@ -236,6 +243,8 @@ impl AgentVerb {
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
+            Self::VaultArtifactsWaits => "vault.artifacts.waits",
+            Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -326,6 +335,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -337,6 +347,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -435,6 +447,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -446,6 +459,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -534,6 +549,7 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
                 | Self::Peek
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
@@ -576,6 +592,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -587,6 +604,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -671,6 +690,7 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -742,6 +762,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
@@ -753,6 +774,8 @@ impl AgentVerb {
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsWaits => &["spec"],
+            Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -845,6 +868,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
@@ -856,6 +880,8 @@ impl AgentVerb {
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsWaits => &["spec"],
+            Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],

@@ -184,12 +184,7 @@ pub(crate) async fn advance_memories_cursor(
     // row's place among its results, or a neighbor's reach.
     let run = evidence.retrieval_run_id.as_deref();
     for (rank, entity) in pack.results.iter().enumerate() {
-        observed.served_from_run(
-            entity.id.to_hex(),
-            run,
-            u32::try_from(rank + 1).ok(),
-            false,
-        );
+        observed.served_from_run(entity.id.to_hex(), run, u32::try_from(rank + 1).ok(), false);
     }
     for entity in &pack.neighbors {
         observed.served_from_run(entity.id.to_hex(), run, None, true);

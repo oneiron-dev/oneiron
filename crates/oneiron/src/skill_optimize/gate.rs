@@ -184,8 +184,7 @@ pub use tradeoff::{
     JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,
     TradeoffRule, escalate_skill_tradeoff_ask, pending_skill_tradeoff_asks,
     set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as_agent,
-    skill_tradeoff_ask,
-    skill_tradeoff_asks_for, skill_tradeoff_preferences,
+    skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
 };
 pub use verdict::{
     HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,

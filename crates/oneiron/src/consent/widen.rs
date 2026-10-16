@@ -101,7 +101,9 @@ pub fn canonical_widen_delta(kind: WidenKind, bound: &GrantBound) -> Result<Vec<
     Ok(bytes)
 }
 /// The canonical delta of one frozen contact-disclosure offer.
-pub(super) fn contact_disclosure_widen_delta(proposal: &ContactDisclosureProposal) -> Result<Vec<u8>> {
+pub(super) fn contact_disclosure_widen_delta(
+    proposal: &ContactDisclosureProposal,
+) -> Result<Vec<u8>> {
     let value = Value::Array(vec![
         Value::from(1),
         Value::from(CONTACT_DISCLOSURE_WIDEN_KIND),

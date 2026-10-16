@@ -137,7 +137,9 @@ impl Vault {
             actor_ref,
             content_kind: record.content_kind,
             policy_manifest_version: record.policy_manifest_version,
-            claim_ref: claim.filter(|_| claim_readable || owner).map(|claim| claim.to_hex()),
+            claim_ref: claim
+                .filter(|_| claim_readable || owner)
+                .map(|claim| claim.to_hex()),
         }))
     }
 }

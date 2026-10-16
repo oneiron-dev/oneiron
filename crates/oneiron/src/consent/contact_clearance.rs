@@ -181,13 +181,9 @@ impl ContactDisclosureProposal {
             return Err(invalid_offer());
         };
         let text = |value: &Value| value.as_str().map(str::to_owned).ok_or_else(invalid_offer);
-        let contact_ref = EntityId::from_bytes(
-            contact
-                .as_slice()
-                .try_into()
-                .map_err(|_| invalid_offer())?,
-        )
-        .map_err(|_| invalid_offer())?;
+        let contact_ref =
+            EntityId::from_bytes(contact.as_slice().try_into().map_err(|_| invalid_offer())?)
+                .map_err(|_| invalid_offer())?;
         let ask_ref = match ask {
             Value::Nil => None,
             ask => Some(text(ask)?),
@@ -390,8 +386,11 @@ impl Vault {
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
             require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
-            let prior =
-                crate::disclosure::contact_clearance_in_txn(&self.store, &*txn, &offer.contact_ref)?;
+            let prior = crate::disclosure::contact_clearance_in_txn(
+                &self.store,
+                &*txn,
+                &offer.contact_ref,
+            )?;
             let proposal = ContactDisclosureProposal {
                 prior_clearance_digest: contact_clearance_digest(prior.as_ref())?,
                 offer,
@@ -435,8 +434,11 @@ impl Vault {
             )?;
             let offer = &proposal.offer;
             require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
-            let prior =
-                crate::disclosure::contact_clearance_in_txn(&self.store, &*txn, &offer.contact_ref)?;
+            let prior = crate::disclosure::contact_clearance_in_txn(
+                &self.store,
+                &*txn,
+                &offer.contact_ref,
+            )?;
             let before = contact_clearance_digest(prior.as_ref())?;
             if before != proposal.prior_clearance_digest {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
@@ -477,15 +479,22 @@ impl Vault {
                 }
                 ContactDisclosureOutcome::Once => {
                     let digest = proposal.once_digest(proposal_ref)?;
-                    receipt.decision_id = self.approve_once_in_txn(txn, owner, digest)?.decision_id();
+                    receipt.decision_id =
+                        self.approve_once_in_txn(txn, owner, digest)?.decision_id();
                     receipt.once_digest = Some(digest);
                 }
                 ContactDisclosureOutcome::Deny => {
                     let digest = proposal.once_digest(proposal_ref)?;
-                    receipt.decision_id = self.deny_consent_in_txn(txn, owner, digest)?.decision_id();
+                    receipt.decision_id =
+                        self.deny_consent_in_txn(txn, owner, digest)?.decision_id();
                 }
             }
-            self.settle_widen_offer_in_txn(txn, proposal_ref, outcome.as_str(), receipt.decision_id)?;
+            self.settle_widen_offer_in_txn(
+                txn,
+                proposal_ref,
+                outcome.as_str(),
+                receipt.decision_id,
+            )?;
             Ok(receipt)
         })
     }
@@ -566,7 +575,8 @@ impl Vault {
                 after_digest: contact_clearance_digest(Some(&clearance))?,
                 once_digest: None,
             };
-            receipt.decision_id = self.append_contact_clearance_receipt_in_txn(txn, owner, &receipt)?;
+            receipt.decision_id =
+                self.append_contact_clearance_receipt_in_txn(txn, owner, &receipt)?;
             Ok(receipt)
         })
     }

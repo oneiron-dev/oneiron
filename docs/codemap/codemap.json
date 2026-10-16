@@ -839,7 +839,7 @@
      "purpose": "Persistent resident bindings",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -16948,6 +16948,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorEventExecutor",
+      "ConnectorEventResponder",
       "ConnectorEventWake"
      ],
      "path": "src/dreamer_runner/connector_event.rs",
@@ -16955,8 +16957,9 @@
      "surface": {
       "const": 2,
       "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -26741,22 +26744,28 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AssetConsumer",
       "HydratedAsset",
+      "ImageHandle",
+      "ImagePick",
+      "ImageViewRequest",
       "LandedImage",
+      "PixelRegion",
+      "PulledImage",
       "ResolvedAsset",
       "ServedAssetForm"
      ],
      "path": "src/memory/asset_resolve.rs",
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
-      "crate-vis": 5,
+      "const": 1,
+      "crate-vis": 4,
       "enum": 2,
-      "fn": 7,
-      "struct": 3
+      "fn": 12,
+      "struct": 8
      }
     },
     {
@@ -33563,13 +33572,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ServedForm"
+      "PixelPull",
+      "ServedForm",
+      "ServedRung"
      ],
      "path": "src/receipt/served_form.rs",
-     "purpose": "Served-form receipts (OF-329): which form of an ASSET a read served, and to which holder",
+     "purpose": "Served-form receipts (OF-329): which rung of the lazy-image ladder a read served an ASSET at, to which…",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "enum": 2,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -42732,7 +42744,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 105
+      "fn": 106
      }
     },
     {
@@ -48293,7 +48305,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 88,
+   "over_bar": 89,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2912,
    "test_files": 903
@@ -53329,7 +53341,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 10,
+      "fn": 11,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -55447,9 +55459,8 @@
      "path": "src/llm/defaults.rs",
      "purpose": "Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies",
      "surface": {
-      "const": 1,
       "enum": 2,
-      "fn": 14,
+      "fn": 13,
       "struct": 4,
       "trait": 1
      }
@@ -55804,7 +55815,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 87
+      "fn": 88
      }
     },
     {
@@ -56647,13 +56658,13 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 88
+      "fn": 89
      }
     },
     {
@@ -56827,7 +56838,7 @@
     "agent_verbs": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "—"
     },
@@ -58194,7 +58205,7 @@
      "path": "src/api/ai/media.rs",
      "purpose": "The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -58205,6 +58216,16 @@
      "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns, the session hints the Dreamer's triggers…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/vision.rs",
+     "purpose": "`POST /v1/ai/ask_image` (OF-329's `ask_image(handle, question)`): a small vision model in the Local-vision…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -62634,6 +62655,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -62885,15 +62907,16 @@
      "notable": [
       "OfferCooldowns",
       "QuotaChoice",
+      "QuotaFallback",
       "QuotaQuestion"
      ],
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -62989,7 +63012,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 1
      }
@@ -63201,7 +63224,7 @@
      "path": "src/models/walk.rs",
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -63742,6 +63765,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/connector_events.rs",
+     "purpose": "The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/cooperative_deletion.rs",
      "purpose": "Delivers queued courtesy deletion asks and answers (OF-273)",
      "surface": {
@@ -63907,6 +63940,16 @@
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/resident_pump.rs",
+     "purpose": "The resident run pump (OF-533): runs each resident agent's dispatches bound to their own leased attempts, so…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -64556,7 +64599,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 236,
+     "files": 237,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64773,7 +64816,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 22,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64831,7 +64874,7 @@
    },
    "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 442,
+   "source_files": 445,
    "test_files": 182
   },
   "oneiron-spawn": {
