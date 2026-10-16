@@ -335,7 +335,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `lib` | file | 1 | s | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice |
+| `lib` | file | 1 | m | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice |
 
 ## oneiron-contracts
 
