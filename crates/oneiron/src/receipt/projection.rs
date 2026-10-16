@@ -112,12 +112,15 @@ pub fn project_receipts_by_brief(
 pub fn project_receipts_by_counterparty(
     receipts: impl IntoIterator<Item = ReceiptRecord>,
 ) -> Vec<CounterpartyReceiptProjection> {
-    project_receipts_by_counterparty_with_contacts(receipts, &BTreeMap::new())
+    project_receipts_by_counterparty_with_contacts(receipts, &BTreeMap::new(), usize::MAX)
 }
 
+/// Each counterparty's totals count every receipt; its listed receipts are
+/// its newest `limit`.
 pub(super) fn project_receipts_by_counterparty_with_contacts(
     receipts: impl IntoIterator<Item = ReceiptRecord>,
     contact_records: &BTreeMap<String, CounterpartyContactProjection>,
+    limit: usize,
 ) -> Vec<CounterpartyReceiptProjection> {
     let mut projections = BTreeMap::<String, CounterpartyProjectionBuilder>::new();
     let mut receipts = receipts.into_iter().collect::<Vec<_>>();
@@ -130,7 +133,7 @@ pub(super) fn project_receipts_by_counterparty_with_contacts(
         projections
             .entry(counterparty_ref.clone())
             .or_insert_with(|| CounterpartyProjectionBuilder::new(counterparty_ref))
-            .push(receipt);
+            .push(receipt, limit);
     }
 
     for (counterparty_ref, contact) in contact_records {
@@ -477,7 +480,7 @@ impl CounterpartyProjectionBuilder {
         }
     }
 
-    fn push(&mut self, receipt: ReceiptRecord) {
+    fn push(&mut self, receipt: ReceiptRecord, limit: usize) {
         if self.first_touch.is_none()
             && let Some(first_touch) = field_ref(&receipt, FIELD_FIRST_TOUCH)
         {
@@ -492,7 +495,9 @@ impl CounterpartyProjectionBuilder {
         self.budget_debit_total = self
             .budget_debit_total
             .saturating_add(receipt_budget_debit(&receipt));
-        self.receipts.push(receipt);
+        if self.receipts.len() < limit {
+            self.receipts.push(receipt);
+        }
     }
 
     fn apply_contact(&mut self, contact: &CounterpartyContactProjection) {
