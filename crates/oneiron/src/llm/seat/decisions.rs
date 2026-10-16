@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use super::{SeatCandidate, SeatTask, invalid};
 use crate::llm::decision::catalogue::SEAT_PICK;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion,
-    HeldLadder, Reversibility, cut_text, fit_state,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion, HeldLadder,
+    Reversibility, cut_text, fit_state,
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;

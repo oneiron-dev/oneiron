@@ -29,11 +29,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::SigningKey;
 
+use super::pads::{WorldKeyPad, pad_in_txn};
 use super::{
     MachineSecret, RecoveryRootSeed, SequenceCounter, WorldKey, WorldKeyBinding, WorldKeyId,
     WrapRecipient, open_counted, open_world_key, recipients,
 };
-use super::pads::{WorldKeyPad, pad_in_txn};
 use crate::authority::{
     AuthorityFold, AuthorityView, Destination, EffectiveRead, EffectiveWorldPrivacy,
     MachineAdmitter, PinnedRoot, RecoveryRootId, WorldKeyWrapsRecord, invalid_authority,

@@ -2,8 +2,9 @@
 //! read-only deck views over it, deck design plans compiled from a kept
 //! brief, the closed SVG subset compiled to native shapes, native tables and
 //! classic charts written with their embedded workbooks, narrow value and
-//! text edits in place, and native Word revisions over a pinned,
-//! Apache-2.0-selected stemma fork.
+//! text edits in place, native Word revisions over a pinned,
+//! Apache-2.0-selected stemma fork, and the DOCX read and projection a live
+//! office body imports from and exports through.
 //!
 //! The wrapper owns no global session or handle store. Its document value
 //! facade addresses stable block IDs and staleness guards; the writer applies
@@ -12,10 +13,12 @@
 
 pub mod deck;
 pub mod design_plan;
+pub mod docx_body;
 pub mod edit;
 pub mod emit;
 pub mod fonts;
 pub mod graphic;
+pub mod live;
 pub mod native_patch;
 pub mod ooxml;
 pub mod retained_opc;

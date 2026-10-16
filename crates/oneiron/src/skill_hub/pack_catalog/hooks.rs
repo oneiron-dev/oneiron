@@ -20,8 +20,8 @@ use crate::skill_hub::HubFile;
 use crate::store::Store;
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    EdgeActorClass, EdgeKind, EntityId, Error, Result, TimeRange, Vault, WriteActor,
-    WriteEnvelope, WriteProvenance,
+    EdgeActorClass, EdgeKind, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
+    WriteProvenance,
 };
 
 /// The binding's predicate: the same row kind a pack's `wakes` write.
@@ -145,7 +145,12 @@ impl PackHook {
             format!("{name}/phase:{}", wire(&selector.phase)),
             format!("{name}/budget_ms:{}", selector.budget_ms),
         ];
-        tokens.extend(selector.verbs.iter().map(|verb| format!("{name}/verb:{verb}")));
+        tokens.extend(
+            selector
+                .verbs
+                .iter()
+                .map(|verb| format!("{name}/verb:{verb}")),
+        );
         if selector.actors.is_empty() {
             tokens.push(format!("{name}/actor:*"));
         }
@@ -261,7 +266,9 @@ impl PackHook {
         };
         let outcomes: Vec<HookOutcomeKind> = json_list(&fields, "outcomes")?;
         if outcomes.is_empty() || outcomes.iter().any(|kind| !kind.applies_in(phase)) {
-            return Err(invalid("a hook returns only outcome kinds its phase allows"));
+            return Err(invalid(
+                "a hook returns only outcome kinds its phase allows",
+            ));
         }
         Ok(Self {
             name,
@@ -283,7 +290,10 @@ impl PackHook {
 }
 
 /// A JSON string list, bounded and without repeats.
-fn json_list<T: DeserializeOwned + Ord>(fields: &BTreeMap<&str, &str>, key: &str) -> Result<Vec<T>> {
+fn json_list<T: DeserializeOwned + Ord>(
+    fields: &BTreeMap<&str, &str>,
+    key: &str,
+) -> Result<Vec<T>> {
     let Some(value) = fields.get(key) else {
         return Ok(Vec::new());
     };
@@ -470,7 +480,10 @@ fn owner_envelope(
         WriteProvenance::new(Value::Map(vec![
             (Value::from("surface"), Value::from("pack.hooks")),
             (Value::from("pack"), Value::from(pack)),
-            (Value::from("source"), Value::Binary(source.as_bytes().to_vec())),
+            (
+                Value::from("source"),
+                Value::Binary(source.as_bytes().to_vec()),
+            ),
             (
                 Value::from("owner_decision"),
                 Value::Binary(owner.decision_id().as_bytes().to_vec()),
@@ -507,11 +520,7 @@ impl Vault {
 
     /// Owner consent binds an installed pack's hooks. A hub install lands
     /// the bytes; content never installs a hook by itself (ARCH-0080 §8).
-    pub fn bind_pack_hooks(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-    ) -> Result<Vec<EntityId>> {
+    pub fn bind_pack_hooks(&self, owner: &AuthenticatedOwner, pack: &str) -> Result<Vec<EntityId>> {
         self.with_write_txn_grouped(|txn| {
             let receipt = self
                 .installed_pack_in_txn(txn, pack)?
@@ -610,7 +619,9 @@ impl Vault {
                 pack: pack.to_owned(),
                 hook: hook.name.clone(),
                 hook_version: hook.version.clone(),
-                body_hash: blake3::Hash::from_bytes(hook.body_hash).to_hex().to_string(),
+                body_hash: blake3::Hash::from_bytes(hook.body_hash)
+                    .to_hex()
+                    .to_string(),
                 selector: hook.selector.clone(),
                 enabled,
             };
@@ -620,7 +631,8 @@ impl Vault {
         for (id, mut row) in prior {
             if row.pack == pack && row.enabled && !bound.contains(&id) {
                 row.enabled = false;
-                batch = batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
+                batch =
+                    batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
             }
         }
         batch.apply(txn)?;

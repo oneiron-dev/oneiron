@@ -167,7 +167,7 @@ pub(crate) fn emit_imip_ics_with_organizer_zones(
 }
 
 /// Stores one rendered invitation as a blob-artifact version and returns the
-/// `blob:<hex>` reference the frozen payload carries.
+/// immutable `blob:<hex>@<version>` reference the frozen payload carries.
 ///
 /// The artifact store is called, never re-implemented: the append is the
 /// existing single-transaction content-addressed write, so re-persisting
@@ -209,10 +209,10 @@ pub fn persist_imip_blob(
             )
             .map_err(|err| imip_emit(format!("blob artifact create failed: {err}")))?;
     }
-    vault
+    let version = vault
         .append_blob_artifact_version(artifact_id, ics, provenance, actor, occurred, occurred_at)
         .map_err(|err| imip_emit(format!("blob artifact append failed: {err}")))?;
-    Ok(format!("blob:{}", artifact_id.to_hex()))
+    Ok(format!("blob:{}@{}", artifact_id.to_hex(), version.version))
 }
 
 /// `YYYYMMDDTHHMMSSZ`, through the CAL-01 border rather than a second

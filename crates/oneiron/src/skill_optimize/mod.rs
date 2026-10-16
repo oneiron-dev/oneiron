@@ -158,9 +158,9 @@ pub use self::dials::{
 };
 pub use self::eval_set::{
     DerivationKind, EvalCase, EvalCaseDraft, EvalCohort, EvalExposure, EvalExposureCounts,
-    EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat,
-    FamilyPurpose, SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict,
-    UnknownReason, WaitingDecision, sufficiency_card,
+    EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat, FamilyPurpose,
+    SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
+    WaitingDecision, sufficiency_card,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
@@ -199,9 +199,8 @@ pub use gate::{
     set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
     skill_body_binding_digest, skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_axis_report,
     skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
-    skill_edit_verdicts_for_proposal, skill_goal_axis_plan, skill_goal_project,
-    skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
-    supersede_skill_edit_judge,
+    skill_edit_verdicts_for_proposal, skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask,
+    skill_tradeoff_asks_for, skill_tradeoff_preferences, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
     check_optimizer_admission_in_txn, displaced_judge_revision_in_txn, ensure_current_judge_in_txn,
