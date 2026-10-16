@@ -88,11 +88,14 @@ pub enum EngineScan {
     /// The vault's inbound STOPs this replica has not projected yet, which
     /// each external send reads. A STOP the projector keeps refusing stays.
     PendingCommStops,
+    /// The contact claims naming a party, which an external send reads when
+    /// a party-wide opt-out stands for its party and no contact row held it.
+    PartyContactClaims,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -115,6 +118,7 @@ impl EngineScan {
         Self::RoomHistoryRows,
         Self::TaskBoardRows,
         Self::PendingCommStops,
+        Self::PartyContactClaims,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -151,6 +155,7 @@ impl EngineScan {
             Self::RoomHistoryRows => "room_history_rows",
             Self::TaskBoardRows => "task_board_rows",
             Self::PendingCommStops => "pending_comm_stops",
+            Self::PartyContactClaims => "party_contact_claims",
         }
     }
 
@@ -178,6 +183,7 @@ impl EngineScan {
             Self::RoomHistoryRows => 37,
             Self::TaskBoardRows => 38,
             Self::PendingCommStops => 48,
+            Self::PartyContactClaims => 49,
         }]
     }
 }

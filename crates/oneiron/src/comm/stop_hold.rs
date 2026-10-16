@@ -15,6 +15,9 @@
 //!
 //! A STOP whose PERSON has not reached this replica names a party no send
 //! can be matched to yet; the hold starts once that PERSON arrives.
+//!
+//! The same read takes a party-wide opt-out (a contact's), on the channels
+//! the party's contact claims name, so a dropped contact row loses no hold.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -155,40 +158,58 @@ fn pending_stop_holds_in_txn(
 /// with a `Store` on the external-effect gate's transaction (F06), for the
 /// PERSONs that carry the send's key.
 ///
-/// Two legs, on the subjects a party's opt-out heads are read on: a standing
-/// channel-scoped `comm.opt_out` head, which the contact rows only cache and a
-/// supported drop removes (R2-F5), and a STOP this replica has not projected
-/// yet.
+/// Three legs, on the subjects a party's opt-out heads are read on, each of
+/// which the contact rows only cache and a supported drop removes (R2-F5): a
+/// standing channel-scoped `comm.opt_out` head, a STOP this replica has not
+/// projected yet, and a standing party-wide head (a contact's opt-out).
 pub(crate) fn send_stop_reason_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     persons: &[EntityId],
+    counterparty: &str,
     channel_class: &str,
 ) -> CommResult<Option<&'static str>> {
     if persons.is_empty() {
         return Ok(None);
     }
     let subjects = parties_opt_out_subjects_in_txn(store, txn, persons.iter().copied().collect())?;
+    let mut party_wide = None;
     for subject in &subjects {
         for claim_id in subject_claim_ids_in_txn(store, txn, subject)? {
             let Some(body) = claim_body_in_txn(store, txn, &claim_id)? else {
                 continue;
             };
-            // A STOP's head names its channel. A party-wide head (a contact's
-            // opt-out) reaches sends through the party's contact rows, each
-            // scoped by its own class (ONE-1868), so it is not read here.
-            if let Some(head) = standing_opt_out_head(&body)?
-                && head.channel_class.is_some()
-                && head.matches_channel(channel_class)
-            {
-                let reason = CounterpartyOptOutReason::from_receipt_reason(&head.reason).map_or(
-                    OPT_OUT_REASON_STOP,
-                    CounterpartyOptOutReason::receipt_reason,
-                );
+            let Some(head) = standing_opt_out_head(&body)? else {
+                continue;
+            };
+            if !head.matches_channel(channel_class) {
+                continue;
+            }
+            let reason = CounterpartyOptOutReason::from_receipt_reason(&head.reason).map_or(
+                OPT_OUT_REASON_STOP,
+                CounterpartyOptOutReason::receipt_reason,
+            );
+            // A STOP's head names its channel.
+            if head.channel_class.is_some() {
                 return Ok(Some(reason));
             }
+            party_wide.get_or_insert(reason);
         }
     }
-    let pending = pending_stop_holds_in_txn(store, txn, &subjects, channel_class)?;
-    Ok(pending.then_some(OPT_OUT_REASON_STOP))
+    if pending_stop_holds_in_txn(store, txn, &subjects, channel_class)? {
+        return Ok(Some(OPT_OUT_REASON_STOP));
+    }
+    // A party-wide head covers every contact of the party, whatever its
+    // channel (ONE-1752), and no channel the party has no contact on
+    // (ONE-1868). The contact claims say which, and a drop keeps them.
+    let Some(reason) = party_wide else {
+        return Ok(None);
+    };
+    let held = crate::counterparty_contact::party_has_contact_on_class_in_claims_in_txn(
+        store,
+        txn,
+        counterparty,
+        channel_class,
+    )?;
+    Ok(held.then_some(reason))
 }

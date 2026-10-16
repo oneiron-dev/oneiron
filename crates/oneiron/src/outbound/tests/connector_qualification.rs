@@ -864,20 +864,47 @@ fn an_inbound_stop_holds_sends_from_arrival_until_the_owners_clear()
     Ok(())
 }
 
-/// F06 R2-F5: the contact row a STOP's projection writes is a cache; once a
-/// supported drop removes it, the standing STOP still holds the send.
+/// F06 R2-F5: the contact rows are a cache; once a supported drop removes one,
+/// the standing opt-out it carried still holds the send. That is a STOP's, and
+/// a party-wide one recorded through the party's contact on another channel.
 #[test]
-fn a_projected_stop_holds_sends_after_the_contact_cache_is_dropped()
+fn a_standing_opt_out_holds_sends_after_the_contact_cache_is_dropped()
 -> Result<(), Box<dyn std::error::Error>> {
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
     let address = "dropped@example.com";
     let (_tmp, vault, actor, identity_ref) = stop_hold_sender(address)?;
+    let sender = (actor, identity_ref);
+    let mut sink = RecordingExecutor::default();
     crate::comm::record_comm_inbound_stop(&vault, address, "email", 30)?;
     crate::comm::run_comm_projector(&vault)?;
     crate::counterparty_contact::drop_contact_cache_row(&vault, &entity(0x84))?;
-    let mut sink = RecordingExecutor::default();
-    let outcome = send_to(&vault, (actor, identity_ref), address, "drop", &mut sink)?;
-    assert_eq!(outcome, OutboundDispatchOutcome::Held);
-    assert!(sink.calls.is_empty(), "a STOP crossed the wire");
+    let outcome = send_to(&vault, sender, address, "drop", &mut sink)?;
+    assert_eq!(outcome, OutboundDispatchOutcome::Held, "STOP");
+
+    let party = "everywhere@example.com";
+    let telegram = entity(0x86);
+    vault.create_channel_identity(
+        &telegram,
+        &crate::test_util::self_held_identity_in_state(
+            "telegram",
+            "@sender",
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::actor(actor),
+            ChannelIdentityState::Active,
+            10,
+        ),
+    )?;
+    for (contact, identity) in [(entity(0x85), identity_ref), (entity(0x87), telegram)] {
+        vault.create_counterparty_contact(
+            &contact,
+            &CounterpartyContactRecord::user_introduction(identity, party, 10)?,
+        )?;
+    }
+    vault.opt_out_counterparty_contact(&entity(0x87), CounterpartyOptOutReason::Unsubscribe, 40)?;
+    crate::counterparty_contact::drop_contact_cache_row(&vault, &entity(0x85))?;
+    let outcome = send_to(&vault, sender, party, "drop:party-wide", &mut sink)?;
+    assert_eq!(outcome, OutboundDispatchOutcome::Held, "party-wide opt-out");
+    assert!(sink.calls.is_empty(), "an opt-out crossed the wire");
     Ok(())
 }
 

@@ -118,7 +118,14 @@ pub(crate) fn hydrate_external_effect_contact(
     // comm legs: the node-local party shortcut would fail open.
     let persons = crate::campaign::claims::do_not_contact_subjects_in_txn(store, txn, party_ref)?;
     fold_matching_comm_do_not_contact_heads(store, txn, &persons, &channel_class, &mut hydrated)?;
-    fold_comm_stop(store, txn, &persons, &channel_class, &mut hydrated)?;
+    fold_comm_stop(
+        store,
+        txn,
+        &persons,
+        party_ref,
+        &channel_class,
+        &mut hydrated,
+    )?;
     // A send override answers the counterparty's opt-out. The owner's own
     // revocation is not an opt-out, so no override lifts it (nor does the
     // opt-out posture; see the evaluator).
@@ -286,22 +293,29 @@ fn fold_matching_comm_do_not_contact_heads(
     Ok(())
 }
 
-/// OR-folds the counterparty's comm STOP (F06): a STOP's standing
-/// `comm.opt_out` head, which the contact rows above only cache and a supported
-/// drop removes (R2-F5), and a STOP this replica has not projected yet. Either holds the send as a
-/// projected STOP's contact row does, so an owner override or posture answers
-/// it the same way. Monotonic, like every leg here.
+/// OR-folds the counterparty's standing comm opt-out (F06): a STOP's
+/// `comm.opt_out` head and a party-wide one, which the contact rows above only
+/// cache and a supported drop removes (R2-F5), and a STOP this replica has not
+/// projected yet. Each holds the send as the contact row it projects to does,
+/// so an owner override or posture answers it the same way. Monotonic, like
+/// every leg here.
 fn fold_comm_stop(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     persons: &[EntityId],
+    party_ref: &str,
     channel_class: &str,
     hydrated: &mut ExternalEffectGateInput,
 ) -> Result<()> {
+    // A send already held, with its reason, gains nothing here.
+    if hydrated.counterparty_opted_out && hydrated.counterparty_opt_out_receipt_reason.is_some() {
+        return Ok(());
+    }
     let Some(reason) = comm_result(crate::comm::send_stop_reason_in_txn(
         store,
         txn,
         persons,
+        party_ref,
         channel_class,
     ))?
     else {

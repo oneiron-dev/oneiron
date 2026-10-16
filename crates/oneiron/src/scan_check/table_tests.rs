@@ -154,7 +154,8 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::RoomPageRows
         | EngineScan::RoomHistoryRows
         | EngineScan::TaskBoardRows
-        | EngineScan::PendingCommStops => None,
+        | EngineScan::PendingCommStops
+        | EngineScan::PartyContactClaims => None,
         EngineScan::AccessGrantRows => {
             // Index rows whose grants are gone: read, skipped, never served.
             vault
