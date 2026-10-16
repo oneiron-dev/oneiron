@@ -54,7 +54,7 @@ impl RowBirth {
     /// The input hash over `parts`, each length-prefixed so two splits of the
     /// same bytes never collide.
     #[must_use]
-    pub fn content_hash_of<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> String {
+    pub fn content_hash_of(parts: impl IntoIterator<Item = &[u8]>) -> String {
         let mut hasher = blake3::Hasher::new_derive_key("oneiron made_by content_hash v1");
         for part in parts {
             hasher.update(&(part.len() as u64).to_le_bytes());
