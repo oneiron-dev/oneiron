@@ -25152,8 +25152,59 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 8,
-      "mod": 8,
+      "mod": 9,
       "re-export": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/model_trials.rs",
+     "purpose": "Per-question held-out trials nominated by external benchmark scores",
+     "surface": {
+      "fn": 9,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/model_trials/evidence.rs",
+     "purpose": "Freeze the question's own labels, check backend reads and bind the sufficiency card",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackendQualityPin",
+      "FrozenTrialCase",
+      "HeldOutSelection",
+      "ModelTrial",
+      "ModelTrialAction",
+      "ModelTrialPolicy",
+      "ModelTrialReceipt",
+      "ModelTrialRequest",
+      "PairedQualityInterval",
+      "TrialAdmission",
+      "TrialAssessment",
+      "TrialCaseInput",
+      "TrialEvidence",
+      "TrialMeasurement",
+      "TrialObservation",
+      "TrialQuality",
+      "TrialReading",
+      "TrialSetPin"
+     ],
+     "path": "src/llm/model_trials/types.rs",
+     "purpose": "The held-out selection and sufficiency card are supplied by eval authoring",
+     "surface": {
+      "enum": 3,
+      "struct": 15
      }
     },
     {
@@ -25173,8 +25224,23 @@
       "crate-vis": 4,
       "enum": 1,
       "fn": 10,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelBackendPin",
+      "ModelCostReceipt",
+      "PricedModelBackend"
+     ],
+     "path": "src/llm/registry/backend.rs",
+     "purpose": "Backend-specific serving identities and prices",
+     "surface": {
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -25480,7 +25546,7 @@
      "path": "src/llm/score_scraper.rs",
      "purpose": "Config-driven benchmark scraping",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "re-export": 2,
       "struct": 3,
       "trait": 1
@@ -45678,7 +45744,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 81,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46324,7 +46390,7 @@
    },
    "over_bar": 72,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2783,
+   "source_files": 2787,
    "test_files": 903
   },
   "oneiron-android": {
