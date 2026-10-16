@@ -14,6 +14,7 @@ pub(crate) fn validate_request(
     if request.model != descriptor.model {
         return Err(FatalLlmError::InvalidRequest.into());
     }
+    descriptor.admit_raw_controls(request)?;
 
     if !request.tools.is_empty() {
         require_capability(
