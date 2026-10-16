@@ -21892,7 +21892,7 @@
      "path": "src/gate/retrieval_filter.rs",
      "purpose": "Retrieval authority projection and narrowing, independent of result filtering",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 1
      }
     },
@@ -24980,6 +24980,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "InspectionHandle",
+      "InspectionResolveRequest",
+      "InspectionResolved",
+      "InspectionState"
+     ],
+     "path": "src/lens/inspection.rs",
+     "purpose": "OF-235: shareable inspection state and its handle link",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 7,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "InstrumentAtoms",
       "InstrumentView"
      ],
@@ -25132,7 +25150,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -27571,6 +27589,16 @@
       "fn": 5,
       "struct": 12,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/inspection.rs",
+     "purpose": "`vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -33790,6 +33818,25 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuthorityAuditEventKind",
+      "AuthorityAuditOrder",
+      "AuthorityAuditPage",
+      "AuthorityAuditQuery",
+      "AuthorityAuditRow"
+     ],
+     "path": "src/receipt/authority_audit.rs",
+     "purpose": "OF-224: the dated consent/authority audit, a renderer-neutral projection of the stored AUTHORITY_LOG",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -33885,6 +33932,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GuestCopyState",
+      "GuestDeletionRequestStatus",
+      "GuestPactStanding",
+      "GuestRevokeDisclosure",
+      "GuestRevokeOutcome",
+      "GuestRevokeResponse",
+      "NotRecallable"
+     ],
+     "path": "src/receipt/guest_revoke.rs",
+     "purpose": "OF-232: the guest-revoke response and its copied-bytes disclosure",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -33952,7 +34019,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 18,
-      "re-export": 12
+      "re-export": 14
      }
     },
     {
@@ -43370,7 +43437,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 147
+      "fn": 149
      }
     },
     {
@@ -48360,7 +48427,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48430,7 +48497,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 124,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48626,7 +48693,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 25,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49090,7 +49157,7 @@
    },
    "over_bar": 100,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2960,
+   "source_files": 2964,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56676,7 +56743,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 125
+      "fn": 127
      }
     },
     {
@@ -57689,7 +57756,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 126
+      "fn": 128
      }
     },
     {
@@ -60126,9 +60193,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
-     "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
+     "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
