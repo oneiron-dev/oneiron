@@ -24,7 +24,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::local::LocalTagger;
-use crate::config::{EmbedderDevice, OneironerConfig, OneironerRuntime};
+use crate::config::oneironer::OneironerRuntime;
+use crate::config::{EmbedderDevice, OneironerConfig};
 
 /// The bundle file the local tagger loads; its SHA-256 prefix is the stack.
 const MANIFEST_FILE: &str = "oneironer.json";
