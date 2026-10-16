@@ -40,6 +40,7 @@
 //!   answer the VV exchange from the persisted state vector without
 //!   loading the window doc.
 
+mod artifacts;
 mod base;
 mod documents;
 mod federated;

@@ -441,11 +441,23 @@ fn artifact_routes() -> Router<Arc<SyncServer>> {
         .route("/a/{artifact}/{*path}", get(serve_artifact_path))
 }
 
-/// The artifact-only listener's router: `/a/` and nothing else, on an origin
-/// of its own. It keeps the API's wire receipts and its binding admission,
-/// which spends each holder proof's nonce, so a member's proof replays on
-/// neither listener.
+/// The artifact-only listener's router: this vault's `/a/`, and under each
+/// configured artifact domain, this vault at its own subdomain
+/// (`<vault>.<domain>/<artifact>/…`). No API route is reachable on it.
 pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
+    let local = vault_artifact_app(server.clone());
+    let mut hosts = ArtifactHosts::new(&server.config.artifact_domains);
+    if let Some(name) = server.config.artifact_vault_name.as_deref() {
+        hosts = hosts.with_vault_app(name, local.clone());
+    }
+    hosts.into_app(local)
+}
+
+/// One vault's artifact routes: `/a/` and nothing else, on an origin of its
+/// own. It keeps the API's wire receipts and its binding admission, which
+/// spends each holder proof's nonce, so a member's proof replays on neither
+/// listener.
+pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
     artifact_routes()
         .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
         .layer(middleware::from_fn_with_state(

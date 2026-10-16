@@ -85,6 +85,8 @@ impl EnvConfig {
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
+        values.artifact_domains = lookup_list(&mut lookup, "ONEIRON_ARTIFACT_DOMAINS");
+        values.artifact_vault_name = lookup("ONEIRON_ARTIFACT_VAULT_NAME");
         values.trusted_proxies = lookup_list(&mut lookup, "ONEIRON_TRUSTED_PROXIES");
         values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
@@ -459,6 +461,8 @@ struct FileServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    artifact_domains: Option<Vec<String>>,
+    artifact_vault_name: Option<String>,
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
@@ -509,6 +513,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
+            artifact_domains: value.artifact_domains,
+            artifact_vault_name: value.artifact_vault_name,
             trusted_proxies: value.trusted_proxies,
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
@@ -560,6 +566,8 @@ struct PartialServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    artifact_domains: Option<Vec<String>>,
+    artifact_vault_name: Option<String>,
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
@@ -611,6 +619,8 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("artifact_domains", &self.artifact_domains)
+            .field("artifact_vault_name", &self.artifact_vault_name)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
@@ -694,6 +704,16 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.allowed_origins {
             resolved.allowed_origins = normalize_list(value);
+        }
+        if let Some(value) = self.artifact_domains {
+            resolved.artifact_domains = normalize_list(value);
+        }
+        if let Some(value) = self.artifact_vault_name {
+            let value = value.trim().to_ascii_lowercase();
+            if !oneiron_vault_contract::valid_vault_name(&value) {
+                anyhow::bail!("artifact_vault_name must be a DNS label of [a-z0-9-]");
+            }
+            resolved.artifact_vault_name = Some(value);
         }
         if let Some(value) = self.trusted_proxies {
             resolved.trusted_proxies = parse_trusted_proxies(&normalize_list(value))?;
@@ -831,6 +851,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
+            artifact_domains: value.artifact_domains.clone(),
+            artifact_vault_name: value.artifact_vault_name.clone(),
             trusted_proxies: value.trusted_proxies.clone(),
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
