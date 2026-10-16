@@ -13072,9 +13072,9 @@
      "purpose": "Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the…",
      "surface": {
       "const": 8,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 3,
-      "fn": 14,
+      "fn": 16,
       "struct": 3
      }
     },
@@ -13270,7 +13270,7 @@
      "path": "src/consent/widen.rs",
      "purpose": "Propose-only authority widening",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -14402,6 +14402,16 @@
       "crate-vis": 4,
       "mod": 1,
       "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/once_disclosure.rs",
+     "purpose": "Approve-once delivery (OF-365): the owner's `once` answer to a contact-disclosure offer discloses that…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -15966,7 +15976,7 @@
      "purpose": "The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all…",
      "surface": {
       "crate-vis": 2,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 1
      }
@@ -16058,7 +16068,7 @@
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
       "crate-vis": 11,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -48180,8 +48190,8 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 22,
-     "impl_vault": false,
+     "files": 23,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out"
@@ -49288,7 +49298,7 @@
    },
    "over_bar": 102,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2971,
+   "source_files": 2972,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60010,7 +60020,7 @@
      "path": "src/api/context_pack/interlocutor.rs",
      "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
