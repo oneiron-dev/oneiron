@@ -52,11 +52,6 @@ pub(crate) use self::holders::{
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::made_by::BLOB_VERSION_MADE_BY_MAX_INPUTS;
 pub use self::provenance::BlobVersionProvenance;
-pub use self::verbs::{
-    ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
-    DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, KeptProposal, NativeOutputRequest,
-    ProposalSettleRequest, UndoneKeep,
-};
 pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
 };
@@ -64,6 +59,11 @@ pub(crate) use self::references::{
 pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only};
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
+pub use self::verbs::{
+    ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
+    DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, KeptProposal, NativeOutputRequest,
+    ProposalSettleRequest, UndoneKeep,
+};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 pub use self::versions::{
     BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, BlobBytes, CalcEngineStamp,

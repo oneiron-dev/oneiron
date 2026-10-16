@@ -12,10 +12,10 @@ use super::record::{
 };
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES,
-    checkpoint_label, fallback_speech_marker, implicit_speak_output_path, load_observation_window,
-    load_utf8_output, observation_output_path, observation_ref, publish_output,
-    record_reply_evidence, record_text_output, recoverable_chunk_path, script_output_path,
-    validate_runtime_outputs,
+    checkpoint_label, clean_for_context, fallback_speech_marker, implicit_speak_output_path,
+    load_context_output, load_observation_window, load_utf8_output, observation_output_path,
+    observation_ref, publish_output, record_reply_evidence, record_text_output,
+    recoverable_chunk_path, script_output_path, validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -23,8 +23,8 @@ use super::types::{
 };
 use super::wire::{HealedExecutorReply, heal_executor_reply};
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput, CodeRunReplayGeneration,
-    CodeRunReplayRecord, CodeRunStepCheckpoint, SelfDurableWait,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
+    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint, SelfDurableWait,
 };
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
 use crate::off_record::ExecutorUtterance;
@@ -298,9 +298,27 @@ impl EngineNativeExecutor<'_> {
                 &host.bridge_calls,
             )?;
             record.bridge_calls.extend(host.bridge_calls);
-            // Bridge results too large for one reply, stored as bodies; the
-            // calls' rows carry their handles.
+            // Bridge results too large for one reply and stored values, as
+            // bodies; the calls' rows and the step's bindings carry their
+            // handles.
             record.outputs.extend(host.captured);
+            // The names the step bound join the record in this same
+            // checkpointed append; a rebound name keeps its place.
+            let bindings: Vec<_> = host
+                .bound
+                .iter()
+                .map(|binding| (binding.name.clone(), binding.handle.clone()))
+                .collect();
+            for binding in host.bound {
+                match record
+                    .bindings
+                    .iter_mut()
+                    .find(|held| held.name == binding.name)
+                {
+                    Some(held) => *held = binding,
+                    None => record.bindings.push(binding),
+                }
+            }
             let observation = publish_output(
                 &self.storage,
                 &mut record,
@@ -316,28 +334,33 @@ impl EngineNativeExecutor<'_> {
                 observation: observation.raw_blake3,
                 done: step_outcome.done,
                 outputs,
+                bindings,
             };
+            // The agent's own refusal declined her TASK (OF-533): the run
+            // ends here, complete, and says nothing more on her behalf.
+            let declined = host.declined.is_some();
             let terminal_status = host
                 .durable_wait
                 .clone()
                 .map(EngineExecutorStatus::Waiting)
                 .or({
-                    if step_outcome.done {
+                    if step_outcome.done || declined {
                         Some(EngineExecutorStatus::Complete)
                     } else {
                         None
                     }
                 });
-            let implicit_speak = matches!(terminal_status, Some(EngineExecutorStatus::Complete))
-                .then(|| {
-                    self.prepare_trailing_speak_fallback(
-                        &record,
-                        &observation,
-                        trailing_speak.as_deref(),
-                    )
-                })
-                .transpose()?
-                .flatten();
+            let implicit_speak = (!declined
+                && matches!(terminal_status, Some(EngineExecutorStatus::Complete)))
+            .then(|| {
+                self.prepare_trailing_speak_fallback(
+                    &record,
+                    &observation,
+                    trailing_speak.as_deref(),
+                )
+            })
+            .transpose()?
+            .flatten();
             if let Some(text) = implicit_speak.as_deref() {
                 // The exact side-effect payload is part of the replay append,
                 // not ephemeral provider state. It is content-addressed like
@@ -723,6 +746,10 @@ impl EngineNativeExecutor<'_> {
                 continue;
             };
             if output.output_ref() == source {
+                // A body that is not clean reaches the model as the mark.
+                if !clean_for_context(&self.storage, output)? {
+                    return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.as_bytes().to_vec());
+                }
                 return Ok(self
                     .storage
                     .get_code_run_raw_output(output)?
@@ -824,7 +851,7 @@ impl EngineNativeExecutor<'_> {
                         return Ok(None);
                     };
                     holds.push((source, hold));
-                    load_utf8_output(&self.storage, record, &observation_output_path(*seq))
+                    load_context_output(&self.storage, record, &observation_output_path(*seq))
                         .map(|text| Some(text.into_bytes()))
                 })?
         };
@@ -834,11 +861,13 @@ impl EngineNativeExecutor<'_> {
         if !epochs.is_empty() {
             self.admit_compaction_read()?;
         }
+        let mut swapped = false;
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
                 Some(Some(frame)) => {
                     messages.push(frame);
+                    swapped = true;
                     continue;
                 }
                 Some(None) => continue,
@@ -857,7 +886,7 @@ impl EngineNativeExecutor<'_> {
                 }))?,
             };
             let turn = CodeRunHistoryTurn {
-                code: load_utf8_output(&self.storage, record, &script_output_path(seq as u64))?,
+                code: load_context_output(&self.storage, record, &script_output_path(seq as u64))?,
                 console,
             };
             messages.push(LlmMessage {
@@ -875,6 +904,14 @@ impl EngineNativeExecutor<'_> {
         }
         messages.extend(self.fold_tail(&epochs, record, views.len())?);
 
+        // Past a swap, the run's results are named once more beside the
+        // frame that replaced the turns that bound them.
+        if swapped && let Some(brief) = self.bindings_brief(record)? {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text { text: brief }],
+            });
+        }
         if let Some(note) = memory_note {
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
@@ -924,6 +961,82 @@ impl EngineNativeExecutor<'_> {
         }
         Ok(request)
     }
+}
+
+/// Bound results a post-swap brief lists, newest first.
+const BRIEF_BINDINGS: usize = 64;
+
+/// Characters of a result's preview a brief line carries.
+const BRIEF_PREVIEW_CHARS: usize = 120;
+
+impl EngineNativeExecutor<'_> {
+    /// The run's live result names, newest first, a line each from its
+    /// manifest and taint sidecars alone: no body is read.
+    fn bindings_brief(&self, record: &CodeRunReplayRecord) -> EngineExecutorResult<Option<String>> {
+        if record.bindings.is_empty() {
+            return Ok(None);
+        }
+        let mut lines = vec![
+            "Results bound in this run (describe(name) gives a card; a card's `read` path reads \
+             it a chunk at a time):"
+                .to_owned(),
+        ];
+        for binding in record.bindings.iter().rev().take(BRIEF_BINDINGS) {
+            let Some(output) = record
+                .outputs
+                .iter()
+                .find(|output| output.handle == binding.handle)
+            else {
+                return Err(Error::CorruptedIndex("executor result binding").into());
+            };
+            let preview: String = if clean_for_context(&self.storage, output)? {
+                output
+                    .preview
+                    .text
+                    .chars()
+                    .take(BRIEF_PREVIEW_CHARS)
+                    .map(|c| if c == '\n' { '\u{23ce}' } else { c })
+                    .collect()
+            } else {
+                "withheld".to_owned()
+            };
+            lines.push(format!(
+                "{} \u{2014} {}, {} bytes, {} lines, {} \u{2014} preview: {preview}",
+                binding.name,
+                match output.kind {
+                    crate::code_run::CodeRunOutputKind::Text => "text",
+                    crate::code_run::CodeRunOutputKind::Binary => "binary",
+                },
+                grouped(output.raw_len),
+                grouped(output.lines),
+                if output.complete {
+                    "complete"
+                } else {
+                    "incomplete"
+                },
+            ));
+        }
+        if record.bindings.len() > BRIEF_BINDINGS {
+            lines.push(format!(
+                "\u{2026}and {} more",
+                record.bindings.len() - BRIEF_BINDINGS
+            ));
+        }
+        Ok(Some(lines.join("\n")))
+    }
+}
+
+/// `n` with its thousands grouped: `2,104,331`.
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 /// Past 60% of the run's result-memory share, a line naming the biggest
