@@ -26921,7 +26921,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -27025,7 +27025,7 @@
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
       "crate-vis": 4,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -56152,6 +56152,7 @@
       "HostCommand",
       "HostInitArgs",
       "HostReRootArgs",
+      "HostVmArgs",
       "InitArgs",
       "McpArgs",
       "McpSurface",
@@ -56173,7 +56174,7 @@
       "enum": 8,
       "fn": 3,
       "re-export": 2,
-      "struct": 18
+      "struct": 19
      }
     },
     {
@@ -57805,6 +57806,7 @@
      "path": "src/managed/args.rs",
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
+      "const": 1,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -57825,7 +57827,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -57865,7 +57867,7 @@
      "purpose": "Managed sockets: listener resolution and binding, the ctl plane, and readiness",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 10,
       "struct": 1
@@ -57887,7 +57889,7 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
       "crate-vis": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -57938,6 +57940,33 @@
       "const": 3,
       "crate-vis": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_guest.rs",
+     "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SleepOutcome",
+      "VaultVm",
+      "VaultVmConfig",
+      "VaultVmRun"
+     ],
+     "path": "src/managed/vm_host.rs",
+     "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
+     "surface": {
+      "enum": 1,
+      "fn": 13,
+      "struct": 3
      }
     },
     {
@@ -59900,7 +59929,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 12,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60007,7 +60036,7 @@
    },
    "over_bar": 15,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 387,
+   "source_files": 389,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -60265,7 +60294,7 @@
      "path": "src/lib/host_adapters.rs",
      "purpose": "Host adapters",
      "surface": {
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2,
       "trait": 2
      }
@@ -60284,6 +60313,22 @@
       "fn": 8,
       "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FirecrackerGuest",
+      "GuestLink",
+      "VsockListener",
+      "VsockStream"
+     ],
+     "path": "src/lib/host_adapters/vsock.rs",
+     "purpose": "The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs…",
+     "surface": {
+      "fn": 11,
+      "struct": 4
      }
     },
     {
@@ -60330,7 +60375,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 3,
+      "mod": 4,
       "re-export": 7
      }
     },
@@ -60371,6 +60416,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "VmGuestFrame",
+      "VmHostFrame"
+     ],
+     "path": "src/lib/vm.rs",
+     "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
+     "surface": {
+      "const": 7,
+      "enum": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Schedule",
       "WakeEntry"
      ],
@@ -60387,16 +60447,16 @@
    ],
    "modules": {
     "lib": {
-     "files": 13,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits"
     }
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 12,
+   "source_files": 14,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
