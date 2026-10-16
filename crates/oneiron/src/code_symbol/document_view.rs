@@ -2,8 +2,8 @@
 //! Each unit points at the operations that wrote it; each operation names its
 //! actor, turn, activity, intent and model.
 
-use super::semantic_diff::{CodeContentVersion, CodeSemanticChange, render_code_semantic_diff};
 use super::semantic_code_diff;
+use super::semantic_diff::{CodeContentVersion, CodeSemanticChange, render_code_semantic_diff};
 use crate::Vault;
 use crate::code_document::{CodeDocumentFrontier, CodeOpAttribution, CodeSpanBlame};
 use crate::entity_id::EntityId;
@@ -34,7 +34,11 @@ impl CodeUnitBlame {
     /// Each distinct operation that wrote part of the unit, in sequence order.
     #[must_use]
     pub fn operations(&self) -> Vec<&CodeOpAttribution> {
-        let mut ops: Vec<_> = self.spans.iter().filter_map(|span| span.op.as_ref()).collect();
+        let mut ops: Vec<_> = self
+            .spans
+            .iter()
+            .filter_map(|span| span.op.as_ref())
+            .collect();
         ops.sort_by_key(|op| op.sequence);
         ops.dedup_by_key(|op| op.sequence);
         ops
@@ -81,7 +85,11 @@ impl Vault {
         let text = self.code_document_at(tested)?;
         semantic_code_diff(&tested.path, "", &text)?
             .into_iter()
-            .filter_map(|change| change.after.map(|version| (change.path, change.symbol, version)))
+            .filter_map(|change| {
+                change
+                    .after
+                    .map(|version| (change.path, change.symbol, version))
+            })
             .map(|(path, symbol, version)| {
                 let (start, end) = unit_chars(&text, &version);
                 Ok(CodeUnitBlame {
@@ -132,7 +140,11 @@ pub fn render_op(op: &CodeOpAttribution) -> String {
 /// else the whole lines it covers (impl blocks joined from several places).
 fn unit_chars(text: &str, version: &CodeContentVersion) -> (usize, usize) {
     let mut line = 1;
-    let mut start_byte = if version.start_line <= 1 { Some(0) } else { None };
+    let mut start_byte = if version.start_line <= 1 {
+        Some(0)
+    } else {
+        None
+    };
     let mut end_byte = text.len();
     for (index, byte) in text.bytes().enumerate() {
         if byte != b'\n' {

@@ -21,9 +21,9 @@ use oneiron::{
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, Vault, WakeAttemptContext, WriteActor,
 };
 use oneiron_driver::{
-    AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher, HybridTick,
-    IdleSample, PassExecutorFactory, PushTick, SessionLifecycleConfig, SessionLifecycleDriver,
-    SessionTicks, ShutdownHandle, TimerTick, WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig,
+    AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher, HybridTick, IdleSample,
+    PassExecutorFactory, PushTick, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks,
+    ShutdownHandle, TimerTick, WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig,
     WakeSupervisorReport,
 };
 
@@ -128,6 +128,17 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
     } = start;
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault)?;
+        // The nightly harness audit reads this; a failed record never stops
+        // the Dreamer.
+        if let Err(error) = super::harness::record_tuning_config(
+            &vault,
+            &runtime,
+            &seat,
+            &settings,
+            now_ms() / 1_000,
+        ) {
+            tracing::warn!(%error, "dreamer tuning config not recorded");
+        }
         let factory = ObservedFactory {
             vault: Arc::clone(&vault),
             runtime,

@@ -302,6 +302,10 @@ impl CodeRunStepCheckpoint {
     }
 }
 
+/// The preview text of a body the secret scan marked.
+pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str =
+    "[preview withheld: the secret scan found a secret in this result]";
+
 /// Compact preview stored in a replay record beside a raw output handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -397,12 +401,39 @@ impl CodeRunRawOutput {
             },
             lines: facts.lines,
             complete,
+            // A body the secret scan marked shows no preview: the view is
+            // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
-                text: facts.preview.clone(),
-                truncated: facts.preview_truncated,
+                text: match facts.secret {
+                    Some(_) => CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned(),
+                    None => facts.preview.clone(),
+                },
+                truncated: facts.preview_truncated || facts.secret.is_some(),
             },
         })
+    }
+
+    /// The manifest a context reference names, for reading its body by
+    /// digest and length; it carries no occurrence facts.
+    pub(crate) fn of_ref(source: crate::compaction::output::OutputRef) -> Self {
+        Self {
+            handle: format!(
+                "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
+                crate::entity_id::bytes_to_hex_lower(&source.hash)
+            ),
+            path: String::new(),
+            raw_blake3: source.hash,
+            raw_len: source.byte_len,
+            kind: CodeRunOutputKind::Binary,
+            lines: 0,
+            complete: true,
+            preview: CodeRunOutputPreview {
+                codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
+                text: String::new(),
+                truncated: false,
+            },
+        }
     }
 
     /// The model-context reference of this body: its digest and length.

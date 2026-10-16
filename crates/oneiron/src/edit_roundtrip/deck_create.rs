@@ -22,8 +22,7 @@
 use std::collections::BTreeMap;
 
 use oneiron_docedit::design_plan::{
-    AssetBinding, Brief, CompileError, Fallback, KeptBrief, MediaType, Outcome,
-    compile_with_fonts,
+    AssetBinding, Brief, CompileError, Fallback, KeptBrief, MediaType, Outcome, compile_with_fonts,
 };
 use oneiron_docedit::emit::{EmitError, EmitInputs, Names, StoredAsset, emit};
 use oneiron_docedit::fonts::{FontBook, FontError};
@@ -36,6 +35,9 @@ use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::note::{NotePin, NoteSpanResolution};
+use crate::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -82,7 +84,9 @@ pub enum OutlineFreshness {
     /// The note changed after the keep.
     Edited,
     /// Cited evidence moved: these pins, in document order, map differently.
-    EvidenceMoved { pins: Vec<usize> },
+    EvidenceMoved {
+        pins: Vec<usize>,
+    },
 }
 
 /// One design direction: a template and what the kept outline becomes on it.
@@ -180,6 +184,8 @@ pub struct DeckCreateRequest<'a> {
     pub name: &'a str,
     pub run_ref: &'a str,
     pub made_by: Option<EntityId>,
+    /// The task or ask the creation answers: the deck's born-from.
+    pub trigger: Option<MadeByTrigger>,
     pub actor: WriteActor,
 }
 
@@ -187,7 +193,9 @@ pub struct DeckCreateRequest<'a> {
 pub enum DeckCreateOutcome {
     Created(Box<DeckCreationRecord>),
     /// Pages no rung holds; nothing was written.
-    Ask { pages: Vec<String> },
+    Ask {
+        pages: Vec<String>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -299,7 +307,10 @@ impl crate::Vault {
                 template_hash: *blake3::hash(&bytes).as_bytes(),
                 outcome: match outcome {
                     Outcome::Ask(decisions) => DirectionOutcome::Ask {
-                        pages: decisions.into_iter().map(|decision| decision.page).collect(),
+                        pages: decisions
+                            .into_iter()
+                            .map(|decision| decision.page)
+                            .collect(),
                     },
                     Outcome::Plan(plan) => {
                         let estimates = plan.slides().iter().flat_map(|slide| &slide.fit.estimates);
@@ -362,7 +373,10 @@ impl crate::Vault {
         let plan = match compile_with_fonts(&brief, &template, &bindings, &book)? {
             Outcome::Ask(decisions) => {
                 return Ok(DeckCreateOutcome::Ask {
-                    pages: decisions.into_iter().map(|decision| decision.page).collect(),
+                    pages: decisions
+                        .into_iter()
+                        .map(|decision| decision.page)
+                        .collect(),
                 });
             }
             Outcome::Plan(plan) => plan,
@@ -402,12 +416,42 @@ impl crate::Vault {
             occurred,
             now,
         )?;
-        let version = self.append_blob_artifact_version(
+        let template_hash = *blake3::hash(&template_bytes).as_bytes();
+        // The first version's made_by: the kept outline is the prompt, the
+        // template version an input, and the replay key binds both hashes.
+        let made_by = MadeBy {
+            inputs: vec![
+                MadeByInput {
+                    row: kept.note,
+                    role: MadeByInputRole::Prompt,
+                },
+                MadeByInput {
+                    row: request.template.artifact,
+                    role: MadeByInputRole::Input,
+                },
+            ],
+            process: MadeByProcess {
+                actor: request
+                    .made_by
+                    .unwrap_or_else(|| request.actor.entity_ref()),
+                class: MadeByClass::Concluded,
+                identity: "deck.create".to_owned(),
+                version: "1".to_owned(),
+                params_hash: blake3::hash(&[kept.content_hash, template_hash].concat())
+                    .to_hex()
+                    .to_string(),
+            },
+            at: now,
+            trigger: request.trigger.clone(),
+        };
+        let version = self.append_blob_artifact_version_made_by(
             &artifact,
+            None,
             &candidate.bytes,
             &BlobVersionProvenance::AgentRun {
                 run_ref: request.run_ref.to_owned(),
             },
+            &made_by,
             request.actor,
             occurred,
             now,
@@ -420,7 +464,7 @@ impl crate::Vault {
             outline_version: kept.version.clone(),
             outline_hash: kept.content_hash,
             template: request.template,
-            template_hash: *blake3::hash(&template_bytes).as_bytes(),
+            template_hash,
             run_ref: request.run_ref.to_owned(),
             made_by: request.made_by,
             slides: candidate
@@ -473,7 +517,9 @@ impl crate::Vault {
                 return Err(invalid("the outline changed after its keep; keep it again"));
             }
             OutlineFreshness::EvidenceMoved { .. } => {
-                return Err(invalid("cited evidence moved after the keep; keep it again"));
+                return Err(invalid(
+                    "cited evidence moved after the keep; keep it again",
+                ));
             }
         }
         self.kept_deck_outline(note)?
@@ -539,7 +585,10 @@ impl crate::Vault {
             .collect()
     }
 
-    fn asset_media(&self, at: &ArtifactVersionRef) -> std::result::Result<MediaType, DeckCreateError> {
+    fn asset_media(
+        &self,
+        at: &ArtifactVersionRef,
+    ) -> std::result::Result<MediaType, DeckCreateError> {
         let body = self
             .get_blob_artifact(&at.artifact)?
             .ok_or(Error::EntityNotFound)?;

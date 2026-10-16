@@ -68,7 +68,8 @@ pub use self::judge::{
 };
 pub use self::projector::{
     attribution_judgments, pending_edit_proposals, read_attribution_cursor,
-    record_attribution_evidence, run_attribution_projector, run_attribution_projector_with_decisions,
+    record_attribution_evidence, run_attribution_projector,
+    run_attribution_projector_with_decisions,
 };
 pub use self::types::{
     AttemptOutcome, AttributionJudgment, AttributionLane, AttributionShare, AttributionSplit,
