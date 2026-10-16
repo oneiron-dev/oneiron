@@ -15681,6 +15681,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PersonThresholdPolicy"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach.rs",
+     "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
+     "surface": {
+      "const": 6,
+      "crate-vis": 2,
+      "fn": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CuratorQuestions",
       "CuratorRubric",
       "CuratorTrigger"
@@ -15749,7 +15764,7 @@
       "const": 3,
       "crate-vis": 6,
       "fn": 1,
-      "mod": 2,
+      "mod": 3,
       "re-export": 2
      }
     },
@@ -43153,7 +43168,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44079,7 +44094,7 @@
    },
    "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2643,
+   "source_files": 2644,
    "test_files": 903
   },
   "oneiron-android": {
