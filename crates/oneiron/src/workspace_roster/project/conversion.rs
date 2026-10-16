@@ -116,10 +116,19 @@ impl Vault {
         })
     }
 
-    /// Convert a room thread once. A host may explicitly name a leader;
-    /// the policy row resolves the otherwise unchosen leader and roster.
+    /// Convert a room thread once, as the owner's act: the owner is
+    /// revalidated in the grouped write, the owner-project signer signs the
+    /// new state for the owner, and only an installed head commits. A host
+    /// may explicitly name a leader; the policy row resolves the otherwise
+    /// unchosen leader and roster.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the owner door binds its owner, signer, source, chosen leader and time"
+    )]
     pub fn convert_thread_to_project(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         room: EntityId,
         thread: EntityId,
         source_message: EntityId,
@@ -127,7 +136,17 @@ impl Vault {
         leader: Option<EntityId>,
         now: u64,
     ) -> Result<ProjectRecord> {
-        self.convert_thread_impl(room, thread, source_message, project_id, leader, None, now)
+        self.convert_thread_impl(
+            owner,
+            signer,
+            room,
+            thread,
+            source_message,
+            project_id,
+            leader,
+            None,
+            now,
+        )
     }
 
     /// Card tap uses host-held placement and revalidates its authenticated
@@ -145,46 +164,47 @@ impl Vault {
         let thread = EntityId::from_hex(intent.source_thread_ref.as_deref().ok_or_else(invalid)?)?;
         let message = EntityId::from_hex(&intent.source_message_ref)?;
         self.convert_thread_impl(
+            owner,
+            signer,
             room,
             thread,
             message,
             project_id,
             None,
-            Some((intent, owner, signer)),
+            Some(intent),
             now,
         )
     }
 
+    /// Every conversion is the owner's act; a card only adds its terms.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the private atomic door binds the source, chosen terms and time"
+        reason = "the private atomic door binds the owner, source, chosen terms and time"
     )]
     fn convert_thread_impl(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         room: EntityId,
         thread: EntityId,
         source_message: EntityId,
         project_id: EntityId,
         leader: Option<EntityId>,
-        card: Option<(
-            &crate::genui::ProjectMintIntent,
-            &crate::consent::AuthenticatedOwner,
-            &OwnerProjectSigner<'_>,
-        )>,
+        card: Option<&crate::genui::ProjectMintIntent>,
         now: u64,
     ) -> Result<ProjectRecord> {
         let kind = self.project_type_byte()?;
         self.backfill_tasks_by_owner()?;
         self.with_write_txn_grouped(|txn| {
-            if let Some((intent, owner, _)) = card {
-                let principal_ref = owner.principal_ref_in_txn(self, txn)?;
-                if intent.principal_ref != principal_ref
+            // The owner is revalidated here, before anything is read for it.
+            let principal_ref = owner.principal_ref_in_txn(self, txn)?;
+            if let Some(intent) = card
+                && (intent.principal_ref != principal_ref
                     || intent.source_message_ref != source_message.to_hex()
                     || intent.source_room_ref.as_deref() != Some(room.to_hex().as_str())
-                    || intent.source_thread_ref.as_deref() != Some(thread.to_hex().as_str())
-                {
-                    return Err(invalid());
-                }
+                    || intent.source_thread_ref.as_deref() != Some(thread.to_hex().as_str()))
+            {
+                return Err(invalid());
             }
             let policy: crate::gate::ProjectConversionPolicy =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?
@@ -216,7 +236,7 @@ impl Vault {
             // final. Only an unchosen leader falls back to the task holder,
             // then the room host.
             let confirmed = card
-                .map(|(intent, _, _)| EntityId::from_hex(&intent.leader_agent_def_ref))
+                .map(|intent| EntityId::from_hex(&intent.leader_agent_def_ref))
                 .transpose()?;
             let roots = turns
                 .iter()
@@ -303,7 +323,7 @@ impl Vault {
             project.origin_room = Some(room.to_hex());
             project.origin_thread = Some(thread.to_hex());
             project.origin_at = Some(row.at);
-            if let Some((intent, _, _)) = card {
+            if let Some(intent) = card {
                 self.apply_card_terms_in_txn(txn, intent, project_id, now, &mut project)?;
                 if policy.roster_selection == RosterSelection::LeaderOnly
                     && project.board.iter().any(|id| id != &project.leader)
@@ -340,32 +360,22 @@ impl Vault {
                 start: now,
                 end: now,
             };
-            match card {
-                // The owner's card: the host signs the new state for the
-                // owner, it lands as history, and only an installed head
-                // commits.
-                Some((_, owner, signer)) => {
-                    let signed_at = owner_signer::owner_signed_at(self, txn)?;
-                    self.sign_owner_project_in_txn(
-                        txn,
-                        owner,
-                        signer,
-                        project_id,
-                        &mut project,
-                        None,
-                        signed_at,
-                    )?;
-                    self.batch_in()
-                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
-                        .apply(txn)?;
-                    self.require_owner_head_in_txn(txn, project_id, &project)?;
-                }
-                None => {
-                    self.batch_in()
-                        .put(&project_id, kind, at, now, &encode(&project)?)
-                        .apply(txn)?;
-                }
-            }
+            // The host signs the new state for the owner, it lands as
+            // history, and only an installed head commits.
+            let signed_at = owner_signer::owner_signed_at(self, txn)?;
+            self.sign_owner_project_in_txn(
+                txn,
+                owner,
+                signer,
+                project_id,
+                &mut project,
+                None,
+                signed_at,
+            )?;
+            self.batch_in()
+                .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
+                .apply(txn)?;
+            self.require_owner_head_in_txn(txn, project_id, &project)?;
             if source_record.tasks.len() != previous_tasks {
                 self.batch_in()
                     .put(&source_project_id, kind, at, now, &encode(&source_record)?)
