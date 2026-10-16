@@ -11,9 +11,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::join_consent::{
-    ConsentNeed, ConsentPart, ConsentSet, ConsentState, JoinDecision, JoinRequest, JoinSubject,
-    RequiredParty, SpendConsent, agent_person_in_txn, decide_with_in_txn, home_room_seats_in_txn,
-    person_of_actor_in_txn,
+    AdmissionBasis, AdmissionConsent, ConsentNeed, ConsentPart, ConsentSet, ConsentState,
+    JoinDecision, JoinRequest, JoinSubject, RequiredParty, SpendConsent, agent_person_in_txn,
+    decide_with_in_txn, home_room_seats_in_txn, person_of_actor_in_txn,
 };
 use super::join_receipt::{
     JOINS, JoinFiling, JoinParticipation, JoinReceipt, JoinReceiptRef, READY, RecordedAnswer,
@@ -58,7 +58,7 @@ pub struct JoinOutcome {
 }
 
 impl JoinOutcome {
-    fn of(receipt: &JoinReceipt) -> Self {
+    pub(super) fn of(receipt: &JoinReceipt) -> Self {
         Self {
             join_ref: receipt.join_ref.clone(),
             decision: JoinDecisionView {
@@ -218,13 +218,7 @@ pub fn rooms_consent_in_txn(
             ));
         }
         ConsentPart::Admission => {
-            if caller.actor_class() != EdgeActorClass::Human
-                || room_host_in_txn(vault, txn, receipt.request.room, caller)?.is_none()
-            {
-                return Err(refused(
-                    "only the room's owner or a delegated host answers its admission",
-                ));
-            }
+            require_admission_party_in_txn(vault, txn, receipt.request.room, caller)?;
             (caller.entity_ref(), None)
         }
         ConsentPart::Spend => {
@@ -296,6 +290,8 @@ fn payer_answer_in_txn(
 
 /// Decides a filing and writes its receipt. Ready commits the participation
 /// and indexes the receipt for its exact room or thread, in this transaction.
+/// A person's own Ready join of a room brings her companions with her, when
+/// `actor` speaks for her (OF-417): each is filed through this same door.
 fn settle_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -319,21 +315,38 @@ fn settle_in_txn(
             &ready_key(request.room, &request.subject, request.branch),
             &filing.join_ref,
         )?;
-        Some(participate_in_txn(vault, txn, request, actor, now)?)
+        Some(participate_in_txn(
+            vault, txn, request, &consents, actor, now,
+        )?)
     } else {
         None
     };
     let receipt = JoinReceipt::decided(filing, consents, decision, participation, now);
     JOINS.put(&vault.store, txn, &receipt.join_ref, &receipt)?;
+    if participation.is_some()
+        && receipt.request.branch.is_none()
+        && let JoinSubject::Person(principal) = receipt.request.subject
+    {
+        super::workplace_join::file_companion_joins_in_txn(
+            vault,
+            txn,
+            receipt.request.room,
+            principal,
+            actor,
+            now,
+        )?;
+    }
     Ok(receipt)
 }
 
 /// The participation a Ready join commits. Only a person joining an ordinary
-/// room itself takes a ledger seat; everyone else's evidence is the receipt.
+/// room on standing of her own takes a ledger seat; everyone else's evidence
+/// is the receipt.
 fn participate_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     request: &JoinRequest,
+    consents: &ConsentSet,
     actor: WriteActor,
     now: u64,
 ) -> Result<JoinParticipation> {
@@ -349,6 +362,15 @@ fn participate_in_txn(
     }
     if vault.members_in_txn(txn, request.room)?.contains(&person) {
         return Ok(JoinParticipation::AlreadySeated);
+    }
+    if matches!(
+        consents.admission,
+        ConsentState::Granted(AdmissionConsent {
+            basis: AdmissionBasis::ThroughPrincipal { .. },
+            ..
+        })
+    ) {
+        return Ok(JoinParticipation::PrincipalReceipt);
     }
     vault.join_member_in_txn(
         txn,
@@ -399,6 +421,24 @@ fn caller_stands_for_in_txn(
     Err(refused(
         "a join is filed by its subject or the subject's principal",
     ))
+}
+
+/// Refuses `caller` unless it answers `room`'s admission: a human who owns
+/// the room or holds its delegated host role, read live.
+pub(super) fn require_admission_party_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<()> {
+    if caller.actor_class() != EdgeActorClass::Human
+        || room_host_in_txn(vault, txn, room, caller)?.is_none()
+    {
+        return Err(refused(
+            "only the room's owner or a delegated host answers its admission",
+        ));
+    }
+    Ok(())
 }
 
 fn answer_ref(vault: &Vault) -> Result<String> {
