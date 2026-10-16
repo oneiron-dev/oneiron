@@ -40,6 +40,8 @@ pub enum SlotKind {
     /// The seed this install's signing keys are derived from: the machine key and
     /// the device key that signs receipts.
     DeviceSigning,
+    /// The key that unlocks the vault data key on this device (OF-570 E1).
+    VaultUnlock,
 }
 
 impl SlotKind {
@@ -49,6 +51,7 @@ impl SlotKind {
         match self {
             Self::MachineEncryption => "machine-encryption",
             Self::DeviceSigning => "device-signing",
+            Self::VaultUnlock => "vault-unlock",
         }
     }
 }
