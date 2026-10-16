@@ -14,13 +14,17 @@
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-use super::made_by::{MadeBy, MadeByClass, MadeByInputRole, MadeByTrigger};
+use super::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::vault::live_entity_row_in_txn;
+use crate::write_envelope::WriteActor;
 
 /// Most inputs one birth may name; the text-commit fold keeps the same bound.
 pub const MAX_BIRTH_INPUTS: usize = 1024;
@@ -49,6 +53,53 @@ impl RowBirth {
             made_by,
             content_hash: String::new(),
         }
+    }
+
+    /// The birth of a row `actor` wrote through `door` at `at`, made from
+    /// `inputs`, whose bytes as the door read them are `read`. It names no
+    /// prompt or trigger: a door that has them builds its own envelope.
+    /// `None` for a concluded birth that names no input: a concluded birth
+    /// names what it was made from, and the door has nothing to name.
+    pub(crate) fn written(
+        actor: WriteActor,
+        class: MadeByClass,
+        door: &str,
+        inputs: &[EntityId],
+        read: &[&[u8]],
+        at: u64,
+    ) -> Option<Self> {
+        if class == MadeByClass::Concluded && inputs.is_empty() {
+            return None;
+        }
+        let mut named: Vec<MadeByInput> = Vec::with_capacity(inputs.len());
+        for row in inputs {
+            if !named.iter().any(|input| input.row == *row) {
+                named.push(MadeByInput {
+                    row: *row,
+                    role: MadeByInputRole::Input,
+                });
+            }
+        }
+        Some(Self {
+            made_by: MadeBy {
+                inputs: named,
+                process: MadeByProcess {
+                    actor: actor.entity_ref(),
+                    class,
+                    identity: door.to_owned(),
+                    version: "1".into(),
+                    // A write door takes no render parameters.
+                    params_hash: format!("{:x}", Sha256::digest([])),
+                },
+                at,
+                trigger: None,
+            },
+            content_hash: if read.is_empty() {
+                String::new()
+            } else {
+                Self::content_hash_of(read)
+            },
+        })
     }
 
     /// The input hash over `parts`, each length-prefixed so two splits of the
@@ -180,6 +231,25 @@ pub(crate) fn stamp_row_birth_in_txn(
         BIRTH_BY_TRIGGER.put(store, txn, &(trigger.row(), *row), &())?;
     }
     Ok(())
+}
+
+/// Stamps `row`'s birth unless it already has one. A document birth names
+/// the row's birth actor and time; a row its writing door stamped keeps
+/// that birth, so the door's richer envelope is never refused here.
+///
+/// # Errors
+///
+/// As [`stamp_row_birth_in_txn`].
+pub(crate) fn stamp_birth_if_absent_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    birth: &RowBirth,
+) -> Result<()> {
+    if ROW_BIRTH.contains(store, txn, row)? {
+        return Ok(());
+    }
+    stamp_row_birth_in_txn(store, txn, row, birth)
 }
 
 /// Stamps a birth that arrived on sync beside its row. The shape rules, the

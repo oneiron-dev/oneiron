@@ -249,10 +249,19 @@ pub(crate) fn stamp_put(
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
 /// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
-/// settles them. A later content put recomputes the default and keeps that
-/// settled position.
+/// settles them. An ASSET body never proposes a sensitivity either: a raise
+/// (a secret-bearing ASSET marked Restricted, OF-560) leaves its stamp at a
+/// band at least as sensitive as the default. A later content put recomputes
+/// the default and keeps that settled position.
 fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
     match kind {
+        crate::registry::ENTITY_TYPE_ASSET => {
+            proposed.sensitivity.is_narrowing_of(prior.sensitivity)
+                && Scope {
+                    sensitivity: proposed.sensitivity,
+                    ..prior.clone()
+                } == *proposed
+        }
         crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
             Scope {
                 audience: proposed.audience.clone(),
@@ -323,6 +332,26 @@ fn writer_settled(prior: &Stamp, proposed: &Scope) -> bool {
             facets: proposed.facets.clone(),
             ..prior.scope.clone()
         } == *proposed
+}
+/// Raises a stamped record's sensitivity to at least `band`, in the
+/// transaction that stored it (OF-560: a file the write door kept with keys
+/// in it is Restricted). Every other axis stays. An unstamped record stays
+/// unstamped, and a stamp already as strict stays as it is.
+pub(crate) fn restrict_stamp_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    band: Sensitivity,
+) -> Result<()> {
+    let Some(mut stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
+        return Ok(());
+    };
+    if matches!(stamp.scope.sensitivity, SensitivityCeiling::AtMost(at) if at >= band) {
+        return Ok(());
+    }
+    stamp.scope.sensitivity = SensitivityCeiling::AtMost(band);
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(store, txn, &id, &stamp)
 }
 /// Settle a locally minted TASK at its writer's world and facet, in the
 /// transaction that put its first body. The writer's facet is provenance:

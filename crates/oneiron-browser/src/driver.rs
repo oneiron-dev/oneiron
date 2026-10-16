@@ -9,13 +9,14 @@
 use crate::cdp::Pipe;
 use crate::outline::{self, Line};
 use crate::{
-    BrowserDriver, BrowserError, ClickInput, ExpectInput, ExpectOutput, FindInput, FindOutput,
-    Observation, ObserveInput, OpenInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput,
-    TypeInput, WaitForInput, WaitForOutput,
+    BrowserDriver, BrowserError, ClickInput, CropInput, ExpectInput, ExpectOutput, FindInput,
+    FindOutput, ImageOutput, Observation, ObserveInput, OpenInput, Row, ScreenshotInput,
+    ScreenshotOutput, SelectInput, TypeInput, ViewInput, WaitForInput, WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
+use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 const REACTION: Duration = Duration::from_millis(600);
@@ -133,8 +134,8 @@ impl CdpDriver {
         }
     }
 
-    fn observation(&mut self, since: Option<u64>) -> Result<Observation, BrowserError> {
-        let rows: Vec<Row> = self.lines()?.into_iter().map(|line| line.row).collect();
+    /// The page's URL and title as they are now.
+    fn page_info(&self) -> Result<(String, String), BrowserError> {
         let info = self.pipe.call(
             None,
             "Target.getTargetInfo",
@@ -142,6 +143,18 @@ impl CdpDriver {
             Instant::now() + CALL,
         )?;
         let info = info.get("targetInfo").unwrap_or(&Value::Null);
+        let field = |name| {
+            info.get(name)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
+        Ok((field("url"), field("title")))
+    }
+
+    fn observation(&mut self, since: Option<u64>) -> Result<Observation, BrowserError> {
+        let rows: Vec<Row> = self.lines()?.into_iter().map(|line| line.row).collect();
+        let (url, title) = self.page_info()?;
         self.seq += 1;
         let current: HashMap<String, Row> = rows
             .iter()
@@ -171,19 +184,12 @@ impl CdpDriver {
         }
         Ok(Observation {
             seq: self.seq,
-            url: info
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-            title: info
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
+            url,
+            title,
             full,
             rows: shown,
             removed,
+            receipt: None,
         })
     }
 
@@ -202,6 +208,41 @@ impl CdpDriver {
             .iter()
             .find(|(id, _)| id == image)
             .map(|(_, png)| png.as_slice())
+    }
+
+    /// Holds `png` under its content ref; returns ref, width, height, bytes.
+    fn remember(&mut self, png: Vec<u8>) -> Result<(String, u32, u32, u64), BrowserError> {
+        let (width, height) = png_dimensions(&png)
+            .ok_or_else(|| BrowserError::Protocol("image is not a PNG".to_owned()))?;
+        let image = format!("blake3:{}", blake3::hash(&png).to_hex());
+        let bytes = png.len() as u64;
+        self.media.push_back((image.clone(), png));
+        if self.media.len() > MEDIA {
+            self.media.pop_front();
+        }
+        Ok((image, width, height, bytes))
+    }
+
+    fn held(&self, image: &str) -> Result<Vec<u8>, BrowserError> {
+        self.image(image)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
+    }
+
+    /// Blacks out password, card and one-time-code fields, or restores them.
+    /// A stored screenshot is masked like an observation: no secret field's
+    /// value reaches the image.
+    fn mask_secrets(&self, mask: bool) -> Result<(), BrowserError> {
+        let script = if mask {
+            "document.querySelectorAll('input[type=password],input[autocomplete^=\"cc-\"],input[autocomplete=\"one-time-code\"]').forEach(e => { e.dataset.oneironMask = e.style.cssText; e.style.setProperty('background', '#000', 'important'); e.style.setProperty('color', '#000', 'important'); e.style.setProperty('-webkit-text-security', 'disc', 'important'); })"
+        } else {
+            "document.querySelectorAll('[data-oneiron-mask]').forEach(e => { e.style.cssText = e.dataset.oneironMask; delete e.dataset.oneironMask; })"
+        };
+        self.page(
+            "Runtime.evaluate",
+            json!({"expression": script, "returnByValue": true}),
+        )?;
+        Ok(())
     }
 
     /// The DOM node behind `target` on the page as it is now.
@@ -417,34 +458,131 @@ impl BrowserDriver for CdpDriver {
         Ok(ExpectOutput { met, row })
     }
 
-    fn screenshot(&mut self, _: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
-        let shot = self.page("Page.captureScreenshot", json!({"format": "png"}))?;
+    fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
+        self.mask_secrets(true)?;
+        let captured = self.page("Page.captureScreenshot", json!({"format": "png"}));
+        let restored = self.mask_secrets(false);
+        let shot = captured?;
+        restored?;
         let data = shot.get("data").and_then(Value::as_str).unwrap_or("");
         let png = base64::engine::general_purpose::STANDARD
             .decode(data)
             .map_err(|e| BrowserError::Protocol(e.to_string()))?;
-        let dimension = |at: usize| {
-            png.get(at..at + 4)
-                .and_then(|b| b.try_into().ok())
-                .map(u32::from_be_bytes)
-        };
-        let (Some(width), Some(height)) = (dimension(16), dimension(20)) else {
-            return Err(BrowserError::Protocol("screenshot is not a PNG".to_owned()));
-        };
-        let image = format!("blake3:{}", blake3::hash(&png).to_hex());
-        let bytes = png.len() as u64;
-        self.media.push_back((image.clone(), png));
-        if self.media.len() > MEDIA {
-            self.media.pop_front();
-        }
+        let (image, width, height, bytes) = self.remember(png)?;
+        let (url, title) = self.page_info()?;
         Ok(ScreenshotOutput {
             image,
             media_type: "image/png".to_owned(),
             width,
             height,
             bytes,
+            trigger: input.trigger,
+            url,
+            title,
         })
     }
+
+    fn view(&mut self, input: ViewInput) -> Result<ImageOutput, BrowserError> {
+        let png = self.held(&input.image)?;
+        let (width, height) = png_dimensions(&png)
+            .ok_or_else(|| BrowserError::Protocol("held image is not a PNG".to_owned()))?;
+        Ok(ImageOutput {
+            image: input.image.clone(),
+            media_type: "image/png".to_owned(),
+            width,
+            height,
+            bytes: png.len() as u64,
+            source: input.image,
+        })
+    }
+
+    fn crop(&mut self, input: CropInput) -> Result<ImageOutput, BrowserError> {
+        let source = input.image.clone();
+        let region = crop_region(
+            &self.held(&input.image)?,
+            input.x,
+            input.y,
+            input.width,
+            input.height,
+        )?;
+        let (image, width, height, bytes) = self.remember(encode_png(&region)?)?;
+        Ok(ImageOutput {
+            image,
+            media_type: "image/png".to_owned(),
+            width,
+            height,
+            bytes,
+            source,
+        })
+    }
+
+    fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError> {
+        let source = input.image.clone();
+        let region = crop_region(
+            &self.held(&input.image)?,
+            input.x,
+            input.y,
+            input.width,
+            input.height,
+        )?;
+        let scale = input
+            .scale
+            .unwrap_or_else(|| (f64::from(WIDTH) / f64::from(input.width.max(1))).min(4.0) as f32);
+        if !scale.is_finite() || !(0.1..=8.0).contains(&scale) {
+            return Err(BrowserError::Input(format!(
+                "zoom scale {scale} is outside 0.1 to 8"
+            )));
+        }
+        let width = ((input.width as f32 * scale).round() as u32).clamp(1, 4096);
+        let height = ((input.height as f32 * scale).round() as u32).clamp(1, 4096);
+        let zoomed = region.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+        let (image, width, height, bytes) = self.remember(encode_png(&zoomed)?)?;
+        Ok(ImageOutput {
+            image,
+            media_type: "image/png".to_owned(),
+            width,
+            height,
+            bytes,
+            source,
+        })
+    }
+}
+
+/// A PNG's width and height from its IHDR, when the bytes are a PNG.
+fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    let dimension = |at: usize| png.get(at..at + 4)?.try_into().ok().map(u32::from_be_bytes);
+    Some((dimension(16)?, dimension(20)?))
+}
+
+/// The (`x`, `y`, `width`, `height`) region of a held PNG.
+fn crop_region(
+    png: &[u8],
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<image::DynamicImage, BrowserError> {
+    let image = image::load_from_memory(png).map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    if width == 0
+        || height == 0
+        || x.checked_add(width).is_none_or(|end| end > image.width())
+        || y.checked_add(height).is_none_or(|end| end > image.height())
+    {
+        return Err(BrowserError::Input(format!(
+            "region {x},{y} {width}x{height} does not fit the {}x{} image",
+            image.width(),
+            image.height()
+        )));
+    }
+    Ok(image.crop_imm(x, y, width, height))
+}
+
+fn encode_png(image: &image::DynamicImage) -> Result<Vec<u8>, BrowserError> {
+    let mut out = Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, image::ImageFormat::Png)
+        .map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    Ok(out.into_inner())
 }
 
 fn str_field(value: &Value, name: &str) -> Result<String, BrowserError> {

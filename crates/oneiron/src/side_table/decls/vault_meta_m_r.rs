@@ -259,6 +259,9 @@ side_tables! {
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
     /// never synced or imported. Key: ().
     PACK_BYTE_MAP_LOCAL_HEAD: VaultMeta b"pack_byte_map:local_head:v1" Raw;
+    /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
+    /// on. Key: id16 (PERSON).
+    PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
@@ -333,6 +336,18 @@ side_tables! {
     PROJECT_ORIGIN_MESSAGE: VaultMeta b"project.origin_message.v1/" Raw;
     /// The project a room thread was converted into. Key: id16 (room id) + id16 (thread id).
     PROJECT_ORIGIN_THREAD: VaultMeta b"project.origin_thread.v1/" Raw;
+    /// A host-held project card (OF-501): the card, its conversation, the agent that drafted it
+    /// and its state. Key: blake3 hash32 of the card id.
+    PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named;
+    /// The source message of each card shown in one conversation. Key: id16 (conversation) +
+    /// blake3 hash32 of the card id.
+    PROJECT_PROPOSAL_CONVERSATION: VaultMeta b"project.proposal.conversation.v1/" Raw;
+    /// A conversation's latest person turn awaiting the project question. Key: id16
+    /// (conversation).
+    PROJECT_PROPOSAL_PENDING: VaultMeta b"project.proposal.pending.v1/" Named;
+    /// The project question's yes, or its ask of a person, on one source message, with its
+    /// decision receipt. Key: id16 (source message).
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;

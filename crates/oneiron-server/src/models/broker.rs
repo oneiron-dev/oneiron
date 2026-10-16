@@ -226,6 +226,9 @@ pub(super) fn broker_backend(
             Wire::OpenAi(OpenAiCompatConfig::from_catalog(rows))
         }
         ProviderKind::Oneironer => anyhow::bail!("a tagger provider sends no model call"),
+        ProviderKind::Cartesia | ProviderKind::Elevenlabs | ProviderKind::Voxcpm2 => {
+            anyhow::bail!("a speech provider sends no model call")
+        }
     };
     Ok(BrokerBackend {
         wire,

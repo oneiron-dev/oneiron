@@ -98,6 +98,8 @@ struct DreamerFile {
     summary_prompt_file: Option<PathBuf>,
     resident_prompt: Option<String>,
     resident_prompt_file: Option<PathBuf>,
+    task_prompt: Option<String>,
+    task_prompt_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -224,6 +226,9 @@ pub struct DreamerSettings {
     /// The instruction each resident's own dreaming writes its diary entry
     /// with (OF-490). Without one, no resident dreams.
     pub resident_instruction: Option<String>,
+    /// The wording a TASK routed to the Dreamer realizes with. Without one,
+    /// the engine's own (`dreamer.task_realize`).
+    pub task_instruction: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -338,6 +343,12 @@ impl ModelsFile {
                 "models.dreamer.resident_prompt",
                 self.dreamer.resident_prompt,
                 self.dreamer.resident_prompt_file,
+                base,
+            )?,
+            task_instruction: levels::prompt_text(
+                "models.dreamer.task_prompt",
+                self.dreamer.task_prompt,
+                self.dreamer.task_prompt_file,
                 base,
             )?,
         };
@@ -540,6 +551,12 @@ fn validate_ladders(
                     rung.model.provider
                 )
             })?;
+            if provider.kind.speech_only() {
+                anyhow::bail!(
+                    "models.roles.{key}: {} is on a speech provider, which serves [models.media.speech] only",
+                    rung.model
+                );
+            }
             let tagger_role = *role == ModelRole::ExtractionEncoder;
             if tagger_role != (provider.kind == ProviderKind::Oneironer) {
                 anyhow::bail!(

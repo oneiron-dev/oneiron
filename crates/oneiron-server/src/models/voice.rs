@@ -73,6 +73,7 @@ impl ModelRuntime {
             model: backend.model,
             tier: backend.tier,
             locality: backend.locality,
+            reference_target: self.media.renders_from_refs(&target),
             target,
             envelope,
         })
