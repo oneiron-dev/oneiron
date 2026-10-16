@@ -69,8 +69,9 @@ impl DreamerRunnerStore<'_> {
         )
     }
     /// The Coach's nightly retrieval tune, co-committed with a Timer wake. The
-    /// lane is shared by several facets, so the wake key is prefixed: one
-    /// dedupe key must never name two job types.
+    /// lane is shared by several facets, so the key is namespaced (one dedupe
+    /// key must never name two job types) and hashed, so any wake key the
+    /// queue accepts still fits.
     pub(crate) fn enqueue_coach_retrieval_tune_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -87,7 +88,13 @@ impl DreamerRunnerStore<'_> {
                 input: Value::Nil,
                 parent_attempt,
             },
-            wake_key.map(|key| format!("{}:{key}", super::COACH_RETRIEVAL_TUNE_FACET)),
+            wake_key.map(|key| {
+                format!(
+                    "{}:{}",
+                    super::COACH_RETRIEVAL_TUNE_FACET,
+                    blake3::hash(key.as_bytes()).to_hex()
+                )
+            }),
             run_id,
             now,
         )
