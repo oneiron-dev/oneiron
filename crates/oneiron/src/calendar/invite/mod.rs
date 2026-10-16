@@ -57,10 +57,10 @@ pub use self::payload::{
     CalendarInvitePayload, decode_frozen_calendar_invite,
 };
 
-#[cfg(test)]
-pub(crate) use self::hygiene::resolve_consent_basis;
 pub(crate) use self::admission::admit_calendar_invite_in_txn;
 pub(crate) use self::hygiene::CalendarInviteConsentSnapshot;
+#[cfg(test)]
+pub(crate) use self::hygiene::resolve_consent_basis;
 pub(crate) use self::mime::read_calendar_invite_ics_in_txn;
 pub(crate) use self::publication::admit_frozen_calendar_invite_in_txn;
 

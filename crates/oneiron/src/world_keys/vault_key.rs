@@ -160,7 +160,9 @@ fn check_name(name: &str) -> Result<()> {
     if ok {
         Ok(())
     } else {
-        Err(refused("a wrap name is 1 to 64 letters, digits, dots, dashes or underscores"))
+        Err(refused(
+            "a wrap name is 1 to 64 letters, digits, dots, dashes or underscores",
+        ))
     }
 }
 
@@ -388,7 +390,11 @@ impl Vault {
 
     /// Unlocks the vault data key with the secret of an escrow wrap's recipient: a
     /// recovery service's release, or the key a transfer was sealed to.
-    pub fn unlock_vault_key_with_escrow(&self, label: &str, secret: &HybridSecretKey) -> Result<()> {
+    pub fn unlock_vault_key_with_escrow(
+        &self,
+        label: &str,
+        secret: &HybridSecretKey,
+    ) -> Result<()> {
         check_name(label)?;
         let kind = VaultKeyWrapKind::Escrow {
             label: label.to_owned(),
@@ -445,7 +451,11 @@ impl Vault {
     }
 
     /// Wraps the held vault data key to one passkey, by its PRF output.
-    pub fn add_vault_key_passkey(&self, credential: &str, prf: [u8; 32]) -> Result<VaultKeyWrapInfo> {
+    pub fn add_vault_key_passkey(
+        &self,
+        credential: &str,
+        prf: [u8; 32],
+    ) -> Result<VaultKeyWrapInfo> {
         check_name(credential)?;
         self.add_vault_key_wrap(
             VaultKeyWrapKind::Passkey {
@@ -537,6 +547,8 @@ impl Vault {
         let key = self
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is locked"))?;
-        Ok(Zeroizing::new(key.derive(context, self.vault_id().as_bytes())))
+        Ok(Zeroizing::new(
+            key.derive(context, self.vault_id().as_bytes()),
+        ))
     }
 }

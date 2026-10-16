@@ -9,11 +9,11 @@
 
 use std::collections::BTreeSet;
 
+use super::pads::pad_in_txn;
 use super::{
     PolicyRevision, SequenceCounter, WorldKeyBinding, WorldKeyId, WrapRecipient, open_world_key,
     recipients, refused,
 };
-use super::pads::pad_in_txn;
 use crate::authority::{
     Destination, EditOrigin, EffectiveRead, WorldPrivacy, own_world_key_records_in_txn,
     read_pin_and_earlier_in_txn,

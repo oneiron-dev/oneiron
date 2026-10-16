@@ -124,7 +124,9 @@ pub fn derive_coordination_cost(
                 reference,
                 at,
             } => {
-                let slot = published.entry(reference.as_str()).or_insert((agent.as_str(), *at));
+                let slot = published
+                    .entry(reference.as_str())
+                    .or_insert((agent.as_str(), *at));
                 if *at < slot.1 {
                     *slot = (agent.as_str(), *at);
                 }
@@ -168,7 +170,11 @@ pub fn derive_coordination_cost(
         wait_by_reason,
         reuse_delays,
         duplicate_work: duplicates,
-        elapsed: last_at.saturating_sub(if first_at == u64::MAX { last_at } else { first_at }),
+        elapsed: last_at.saturating_sub(if first_at == u64::MAX {
+            last_at
+        } else {
+            first_at
+        }),
         calls,
         derived_at,
     }
@@ -184,7 +190,10 @@ pub fn team_events_from_attempts(records: &[AttemptRecord]) -> Vec<TeamEvent> {
     let mut events = Vec::new();
     for record in records {
         let agent = bytes_to_hex_lower(record.id.as_bytes());
-        let ready = record.scheduled_at.unwrap_or(record.created_at).max(record.created_at);
+        let ready = record
+            .scheduled_at
+            .unwrap_or(record.created_at)
+            .max(record.created_at);
         if let Some(scheduled) = record.scheduled_at
             && scheduled > record.created_at
         {
@@ -286,9 +295,18 @@ pub fn project_run_coordination(vault: &Vault, run_id: &str, now: u64) -> Result
 /// [`Error::InvalidClaimBody`] for a malformed reference; storage errors.
 pub fn label_duplicate_work(vault: &Vault, run_id: &str, label: &DuplicateWork) -> Result<()> {
     bounded(run_id, "a team reference is 1..=256 bytes without NUL")?;
-    bounded(&label.first, "a work reference is 1..=256 bytes without NUL")?;
-    bounded(&label.second, "a work reference is 1..=256 bytes without NUL")?;
-    bounded(&label.audit_receipt, "an audit receipt is 1..=256 bytes without NUL")?;
+    bounded(
+        &label.first,
+        "a work reference is 1..=256 bytes without NUL",
+    )?;
+    bounded(
+        &label.second,
+        "a work reference is 1..=256 bytes without NUL",
+    )?;
+    bounded(
+        &label.audit_receipt,
+        "an audit receipt is 1..=256 bytes without NUL",
+    )?;
     if label.first == label.second {
         return Err(Error::InvalidClaimBody(
             "duplicate work names two distinct pieces of work",
