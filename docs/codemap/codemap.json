@@ -5150,7 +5150,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -59512,7 +59512,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/blob_artifacts.rs",
@@ -66347,7 +66347,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 23,
+   "over_bar": 24,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 464,
    "test_files": 182
