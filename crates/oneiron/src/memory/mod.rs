@@ -158,7 +158,8 @@ pub use witness::{
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
 pub(crate) use witness::{
-    MessageStreamRuntime, message_completion_in_txn, message_stream_finality_in_txn,
+    MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
+    message_stream_finality_in_txn,
 };
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 

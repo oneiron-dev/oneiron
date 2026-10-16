@@ -48,7 +48,14 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultWeaveReport(input: unknown): unknown
+vaultWeaveDigest(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultLensesPropose(input: unknown): unknown
+vaultLensesActivate(input: unknown): unknown
+vaultLensesDeactivate(input: unknown): unknown
+vaultLensesList(input: unknown): unknown
+vaultLensesDefault(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
@@ -76,6 +83,9 @@ vaultRoomsTrunk(input: unknown): unknown
 vaultRoomsReplyStrips(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
+vaultProjectsGoalRevisions(input: unknown): unknown
+vaultProjectsGoalDismiss(input: unknown): unknown
+vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown

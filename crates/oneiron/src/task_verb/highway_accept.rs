@@ -304,6 +304,20 @@ impl Memory<'_> {
                                 lease_owner: Some(lease_owner),
                             },
                             ClaimOutcome::Empty => {
+                                // OF-368: a TASK answering an unattached
+                                // comment waits, so the claim held its try
+                                // instead of leasing it. The refusal rolls
+                                // the accept back with that pause.
+                                if self
+                                    .vault()
+                                    .annotation_task_hold_in_txn(&*wtxn, &task_ref)?
+                                    .is_some()
+                                {
+                                    return Err(invalid_state(
+                                        "this task waits while its comment is unattached",
+                                        "Accept again once the comment is reattached.",
+                                    ));
+                                }
                                 return Err(invalid_state(
                                     "this task's next try is not ready yet",
                                     "Accept again once its backoff has passed.",

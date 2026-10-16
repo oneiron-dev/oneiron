@@ -78,7 +78,7 @@ pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators,
 };
-pub(crate) use resident_dream::resident_dream_input;
+pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resident_dream::{
     RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS, ResidentDreamModel, ResidentDreamProgress,
     resident_of_dream_input, run_resident_dream,

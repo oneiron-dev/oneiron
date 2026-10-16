@@ -25,6 +25,9 @@ use oneiron::{
     ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
 };
 
+use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
+use oneiron::receipt::LensActivationReceipt;
+
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -423,4 +426,49 @@ fn failure(operation: AiOperation, error: &LlmError) -> MemoryError {
         format!("ai.{}: {error} {detail}", operation.as_str()),
         &[suggestion],
     )
+}
+
+/// The owner's proof for a `vault.lenses.*` slot decision, from the request,
+/// as `/v1/owner` takes it.
+fn lens_owner(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    verb: &str,
+) -> MemoryResult<oneiron::consent::AuthenticatedOwner> {
+    crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is the vault owner's"),
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })
+}
+
+/// `vault.lenses.activate`: the owner selects a proposed lens revision for
+/// its pack slot, under the proof `/v1/owner` takes from the request. The
+/// owner's confirmation is the consent; an agent can only propose.
+pub(crate) async fn vault_lenses_activate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LensActivateRequest,
+) -> MemoryResult<LensActivationReceipt> {
+    let owner = lens_owner(auth, server, "vault.lenses.activate")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || server.vault().activate_lens(&owner, input))
+        .await
+        .map_err(|_| internal("vault.lenses.activate"))?
+}
+
+/// `vault.lenses.deactivate`: the owner clears a pack slot's selected lens,
+/// under the same proof. The pack, its skill and the proposal stay.
+pub(crate) async fn vault_lenses_deactivate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LensDeactivateRequest,
+) -> MemoryResult<LensActivationReceipt> {
+    let owner = lens_owner(auth, server, "vault.lenses.deactivate")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || server.vault().deactivate_lens(&owner, input))
+        .await
+        .map_err(|_| internal("vault.lenses.deactivate"))?
 }

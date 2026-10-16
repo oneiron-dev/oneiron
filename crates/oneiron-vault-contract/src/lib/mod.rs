@@ -11,6 +11,7 @@
 //! Consumers pin this crate at an exact revision and run cross-repo
 //! conformance before moving the pin.
 
+pub mod artifact_origin;
 mod ctl;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
