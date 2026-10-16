@@ -72,6 +72,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.claim", post(vault_rooms_claim))
         .route("/vault.rooms.speak", post(vault_rooms_speak))
         .route(
+            "/vault.projects.goal.revisions",
+            post(vault_projects_goal_revisions),
+        )
+        .route(
+            "/vault.projects.goal.dismiss",
+            post(vault_projects_goal_dismiss),
+        )
+        .route(
+            "/vault.projects.route_tradeoff",
+            post(vault_projects_route_tradeoff),
+        )
+        .route(
             "/vault.conversations.turn.continue",
             post(vault_conversations_turn_continue),
         )
@@ -1220,6 +1232,68 @@ async fn vault_rooms_speak(
         actor,
         class,
         "vault.rooms.speak",
+        value,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(Json(output))
+}
+async fn vault_projects_goal_revisions(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.projects.goal.revisions",
+        value,
+    )?))
+}
+async fn vault_projects_goal_dismiss(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.projects.goal.dismiss",
+        value,
+    )?))
+}
+async fn vault_projects_route_tradeoff(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    let output = facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.projects.route_tradeoff",
         value,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);

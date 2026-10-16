@@ -329,6 +329,9 @@ class Oneiron:
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
         @property
+        def projects(self) -> "Oneiron._VaultProjectsVerbs":
+            return Oneiron._VaultProjectsVerbs(self._client)
+        @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs":
             return Oneiron._VaultConversationsVerbs(self._client)
         @property
@@ -502,6 +505,21 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
         def sharing(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultProjectsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def goal(self) -> "Oneiron._VaultProjectsGoalVerbs":
+            return Oneiron._VaultProjectsGoalVerbs(self._client)
+        def route_tradeoff(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_route_tradeoff(json.dumps(spec))))
+    class _VaultProjectsGoalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def revisions(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_revisions(json.dumps(spec))))
+        def dismiss(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_dismiss(json.dumps(spec))))
     class _VaultConversationsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

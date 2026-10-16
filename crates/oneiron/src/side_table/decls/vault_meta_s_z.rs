@@ -298,6 +298,9 @@ side_tables! {
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
     /// A skill goal's join to a project's goal record (MessagePack named map). Key: id16 (goal).
     SKILL_OPTIMIZE_PROJECT_GOAL: VaultMeta b"skill_optimize/project_goal/v1\0" Raw;
+    /// A vault owner's dismissal of one learned goal-revision proposal under the goal claim in
+    /// force (MessagePack named map). Key: id16 (project) + question digest (64 hex).
+    SKILL_OPTIMIZE_PROJECT_GOAL_DISMISSED: VaultMeta b"skill_optimize/project_goal_dismissed/v1\0" Raw;
     /// A learned preference proposed for a project's goal record (MessagePack named map). Key:
     /// id16 (project) + id16 (row).
     SKILL_OPTIMIZE_PROJECT_GOAL_PROPOSAL: VaultMeta b"skill_optimize/project_goal_proposal/v1\0" Raw;
@@ -428,6 +431,12 @@ side_tables! {
     TASK_OWNER_FACT_REVERSE: VaultMeta b"tasks.owner_fact.v1/" Raw;
     /// Display handle for a peer actor. Key: id16.
     TASK_PEER_HANDLE: VaultMeta b"tasks.peer.handle.v1\0" Raw;
+    /// The skill tradeoff a project ask carries: proposal, question digest, project, task, question
+    /// turn and whether the gate settled it or it went void. Key: id16 (ask group).
+    TASK_PROJECT_TRADEOFF_ASK: VaultMeta b"tasks.project_tradeoff.ask.v1/" Named;
+    /// The home-room TURN one skill tradeoff question was witnessed as, ids reserved before the
+    /// speak. Key: id16 (proposal) + id16 (project) + question digest (64 hex).
+    TASK_PROJECT_TRADEOFF_TURN: VaultMeta b"tasks.project_tradeoff.turn.v1/" Named;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// Registered external ask wait. Key: id16 + bytes32.
