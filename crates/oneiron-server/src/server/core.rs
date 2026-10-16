@@ -95,6 +95,9 @@ pub struct SyncServer {
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `[browser]` guest each code run starts for its own browser verbs.
+    /// `None` answers every browser call `browser_unbound`.
+    pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -342,6 +345,7 @@ impl SyncServer {
             managed_issuer: None,
             mcp_registry,
             mcp_code_host: None,
+            browser_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
@@ -414,6 +418,17 @@ impl SyncServer {
             Arc::clone(self.wire_telemetry.limit_questions()),
         )));
         self
+    }
+
+    /// Gives code runs a browser guest, from the `[browser]` section.
+    #[must_use]
+    pub fn with_browser_guest(mut self, guest: Option<oneiron_browser::BrowserGuest>) -> Self {
+        self.browser_guest = guest;
+        self
+    }
+
+    pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
+        self.browser_guest.as_ref()
     }
 
     pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {

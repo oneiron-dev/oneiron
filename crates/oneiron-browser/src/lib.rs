@@ -7,6 +7,7 @@
 //! same element after the page changes around it. Every action waits for the
 //! page to settle and returns the next observation as a diff.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "driver")]
@@ -18,6 +19,8 @@ mod outline;
 #[cfg(feature = "driver")]
 mod session;
 
+#[cfg(feature = "driver")]
+pub use oneiron_container::{GuestLimits, ImageRef};
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserSession};
 
@@ -48,19 +51,22 @@ pub struct Observation {
     pub removed: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ObserveInput {
     #[serde(default)]
     pub since: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenInput {
     pub url: String,
 }
 
 /// Rows whose role equals `role` and whose name contains `name`, ignoring case.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FindInput {
     #[serde(default)]
     pub role: Option<String>,
@@ -73,13 +79,15 @@ pub struct FindOutput {
     pub rows: Vec<Row>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ClickInput {
     #[serde(rename = "ref")]
     pub target: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TypeInput {
     #[serde(rename = "ref")]
     pub target: String,
@@ -90,17 +98,22 @@ pub struct TypeInput {
 }
 
 /// Picks the option of a `<select>` whose label, text or value is `option`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectInput {
     #[serde(rename = "ref")]
     pub target: String,
     pub option: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// Waits until some row matches `role` and `name`, as `find` matches them.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WaitForInput {
-    #[serde(flatten)]
-    pub find: FindInput,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub timeout_ms: Option<u32>,
 }
@@ -113,14 +126,17 @@ pub struct WaitForOutput {
 }
 
 /// A check on the page as it is now: the row named by `ref`, or else the
-/// first row `find` matches, is present (or absent) and, when `value` is
-/// given, holds exactly that value.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// first row `role` and `name` match, is present (or absent) and, when
+/// `value` is given, holds exactly that value.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExpectInput {
     #[serde(default, rename = "ref")]
     pub target: Option<String>,
-    #[serde(flatten)]
-    pub find: FindInput,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub value: Option<String>,
     #[serde(default)]
@@ -134,7 +150,8 @@ pub struct ExpectOutput {
     pub row: Option<Row>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScreenshotInput {}
 
 /// A screenshot the session holds. It is never captioned: `image` names the
@@ -152,7 +169,9 @@ pub struct ScreenshotOutput {
 #[serde(tag = "code", content = "detail", rename_all = "snake_case")]
 pub enum BrowserError {
     #[error("this run has no browser")]
-    NoBrowser,
+    Unbound,
+    #[error("invalid browser verb input: {0}")]
+    Input(String),
     #[error("the browser guest could not start: {0}")]
     Unavailable(String),
     #[error("the browser guest is gone")]
@@ -187,6 +206,42 @@ pub trait BrowserDriver: Send {
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError>;
     fn expect(&mut self, input: ExpectInput) -> Result<ExpectOutput, BrowserError>;
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError>;
+}
+
+impl BrowserError {
+    /// The stable code a refused verb call answers with. A program reads only
+    /// this; the detail stays in the host's log.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Unbound => "browser_unbound",
+            Self::Input(_) => "browser_input_invalid",
+            Self::Unavailable(_) => "browser_unavailable",
+            Self::GuestLost => "browser_guest_lost",
+            Self::StaleRef(_) => "browser_stale_ref",
+            Self::Covered(_) => "browser_covered",
+            Self::NoOption(_) => "browser_no_option",
+            Self::NeedsPress(_) => "needs_press",
+            Self::Url(_) => "browser_url_refused",
+            Self::Navigation(_) => "browser_navigation_failed",
+            Self::Timeout(_) => "browser_timeout",
+            Self::Protocol(_) => "browser_protocol",
+        }
+    }
+}
+
+impl WaitForInput {
+    #[must_use]
+    pub fn query(&self) -> FindInput {
+        FindInput { role: self.role.clone(), name: self.name.clone() }
+    }
+}
+
+impl ExpectInput {
+    #[must_use]
+    pub fn query(&self) -> FindInput {
+        FindInput { role: self.role.clone(), name: self.name.clone() }
+    }
 }
 
 impl FindInput {

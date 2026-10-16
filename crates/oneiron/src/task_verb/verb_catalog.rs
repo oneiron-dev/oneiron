@@ -33,6 +33,15 @@ pub enum AgentVerb {
     RoomsTrunk,
     RoomsClaim,
     RoomsSpeak,
+    BrowserOpen,
+    BrowserObserve,
+    BrowserFind,
+    BrowserClick,
+    BrowserType,
+    BrowserSelect,
+    BrowserWaitFor,
+    BrowserExpect,
+    BrowserScreenshot,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -68,6 +77,15 @@ impl AgentVerb {
         Self::RoomsTrunk,
         Self::RoomsClaim,
         Self::RoomsSpeak,
+        Self::BrowserOpen,
+        Self::BrowserObserve,
+        Self::BrowserFind,
+        Self::BrowserClick,
+        Self::BrowserType,
+        Self::BrowserSelect,
+        Self::BrowserWaitFor,
+        Self::BrowserExpect,
+        Self::BrowserScreenshot,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -106,12 +124,72 @@ impl AgentVerb {
             Self::RoomsTrunk => "rooms.trunk",
             Self::RoomsClaim => "rooms.claim",
             Self::RoomsSpeak => "rooms.speak",
+            Self::BrowserOpen => "browser.open",
+            Self::BrowserObserve => "browser.observe",
+            Self::BrowserFind => "browser.find",
+            Self::BrowserClick => "browser.click",
+            Self::BrowserType => "browser.type",
+            Self::BrowserSelect => "browser.select",
+            Self::BrowserWaitFor => "browser.wait_for",
+            Self::BrowserExpect => "browser.expect",
+            Self::BrowserScreenshot => "browser.screenshot",
         }
     }
     pub const fn is_facade(self) -> bool {
         matches!(
             self,
             Self::Cancel
+                | Self::Describe
+                | Self::TasksCreate
+                | Self::TasksUpdate
+                | Self::Witness
+                | Self::ClaimUpsert
+                | Self::Recall
+                | Self::Export
+                | Self::Receipts
+                | Self::KeyValueGet
+                | Self::KeyValuePut
+                | Self::KeyValueDelete
+                | Self::KeyValueSearch
+                | Self::KeyValueNamespaces
+                | Self::Can
+                | Self::Peek
+                | Self::TasksAsk
+                | Self::TasksWait
+                | Self::TasksAnswer
+                | Self::TasksOutcomes
+                | Self::RoomsList
+                | Self::RoomsMessages
+                | Self::RoomsRender
+                | Self::RoomsFind
+                | Self::RoomsGet
+                | Self::RoomsTrunk
+                | Self::RoomsClaim
+                | Self::RoomsSpeak
+        )
+    }
+    pub const fn is_browser(self) -> bool {
+        matches!(
+            self,
+            Self::BrowserOpen
+                | Self::BrowserObserve
+                | Self::BrowserFind
+                | Self::BrowserClick
+                | Self::BrowserType
+                | Self::BrowserSelect
+                | Self::BrowserWaitFor
+                | Self::BrowserExpect
+                | Self::BrowserScreenshot
+        )
+    }
+    pub const fn is_mcp(self) -> bool {
+        matches!(
+            self,
+            Self::BoardExpand
+                | Self::BoardRefresh
+                | Self::BoardSubscribe
+                | Self::BoardUnsubscribe
+                | Self::Cancel
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksUpdate
@@ -211,6 +289,15 @@ impl AgentVerb {
                 | Self::RoomsTrunk
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
+                | Self::BrowserOpen
+                | Self::BrowserObserve
+                | Self::BrowserFind
+                | Self::BrowserClick
+                | Self::BrowserType
+                | Self::BrowserSelect
+                | Self::BrowserWaitFor
+                | Self::BrowserExpect
+                | Self::BrowserScreenshot
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -231,6 +318,10 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
+                | Self::BrowserOpen
+                | Self::BrowserClick
+                | Self::BrowserType
+                | Self::BrowserSelect
         )
     }
     pub const fn proposes(self) -> bool {
@@ -270,6 +361,15 @@ impl AgentVerb {
             Self::RoomsTrunk => &["room_ref", "turn_ref"],
             Self::RoomsClaim => &["room_ref", "turn_ref"],
             Self::RoomsSpeak => &["spec", "room_ref"],
+            Self::BrowserOpen => &["spec"],
+            Self::BrowserObserve => &["spec"],
+            Self::BrowserFind => &["spec"],
+            Self::BrowserClick => &["spec"],
+            Self::BrowserType => &["spec"],
+            Self::BrowserSelect => &["spec"],
+            Self::BrowserWaitFor => &["spec"],
+            Self::BrowserExpect => &["spec"],
+            Self::BrowserScreenshot => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -306,6 +406,15 @@ impl AgentVerb {
             Self::RoomsTrunk => &["room_ref", "turn_ref"],
             Self::RoomsClaim => &["room_ref", "turn_ref"],
             Self::RoomsSpeak => &["spec", "room_ref"],
+            Self::BrowserOpen => &["spec"],
+            Self::BrowserObserve => &["spec"],
+            Self::BrowserFind => &["spec"],
+            Self::BrowserClick => &["spec"],
+            Self::BrowserType => &["spec"],
+            Self::BrowserSelect => &["spec"],
+            Self::BrowserWaitFor => &["spec"],
+            Self::BrowserExpect => &["spec"],
+            Self::BrowserScreenshot => &["spec"],
         }
     }
 }

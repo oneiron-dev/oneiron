@@ -1,6 +1,7 @@
 //! Server configuration: resolved types, CLI flags, and the file/env/argv merge.
 
 pub mod backup;
+pub mod browser;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
@@ -19,6 +20,7 @@ pub mod server_config;
 mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
+pub use browser::BrowserConfig;
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
