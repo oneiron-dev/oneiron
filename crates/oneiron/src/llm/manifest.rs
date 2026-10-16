@@ -345,7 +345,7 @@ impl Vault {
         new_encoder_export: Option<&EncoderExport>,
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        self.write_model_manifest_in_txn(&mut txn, manifest, new_approval)?;
+        self.write_model_manifest_in_txn(&mut txn, manifest, new_approval, new_encoder_export)?;
         txn.commit()?;
         Ok(())
     }
@@ -356,6 +356,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         manifest: &ModelManifest,
         new_approval: Option<&TeacherProbeApproval>,
+        new_encoder_export: Option<&EncoderExport>,
     ) -> Result<()> {
         manifest.validate()?;
         let saved_approval = TEACHER_APPROVAL.get(&self.store, txn, &())?;
@@ -369,12 +370,12 @@ impl Vault {
                 return Err(invalid("encoder export requires the pinned teacher approval"));
             }
             export.verify(manifest, &policy)?;
-            encoder_export::ENCODER_EXPORT.put(&self.store, &mut txn, &(), export)?;
-        } else if let Some(export) = encoder_export::ENCODER_EXPORT.get(&self.store, &txn, &())? {
+            encoder_export::ENCODER_EXPORT.put(&self.store, txn, &(), export)?;
+        } else if let Some(export) = encoder_export::ENCODER_EXPORT.get(&self.store, txn, &())? {
             if &export.request.teacher_approval != approval
                 || export.verify(manifest, &policy).is_err()
             {
-                encoder_export::ENCODER_EXPORT.delete(&self.store, &mut txn, &())?;
+                encoder_export::ENCODER_EXPORT.delete(&self.store, txn, &())?;
             }
         }
         if let Some(approval) = new_approval {
