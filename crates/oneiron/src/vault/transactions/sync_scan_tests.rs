@@ -43,8 +43,9 @@ fn broad_host_scans_refuse_undeclared_rows_without_hiding_declared_rows() {
     );
 }
 
-/// A hard delete's fence and hard-delete marker are written only by the delete doors: the
-/// host's generic door can neither forge one for a live id nor lower or drop the delete's own.
+/// A hard delete's fence, hard-delete marker and topology reservation are written only by the
+/// delete doors: the host's generic door can neither forge one for a live id nor lower or drop
+/// the delete's own.
 #[test]
 fn the_generic_door_neither_forges_nor_drops_a_deletion_fence_or_marker() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
@@ -70,13 +71,14 @@ fn the_generic_door_neither_forges_nor_drops_a_deletion_fence_or_marker() {
     );
     let fence_row = read(&fence).expect("the delete fenced its id");
     let marker_row = read(&marker).expect("the delete marked its id");
-    let live = entity(0x42);
+    let live = entity(0x43);
     let forged = [
         format!("df:{}", live.to_hex()),
         crate::deletion::local_hard_delete_key(&live),
+        format!("topology-delete-intent:{}", live.to_hex()),
     ];
 
-    for key in [&fence, &marker, &forged[0], &forged[1]] {
+    for key in [&fence, &marker].into_iter().chain(&forged) {
         assert!(
             matches!(vault.sync_state_put(key, b""), Err(Error::InvalidConfig(_))),
             "{key}"

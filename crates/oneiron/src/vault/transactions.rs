@@ -26,9 +26,10 @@ const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// they edit the record of which identity-topology seals this vault wrote and
 /// whose it last counted: only the seal writes it (H161). Nor the record of
 /// which author carriers it wrote: only the carrier write and its scrub touch
-/// it (H161 sidecars). Nor a delete's fence or hard-delete marker: only the
-/// delete doors write them. Nor a federation world's registration or stale
-/// stamp: only the registration and the stale sweep write them.
+/// it (H161 sidecars). Nor a delete's fence, hard-delete marker or topology
+/// reservation: only the delete doors write them. Nor a federation world's
+/// registration or stale stamp: only the registration and the stale sweep
+/// write them.
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
@@ -47,14 +48,15 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
         ));
     }
     if [
-        crate::deletion::ROW_DELETION_FENCE.decl().prefix,
-        crate::deletion::HARD_DELETE_MARKER.decl().prefix,
+        crate::side_table::DELETION_ROW_FENCE.prefix,
+        crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
+        crate::side_table::DELETION_TOPOLOGY_DELETE_INTENT.prefix,
     ]
     .iter()
     .any(|prefix| key.as_bytes().starts_with(prefix))
     {
         return Err(Error::InvalidConfig(
-            "deletion fences and hard-delete markers are written only by the delete doors"
+            "deletion fences, markers and topology reservations are written only by the delete doors"
                 .to_owned(),
         ));
     }
