@@ -68,8 +68,7 @@ impl Vault {
         let window_label = window_label_from_timestamp(requested_at);
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
-            self.store
-                .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
+            self.store.reject_legal_hold_in_txn(&txn, id.as_bytes())?;
         }
         let crdt_persisted = self.write_crdt_tombstone(
             id,
@@ -102,8 +101,7 @@ impl Vault {
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
         if reason.active_store_hard_purge_v1() {
-            self.store
-                .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
         }
         if !crdt_persisted && reason.active_store_hard_purge_v1() {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;

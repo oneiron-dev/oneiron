@@ -14,8 +14,7 @@ impl Vault {
             &BTreeSet::from([*head]),
         )?;
         for shell in shells {
-            self.store
-                .reject_held_gate_partition_in_txn(txn, shell.as_bytes())?;
+            self.store.reject_legal_hold_in_txn(txn, shell.as_bytes())?;
         }
         Ok(())
     }
@@ -55,7 +54,7 @@ impl Vault {
         }
         for shell in &shells {
             self.store
-                .reject_held_gate_partition_in_txn(wtxn, shell.as_bytes())?;
+                .reject_legal_hold_in_txn(&*wtxn, shell.as_bytes())?;
         }
         let mut changed = Vec::new();
         let mut had_vector = false;

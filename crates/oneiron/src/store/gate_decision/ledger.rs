@@ -295,7 +295,7 @@ impl Store {
         claim_id: &[u8; 16],
         redacted_at: u64,
     ) -> Result<bool> {
-        self.reject_held_gate_partition_in_txn(&*wtxn, claim_id)?;
+        self.reject_legal_hold_in_txn(&*wtxn, claim_id)?;
         let id = crate::entity_id::EntityId::from_bytes(*claim_id)
             .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
         let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();

@@ -117,6 +117,15 @@ impl EntityStoreMaintenance for Store {
         let mut payload = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
         payload.extend_from_slice(&body);
         crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
+        // Both completion times are now written: a legal hold's "erase
+        // completed" names this receipt's request (OF-470 C4).
+        crate::store::legal_hold::note_erase_completed_in_txn(
+            self,
+            txn,
+            &receipt.scope.entity_ids,
+            &receipt.request_id,
+            completed_at,
+        )?;
         self.entities.put(txn, id.as_bytes(), &payload)
     }
     #[cfg(feature = "sync")]
