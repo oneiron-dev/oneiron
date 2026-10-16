@@ -69,6 +69,13 @@ pub const DREAMER_VAULT_CLEANUP_ATTEMPT_KIND: &str = "dreamer.vault_cleanup";
 /// Doubles as the payload `job_type`, so the kind gate and the payload
 /// discriminator cannot drift apart.
 pub const DREAMER_NOTE_REVIEW_ATTEMPT_KIND: &str = "dreamer.note_review";
+/// A resident's own dreaming (OF-490): one Nightly child per resident whose
+/// definition is on and whose dreaming is not off. It runs under the
+/// resident's own stamp, not the Dreamer's, and writes the resident's diary.
+/// Admitted on the Timer wake (Macro scope) after the NOTE review.
+///
+/// Doubles as the payload `job_type`.
+pub const DREAMER_RESIDENT_DREAM_ATTEMPT_KIND: &str = "dreamer.resident_dream";
 /// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
 /// failure-ladder case the escalation hands to the Coach. Host-run, like agent
 /// dispatch: the wake driver never admits it; a host Coach leases it with

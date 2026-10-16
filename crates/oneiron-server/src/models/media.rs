@@ -14,10 +14,11 @@ use oneiron::llm::media::{
     MediaResponse, Modality,
 };
 use oneiron::llm::run_admission::{HostAccount, MediaGate, RunPermit, RunReceiptSink};
-use oneiron::llm::{SingleRouteBackend, SingleSend};
+use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCatalogEntry,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
+    ModelTierRef,
 };
 use oneiron_llm_openai::{
     OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
@@ -195,6 +196,8 @@ struct MediaSeat {
     ladder: Arc<OfferLadder>,
     rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
     rows: Vec<MediaRow>,
+    /// The voice tiers its rungs serve: each tier's one rung, by its id.
+    tiers: BTreeMap<ModelTierRef, ModelId>,
 }
 
 /// One row `GET /v1/ai/options` lists: a model that serves an operation,
@@ -293,6 +296,15 @@ impl MediaRuntime {
             let Some(seat_model) = seat_model.filter(|_| !rungs.is_empty()) else {
                 continue;
             };
+            // A tier bound to a rung that did not start serves no voice.
+            let tiers = seat
+                .tiers
+                .iter()
+                .filter_map(|(tier, model)| {
+                    let (id, _, _) = rows.iter().find(|(_, bound, _)| bound == model)?;
+                    Some((tier.clone(), id.clone()))
+                })
+                .collect();
             let locality = ladder_locality(&rungs, config);
             let alone = rungs
                 .iter()
@@ -324,6 +336,7 @@ impl MediaRuntime {
                     ladder: Arc::new(OfferLadder::seat(seat_model, rungs, Arc::clone(rests))),
                     rungs: alone,
                     rows,
+                    tiers,
                 },
             );
         }
@@ -385,6 +398,50 @@ impl MediaRuntime {
             .map(|row| row.locality)
     }
 
+    /// Each voice tier a rung of `operation`'s seat is bound to, as the
+    /// vault's voice routing reads it: the rung's own id, its tier and
+    /// where it runs.
+    #[must_use]
+    pub fn voice_backends(&self, operation: AiOperation) -> Vec<VoiceBackendBinding> {
+        let Some(seat) = self.seats.get(&operation) else {
+            return Vec::new();
+        };
+        seat.tiers
+            .iter()
+            .filter_map(|(tier, model)| {
+                let row = seat.rows.iter().find(|row| row.model == model.as_str())?;
+                Some(VoiceBackendBinding {
+                    model: model.clone(),
+                    tier: tier.clone(),
+                    locality: row.locality,
+                })
+            })
+            .collect()
+    }
+
+    /// The rungs a call naming `model` may reach, in ladder order: every
+    /// rung for the seat's id, the one rung for a rung's. Each comes with
+    /// its provider, the render target the voice bank keys its clones by,
+    /// and where it runs.
+    #[must_use]
+    pub fn rung_targets(
+        &self,
+        operation: AiOperation,
+        model: &ModelId,
+    ) -> Vec<(ModelId, String, ModelLocality)> {
+        let Some(seat) = self.seats.get(&operation) else {
+            return Vec::new();
+        };
+        seat.rows
+            .iter()
+            .filter(|row| seat.model == *model || row.model == model.as_str())
+            .filter_map(|row| {
+                let id = ModelId::new(row.model.clone()).ok()?;
+                Some((id, row.provider.clone(), row.locality))
+            })
+            .collect()
+    }
+
     /// The ladder that serves `request`: its seat's, or one rung alone.
     fn ladder(&self, request: &MediaRequest) -> LlmResult<Arc<OfferLadder>> {
         let seat = self
@@ -406,7 +463,12 @@ impl MediaRuntime {
     ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + '_> {
         let ladder = self.ladder(&request)?;
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(MEDIA_RUN, meter, self.host.clone(), Arc::clone(&self.receipts));
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
         Ok(async move { ladder.media(&run, request, None).await })
     }
 

@@ -241,10 +241,32 @@ impl SyncConnection {
 
     /// Drop read caches of opened items last touched before `before`
     /// (recorded-clock seconds). Promoted and sync-all windows are not
-    /// pruned here: demoting a canonical window is not available yet.
+    /// pruned here: [`Self::demote_window`] demotes a promoted one.
     pub fn prune_opened_items(&self, before: u64) -> Result<usize, crate::sync::TransportError> {
         crate::sync::residence::prune_thin_items(self.manager.vault(), before)
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// Demote a promoted window back to thin once the home holds every op of
+    /// it (OF-534). See [`crate::sync::SyncClient::demote_window`]. When it
+    /// completes, the live socket reconnects without the window.
+    pub async fn demote_window(
+        &self,
+        window: &crate::sync::WindowKey,
+    ) -> Result<crate::sync::residence::WindowDemotion, crate::sync::TransportError> {
+        if self.config.client_config.federation_peer.is_some() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "a federation lane has no residence mode",
+            ));
+        }
+        let demotion = self.client()?.demote_window(window).await?;
+        if demotion.complete {
+            // The steady socket still follows the window: a fresh hello
+            // drops it.
+            let mode = *self.mode.borrow();
+            self.mode.send_replace(mode);
+        }
+        Ok(demotion)
     }
 
     /// Fetch one grant-selected item into this device's observed CRDT window.

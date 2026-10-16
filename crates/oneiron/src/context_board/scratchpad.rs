@@ -276,6 +276,23 @@ fn sealed_pad() -> MemoryError {
 }
 
 impl crate::Vault {
+    /// The pads `actor` wrote that are sealed, in key order: what its own
+    /// dreaming reads (OF-490).
+    pub(crate) fn sealed_scratchpads_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+    ) -> crate::error::Result<Vec<EntityId>> {
+        Ok(PAD
+            .scan_from(&self.store, txn, &[TAG_SEALED])?
+            .into_iter()
+            .filter_map(|(key, row)| match key {
+                PadKey::Sealed { pad } if row.actor == *actor.as_bytes() => Some(pad),
+                _ => None,
+            })
+            .collect())
+    }
+
     /// Whether `pad` is a scratchpad this door sealed: the gate an
     /// after-seal extraction reads (ARCH-0032 NoteKind defaults).
     pub fn scratchpad_sealed(&self, pad: EntityId) -> crate::error::Result<bool> {

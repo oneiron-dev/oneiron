@@ -22,9 +22,6 @@ use crate::agent_dispatch::{
     WidthCheckClass, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::context_board::{
-    AgentsSection, ChildAgentPresence, PeerPresence, render_agents_section,
-};
 use crate::edit_distance::escalation::{EscalationTrigger, standing_policy_for};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -455,27 +452,24 @@ impl Memory<'_> {
         Ok(policy_in(self.vault(), &txn, scope)?.policy)
     }
 
-    /// Rebuilds this actor's AGENTS counts from the durable metering rows.
-    /// Includes silent runs and parked denials; this projection grants no authority.
-    pub fn fan_out_agents_section(
-        &self,
-        children: &[ChildAgentPresence],
-        peers: &[PeerPresence],
-    ) -> MemoryResult<AgentsSection> {
+    /// This actor's consult fan-out meter rows, rebuilt from the durable
+    /// metering rows. Includes silent runs and parked denials; this
+    /// projection grants no authority.
+    pub fn fan_out_meter_rows(&self) -> MemoryResult<Vec<super::FanoutMeterRow>> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let mut section = render_agents_section(children, peers);
         let txn = self
             .vault()
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
+        let mut rows = Vec::new();
         for run in runs_in(self.vault(), &txn)? {
             if run.plan.actor_ref == self.actor().to_hex() {
-                section.rows.extend(run.receipt()?.meter.board_rows);
+                rows.extend(run.receipt()?.meter.board_rows);
             }
         }
-        Ok(section)
+        Ok(rows)
     }
 
     /// The statement of one consult fan-out: every consult a peer delivery,

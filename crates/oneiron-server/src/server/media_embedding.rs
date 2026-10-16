@@ -171,10 +171,13 @@ impl SyncServer {
 
     /// Fills every slot-bound space while passes store vectors, sleeps when
     /// one stores none, and backs off while a space fails. Each space's
-    /// failure is logged once until it changes.
+    /// failure is logged once until it changes. A stable recovery of a
+    /// provider that was down (OF-305) ends a backoff at once: the spaces
+    /// that failed are tried again from the first wait.
     async fn backfill_media_forever(self: Arc<Self>) {
         let mut wait = BACKFILL_IDLE;
         let mut failing: BTreeMap<String, String> = BTreeMap::new();
+        let mut recoveries = self.ai.model_runtime().recoveries();
         loop {
             let server = Arc::clone(&self);
             let runtime = tokio::runtime::Handle::current();
@@ -215,7 +218,23 @@ impl SyncServer {
                     continue;
                 }
             }
-            tokio::time::sleep(wait).await;
+            if failing.is_empty() {
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                recovered = recoveries.changed() => {
+                    if recovered.is_ok() {
+                        tracing::info!("a provider recovered; media backfill tries its failing spaces again");
+                        wait = BACKFILL_IDLE;
+                    } else {
+                        // The runtime is gone: no recovery comes, and the
+                        // backoff runs out as before.
+                        tokio::time::sleep(wait).await;
+                    }
+                }
+            }
         }
     }
 
@@ -335,6 +354,7 @@ impl RuntimeMediaEmbedder {
             parts: vec![part],
             references: Vec::new(),
             params: BTreeMap::new(),
+            voice: None,
         };
         let context = oneiron::llm::HostInferenceContext {
             binding: oneiron::llm::HostInferenceBinding::Advertised {

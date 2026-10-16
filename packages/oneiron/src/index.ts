@@ -131,7 +131,10 @@ export class Oneiron {
   report(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.report(input) as unknown) }
   readonly self = {
     memory: {
-      diary: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown),
+      diary: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown), {
+        reads: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReads(input) as unknown),
+        review: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReview(input) as unknown),
+      }),
     },
     skills: {
       save: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsSave(input) as unknown),
@@ -183,6 +186,10 @@ export class Oneiron {
     receipts: Object.assign((limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)), {
       get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultReceiptsGet(input) as unknown),
     }),
+    images: {
+      /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
+      view: (request: ImageViewRequest): PulledImage => this.#call(() => {  const result = JSON.parse(this.#client.vaultImagesView(keyedJson(request))) as PulledImage; return result }),
+    },
     kv: {
       /** Exact actor-owned worldless key lookup, never recall. */
       get: (request: KeyValueAddress): KeyValueItem | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultKvGet(keyedJson(request))) as WireItem | null; return result === null ? null : itemFromWire(result) }),
@@ -195,8 +202,22 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    weave: {
+      report: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveReport(input) as unknown),
+      digest: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveDigest(input) as unknown),
+    },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+    },
+    lenses: {
+      propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
+      activate: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesActivate(input) as unknown),
+      deactivate: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDeactivate(input) as unknown),
+      list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesList(input) as unknown),
+      default: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDefault(input) as unknown),
+    },
+    hooks: {
+      replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
     },
     artifacts: {
       /** One artifact's kind, head and versions, each with its made_by and born-from. */
@@ -207,6 +228,10 @@ export class Oneiron {
       born_from: (request: BornFromRequest): BornFromView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBornFrom(keyedJson(request))) as BornFromView; return result }),
       /** The proposals waiting beside one artifact for Keep or Discard. */
       proposals: (request: ArtifactRefRequest): PendingProposalView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposals(keyedJson(request))) as PendingProposalView[]; return result.map(item => item) }),
+      /** The organ calls held beside one artifact until one of your nodes can run them, each with why it waits. */
+      waits: (request: ArtifactRefRequest): OrganWaitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsWaits(keyedJson(request))) as OrganWaitView[]; return result.map(item => item) }),
+      /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
+      release_wait: (request: ProposalSettleRequest): ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as ReleasedWait; return result }),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
@@ -241,7 +266,10 @@ export class Oneiron {
       confirm: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsConfirm(input) as unknown),
       goal: {
         intake: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as unknown),
+        revisions: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalRevisions(input) as unknown),
+        dismiss: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalDismiss(input) as unknown),
       },
+      route_tradeoff: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsRouteTradeoff(input) as unknown),
     },
     conversations: {
       turn: {
@@ -269,6 +297,9 @@ export class Oneiron {
     },
     hydrate: (input: Facade.HydrateRequest): {value: (Facade.EntityView)[]; narrowing: unknown} => this.#call(() => this.#client.vaultHydrate(input) as {value: (Facade.EntityView)[]; narrowing: unknown}),
     get: (input: Facade.EntityRequest): {value: Facade.EntityView | null; narrowing: unknown} => this.#call(() => this.#client.vaultGet(input) as {value: Facade.EntityView | null; narrowing: unknown}),
+    refs: {
+      resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRefsResolve(input) as unknown),
+    },
     search: {
       bm25: (input: Facade.QueryBm25Request): {value: (Facade.LexicalHit)[]; narrowing: unknown} => this.#call(() => this.#client.vaultSearchBm25(input) as {value: (Facade.LexicalHit)[]; narrowing: unknown}),
     },
@@ -301,6 +332,7 @@ export class Oneiron {
       poll: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoPoll(input) as unknown),
       cancel: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoCancel(input) as unknown),
     }),
+    verdict: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVerdict(input) as unknown),
   }
   readonly connector = {
     list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorList(input) as unknown),
