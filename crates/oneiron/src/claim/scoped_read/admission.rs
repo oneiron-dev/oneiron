@@ -292,7 +292,7 @@ impl<'a> ScopedRead<'a> {
         let Some(roster) = crate::context_board::room_roster_in(self.vault, txn, turn.room)? else {
             return Ok(None);
         };
-        if roster.binary_search(&turn.caller).is_err() {
+        if !crate::context_board::room_reader_in(self.vault, txn, turn.room, &roster, turn.caller)? {
             return Ok(None);
         }
         let mut held = self
