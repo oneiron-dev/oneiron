@@ -450,7 +450,8 @@ async fn generate_private(
     offer: ServedOffer,
     budget: BudgetGuard,
 ) -> LlmResult<LlmResponse> {
-    let run = crate::models::undeclared_run("anonymous-chat", budget, Arc::new(DiscardReceipts));
+    let run =
+        crate::models::undeclared_run("anonymous-chat", budget, None, Arc::new(DiscardReceipts));
     let call = RunCall {
         selector: None,
         request: &request,
