@@ -24,6 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/status.rs` | src | s | 4 struct · 3 enum · 9 crate-vis | AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus | Live state of the server's background AI work, shared between the workers that change it and the routes that… |
 | `src/ai_host/step.rs` | src | s | 4 crate-vis | — | One saved-workflow step on a model seat |
 | `src/ai_host/step_failure.rs` | src | s | 3 crate-vis | — | A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or… |
+| `src/ai_host/stewardship.rs` | src | s | 1 crate-vis | — | Follow-up drafts for due stewardship reach-outs (ARCH-0026 Represent) |
 | `src/ai_host/sync_wake.rs` | src | s | 3 crate-vis | — | A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's… |
 | `src/ai_host/test_support.rs` | src | s | 11 crate-vis | — | Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake… |
 | `src/ai_host/tests.rs` | test | m | — | — | The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model… |
@@ -174,6 +175,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/history_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner… |
 | `src/api/owner_routes/pack_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
 | `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
+| `src/api/owner_routes/proactivity_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
 | `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
 | `src/api/packs/mod.rs` | src | s | 1 crate-vis | — | Served pack operations, including explicit default skill imports |
 | `src/api/pairing.rs` | src | m | 12 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
