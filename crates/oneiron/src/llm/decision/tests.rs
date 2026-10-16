@@ -389,6 +389,22 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
         assert_eq!(queued[0].reason, HumanAskReason::NeedsPerson);
         let prior = queued[0].prior.as_ref().unwrap();
         assert_eq!(prior.answer, DecisionAnswer::Choice("split".into()));
+        // The person picks another option: the typed record carries the read that asked.
+        let changed = queued[0]
+            .changed_by(DecisionAnswer::Choice("keep".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(changed.reason, HumanAskReason::NeedsPerson);
+        assert_eq!(changed.prior, DecisionAnswer::Choice("split".into()));
+        assert_eq!(changed.prior_probability, Some(0.7));
+        assert_eq!(changed.person, DecisionAnswer::Choice("keep".into()));
+        assert_eq!(changed.person_reading, Some(0.97));
+        assert_eq!(changed.paired_reading, Some(0.3));
+        // The same answer changes nothing; an answer outside the labels is refused.
+        let same = DecisionAnswer::Choice("split".into());
+        assert_eq!(queued[0].changed_by(same).unwrap(), None);
+        let outside = DecisionAnswer::Choice("nope".into());
+        assert!(queued[0].changed_by(outside).is_err());
     }
     assert_eq!(
         reader.seen.lock().unwrap()[0].3.as_deref(),

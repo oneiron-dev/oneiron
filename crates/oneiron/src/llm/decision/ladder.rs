@@ -4,7 +4,7 @@ use super::policy::{BandMode, DecisionBandPolicy, PersonThreshold, Reversibility
 use super::types::{invalid, paired_valid};
 use super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung, HumanAskReason,
-    PairedReading, ProviderPin, TypedDecision,
+    PairedReading, PersonChangedAnswer, ProviderPin, TypedDecision,
 };
 use crate::{EntityId, Result};
 use std::collections::BTreeMap;
@@ -183,6 +183,32 @@ pub struct HumanDecisionRequest {
     pub prior: Option<ProviderDecision>,
     /// Host-issued versioned queue identity; the host renders its own text.
     pub queue_pin: ProviderPin,
+}
+
+impl HumanDecisionRequest {
+    /// The record of the person's answer changing the model's. None when there was no model
+    /// answer to change or the person gave the same one.
+    pub fn changed_by(&self, person: DecisionAnswer) -> Result<Option<PersonChangedAnswer>> {
+        if person == DecisionAnswer::Abstain || !self.question.contract.accepts(&person) {
+            return Err(invalid("invalid person answer"));
+        }
+        Ok(self
+            .prior
+            .as_ref()
+            .filter(|prior| prior.answer != DecisionAnswer::Abstain && prior.answer != person)
+            .map(|prior| PersonChangedAnswer {
+                question: self.question.id,
+                question_version: self.question.version,
+                principal: self.principal,
+                reason: self.reason,
+                prior: prior.answer.clone(),
+                prior_probability: prior.probability,
+                person,
+                person_reading: prior.person.map(|reading| reading.probability),
+                paired_reading: prior.paired.map(|reading| reading.probability),
+                queue_pin: self.queue_pin.clone(),
+            }))
+    }
 }
 
 pub trait HumanDecisionQueue: Send + Sync {

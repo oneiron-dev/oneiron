@@ -272,6 +272,26 @@ pub struct TypedDecision {
     pub human_ask: Option<HumanAskReason>,
 }
 
+/// A person answered differently from the model's prior: the Coach's tuning input for
+/// the person threshold row and the bands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonChangedAnswer {
+    #[serde(with = "super::codec::entity")]
+    pub question: EntityId,
+    pub question_version: u32,
+    #[serde(with = "super::codec::entity")]
+    pub principal: EntityId,
+    pub reason: HumanAskReason,
+    pub prior: DecisionAnswer,
+    pub prior_probability: Option<f64>,
+    pub person: DecisionAnswer,
+    /// The prior read's P(ask a person) and P(needs more thinking), when it took them.
+    pub person_reading: Option<f64>,
+    pub paired_reading: Option<f64>,
+    pub queue_pin: ProviderPin,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HumanAskReason {
