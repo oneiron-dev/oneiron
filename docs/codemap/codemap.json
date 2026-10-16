@@ -15530,7 +15530,7 @@
      "path": "src/deletion/delete/markers.rs",
      "purpose": "pt:/ac: marker and gate-decision commit helpers plus the cleanup-archive door",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -16407,9 +16407,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 2,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -16487,6 +16487,21 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PersonAboutExecutor"
+     ],
+     "path": "src/dreamer_consolidation/person_about.rs",
+     "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -16716,7 +16731,7 @@
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "—",
      "surface": {
-      "const": 11,
+      "const": 12,
       "crate-vis": 30
      }
     },
@@ -27697,7 +27712,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 2,
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
@@ -27807,6 +27822,28 @@
      "purpose": "The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GrantAskReceipt",
+      "GrantAskRequest",
+      "GrantAskScope",
+      "MessagePersonReceipt",
+      "MessagePersonRequest",
+      "PeopleListRequest",
+      "PeoplePage",
+      "PersonRequest"
+     ],
+     "path": "src/memory/people_verbs.rs",
+     "purpose": "PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 7
      }
     },
     {
@@ -28755,7 +28792,7 @@
       "crate-vis": 24,
       "enum": 3,
       "fn": 4,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 2
      }
     },
@@ -28937,6 +28974,25 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FolderFile",
+      "FolderFileState",
+      "FolderRescan",
+      "FolderRescanReport",
+      "FolderSource",
+      "FolderSourceFile"
+     ],
+     "path": "src/note/folder_source.rs",
+     "purpose": "A local folder that stays attached to the vault (OF-554, ARCH-0027)",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -28961,6 +29017,7 @@
      "purpose": "A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027…",
      "surface": {
       "const": 1,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 6,
       "struct": 5
@@ -43466,7 +43523,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 149
+      "fn": 153
      }
     },
     {
@@ -48176,7 +48233,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48526,7 +48583,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 125,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48547,7 +48604,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -49186,7 +49243,7 @@
    },
    "over_bar": 100,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2966,
+   "source_files": 2969,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56772,7 +56829,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 127
+      "fn": 131
      }
     },
     {
@@ -57785,7 +57842,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 128
+      "fn": 132
      }
     },
     {
@@ -61854,6 +61911,11 @@
       "ImportBatchArgs",
       "ImportCommand",
       "ImportDecisionArgs",
+      "ImportFolderAttachArgs",
+      "ImportFolderCommand",
+      "ImportFolderListArgs",
+      "ImportFolderPathArgs",
+      "ImportFolderRescanArgs",
       "ImportNotesArgs",
       "ImportSourceArgs",
       "MaintainArgs",
@@ -61875,8 +61937,8 @@
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 6,
-      "struct": 20
+      "enum": 7,
+      "struct": 24
      }
     },
     {
@@ -61985,7 +62047,17 @@
      "path": "src/commands/history_import/notes.rs",
      "purpose": "`oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/notes/folder.rs",
+     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes that stays attached to the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -65926,7 +65998,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66173,7 +66245,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 458,
+   "source_files": 459,
    "test_files": 182
   },
   "oneiron-spawn": {

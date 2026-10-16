@@ -1238,7 +1238,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/delete/facade.rs` | src | L | 4 fn · 2 crate-vis | — | Public and gated delete entry points plus the headerful orchestration state machine |
 | `src/deletion/delete/headerless.rs` | src | s | 1 crate-vis | — | Headerless-residue delete leg: scope probe, tombstone publish, purge, and conditional receipt |
 | `src/deletion/delete/impact.rs` | src | s | 2 struct · 8 fn · 1 crate-vis | HeldBytes, LfsChunkImpact | Shared-bytes impact for the delete preview: whether the record is the last holder of its bytes or one of… |
-| `src/deletion/delete/markers.rs` | src | s | 8 crate-vis | — | pt:/ac: marker and gate-decision commit helpers plus the cleanup-archive door |
+| `src/deletion/delete/markers.rs` | src | s | 9 crate-vis | — | pt:/ac: marker and gate-decision commit helpers plus the cleanup-archive door |
 | `src/deletion/delete/mod.rs` | src | s | 3 re-export | — | — |
 | `src/deletion/delete/outcome.rs` | src | s | 2 struct · 1 crate-vis | DeleteEntityOptions, DeleteEntityOutcome | Reason-aware delete result type and its missing() constructor |
 | `src/deletion/delete/preview.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | DeleteEntityPreview | Snapshot-bound impact preview for the one-action, confirmed delete door |
@@ -1303,7 +1303,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/failure_rules.rs` | src | m | 1 fn · 13 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 1 enum · 4 fn · 6 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind | — |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
-| `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 14 re-export · 15 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 15 re-export · 16 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 15 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/nightly_merge.rs` | src | m | 4 crate-vis | — | Nightly fan-in over child proposals |
 | `src/dreamer_consolidation/note_review.rs` | src | m | 1 crate-vis | — | ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs |
@@ -1311,6 +1311,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/parallel.rs` | src | s | 1 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
 | `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 7 fn · 9 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 4 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
+| `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 1 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/provenance.rs` | src | m | 5 struct · 1 enum · 2 trait · 7 fn · 6 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink, PromotionCandidate | — |
 | `src/dreamer_consolidation/redirty.rs` | src | m | 15 crate-vis | — | The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again… |
 | `src/dreamer_consolidation/resident_dream.rs` | src | m | 2 struct · 3 fn · 1 const · 3 crate-vis | ResidentDreamModel, ResidentDreamProgress | A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own… |
@@ -1327,7 +1328,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/settle.rs` | src | m | 5 struct · 1 enum · 3 fn · 1 const · 4 crate-vis | ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass, SettledConflict | Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`) |
 | `src/dreamer_consolidation/sieve_attempt.rs` | src | s | 1 crate-vis | — | The sieve's owed novelty/typing rungs and its sampled expensive-path audit |
 | `src/dreamer_consolidation/step_charge.rs` | src | s | 5 crate-vis | — | Attempt-local step spend due to the shared wake ledger after memo replay |
-| `src/dreamer_consolidation/support.rs` | src | s | 11 const · 30 crate-vis | — | — |
+| `src/dreamer_consolidation/support.rs` | src | s | 12 const · 30 crate-vis | — | — |
 | `src/dreamer_consolidation/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/dreamer_consolidation/tests/failure_rules.rs` | test | m | — | — | A resident-authored policy changes what the real executor can publish on fatal fallback |
 | `src/dreamer_consolidation/tests/imported_review.rs` | test | m | — | — | Claims from imported words wait in the owner's import review (ARCH-0027) |
@@ -2188,7 +2189,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/key_value/writes.rs` | src | s | 2 fn | — | Key mutations compose the existing claim gate and lifecycle door in ONE transaction |
 | `src/memory/locality.rs` | src | s | 1 struct · 3 fn · 4 crate-vis | ProducerRows | Where a [`Memory`] caller sits, and the rows its reads derive an answer from, for a host that judges that… |
 | `src/memory/machine_write.rs` | src | s | 1 crate-vis | — | Machine-author claim stamping after the facade resolves its final approval |
-| `src/memory/mod.rs` | src | s | 2 mod · 32 re-export · 13 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 2 mod · 33 re-export · 13 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/outbound/calendar.rs` | src | s | 1 struct · 4 fn · 1 type | CalendarFreebusyIntervalDto | Calendar scoped-read surface (read/search/freebusy) plus the invite entry point |
 | `src/memory/outbound/dedupe.rs` | src | s | 7 crate-vis | — | Idempotent-replay receipts, retry-lineage walk, and gate-binding side index |
@@ -2198,6 +2199,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/outbound/schedule.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | Schedule-only dispatch of connector sends through the OF-327 chokepoint |
 | `src/memory/outbound/types.rs` | src | s | 3 struct · 1 crate-vis | OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext | Outbound schedule DTOs: context, draft input, and intent receipt |
 | `src/memory/owner_door.rs` | src | s | 2 fn | — | The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the… |
+| `src/memory/people_verbs.rs` | src | s | 7 struct · 1 enum · 4 fn · 1 const | GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest, PeopleListRequest, PeoplePage, PersonRequest | PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and… |
 | `src/memory/read_lane.rs` | src | m | 15 crate-vis | — | The bound actor's one read lane |
 | `src/memory/reads.rs` | src | m | 5 struct · 11 fn · 3 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
 | `src/memory/recall/call_mode.rs` | src | s | 1 enum · 5 fn · 1 const · 1 crate-vis | RecallEffort | Call mode (retrieval hub #call-mode): recall for live calls |
@@ -2285,7 +2287,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/tests.rs` | test | m | — | — | — |
 | `src/merge_queue/types.rs` | src | s | 10 struct · 2 enum · 1 trait · 6 fn · 2 crate-vis | BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile, MergeLanding +5 | Persisted queue records and sealed landing/check boundaries |
 | `src/msgpack_shape.rs` | src | s | 3 crate-vis | — | A budget check of untrusted MessagePack before it is decoded |
-| `src/note.rs` | src | m | 2 struct · 3 enum · 4 fn · 1 const · 8 re-export · 24 crate-vis | NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget | Attributed NOTE records with built-in, plugin and registered PACK kinds |
+| `src/note.rs` | src | m | 2 struct · 3 enum · 4 fn · 1 const · 9 re-export · 24 crate-vis | NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `src/note/adapter_tests.rs` | test | m | — | — | Canonical program adapter laws; no native snapshot grants authority |
 | `src/note/birth.rs` | src | s | 1 crate-vis | — | Deterministic NOTE birth on the shared document registry's first load |
 | `src/note/brief_view.rs` | src | s | 2 struct · 2 fn | BriefCitationView, BriefView | Fresh brief views: current ledger state, cursor drift, and one renderer |
@@ -2302,8 +2304,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 21 crate-vis | NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
 | `src/note/erase.rs` | src | s | 2 crate-vis | — | Active-store erasure of NOTE snapshots and workflow text, including headerless residue |
 | `src/note/erasure_tests.rs` | test | m | — | — | Exact citation erasure, carrier fences, and authority replay regressions |
+| `src/note/folder_source.rs` | src | m | 5 struct · 1 enum · 6 fn | FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile | A local folder that stays attached to the vault (OF-554, ARCH-0027) |
 | `src/note/id_codec.rs` | src | s | 2 crate-vis | — | Hex entity references in the NOTE document and blessed-kind wire formats |
-| `src/note/import.rs` | src | m | 5 struct · 1 enum · 6 fn · 1 const | ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink, ImportedNoteStanding | A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027… |
+| `src/note/import.rs` | src | m | 5 struct · 1 enum · 6 fn · 1 const · 4 crate-vis | ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink, ImportedNoteStanding | A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027… |
 | `src/note/kind_contract.rs` | src | s | 1 struct · 3 enum · 5 fn · 1 crate-vis | BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault | The one blessed Plugin contract, installed by a verified person |
 | `src/note/kinds.rs` | src | s | 1 struct · 3 enum · 4 fn · 4 crate-vis | ContextDefault, ExtractionDefault, NoteKindDescriptor, RetentionDefault | Vault-resident PACK descriptor records; the shipped kinds are data, not variants |
 | `src/note/live_body.rs` | src | s | 1 crate-vis | — | Live NOTE read projection without rewriting the immutable birth record |
@@ -3503,7 +3506,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk.rs` | src | L | 31 struct · 1 enum · 6 fn · 7 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest, ProjectCardDismissal +24 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_connector.rs` | src | s | 5 struct · 3 fn | ConnectorEntry, ConnectorListRequest, ConnectorNameRequest, ConnectorView, OutboundScheduleRequest | The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens… |
 | `src/task_verb/sdk_diary.rs` | src | s | 2 struct · 1 enum · 3 fn | DiaryQueryEntry, DiaryQueryOutcome, DiaryQueryRequest | `self.memory.diary.query`: the caller reads an agent's private diary, stating a reason the agent sees in its… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 149 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 153 fn · 2 const | — | — |
 | `src/task_verb/sdk_host.rs` | src | m | 14 struct · 5 enum · 8 fn · 3 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +11 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_memory.rs` | src | s | 14 struct · 1 enum · 3 crate-vis | AppendBlobVersionRequest, BlobContent, ClaimRefRequest, CommitRequest, CreateNoteFromEntityRequest, CreateNoteRequest, EditNoteRequest, EntityRequest +7 | Typed inputs for the public memory verbs in the SDK inventory |
 | `src/task_verb/sdk_self.rs` | src | s | 4 struct · 2 fn | DiaryEntryReceipt, DiaryEntryRequest, SteerReceipt, SteerRequest | The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one… |
