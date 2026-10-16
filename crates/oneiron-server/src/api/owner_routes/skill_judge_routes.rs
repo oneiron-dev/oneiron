@@ -18,8 +18,8 @@ use axum::routing::{get, post};
 use oneiron::skill_optimize::{
     GoalAxisReport, ProjectGoalRevisionProposal, SkillTradeoffAsk, SkillTradeoffPreferences,
     TradeoffChoice, measure_skill_edit_goal_axes, project_goal_revision_proposals,
-    set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project,
-    skill_tradeoff_asks_for, skill_tradeoff_preferences,
+    set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project, skill_tradeoff_asks_for,
+    skill_tradeoff_preferences,
 };
 use serde::{Deserialize, Serialize};
 
@@ -135,8 +135,9 @@ struct PersonTimeTotal {
 struct Measure {
     /// The open optimizer proposal, as 32 hex.
     proposal: String,
-    /// Live pulls per online axis, across both arms.
-    pulls_per_axis: u32,
+    /// Live pulls per online axis, across both arms; `[skills]
+    /// live_pulls_per_axis` when absent.
+    pulls_per_axis: Option<u32>,
 }
 
 /// `GET /v1/owner/skills/judge/decisions`: the newest journal rows.
@@ -195,14 +196,21 @@ async fn measure(
         let proposal = entity_id("proposal", &request.proposal)?;
         let judge = replay_judge::registered()
             .ok_or_else(|| OwnerError::Invalid("no skill judge is registered".to_owned()))?;
-        let bandit = ServeAxisBandit::for_proposal(Arc::clone(server.vault()), &proposal)?;
-        judge.word_skill_axes(&bandit.incumbent_skill())?;
+        let pulls_per_axis = request
+            .pulls_per_axis
+            .or(judge.live_pulls_per_axis())
+            .ok_or_else(|| {
+                OwnerError::Invalid(
+                    "name pulls_per_axis, or set [skills] live_pulls_per_axis".to_owned(),
+                )
+            })?;
+        let bandit = ServeAxisBandit::for_proposal(judge, &proposal)?;
         Ok(measure_skill_edit_goal_axes(
             server.vault(),
             &proposal,
             judge,
             &bandit,
-            request.pulls_per_axis,
+            pulls_per_axis,
         )?)
     })
     .await?;

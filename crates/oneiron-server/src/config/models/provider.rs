@@ -27,6 +27,11 @@ pub enum ProviderKind {
     /// ElevenLabs' speech API (`POST /v1/text-to-speech/{voice}/stream`,
     /// `xi-api-key`): a `[models.media.speech]` rung only.
     Elevenlabs,
+    /// An own-server VoxCPM2 worker (`deploy/voxcpm2`): it renders each
+    /// call from the banked identity's reference clip, which the call
+    /// carries, so it is reached over loopback HTTP only. A
+    /// `[models.media.speech]` rung only.
+    Voxcpm2,
 }
 
 impl ProviderKind {
@@ -40,7 +45,14 @@ impl ProviderKind {
     /// media seat and nothing else.
     #[must_use]
     pub fn speech_only(self) -> bool {
-        matches!(self, Self::Cartesia | Self::Elevenlabs)
+        matches!(self, Self::Cartesia | Self::Elevenlabs | Self::Voxcpm2)
+    }
+
+    /// Whether this kind renders from a banked identity's reference clip on
+    /// each call and keeps no clone of it.
+    #[must_use]
+    pub fn renders_from_refs(self) -> bool {
+        matches!(self, Self::Voxcpm2)
     }
 
     /// Whether this kind serves the `reranker` role, over `/v1/rerank`.
@@ -54,7 +66,7 @@ impl ProviderKind {
             Self::OpenaiCompat | Self::AnthropicCompat | Self::Cartesia | Self::Elevenlabs => {
                 ModelLocality::ThirdParty
             }
-            Self::LocalOpenaiCompat | Self::Oneironer => ModelLocality::OwnServer,
+            Self::LocalOpenaiCompat | Self::Oneironer | Self::Voxcpm2 => ModelLocality::OwnServer,
         }
     }
 
@@ -78,7 +90,7 @@ impl ProviderKind {
                 LlmCapability::ToolCalling,
                 LlmCapability::ToolResults,
             ],
-            Self::Oneironer | Self::Cartesia | Self::Elevenlabs => Vec::new(),
+            Self::Oneironer | Self::Cartesia | Self::Elevenlabs | Self::Voxcpm2 => Vec::new(),
         }
     }
 }
@@ -332,6 +344,18 @@ fn validate_base_url(name: &str, kind: ProviderKind, url: &str) -> anyhow::Resul
     {
         anyhow::bail!(
             "models.providers.{name}.base_url carries credentials, a query or a fragment; use key_env and a plain URL"
+        );
+    }
+    // The VoxCPM2 worker takes the person's raw voice with every call: its
+    // own wire refuses anything but loopback HTTP on a port, so does this.
+    if kind == ProviderKind::Voxcpm2
+        && (parsed.scheme() != "http"
+            || parsed.host_str() != Some("127.0.0.1")
+            || parsed.port().is_none()
+            || parsed.path() != "/")
+    {
+        anyhow::bail!(
+            "models.providers.{name}.base_url: a voxcpm2 worker is reached at http://127.0.0.1:<port> only"
         );
     }
     let near = host_is_near(&parsed);

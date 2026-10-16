@@ -166,8 +166,8 @@ pub use self::eval_set::{
     WaitingDecision, sufficiency_card,
 };
 pub use self::goal_axes::{
-    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
-    OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
+    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,
+    GoalAxisReport, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
 };
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,
@@ -195,13 +195,13 @@ pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind, GoalAxisScore,
     GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase,
-    HeldOutReplayNotes, HeldOutVerdict, HonestyReplay, HonestyReplayObservation, JevTradeoffVerdict,
-    JudgeMeasurements, PreferredResponse, ProjectGoalRevisionProposal, SKILL_EDIT_CYCLE_CAP_KEY,
-    SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle,
-    SkillEditDisposition, SkillEditGoal, SkillTradeoffAsk, SkillTradeoffPreferences,
-    SkillTradeoffQuestion, TradeoffChoice, TradeoffResolution, TradeoffRole, TradeoffRule,
-    TradeoffRung, WorldAxisScore, admit_optimized_skill_revision, dev_receipts,
-    dismiss_project_goal_revision_proposal, escalate_skill_tradeoff_ask,
+    HeldOutReplayNotes, HeldOutVerdict, HonestyReplay, HonestyReplayObservation,
+    JevTradeoffVerdict, JudgeMeasurements, PreferredResponse, ProjectGoalRevisionProposal,
+    SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME,
+    SkillEditCycle, SkillEditDisposition, SkillEditGoal, SkillTradeoffAsk,
+    SkillTradeoffPreferences, SkillTradeoffQuestion, TradeoffChoice, TradeoffResolution,
+    TradeoffRole, TradeoffRule, TradeoffRung, WorldAxisScore, admit_optimized_skill_revision,
+    dev_receipts, dismiss_project_goal_revision_proposal, escalate_skill_tradeoff_ask,
     held_out_receipt_set_digest, held_out_receipts, is_skill_edit_verdict_receipt,
     measure_skill_edit_goal_axes, pending_skill_tradeoff_asks, project_goal_revision_proposals,
     receipt_is_held_out, register_held_out_replay_scorer, resolve_skill_edit_tradeoff,
@@ -211,7 +211,7 @@ pub use gate::{
     settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest, skill_edit_cycle_cap,
     skill_edit_goal, skill_edit_goal_axis_report, skill_edit_score_call_purpose,
     skill_edit_verdict, skill_edit_verdicts, skill_edit_verdicts_for_proposal,
-    skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for,
+    skill_edit_needs_goal_axis_report, skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for,
     skill_tradeoff_preferences, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{

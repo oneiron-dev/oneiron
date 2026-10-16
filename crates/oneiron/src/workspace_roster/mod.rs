@@ -130,10 +130,11 @@ pub(crate) use project::{
 };
 pub use project::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, OwnerProjectSigner,
-    ProjectAsk, ProjectCycleQuestion, ProjectDisposition, ProjectEffective, ProjectForkEvidence,
-    ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget, ProjectHistoryPolicy,
-    ProjectHistoryQuestion, ProjectParentWitness, ProjectRank, ProjectResolution, ProjectRevision,
-    ProjectRevisionHash, ProjectRevisionProof, ProjectSeal, ProjectWitness, ProjectWriteOutcome,
+    ProjectAsk, ProjectCycleQuestion, ProjectDisposition, ProjectEffective, ProjectForkConflict,
+    ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
+    ProjectHistoryPolicy, ProjectHistoryQuestion, ProjectParentWitness, ProjectRank,
+    ProjectResolution, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, ProjectSeal,
+    ProjectWitness, ProjectWriteOutcome,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
@@ -182,6 +183,12 @@ pub(crate) use rooms::RoomThreadTask;
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
 pub(crate) use rooms::project_room_audience_in;
+
+pub(crate) use rooms::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    record_participation_in_txn, require_join_covering_in_txn,
+};
+pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
 
 pub use crate::gate::RoomThreadFill;
 

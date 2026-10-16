@@ -2,7 +2,7 @@ use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
@@ -474,6 +474,8 @@ impl Memory<'_> {
                         run_id: None,
                         now,
                     },
+                    // OF-540: a created TASK carries no team-run stamp to its route yet.
+                    AgentSpawnContext::default(),
                 )?;
                 // Dispatched and deduped-existing are ONE idempotent outcome: a
                 // retried route returns the attempt already realizing the task.

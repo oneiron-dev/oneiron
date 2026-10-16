@@ -103,10 +103,7 @@ fn id_from(bytes: &[u8]) -> Result<EntityId> {
     .map_err(Into::into)
 }
 
-fn selection_hash(
-    items: &std::collections::BTreeSet<EntityId>,
-    base: Option<bool>,
-) -> [u8; 32] {
+fn selection_hash(items: &std::collections::BTreeSet<EntityId>, base: Option<bool>) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     for id in items {
         hash.update(id.as_bytes());

@@ -46,8 +46,8 @@ mod open_conflict;
 mod parallel;
 mod partition;
 mod persistence;
-mod provenance;
 mod person_about;
+mod provenance;
 pub(crate) mod redirty;
 mod resident_dream;
 pub(crate) mod resources;
@@ -76,25 +76,23 @@ pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
+pub(crate) use person_about::enqueue_person_about_on_wake;
+pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub use provenance::*;
 pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators,
 };
-pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resident_dream::{
     RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS, ResidentDreamModel, ResidentDreamProgress,
     resident_of_dream_input, run_resident_dream,
 };
+pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resources::ScopedConsolidationWrite;
-pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
-pub use weave_lens::{WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, run_weave_lens};
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,
 };
-pub(crate) use person_about::enqueue_person_about_on_wake;
-pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement,
@@ -104,6 +102,8 @@ pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
 };
 pub use support::*;
+pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
+pub use weave_lens::{WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, run_weave_lens};
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
     live_turn_text_in, projected_turn_text_in, whole_turn_text_as_in,

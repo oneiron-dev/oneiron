@@ -383,7 +383,12 @@ impl ObservedFactory {
             self.egress.then(|| extraction_egress(selected.collect())),
             Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
         )
-        .with_role_backends(roles);
+        .with_role_backends(roles)
+        // A fired commitment proposes its reminder where the vault already
+        // reaches the obligor; the owner approves it in run review (OF-187).
+        .with_commitment_wake_planner(Box::new(
+            oneiron::commitment_wake::CommitmentReminderPlanner,
+        ))?;
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
@@ -406,7 +411,11 @@ impl PassExecutorFactory for ObservedFactory {
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
         self.prepare(guard)?;
-        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+        let resident = match (
+            &self.weaver,
+            &self.line,
+            self.resident_instruction.as_deref(),
+        ) {
             (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,
@@ -446,7 +455,11 @@ impl PassExecutorFactory for ObservedFactory {
     ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
         self.prepare(guard)?;
         let status = self.status.as_ref();
-        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+        let resident = match (
+            &self.weaver,
+            &self.line,
+            self.resident_instruction.as_deref(),
+        ) {
             (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,

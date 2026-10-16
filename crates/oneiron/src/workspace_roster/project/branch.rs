@@ -5,8 +5,10 @@
 //! top meet their frontiers with the anchor's own bounds, so a tie still
 //! installs no widening. A principal that a held act in one branch deposes
 //! or removes takes no authority from what it signed in a sibling branch,
-//! a resolution included, unless that act itself takes none. Every step is
-//! a function of the held set: no arrival order, no arbitrary winner.
+//! a resolution included, unless that act itself takes none. Two
+//! resolutions that do not build on each other settle nothing, even where
+//! this fold cannot use one of them (ruling (b)). Every step is a function
+//! of the held set: no arrival order, no arbitrary winner.
 use super::fold::{ProjectEffective, ProjectRank, rank_at, reason};
 use super::read::ProjectVerdict;
 use super::revision::{ProjectRevision, ProjectRevisionHash};
@@ -60,6 +62,9 @@ pub(super) struct Exclusion {
     pub(super) relied: BTreeSet<ProjectRevisionHash>,
     /// The acts never excluded that depose each principal.
     pub(super) deposers: BTreeMap<String, Vec<ProjectRevisionHash>>,
+    /// The nodes whose resolutions race (two or more causal tips): no
+    /// settlement there stands and no branch there wins alone.
+    pub(super) raced: BTreeSet<ProjectRevisionHash>,
 }
 
 /// One valid signed revision below a root. Acts are kept in preorder, so
@@ -91,6 +96,8 @@ struct Resolver {
     /// The act indices it supersedes.
     settles: Vec<usize>,
     settlement: Settlement,
+    /// Whether its node's resolutions race: then it stands in no fold.
+    raced: bool,
 }
 
 impl FoldCx<'_, '_, '_> {
@@ -126,6 +133,7 @@ impl FoldCx<'_, '_, '_> {
 
     fn fold_fork(&self, root: ProjectRevisionHash, node: ProjectRevisionHash) -> Result<Fork> {
         let exclusion = self.exclusion(root)?;
+        let raced = exclusion.raced.contains(&node);
         let valid = self.valid_children(node)?;
         let settlement = exclusion.settled.get(&node).cloned().unwrap_or_default();
         let authority = self.authority_of(&node);
@@ -204,7 +212,11 @@ impl FoldCx<'_, '_, '_> {
             .map(|(child, _)| *child)
             .collect();
         fork.rank = Some(top);
-        if let [winner] = at_top[..] {
+        // At a race no branch wins alone: a competitor this fold cannot use
+        // settles nothing, so the usable contenders meet (ruling (b)).
+        if let [winner] = at_top[..]
+            && !raced
+        {
             let (_, branch) = &branches[&winner];
             fork.view = branch.view.clone();
             fork.blocked = branch.blocked;
@@ -271,10 +283,17 @@ impl FoldCx<'_, '_, '_> {
             .map(|act| act.hash)
             .collect();
         let mut resolvers: Vec<Resolver> = Vec::new();
+        let mut raced = BTreeSet::new();
         let nodes = std::iter::once((root, None))
             .chain((acts.iter().enumerate()).map(|(index, act)| (act.hash, Some(index))));
         for (node, anchor) in nodes {
             let node_first = resolvers.len();
+            // The race is read from the authorized envelopes, before this
+            // fold's cycle or deposition removes any (ruling (b)).
+            let race = self.resolution_tips(node)?.len() > 1;
+            if race {
+                raced.insert(node);
+            }
             for settlement in self.settlements(node)? {
                 let Some(tip) = settlement.tip else {
                     continue;
@@ -294,6 +313,7 @@ impl FoldCx<'_, '_, '_> {
                         .filter_map(|lost| at.get(lost).copied())
                         .collect(),
                     settlement,
+                    raced: race,
                 });
             }
             let node_end = resolvers.len();
@@ -327,6 +347,7 @@ impl FoldCx<'_, '_, '_> {
                 .collect(),
             relied,
             deposers,
+            raced,
         })
     }
 
@@ -460,7 +481,8 @@ fn attacked(acts: &[Act], resolvers: &[Resolver], discounted: &[bool]) -> Vec<bo
         let built_on = (resolver.builds_on.iter())
             .filter(|other| standing(**other))
             .count();
-        out[acts.len() + index] = at_node[resolver.node_first] > built_on
+        out[acts.len() + index] = resolver.raced
+            || at_node[resolver.node_first] > built_on
             || (resolver.signer.as_deref())
                 .is_some_and(|signer| deposers.challenge(acts, resolver.anchor, signer, &[]))
             || resolver.next.is_some_and(|next| {
@@ -486,8 +508,9 @@ fn attacked(acts: &[Act], resolvers: &[Resolver], discounted: &[bool]) -> Vec<bo
 /// excluded attacks is excluded, and what nothing left standing attacks
 /// stands. Mutual depositions exclude neither side, a chain resolves from
 /// its unchallenged end, and two resolutions neither builds on settle
-/// nothing. Returns the excluded set and the set anything not excluded
-/// attacks.
+/// nothing, nor does either once a deposition or a cycle takes the other
+/// (a raced resolver is always attacked). Returns the excluded set and the
+/// set anything not excluded attacks.
 fn well_founded(acts: &[Act], resolvers: &[Resolver]) -> (Vec<bool>, Vec<bool>) {
     let mut under = vec![false; acts.len() + resolvers.len()];
     loop {

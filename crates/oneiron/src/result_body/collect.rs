@@ -3,7 +3,9 @@
 use std::time::SystemTime;
 
 use super::files::{BodyEntry, body_entries, remove_unnamed, sync_dir, unlink_body};
-use super::{RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle};
+use super::{
+    RAW_OUTPUT_ROWS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, raw_output_handle, unowned_mark_key,
+};
 use crate::provenance::body::{
     digest_is_held_in_txn, released_bodies_in_txn, take_released_in_txn,
 };
@@ -16,7 +18,7 @@ const SWEEP_BATCH: usize = 256;
 /// What one collector pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResultBodyCollectReport {
-    /// Released bodies whose raw-output row, sidecars and file went.
+    /// Released bodies whose raw-output row, unowned marks and file went.
     pub collected: usize,
     /// Released digests a descriptor holds again, or another pass took
     /// first: off the queue, left as they are.
@@ -31,8 +33,9 @@ impl Vault {
     /// Collects the result bodies nothing holds any longer (OF-597): up to
     /// `limit` released digests, then up to `limit` orphan files. Each
     /// released digest is rechecked in the write transaction that drops its
-    /// raw-output row, taint sidecar and secret mark, and its file and line
-    /// index are unlinked only once that commits. An orphan is a body file no
+    /// raw-output row and its unowned occurrence's taint sidecar and secret
+    /// mark, and its file and line index are unlinked only once that
+    /// commits. An owned occurrence's marks stay with its manifest. An orphan is a body file no
     /// raw-output row or descriptor names, older than an hour, so a body
     /// whose row has yet to commit stays. A pinned body is left for a later
     /// pass. Idempotent; a file already gone is fine.
@@ -79,10 +82,10 @@ impl Vault {
                     report.held += 1;
                     continue;
                 }
-                let handle = raw_output_handle(digest);
-                RAW_OUTPUT_ROWS.delete(&self.store, txn, &handle)?;
-                RAW_OUTPUT_TAINTS.delete(&self.store, txn, &handle)?;
-                RAW_OUTPUT_SECRETS.delete(&self.store, txn, &handle)?;
+                let marks = unowned_mark_key(digest)?;
+                RAW_OUTPUT_ROWS.delete(&self.store, txn, &raw_output_handle(digest))?;
+                RAW_OUTPUT_TAINTS.delete(&self.store, txn, &marks)?;
+                RAW_OUTPUT_SECRETS.delete(&self.store, txn, &marks)?;
                 taken.push(*digest);
             }
             Ok(taken)

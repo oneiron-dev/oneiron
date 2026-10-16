@@ -31,6 +31,8 @@ report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+selfIdentityAnswer(input: unknown): unknown
+selfIdentitySettle(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
 selfMessage(input: unknown): unknown
@@ -81,6 +83,8 @@ vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
+vaultDisclosureOffer(input: unknown): unknown
+vaultSharesCreate(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
@@ -102,6 +106,7 @@ tasksAnswer(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
+vaultRoomsParticipants(input: unknown): unknown
 vaultRoomsRender(input: unknown): unknown
 vaultRoomsFind(input: unknown): unknown
 vaultRoomsGet(input: unknown): unknown
@@ -124,6 +129,7 @@ vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
+vaultCompanionsSharingSet(input: unknown): unknown
 vaultWorkspaceWorkCompanionGet(input: unknown): unknown
 vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
