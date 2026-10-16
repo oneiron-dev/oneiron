@@ -34,7 +34,7 @@ const VERSION: &str = "brief@7";
 const FLOW: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"><rect x="10" y="20" width="80" height="60" fill="#4F81BD"/><circle cx="150" cy="50" r="30" fill="#C0504D"/></svg>"##;
 
 /// A decodable RGB PNG, so the oracle has pixels to render.
-fn png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
+pub(crate) fn png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
     fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
         out.extend(u32::try_from(data.len()).unwrap().to_be_bytes());
         let mut crc = crc32fast::Hasher::new();
@@ -61,7 +61,7 @@ fn png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
     out
 }
 
-fn record(handle: &str, media: MediaType, bytes: &[u8], origin: Origin) -> AssetRecord {
+pub(crate) fn record(handle: &str, media: MediaType, bytes: &[u8], origin: Origin) -> AssetRecord {
     AssetRecord {
         artifact: handle.to_owned(),
         version: 1,
