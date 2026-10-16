@@ -16948,6 +16948,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorEventExecutor",
+      "ConnectorEventResponder",
       "ConnectorEventWake"
      ],
      "path": "src/dreamer_runner/connector_event.rs",
@@ -16955,8 +16957,9 @@
      "surface": {
       "const": 2,
       "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -53329,7 +53332,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 10,
+      "fn": 11,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -63743,6 +63746,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/connector_events.rs",
+     "purpose": "The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/cooperative_deletion.rs",
      "purpose": "Delivers queued courtesy deletion asks and answers (OF-273)",
      "surface": {
@@ -64774,7 +64787,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64832,7 +64845,7 @@
    },
    "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 442,
+   "source_files": 443,
    "test_files": 182
   },
   "oneiron-spawn": {
