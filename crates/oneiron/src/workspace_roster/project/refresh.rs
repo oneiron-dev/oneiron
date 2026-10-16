@@ -392,9 +392,11 @@ fn plan(
         let held = held_in_txn(store, txn, project, kind)?;
         let cx = reader.door_cx(project, &held)?;
         let count = budget_count(&cx)?;
+        // The crossing: the project freezes, and the owner's question opens.
         record.frozen.get_or_insert(ProjectFreeze {
             at_counted: count,
             narrowed: false,
+            raised_at: now,
         });
         let applied: BTreeSet<ProjectRevisionHash> = PROJECT_FROZEN_APPLIED
             .scan_keys(store, txn, project.as_bytes())?
@@ -491,7 +493,9 @@ fn ask_owner(
 fn waits_on_parent_project(verdict: ProjectVerdict) -> bool {
     matches!(
         verdict,
-        ProjectVerdict::Pending(reason::PARENT_MISSING | reason::PARENT_PENDING)
+        ProjectVerdict::Pending(
+            reason::PARENT_MISSING | reason::PARENT_PENDING | reason::PARENT_HEAD_PENDING
+        )
             | ProjectVerdict::Quarantined(
                 reason::PARENT_HIDDEN | reason::EXCEEDS_PARENT | reason::SPAWN
             )
