@@ -91,6 +91,28 @@
       "section": false
     },
     {
+      "name": "self.identity.answer",
+      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
+      "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
+      "call": "memory.identity_answer(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.identity.settle",
+      "input": "crate::dreamer_runner::maintenance::identity::IdentityActNowRequest",
+      "output": "crate::dreamer_runner::maintenance::identity::IdentityActNow",
+      "call": "memory.identity_act_now(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.people.list",
       "input": "crate::memory::PeopleListRequest",
       "output": "crate::memory::PeoplePage",

@@ -3,6 +3,8 @@
 //! digest, their keep-in-touch rules, and the review of a drafted follow-up.
 //! `/v1/owner/coach/training-offers` (OF-577) answers the Coach's offers the
 //! inbox and digest deliver; an answer records an intent and applies nothing.
+//! `/v1/owner/identity/asks` (OF-123) is the needs-you strip's identity asks,
+//! each with its one-tap choice card, and their answers.
 //! Approving a draft approves its exact content, then schedules it through
 //! the ordinary outbound gate as the Dreamer on the owner's behalf; the
 //! gate's grants, consent and windows still decide the send.
@@ -15,6 +17,9 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigest;
+use oneiron::dreamer_runner::maintenance::identity::{
+    IdentityAskView, IdentityCardCopy, IdentitySettled,
+};
 use oneiron::dreamer_runner::maintenance::representation::{
     RepresentationCitation, RepresentationRequest, schedule_approved_representation,
 };
@@ -39,6 +44,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/representation/decline", post(decline_representation))
         .route("/coach/training-offers", get(training_offers))
         .route("/coach/training-offers/answer", post(answer_training_offer))
+        .route("/identity/asks", get(identity_asks))
+        .route("/identity/asks/answer", post(answer_identity_ask))
 }
 
 fn now_secs() -> u64 {
@@ -307,4 +314,83 @@ async fn answer_training_offer(
     })
     .await?;
     Ok(Json(record))
+}
+
+/// A choice card's words when the client names none; a client in another
+/// language passes its own.
+const IDENTITY_PROMPT: &str = "Who is this?";
+const IDENTITY_SOMEONE_NEW: &str = "Someone new";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IdentityCardQuery {
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    someone_new: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct IdentityAskCard {
+    #[serde(flatten)]
+    ask: IdentityAskView,
+    card: oneiron::lens::GeneratedUiCard,
+}
+
+/// `GET /v1/owner/identity/asks`: every open identity ask, each with its
+/// one-tap choice card. Asks still being decided carry `escalated_at: null`.
+async fn identity_asks(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<IdentityCardQuery>, QueryRejection>,
+) -> OwnerReply<Vec<IdentityAskCard>> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let copy = IdentityCardCopy {
+        prompt: query.prompt.unwrap_or_else(|| IDENTITY_PROMPT.to_owned()),
+        someone_new: query
+            .someone_new
+            .unwrap_or_else(|| IDENTITY_SOMEONE_NEW.to_owned()),
+    };
+    let asks = blocking(move || -> OwnerResult<Vec<IdentityAskCard>> {
+        let vault = server.vault();
+        let mut cards = Vec::new();
+        for ask in vault.identity_asks()? {
+            let card = vault.identity_card(&ask.ask, &copy)?;
+            cards.push(IdentityAskCard { ask, card });
+        }
+        Ok(cards)
+    })
+    .await?;
+    Ok(Json(asks))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnswerIdentityAsk {
+    /// An ask, as 64 hex.
+    ask: String,
+    /// One of its options: `is:<id>` or `someone_new`.
+    choice: String,
+}
+
+/// `POST /v1/owner/identity/asks/answer`: the owner's choice on one ask. The
+/// mention takes it, and the words around it are saved as a hint.
+async fn answer_identity_ask(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<AnswerIdentityAsk>, JsonRejection>,
+) -> OwnerReply<IdentitySettled> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let settled = blocking(move || -> OwnerResult<IdentitySettled> {
+        Ok(server.vault().answer_identity_ask(
+            &owner,
+            &request.ask,
+            &request.choice,
+            now_secs(),
+        )?)
+    })
+    .await?;
+    Ok(Json(settled))
 }
