@@ -191,6 +191,8 @@ class Oneiron:
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
     # BEGIN GENERATED FACADE VERBS
+    def report(self, spec):
+        return json.loads(_translate(lambda: self._client.report(json.dumps(spec))))
     @property
     def self(self) -> "Oneiron._SelfVerbs":
         return Oneiron._SelfVerbs(self._client)

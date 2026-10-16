@@ -593,6 +593,18 @@ impl<'a> AttemptQueue<'a> {
         kind: &str,
         now: u64,
     ) -> Result<Option<AttemptId>> {
+        self.ready_kind_matching_in_txn(wtxn, kind, now, |_| Ok(true))
+    }
+
+    /// The same ready scan and repairs, skipping rows a domain's admission
+    /// lease does not currently permit. Skipping never removes their readiness.
+    pub(crate) fn ready_kind_matching_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        kind: &str,
+        now: u64,
+        mut permits: impl FnMut(&AttemptRecord) -> Result<bool>,
+    ) -> Result<Option<AttemptId>> {
         validate_kind(kind)?;
         let now = now.min(crate::ports::recorded_at_in_txn(self.store, wtxn)?);
 
@@ -643,6 +655,13 @@ impl<'a> AttemptQueue<'a> {
                 record.task_ref.as_deref(),
                 now,
             )? {
+                continue;
+            }
+            if !permits(&record)? {
+                if record_ready_at != key_ready_at {
+                    scan.ready_replacements
+                        .push((ready_key(record_ready_at, id), id));
+                }
                 continue;
             }
             scan.candidate = Some(ClaimKindCandidate { id });

@@ -47,6 +47,7 @@
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
 mod admission;
+pub mod audit;
 use admission::stored_diagnostic_event;
 pub(crate) use admission::{
     reject_off_record_diagnostic_sources, validate_diagnostic_event_admission,
@@ -78,6 +79,7 @@ mod repair;
 
 pub(crate) use repair::validate_repair_proposal;
 pub use repair::{
+    DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget,
     Healer, HealerInvocationStamp, RepairActor, RepairBundle, RepairConsentRoute,
     RepairCriticality, RepairOperation, RepairProposal, ReviewedRepair,
 };

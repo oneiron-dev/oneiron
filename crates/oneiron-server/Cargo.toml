@@ -56,11 +56,14 @@ oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
 oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
+oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
 # Protocol mappers for the `[models]` provider kinds. Both own wire mapping
 # only; this crate supplies the HTTP transport (models/openai.rs and
 # models/anthropic.rs).
 oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
 oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
+# The paired-machine mesh listener (OF-535), behind the `mesh` feature.
+oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh"] }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
@@ -198,3 +201,6 @@ workspace = true
 # component once `[models.code_mode]` asks for it.
 default = ["code-sandbox-wasmtime"]
 code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
+# The paired-machine mesh listener (OF-535); off by default, and on only when
+# the host also names a bind address.
+mesh = ["dep:oneiron-mesh-transport"]
