@@ -689,6 +689,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ExceptionalWidthCheck",
+      "FanoutCaller",
+      "FanoutStatement",
+      "FanoutWork",
+      "PeerCount",
+      "WidthCheckClass"
+     ],
+     "path": "src/agent_dispatch/fanout_statement.rs",
+     "purpose": "The fan-out statement (OF-393, ARCH-0079 #width): before every fan-out, the total count, the per-peer…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/healer_context.rs",
      "purpose": "Reference-only healer context validation, shared by dispatch and decoding",
@@ -738,7 +758,7 @@
      "path": "src/agent_dispatch/launch.rs",
      "purpose": "The launch statement (OF-532, ARCH-0079 #budget): before every agent launch, the whole tree's agent count…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 1,
       "struct": 5
@@ -771,7 +791,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 3,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -843,9 +863,9 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -14127,7 +14147,7 @@
      "path": "src/context_projection/panel_spec.rs",
      "purpose": "The referenced lead-panel spec: typed shape, codec, durable persistence, and task-input planner",
      "surface": {
-      "const": 3,
+      "const": 2,
       "crate-vis": 2,
       "enum": 1,
       "fn": 6,
@@ -19897,7 +19917,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 5,
       "fn": 6,
       "struct": 6
@@ -29870,7 +29890,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "FanoutApprovalMode"
@@ -29878,7 +29898,7 @@
      "path": "src/outbound_chokepoint/fanout.rs",
      "purpose": "Pre-execution fan-out admission",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "enum": 1
      }
     },
@@ -41653,10 +41673,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/consult_fanout_admission.rs",
-     "purpose": "Meter and admit consult fan-outs before any TASK exists",
+     "purpose": "Meter, state and admit consult fan-outs before any TASK exists",
      "surface": {
       "crate-vis": 4,
-      "fn": 11
+      "fn": 12
      }
     },
     {
@@ -41670,7 +41690,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/consult_fanout_resume.rs",
@@ -41841,6 +41861,16 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fanout_check.rs",
+     "purpose": "The exceptional-width check of fan-outs the engine never holds: a `tasks.ask` census and a wave plan (OF-393)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -44231,8 +44261,8 @@
      "path": "src/wave_orchestration.rs",
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)",
      "surface": {
-      "const": 4,
-      "fn": 16,
+      "const": 3,
+      "fn": 17,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -46308,7 +46338,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47164,7 +47194,7 @@
     "outbound_chokepoint": {
      "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Replay-first outbound effect execution"
     },
@@ -47603,7 +47633,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -47757,9 +47787,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 83,
+   "over_bar": 84,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2878,
+   "source_files": 2880,
    "test_files": 903
   },
   "oneiron-android": {
