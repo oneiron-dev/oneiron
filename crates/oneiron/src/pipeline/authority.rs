@@ -1,6 +1,7 @@
 //! Enforcement of gate-resolved retrieval authority. No caller requests enter here.
 
 use crate::claim::ClaimBody;
+use crate::federation::Sensitivity;
 use crate::gate::ResolvedRetrievalFilter;
 use crate::registry::{ENTITY_TYPE_CLAIM, EntityClassification, entity_type_registry_entry};
 use crate::store::StoreRead;
@@ -20,7 +21,8 @@ pub(super) fn claim_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) 
 pub(crate) fn claim_ceiling_allowed(filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
     !filter.deny_all
         && crate::claim::claim_sensitivity_band(body)
-            .is_some_and(|band| band <= filter.max_sensitivity_band)
+            .and_then(band_sensitivity)
+            .is_some_and(|band| filter.read_scope().sensitivity.permits(band))
         && body.confidence.is_finite()
         && (filter.min_confidence..=1.0).contains(&body.confidence)
         && body.salience.unwrap_or(0.0).is_finite()
@@ -41,9 +43,22 @@ pub(crate) fn type_allowed(
     !filter.deny_all
         && store.base().validate_entity_type(kind).is_ok()
         && match filter.entity_types.as_ref() {
-            Some(types) => types.contains(&kind),
+            Some(_) => filter.read_scope().bands.contains(&kind),
             None => !is_maintenance(kind) || named.is_some_and(|named| named.contains(&kind)),
         }
+}
+
+/// A claim's sensitivity band as the [`Sensitivity`] a read Scope ceilings,
+/// mapped as `ResolvedRetrievalFilter::read_scope` maps the filter's own
+/// band. A band past Restricted names no sensitivity and is never admitted.
+fn band_sensitivity(band: u8) -> Option<Sensitivity> {
+    match band {
+        0 => Some(Sensitivity::Public),
+        1 => Some(Sensitivity::Private),
+        2 => Some(Sensitivity::Sensitive),
+        3 => Some(Sensitivity::Restricted),
+        _ => None,
+    }
 }
 
 fn is_maintenance(kind: u8) -> bool {
