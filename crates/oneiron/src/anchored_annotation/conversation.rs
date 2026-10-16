@@ -40,15 +40,6 @@ impl Vault {
         author: WriteActor,
         now: u64,
     ) -> Result<()> {
-        self.get_annotation_thread(&artifact, &thread)?
-            .ok_or_else(invalid)?;
-        validate_node(self, node)?;
-        if let Some(existing) = self.annotation_conversation_node(artifact, thread)? {
-            if existing == node {
-                return Ok(());
-            }
-            return Err(invalid());
-        }
         let envelope = super::codec::annotation_envelope(author, "bind_conversation_node")?;
         let value = Value::Array(vec![
             Value::from(1),
@@ -58,6 +49,21 @@ impl Vault {
         ]);
         let id = EntityId::now();
         self.with_write_txn_grouped(|txn| {
+            self.annotation_thread_in_txn(txn, &artifact, &thread, true)?
+                .ok_or_else(invalid)?;
+            validate_node_in_txn(self, txn, node)?;
+            if let Some((existing, settled)) =
+                self.annotation_conversation_node_for_effect_in_txn(txn, artifact, thread)?
+            {
+                validate_node_in_txn(self, txn, existing)?;
+                if existing != node {
+                    return Err(invalid());
+                }
+                // A held binding vetoes another node but never stands in for this one.
+                if settled {
+                    return Ok(());
+                }
+            }
             self.batch_in()
                 .claim_candidate(
                     &id,
@@ -73,6 +79,33 @@ impl Vault {
         })
     }
 
+    fn annotation_conversation_node_for_effect_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact: EntityId,
+        thread: EntityId,
+    ) -> Result<Option<(AnnotationConversationNode, bool)>> {
+        let mut result: Option<(AnnotationConversationNode, bool)> = None;
+        for id in self.claims_for_subject_in_txn(txn, &artifact)? {
+            let Some(body) = self.get_claim_in_txn(txn, &id)? else {
+                continue;
+            };
+            if body.predicate != NODE_PREDICATE || !claim_surfaceable(&body) {
+                continue;
+            }
+            let Some(node) = decode_node(&body.value, thread)? else {
+                continue;
+            };
+            if result.is_some_and(|(old, _)| old != node) {
+                return Err(invalid());
+            }
+            let settled =
+                crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)?;
+            result = Some((node, settled || result.is_some_and(|(_, any)| any)));
+        }
+        Ok(result)
+    }
+
     pub fn annotation_conversation_node(
         &self,
         artifact: EntityId,
@@ -86,24 +119,8 @@ impl Vault {
             if body.predicate != NODE_PREDICATE || !claim_surfaceable(&body) {
                 continue;
             }
-            let array = body
-                .value
-                .as_array()
-                .filter(|a| a.len() == 4)
-                .ok_or_else(invalid)?;
-            if array[0].as_u64() != Some(1) {
-                return Err(invalid());
-            }
-            let entity = |index: usize| {
-                EntityId::from_hex(array[index].as_str().ok_or_else(invalid)?)
-                    .map_err(|_| invalid())
-            };
-            if entity(1)? != thread {
+            let Some(node) = decode_node(&body.value, thread)? else {
                 continue;
-            }
-            let node = AnnotationConversationNode {
-                conversation_ref: entity(2)?,
-                turn_ref: entity(3)?,
             };
             validate_node(self, node)?;
             if result.is_some_and(|old| old != node) {
@@ -152,6 +169,46 @@ impl Vault {
             AnnotationCollaborationState::Open
         })
     }
+}
+
+fn decode_node(value: &Value, thread: EntityId) -> Result<Option<AnnotationConversationNode>> {
+    let array = value
+        .as_array()
+        .filter(|a| a.len() == 4)
+        .ok_or_else(invalid)?;
+    if array[0].as_u64() != Some(1) {
+        return Err(invalid());
+    }
+    let entity = |index: usize| {
+        EntityId::from_hex(array[index].as_str().ok_or_else(invalid)?).map_err(|_| invalid())
+    };
+    if entity(1)? != thread {
+        return Ok(None);
+    }
+    let node = AnnotationConversationNode {
+        conversation_ref: entity(2)?,
+        turn_ref: entity(3)?,
+    };
+    Ok(Some(node))
+}
+
+fn validate_node_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    node: AnnotationConversationNode,
+) -> Result<()> {
+    let scope = crate::conversation_dag::ScopeSelector {
+        conversation: node.conversation_ref,
+        session: None,
+        path: crate::conversation_dag::ScopePath::Branch(node.turn_ref),
+        include_forks: false,
+    };
+    let path =
+        crate::conversation_dag::resolve_in_txn(vault, txn, &scope).map_err(|_| invalid())?;
+    if path.records.last() != Some(&node.turn_ref) {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 fn validate_node(vault: &Vault, node: AnnotationConversationNode) -> Result<()> {

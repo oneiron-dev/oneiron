@@ -397,6 +397,7 @@ fn answer_unit(
                         .map(|reading| reading.bind(prediction.provider.clone()))
                         .into_iter()
                         .collect(),
+                    person: Vec::new(),
                 },
                 human_ask: None,
             },

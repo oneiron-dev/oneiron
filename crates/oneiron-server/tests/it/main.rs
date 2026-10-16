@@ -25,6 +25,9 @@ mod dreamer_live;
 mod fake_llm;
 mod first_owner_bootstrap;
 mod history_import;
+// Runtime files, owner-only modes and SIGTERM are Unix-only.
+#[cfg(unix)]
+mod hook;
 // The secret file's owner-only mode and SIGTERM are Unix-only.
 #[cfg(unix)]
 mod host_re_root;

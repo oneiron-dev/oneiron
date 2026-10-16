@@ -392,6 +392,12 @@ impl Vault {
                             reason: Some(CHANGE_REASON_CRITICAL_CONFIRM_CLEARED),
                         },
                     )?;
+                    crate::reaction::release_cleared_reaction_in_txn(
+                        self,
+                        wtxn,
+                        binding.claim_id,
+                        &body,
+                    )?;
                     Ok(Ok(CriticalWriteConfirmResolution::Cleared))
                 }
                 CriticalWriteConfirmDisposition::Decline => {
@@ -452,7 +458,7 @@ impl Vault {
     }
 
     #[cfg(test)]
-    pub(super) fn expire_critical_write_confirms_at(&self, now: u64) -> Result<usize> {
+    pub(crate) fn expire_critical_write_confirms_at(&self, now: u64) -> Result<usize> {
         Ok(self.expire_critical_write_confirms_impl(Some(now))?.demoted)
     }
 

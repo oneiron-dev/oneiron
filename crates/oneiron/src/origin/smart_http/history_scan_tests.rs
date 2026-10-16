@@ -511,12 +511,17 @@ fn hook_refuses_a_blob_past_its_bound_or_the_disk_floor_before_announcing_it() {
                 .stderr(Stdio::piped())
                 .spawn()
                 .expect("spawn hook");
-            child
+            // A refusing hook can exit before it reads its update; the
+            // asserts on its exit and stderr below decide either way.
+            match child
                 .stdin
                 .take()
                 .expect("hook stdin")
                 .write_all(updates.as_bytes())
-                .expect("ref update");
+            {
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+                written => written.expect("ref update"),
+            }
             let output = child.wait_with_output().expect("hook exits");
             let request = fs::read(hooks.request_path()).ok();
             let blobs = fs::read(hooks.blobs_path()).ok();

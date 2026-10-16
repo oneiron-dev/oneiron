@@ -2,6 +2,7 @@ use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;
 use super::ViewQuery;
+use super::commit_core_batch;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_hydrate_deletion_metadata;
@@ -348,17 +349,15 @@ pub(crate) async fn core_memory_verb(
                 entity.occurred_end,
                 entity.learned_at,
             )?;
-            let batch = server.vault.batch();
-            stage_core_entity_put(
-                batch,
+            let batch = stage_core_entity_put(
+                server.vault.batch(),
                 &id,
                 entity.entity_type,
                 timestamps,
                 &entity.body,
                 entity.text.as_deref(),
-            )?
-            .commit()
-            .map_err(|error| {
+            )?;
+            commit_core_batch(&auth, batch).map_err(|error| {
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
                 core_engine_error("core memory remember failed", error)
             })?;
