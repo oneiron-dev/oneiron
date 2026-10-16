@@ -11,6 +11,7 @@ mod message_stream;
 mod pins;
 mod recovery;
 mod registry;
+pub mod review_explainer;
 mod side_keys;
 mod storage;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
