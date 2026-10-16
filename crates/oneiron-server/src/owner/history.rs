@@ -2,12 +2,17 @@
 //! history below its oldest pin, by hand. Disk keeps everything until then;
 //! no Grant and no scheduled job reaches this. The live text and every pinned
 //! version read the same afterwards; only the history between them goes.
+//!
+//! In a shared vault with two or more live Owners the erase waits on the
+//! vault's `erase` veto window (Docs Q05): asking starts that act and erases
+//! nothing, and the starter runs it once the window passes with no objection.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::entity_doc::PurgeReceipt;
+use oneiron::entity_doc::{PurgeReceipt, TextHistoryErase};
+use oneiron::federation::PendingAuthorityAct;
 use oneiron::memory::MemoryError;
 use serde::{Deserialize, Serialize};
 
@@ -52,12 +57,34 @@ impl From<PurgeReceipt> for Erased {
     }
 }
 
-/// Erases `request.entity`'s history as `owner`.
+/// What asking to erase a history did, as the engine rules it for this vault.
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub(crate) enum EraseOutcome {
+    /// A personal vault, or a shared one with one live Owner: erased now.
+    Erased(Erased),
+    /// Two or more live Owners: nothing is erased yet. The vault's `erase`
+    /// act started over exactly this range and every other Owner is told; an
+    /// objection holds it. `POST /v1/owner/history/erase/execute` with its
+    /// id runs it once the window passes with no objection.
+    Waiting { act: PendingAuthorityAct },
+}
+
+/// `POST /v1/owner/history/erase/execute`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExecuteErase {
+    /// The id of the `erase` act a waiting history erase returned.
+    pub(crate) act_id: String,
+}
+
+/// Asks to erase `request.entity`'s history as `owner`: erased now, or the
+/// vault's `erase` act started (Docs Q05).
 pub(crate) fn erase(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     request: &EraseHistory,
-) -> OwnerResult<Erased> {
+) -> OwnerResult<EraseOutcome> {
     let entity = entity_id("entity", &request.entity)?;
     let through = request
         .through
@@ -69,14 +96,34 @@ pub(crate) fn erase(
         })
         .transpose()?;
     vault
-        .erase_text_history_as(owner, &entity, through.as_deref())
-        .map(Erased::from)
-        .map_err(|error| {
-            if let Err(refusal) = vault.recheck_owner(owner) {
-                return OwnerError::from(refusal);
-            }
-            erase_error(error)
+        .start_text_history_erase(owner, &entity, through.as_deref())
+        .map(|outcome| match outcome {
+            TextHistoryErase::Erased(receipt) => EraseOutcome::Erased(receipt.into()),
+            TextHistoryErase::Waiting(act) => EraseOutcome::Waiting { act },
         })
+        .map_err(|error| refused_as(vault, owner, error))
+}
+
+/// Runs the history erase a completed `erase` act names, once: the act is
+/// one `owner` started here, and its window ran out with no objection. A
+/// retry returns that erase's receipt.
+pub(crate) fn execute(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    request: &ExecuteErase,
+) -> OwnerResult<Erased> {
+    vault
+        .execute_completed_text_history_erase(owner, &request.act_id)
+        .map(Erased::from)
+        .map_err(|error| refused_as(vault, owner, error))
+}
+
+/// A lapsed owner proof answers first; otherwise the engine's refusal.
+fn refused_as(vault: &Vault, owner: &AuthenticatedOwner, error: MemoryError) -> OwnerError {
+    if let Err(refusal) = vault.recheck_owner(owner) {
+        return OwnerError::from(refusal);
+    }
+    erase_error(error)
 }
 
 /// Every history erase filed for `entity`.

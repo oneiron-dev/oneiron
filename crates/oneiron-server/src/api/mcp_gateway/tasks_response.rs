@@ -677,6 +677,11 @@ fn mcp_agent_verb_input(
         "vault.members.leave" => a.spec.clone().ok_or_else(invalid),
         "vault.authority.handoff_alarms" => Ok(Value::Object(serde_json::Map::new())),
         "vault.authority.handoff_alarms.acknowledge" => a.spec.clone().ok_or_else(invalid),
+        "vault.legal_holds.place" => a.spec.clone().ok_or_else(invalid),
+        "vault.legal_holds.widen" => a.spec.clone().ok_or_else(invalid),
+        "vault.legal_holds.list" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.legal_holds.log" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.legal_holds.lift_and_erase" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.activate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
@@ -1057,6 +1062,17 @@ pub(crate) fn mcp_agent_verb_arguments(
         }
         "vault.authority.handoff_alarms" => {}
         "vault.authority.handoff_alarms.acknowledge" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.legal_holds.place" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.legal_holds.widen" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.legal_holds.list" => {}
+        "vault.legal_holds.log" => {}
+        "vault.legal_holds.lift_and_erase" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.propose" => {
@@ -2140,6 +2156,71 @@ async fn execute_agent_verb_row(
                 )
                 .await
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.legal_holds.place" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.legal_holds.place", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LegalHoldPlaceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_legal_holds_place(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.legal_holds.widen" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.legal_holds.widen", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LegalHoldWidenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_legal_holds_widen(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.legal_holds.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.legal_holds.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_legal_holds_list(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.legal_holds.log" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.legal_holds.log", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_legal_holds_log(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.legal_holds.lift_and_erase" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.legal_holds.lift_and_erase", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_legal_holds_lift_and_erase(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
