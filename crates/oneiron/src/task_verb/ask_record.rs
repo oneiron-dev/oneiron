@@ -632,6 +632,10 @@ pub(super) fn replay_answer_option_matches(
     Ok(first.word.option == word.option && matching.all(|entry| entry.word.option == word.option))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one consult answer over its writer and the owner proof"
+)]
 pub(super) fn record_answer(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -639,6 +643,7 @@ pub(super) fn record_answer(
     body: &super::consult_result::TaskVerbBody,
     actor: crate::WriteActor,
     answer: (&super::TaskTerminalRecord, Option<&super::TaskAskOptionId>),
+    owner: Option<&crate::consent::AuthenticatedOwner>,
     now: u64,
 ) -> Result<Option<EntityId>> {
     let (terminal, option) = answer;
@@ -673,6 +678,7 @@ pub(super) fn record_answer(
                 confirmation: None,
                 provenance_refs: evidence_refs.iter().copied().collect(),
             },
+            owner,
             now,
         )?;
     }

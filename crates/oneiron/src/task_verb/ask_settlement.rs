@@ -58,11 +58,27 @@ pub(crate) fn settle_ask_if_due(vault: &Vault, id: EntityId) -> Result<()> {
     })
 }
 
+/// [`settle_with_owner_in`] carrying no owner proof: status reads, sweeps,
+/// waits and every path that admitted no owner's word in this transaction.
 pub(super) fn settle_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     now: u64,
+) -> Result<Option<TaskAskResult>> {
+    settle_with_owner_in(vault, txn, id, now, None)
+}
+
+/// Cuts the ask `id` when it is due. `owner` is the live proof of the
+/// owner whose word was admitted in this same transaction, when there was
+/// one; it is passed in-process and never stored. An attendee ask cuts on a
+/// definitive word only under it (`super::attendee_answer::may_cut`).
+pub(super) fn settle_with_owner_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    now: u64,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
 ) -> Result<Option<TaskAskResult>> {
     if let Some(result) = read_result(vault, txn, id)? {
         // A replay runs the continuation again; it acts at most once.
@@ -136,6 +152,9 @@ pub(super) fn settle_in(
     } else {
         return Ok(None);
     };
+    if !super::attendee_answer::may_cut(vault, txn, &group, reason, &decision, owner)? {
+        return Ok(None);
+    }
     let decision = if stale {
         TaskAskDecision::Unknown
     } else {
