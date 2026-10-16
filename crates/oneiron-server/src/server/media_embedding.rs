@@ -335,6 +335,7 @@ impl RuntimeMediaEmbedder {
             parts: vec![part],
             references: Vec::new(),
             params: BTreeMap::new(),
+            voice: None,
         };
         let context = oneiron::llm::HostInferenceContext {
             binding: oneiron::llm::HostInferenceBinding::Advertised {
