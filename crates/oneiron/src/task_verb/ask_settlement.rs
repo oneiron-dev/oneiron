@@ -72,7 +72,8 @@ pub(super) fn settle_in(
 /// Cuts the ask `id` when it is due. `owner` is the live proof of the
 /// owner whose word was admitted in this same transaction, when there was
 /// one; it is passed in-process and never stored. An attendee ask cuts on a
-/// definitive word only under it (`super::attendee_answer::may_cut`).
+/// definitive word only under it (`super::attendee_answer::may_cut`), and
+/// that cut resolves the speaker's identity in this transaction.
 pub(super) fn settle_with_owner_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -252,6 +253,9 @@ pub(super) fn settle_with_owner_in(
             result.settlement.outcome_answer_ref = Some(bound.claim);
         }
     }
+    // OF-365: an attendee ask's owner-proved word resolves the speaker's
+    // identity in the settling commit; no other ask is touched.
+    super::attendee_answer::resolve_answer_in(vault, txn, &group, &result, owner)?;
     let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
     result.settlement.link_result_proof = proof;
     ask_record::put(vault, txn, reference, SETTLEMENT, &result, now)?;

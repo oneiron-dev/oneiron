@@ -303,6 +303,28 @@ impl Vault {
             Some(from),
         )
     }
+    /// [`Self::set_history_visibility`] inside the caller's write
+    /// transaction, for an owner decision that commits with its receipt.
+    pub(super) fn set_history_visibility_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+        actor: WriteActor,
+        at: u64,
+        from: u64,
+    ) -> Result<()> {
+        self.change_membership_in_txn(
+            txn,
+            conversation,
+            person,
+            actor,
+            at,
+            MembershipAction::History,
+            None,
+            Some(from),
+        )
+    }
     /// [`Self::join_member`] inside the caller's write transaction, for a
     /// join that commits with the record it belongs to.
     pub(super) fn join_member_in_txn(

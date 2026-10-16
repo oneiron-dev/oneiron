@@ -14,15 +14,25 @@
 //! speaker is never dropped from an audience while it waits to be
 //! identified. Its "who is this?" ask (ILDF2 P4) is raised once, on the
 //! roster revision it first entered under.
+//!
+//! The owner answers P5 on a private surface: [`Vault::confirm_container_attendee`]
+//! clears the entry's contact standing under a frozen offer and sets the
+//! history it sees, [`Vault::deny_container_attendee`] refuses, and either
+//! decides the entry once. The clearance stays the contact's own row; the
+//! container adds no `(room, contact)` grant. A contact already cleared is
+//! not asked or cleared again.
 
 use serde::{Deserialize, Serialize};
 
 use super::membership::HistoryChoice;
 use super::*;
-use crate::disclosure::UnknownAttendeeAsk;
+use crate::consent::{AuthenticatedOwner, ContactDisclosureOutcome, DisclosureConfirmationReceipt};
+use crate::disclosure::{
+    AttendeeIdentityChoice, DisclosureScopeStatus, RoomParty, UnknownAttendeeAsk,
+};
 use crate::error::GateError;
 use crate::memory::{Memory, MemoryResult};
-use crate::task_verb::TaskAskReceipt;
+use crate::task_verb::{AttendeeEntryFact, TaskAskReceipt};
 
 const ENTRY_SLOT_DOMAIN: &[u8] = b"oneiron.conversation.attendee_entry.slot.v1";
 
@@ -67,6 +77,9 @@ pub struct ContainerAttendeeEntry {
     pub roster_revision: u64,
     /// Engine time of the first entry: the attendee's history cut.
     pub entered_at: u64,
+    /// Who the owner said an unplaced speaker is, on the entry revision;
+    /// `None` while unanswered (unknown, so public-only) and for a PERSON.
+    pub identity: Option<AttendeeIdentityChoice>,
     /// An owner decided this entry's P5 question.
     pub decided: bool,
 }
@@ -183,7 +196,156 @@ impl Memory<'_> {
     }
 }
 
+fn not_clearable(reason: &'static str) -> Error {
+    Error::Gate(GateError::InvalidConsentBound(reason))
+}
+
 impl Vault {
+    /// The owner's yes to one entry's P5 question, in one write transaction:
+    /// clears the contact this entry is, standing, under the frozen offer
+    /// `proposal_ref` (exactly `expected_delta`), sets the history the entry
+    /// sees, and takes the entry's decision slot so it is decided once.
+    ///
+    /// The offer must be for the entry's contact: a PERSON's room party, or
+    /// the identity the owner gave an unplaced speaker on its entry
+    /// revision. A contact already cleared gets no new standing clearance:
+    /// its row already covers the entry, which keeps its history cut. An
+    /// unplaced speaker is no member, so it sees from its entry; only a
+    /// PERSON's history moves. Owner, offer, contact and prior clearance are
+    /// all revalidated by the confirm door this runs.
+    pub fn confirm_container_attendee(
+        &self,
+        owner: &AuthenticatedOwner,
+        entry_ref: &EntityId,
+        proposal_ref: &str,
+        expected_delta: &[u8],
+        history: HistoryChoice,
+    ) -> Result<DisclosureConfirmationReceipt> {
+        self.with_write_txn_grouped(|txn| {
+            let (fact, contact) = self.entry_contact_in_txn(txn, entry_ref, proposal_ref)?;
+            if crate::disclosure::contact_clearance_in_txn(&self.store, txn, &contact)?
+                .is_some_and(|clearance| clearance.status == DisclosureScopeStatus::Active)
+            {
+                return Err(not_clearable(
+                    "this contact is already cleared; its standing clearance covers the entry",
+                ));
+            }
+            let receipt = self.confirm_contact_disclosure_in_txn(
+                txn,
+                owner,
+                proposal_ref,
+                expected_delta,
+                ContactDisclosureOutcome::Standing,
+            )?;
+            self.take_decision_slot_in_txn(txn, &entry_slot(entry_ref), receipt.decision_id)?;
+            self.entry_history_in_txn(txn, owner, &fact, history)?;
+            Ok(receipt)
+        })
+    }
+
+    /// The owner's no to one entry's P5 question: settles the frozen offer
+    /// as denied, widens nothing, and decides the entry once. The entry
+    /// keeps its history cut, and the contact its current clearance.
+    pub fn deny_container_attendee(
+        &self,
+        owner: &AuthenticatedOwner,
+        entry_ref: &EntityId,
+        proposal_ref: &str,
+        expected_delta: &[u8],
+    ) -> Result<DisclosureConfirmationReceipt> {
+        self.with_write_txn_grouped(|txn| {
+            self.entry_contact_in_txn(txn, entry_ref, proposal_ref)?;
+            let receipt = self.confirm_contact_disclosure_in_txn(
+                txn,
+                owner,
+                proposal_ref,
+                expected_delta,
+                ContactDisclosureOutcome::Deny,
+            )?;
+            self.take_decision_slot_in_txn(txn, &entry_slot(entry_ref), receipt.decision_id)?;
+            Ok(receipt)
+        })
+    }
+
+    /// The entry `entry_ref` and the contact it is, bound to the offer
+    /// `proposal_ref`: the offer must be about that contact.
+    fn entry_contact_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entry_ref: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<(AttendeeEntryFact, EntityId)> {
+        let fact = crate::task_verb::read_attendee_entry_in(self, txn, *entry_ref)?
+            .ok_or(Error::EntityNotFound)?;
+        let contact = match &fact.attendee {
+            ContainerAttendee::Person(person) => {
+                let fold = self.authority_view_readonly_in_txn(txn)?;
+                match crate::disclosure::room_party_in(self, txn, &fold, *person)? {
+                    RoomParty::Contact(contact) => Some(contact),
+                    _ => None,
+                }
+            }
+            ContainerAttendee::Speaker {
+                session_key,
+                speaker_key,
+            } => match self.attendee_identity_in_txn(
+                txn,
+                session_key,
+                speaker_key,
+                fact.roster_revision,
+            )? {
+                Some(AttendeeIdentityChoice::Contact(contact)) => Some(contact),
+                _ => None,
+            },
+        }
+        .ok_or_else(|| not_clearable("this entry is no contact the owner can clear"))?;
+        let offer = self
+            .contact_disclosure_offer_in_txn(txn, proposal_ref)?
+            .ok_or_else(|| not_clearable("no contact-disclosure offer is filed under this ref"))?;
+        if offer.offer.contact_ref != contact {
+            return Err(not_clearable("the offer is for another contact"));
+        }
+        Ok((fact, contact))
+    }
+
+    /// Applies the owner's history choice to the entry `fact`. A PERSON's
+    /// current membership window starts at its join or at the origin; an
+    /// unplaced speaker's cut is its entry and does not move.
+    fn entry_history_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        fact: &AttendeeEntryFact,
+        history: HistoryChoice,
+    ) -> Result<()> {
+        let shares = match history {
+            HistoryChoice::Share => true,
+            HistoryChoice::None => false,
+            HistoryChoice::Inherit => body::body_in(self, txn, fact.container)?.shares_history(),
+        };
+        let ContainerAttendee::Person(person) = fact.attendee else {
+            if shares {
+                return Err(state("an unplaced speaker sees from its entry"));
+            }
+            return Ok(());
+        };
+        let window = self
+            .windows_in_txn(txn, fact.container, person)?
+            .pop()
+            .filter(|window| window.to.is_none())
+            .ok_or_else(|| state("not a current member"))?;
+        let from = if shares { 0 } else { window.joined_at };
+        if from == window.from {
+            return Ok(());
+        }
+        let actor = WriteActor::new(
+            owner.revalidate_in_txn(self, txn)?,
+            crate::EdgeActorClass::Human,
+        );
+        let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        self.set_history_visibility_in_txn(txn, fact.container, person, actor, at, from)
+    }
+
     /// The first entry of `attendee` into `container`; `None` until it
     /// entered.
     pub fn container_attendee_entry(
@@ -196,12 +358,25 @@ impl Vault {
         let Some(fact) = crate::task_verb::read_attendee_entry_in(self, &txn, entry_ref)? else {
             return Ok(None);
         };
+        let identity = match &fact.attendee {
+            ContainerAttendee::Person(_) => None,
+            ContainerAttendee::Speaker {
+                session_key,
+                speaker_key,
+            } => self.attendee_identity_in_txn(
+                &txn,
+                session_key,
+                speaker_key,
+                fact.roster_revision,
+            )?,
+        };
         Ok(Some(ContainerAttendeeEntry {
             entry_ref,
             container: fact.container,
             attendee: fact.attendee,
             roster_revision: fact.roster_revision,
             entered_at: fact.entered_at,
+            identity,
             decided: entry_decided_in(self, &txn, &entry_ref)?,
         }))
     }

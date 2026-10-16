@@ -8,10 +8,16 @@
 //! ask CLAIM froze. Every other word is refused before it is recorded, so an
 //! unauthorized word can never occupy First and strand the owner's later
 //! tap. A settlement without that proof may still close the ask on its
-//! deadline or as stale, never on a definitive word. Other asks are unchanged.
+//! deadline or as stale, never on a definitive word. The settlement that
+//! selects the owner's word resolves the speaker's identity in its own
+//! transaction, from that word's option alone; a replay never resolves
+//! again. Other asks are unchanged.
 
 use super::ask_record::{self, AskGroup};
-use super::ask_types::{TaskAskDecision, TaskAskSettlementReason, TaskAskSource, TaskAskWord};
+use super::ask_types::{
+    TaskAskDecision, TaskAskEvidenceReason, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
+    TaskAskWord,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimLifecycleStatus;
 use crate::consent::AuthenticatedOwner;
@@ -183,6 +189,63 @@ pub(super) fn may_cut(
     match owner {
         Some(owner) => Ok(owner.revalidate_in_txn(vault, txn)? == answer.actor_ref),
         None => Ok(false),
+    }
+}
+
+/// Resolves the speaker's identity from the word `result` selected, in the
+/// settlement's own write transaction, before the settlement is stored.
+///
+/// It acts only on a definitive cut of an attendee ask: a counted Human word
+/// selected First, coverage met, no fallback, a question still current, and
+/// live owner proof naming that word's actor. The choice is that word's own
+/// option, never a later caller's. An identity an owner door already
+/// recorded for this speaker and revision stands: the decision slot keeps
+/// its winner, and this settlement records its word without overwriting it.
+pub(super) fn resolve_answer_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    group: &AskGroup,
+    result: &TaskAskResult,
+    owner: Option<&AuthenticatedOwner>,
+) -> Result<()> {
+    let Some(hex) = attendee_intent(group) else {
+        return Ok(());
+    };
+    let (TaskAskDecision::First(answer), Some(owner)) = (&result.decision, owner) else {
+        return Ok(());
+    };
+    if !result.coverage.met
+        || result.fallback.is_some()
+        || result.settlement.reason == TaskAskSettlementReason::Stale
+        || owner.revalidate_in_txn(vault, txn)? != answer.actor_ref
+    {
+        return Ok(());
+    }
+    let selected = result
+        .evidence
+        .iter()
+        .find(|entry| {
+            entry.answer == *answer
+                && entry.reason == TaskAskEvidenceReason::Counted
+                && entry.source == TaskAskSource::Human
+        })
+        .ok_or_else(ask_record::invalid)?;
+    let choice = selected
+        .word
+        .option
+        .as_ref()
+        .and_then(AttendeeIdentityChoice::from_option)
+        .ok_or_else(ask_record::invalid)?;
+    let ask_ref = EntityId::from_hex(hex).map_err(|_| ask_record::invalid())?;
+    match vault.resolve_attendee_identity_in_txn(
+        txn,
+        owner,
+        &ask_ref,
+        group.effective.what.revision,
+        choice,
+    ) {
+        Ok(_) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
