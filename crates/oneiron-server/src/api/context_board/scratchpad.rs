@@ -1,0 +1,234 @@
+//! POST /v1/core/context-board/scratchpad: the caller's one session pad
+//! (OF-548). A line appends to the session's live `scratchpad` NOTE, opening
+//! it (and sealing the actor's prior pad) on the session's first line; a seal
+//! ends the run. The board serves the live pad as its SCRATCHPAD rows.
+
+use super::validate_session_id;
+use crate::auth::CoreAuth;
+use crate::auth::CoreScope;
+use crate::error::ApiError;
+use crate::error::ApiErrorDetails;
+use crate::error::ApiErrorEnvelope;
+use crate::error::EnvelopedApiError;
+use crate::server::SyncServer;
+use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
+use axum::response::Json;
+use oneiron::context_board::SCRATCHPAD_LINE_MAX_BYTES;
+use serde::Deserialize;
+use serde::Serialize;
+use std::sync::Arc;
+use utoipa::ToSchema;
+
+/// An optional line mark: after the seal `keep` lines extract and `scratch`
+/// lines never do.
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ContextBoardScratchpadMark {
+    Keep,
+    Scratch,
+}
+
+impl ContextBoardScratchpadMark {
+    fn engine(self) -> oneiron::context_board::ScratchpadMark {
+        match self {
+            Self::Keep => oneiron::context_board::ScratchpadMark::Keep,
+            Self::Scratch => oneiron::context_board::ScratchpadMark::Scratch,
+        }
+    }
+}
+
+/// One scratchpad write: a line, or the seal that ends the session's run.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(example = json!({
+    "session_id": "session-123",
+    "text": "the hallway door sticks after rain",
+    "mark": "keep"
+}))]
+pub(crate) struct ContextBoardScratchpadRequest {
+    /// The run's session id; one live pad per session.
+    session_id: String,
+    /// The line to append. Required unless `seal` is set.
+    #[serde(default)]
+    text: Option<String>,
+    /// Optional line mark.
+    #[serde(default)]
+    mark: Option<ContextBoardScratchpadMark>,
+    /// Keep the line in full on the board however old it gets.
+    #[serde(default)]
+    pin: bool,
+    /// Seal the session's pad instead of writing a line.
+    #[serde(default)]
+    seal: bool,
+}
+
+/// What the write did to the session's pad.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ContextBoardScratchpadResponse {
+    /// Hex id of the pad NOTE written or sealed; absent when a seal found no pad.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    pad: Option<String>,
+    /// Whether the pad is now sealed.
+    sealed: bool,
+    /// Hex id of the actor's prior pad, sealed because this line opened a new one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sealed_prior: Option<String>,
+}
+
+/// Append one line to the caller's session pad, or seal it.
+#[utoipa::path(
+    post,
+    path = "/v1/core/context-board/scratchpad",
+    request_body(content = ContextBoardScratchpadRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Line appended or pad sealed.", body = ContextBoardScratchpadResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed scratchpad request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or names no entity principal and actor class.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The session's pad is sealed.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 413, description = "The line exceeds the scratchpad line limit.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Scratchpad write failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+pub(crate) async fn context_board_scratchpad(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ContextBoardScratchpadRequest>, JsonRejection>,
+) -> Result<Json<ContextBoardScratchpadResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let req = super::super::json_payload(payload)?;
+    validate_session_id(&req.session_id, "session_id")?;
+    let memory = scratchpad_memory(&server, &auth)?;
+    if req.seal {
+        if req.text.is_some() || req.mark.is_some() || req.pin {
+            return Err(ApiError::bad_request("a seal carries no line", Some("seal")).into());
+        }
+        let pad = memory
+            .scratchpad_seal(&req.session_id)
+            .map_err(scratchpad_error)?;
+        return Ok(Json(ContextBoardScratchpadResponse {
+            pad: pad.map(|pad| pad.to_hex()),
+            sealed: pad.is_some(),
+            sealed_prior: None,
+        }));
+    }
+    let text = req
+        .text
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("text is required", Some("text")))?;
+    if text.len() > SCRATCHPAD_LINE_MAX_BYTES {
+        return Err(
+            ApiError::payload_too_large("text", SCRATCHPAD_LINE_MAX_BYTES, text.len()).into(),
+        );
+    }
+    let receipt = memory
+        .scratchpad_append(
+            &req.session_id,
+            text,
+            req.mark.map(ContextBoardScratchpadMark::engine),
+            req.pin,
+        )
+        .map_err(scratchpad_error)?;
+    Ok(Json(ContextBoardScratchpadResponse {
+        pad: Some(receipt.pad.to_hex()),
+        sealed: false,
+        sealed_prior: receipt.sealed_prior.map(|pad| pad.to_hex()),
+    }))
+}
+
+/// An agent run's live pad as its board serves it: the SCRATCHPAD section
+/// for the frame, its full-view rows, and the pad NOTE for the served rows.
+pub(super) struct ServedScratchpad {
+    pub(super) pad: oneiron::EntityId,
+    pub(super) rows: Vec<String>,
+    pub(super) section: oneiron::context_board::BoardSection,
+}
+
+/// The session's live pad, read as the agent itself. Any other caller, or a
+/// run without a session, gets none.
+pub(super) fn served_scratchpad(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    session: Option<&str>,
+) -> Result<Option<ServedScratchpad>, ApiError> {
+    let Some(session) =
+        session.filter(|_| auth.actor_class() == Some("agent") && auth.principal_ref().is_some())
+    else {
+        return Ok(None);
+    };
+    validate_session_id(session, "session.session_id")?;
+    let Some(board) = scratchpad_memory(server, auth)?
+        .scratchpad_board_section(session)
+        .map_err(scratchpad_error)?
+    else {
+        return Ok(None);
+    };
+    let rows = board
+        .section
+        .pinned_rows()
+        .iter()
+        .chain(board.section.detail_rows())
+        .cloned()
+        .collect();
+    Ok(Some(ServedScratchpad {
+        pad: board.pad,
+        rows,
+        section: board.section,
+    }))
+}
+
+/// The pad belongs to the authenticated entity principal under its declared
+/// class; the engine re-checks both on every write.
+fn scratchpad_memory<'a>(
+    server: &'a SyncServer,
+    auth: &CoreAuth,
+) -> Result<oneiron::memory::Memory<'a>, ApiError> {
+    let refused = |message: &str| {
+        ApiError::new(
+            message,
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Present a slip minted with --principal-ref and --actor-class."],
+        )
+    };
+    let actor = auth
+        .principal_ref()
+        .and_then(|reference| oneiron::EntityId::from_hex(reference).ok())
+        .ok_or_else(|| refused("the scratchpad needs an entity principal"))?;
+    let class = match auth.actor_class() {
+        Some("human") => oneiron::EdgeActorClass::Human,
+        Some("agent") => oneiron::EdgeActorClass::Agent,
+        Some("system") => oneiron::EdgeActorClass::System,
+        _ => return Err(refused("the scratchpad needs a declared actor class")),
+    };
+    Ok(
+        super::super::credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality()),
+    )
+}
+
+/// The engine's refusal on the board's error contract: its code picks the
+/// status, its message and suggestions pass through.
+fn scratchpad_error(error: oneiron::MemoryError) -> ApiError {
+    let details = match error.code.as_str() {
+        oneiron::MEMORY_CODE_BAD_REQUEST => ApiErrorDetails::BadRequest { field: None },
+        oneiron::MEMORY_CODE_NOT_FOUND => return ApiError::not_found("scratchpad", None),
+        oneiron::MEMORY_CODE_FORBIDDEN | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            }
+        }
+        oneiron::MEMORY_CODE_INVALID_STATE => ApiErrorDetails::InvalidState {
+            state: Some("scratchpad".to_owned()),
+        },
+        _ => {
+            tracing::error!(code = %error.code, error = %error.message, "scratchpad failed");
+            return ApiError::internal_server_error("scratchpad failed");
+        }
+    };
+    ApiError::new(error.message, details, error.suggestions)
+}
