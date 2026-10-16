@@ -16,8 +16,8 @@ use super::codec::{
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
-    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
-    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -208,7 +208,7 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Enqueues a SKILL-OPT attempt in a caller-owned write transaction, so a
     /// wake that registers one lands it as a durable fact of the wake.
-    fn enqueue_skill_optimize_in_txn(
+    pub(crate) fn enqueue_skill_optimize_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueDreamerSkillOptimizeAttempt,
@@ -763,6 +763,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
+        || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }
 
 /// The refusal-facing name of a wake trigger.

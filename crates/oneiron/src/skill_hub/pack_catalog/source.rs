@@ -12,6 +12,7 @@ pub struct PackSource {
     pub(super) manifest: PackManifest,
     pub(super) hash: SkillContentHash,
     pub(super) sections: Vec<PackSection>,
+    pub(super) hooks: Vec<super::PackHook>,
 }
 impl PackSource {
     pub fn from_files(mut files: Vec<HubFile>) -> Result<Self> {
@@ -120,7 +121,7 @@ impl PackSource {
                         file.path.as_str(),
                         "identity.md" | "policy.md" | "skills.json"
                     ))
-                && !["skills/", "knowledge/", "scripts/"]
+                && !["skills/", "knowledge/", "scripts/", "hooks/"]
                     .iter()
                     .any(|prefix| file.path.starts_with(prefix))
             {
@@ -130,11 +131,13 @@ impl PackSource {
         if let Some(facets) = &manifest.agent_facets {
             facets.validate_files(&manifest, &files)?;
         }
+        let hooks = super::hooks::parse_source_hooks(&manifest, &files)?;
         Ok(Self {
             files,
             manifest,
             hash,
             sections,
+            hooks,
         })
     }
     pub fn entity_id(&self) -> Result<crate::EntityId> {
@@ -149,12 +152,16 @@ impl PackSource {
     pub fn sections(&self) -> &[PackSection] {
         &self.sections
     }
+    pub fn hooks(&self) -> &[super::PackHook] {
+        &self.hooks
+    }
     pub fn has_code(&self) -> bool {
         self.manifest.kind == super::PackKind::Connector
-            || self
-                .files
-                .iter()
-                .any(|file| file.path.starts_with("scripts/") || file.path.contains("/scripts/"))
+            || self.files.iter().any(|file| {
+                file.path.starts_with("scripts/")
+                    || file.path.contains("/scripts/")
+                    || file.path.starts_with("hooks/")
+            })
     }
     pub fn content_hash(&self) -> SkillContentHash {
         self.hash

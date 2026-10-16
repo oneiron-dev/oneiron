@@ -63,7 +63,8 @@ pub(crate) fn cell_prior_in_txn(
             .setting_key
             .as_deref()
             .and_then(learning_setting::setting_spec)
-        && let Some((value, weight_runs)) = learning_setting::owner_seed_in_txn(&vault.store, txn, spec)?
+        && let Some((value, weight_runs)) =
+            learning_setting::owner_seed_in_txn(&vault.store, txn, spec)?
     {
         return Ok(Prior {
             origin: PriorOrigin::Seed,

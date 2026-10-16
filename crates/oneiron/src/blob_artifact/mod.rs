@@ -24,8 +24,11 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+mod born_from;
+mod family;
 mod holders;
 mod lifecycle;
+mod made_by;
 mod provenance;
 mod references;
 mod store_keys;
@@ -38,11 +41,15 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
+pub use self::born_from::{BornFromArtifact, BornFromSource};
+pub(crate) use self::family::hash_hex;
+pub use self::family::{ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView};
 pub(crate) use self::holders::{
     artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
     held_content_hashes_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
+pub use self::made_by::BLOB_VERSION_MADE_BY_MAX_INPUTS;
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, record_version_claim,

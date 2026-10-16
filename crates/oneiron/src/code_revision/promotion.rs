@@ -11,6 +11,14 @@ use rmpv::Value;
 const PROMOTIONS: SideTable<EntityId, Vec<String>, LegacyCompact> =
     SideTable::new(&side_table::CODE_REVISION_PROMOTION);
 
+/// One file a promoted revision changed and the operations that changed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeRevisionFileOps {
+    pub document_id: [u8; 32],
+    pub path: String,
+    pub ops: Vec<crate::code_document::CodeOpAttribution>,
+}
+
 /// Host-recorded inputs for a code-touching session. No prompt payload is put in Git.
 pub struct CodeSessionRun {
     pub session: EntityId,
@@ -123,6 +131,7 @@ impl Vault {
             let reviewed_mode = proposal.reviewed_file_mode(self, &edit.after)?;
             if edit.session_id != proposal.session
                 || edit.actor.entity_ref() != proposal.actor
+                || edit.provenance != proposal.op_provenance
                 || edit.edit.path != proposal.path
                 || reviews
                     .insert(edit.document_id, (proposal, edit, reviewed_mode))
@@ -251,6 +260,36 @@ impl Vault {
         }
         Err(Error::IndexOverflow("code_revision_mode_review_chain"))
     }
+    /// The document operations a promoted revision carries, per changed file:
+    /// every operation its tested frontier holds beyond the parent's, each
+    /// with its actor, turn, activity, intent and model.
+    pub fn code_revision_promoted_ops(
+        &self,
+        revision_id: EntityId,
+    ) -> Result<Vec<CodeRevisionFileOps>> {
+        self.require_code_revision_promotion(revision_id)?;
+        let revision = self
+            .get_code_revision(&revision_id)?
+            .ok_or(Error::EntityNotFound)?;
+        let parent = revision
+            .parent_revision_id
+            .map(|id| self.get_code_revision(&id)?.ok_or(Error::EntityNotFound))
+            .transpose()?;
+        let mut files = Vec::new();
+        for (id, file) in &revision.file_frontiers {
+            let before = parent.as_ref().and_then(|p| p.file_frontiers.get(id));
+            if before == Some(file) {
+                continue;
+            }
+            files.push(CodeRevisionFileOps {
+                document_id: *id,
+                path: file.path.clone(),
+                ops: self.code_document_ops_between(before, file)?,
+            });
+        }
+        Ok(files)
+    }
+
     pub fn code_revision_promotions(&self, revision: EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         let Some(ids) = PROMOTIONS.get(&self.store, &txn, &revision)? else {

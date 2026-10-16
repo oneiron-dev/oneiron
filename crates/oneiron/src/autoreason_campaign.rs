@@ -21,8 +21,10 @@
 
 use crate::extraction_eval::Of360EvalError;
 
+pub mod archive;
 pub mod beam_promotion;
 mod config;
+pub mod coverage;
 pub mod general;
 mod judge;
 mod report;
@@ -34,7 +36,10 @@ pub use config::{
     CampaignCorpusFilter, CampaignCriticTier, CampaignDatasetRef, CampaignExecutableArm,
     CampaignMetricPin, CampaignSplits, CampaignTournamentConfig,
 };
-pub use judge::{BlindCampaignJudgeInput, CampaignGoldAnchor, CampaignTasteJudgment};
+pub use judge::{
+    BlindCampaignJudgeInput, CAMPAIGN_TASTE_DIAL, CampaignGoldAnchor, CampaignTaste,
+    CampaignTasteDecisions, CampaignTasteWording,
+};
 pub use report::{
     CampaignArmReport, CampaignCost, CampaignEvaluationSplit, CampaignSmokeOutcome,
     CampaignSplitReport, build_campaign_split_report, merge_campaign_arm_report,
@@ -98,6 +103,9 @@ pub enum CampaignError {
     /// The landed OF-360 evaluator refused the dataset or run.
     #[error(transparent)]
     Of360(#[from] Of360EvalError),
+    /// The taste decision could not be asked.
+    #[error(transparent)]
+    Decision(#[from] crate::Error),
 }
 
 /// Result alias for campaign operations.

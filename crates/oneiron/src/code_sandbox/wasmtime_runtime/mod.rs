@@ -17,7 +17,8 @@ pub mod bindings {
 
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    JsCodeModeStream,
 };
 use crate::{Error, Result};
 use std::sync::mpsc;
@@ -47,7 +48,10 @@ impl Default for ComponentBudget {
         Self {
             // The QuickJS factory's readiness probe alone burns 12,684,552 fuel
             // on the pinned first-party artifact; the default must admit it.
-            fuel: 100_000_000,
+            // A streamed result costs the guest a few instructions a byte to
+            // encode, so a step may emit hundreds of megabytes before its
+            // fuel, not its wall time, ends it.
+            fuel: 2_000_000_000,
             memory_bytes: 64 * 1024 * 1024,
             wall_time: Duration::from_secs(5),
             host_calls: 256,
@@ -145,8 +149,11 @@ impl WasmtimeComponentRuntime {
             step_seq: step.seq,
             random_counter: 0,
             message_bytes: budget.message_bytes,
+            held: HeldOutput::default(),
+            held_limit: budget.memory_bytes,
+            output_failure: None,
         };
-        std::thread::scope(|scope| {
+        let outcome = std::thread::scope(|scope| {
             let worker_engine = engine.clone();
             scope.spawn(move || {
                 let result = execute_component(
@@ -165,7 +172,8 @@ impl WasmtimeComponentRuntime {
             // drive_host drops its receiver first, so blocked sends wake.
             engine.increment_epoch();
             result
-        })
+        })?;
+        bridge.held.into_outcome(outcome)
     }
 }
 
@@ -250,7 +258,25 @@ fn drive_host(
                 let response = wire::dispatch(bridge, name, &input);
                 let _ = reply.send(response);
             }
-            Ok(HostEvent::Finished(result)) => return result,
+            Ok(HostEvent::Output {
+                target,
+                frame,
+                reply,
+            }) => {
+                // A refused frame traps the guest, so no step goes on with
+                // part of its result missing; the host's reason is the step's.
+                let response = wire::output(bridge, target, frame).map_err(|error| {
+                    bridge.output_failure = Some(error);
+                    failure("streamed output refused")
+                });
+                let _ = reply.send(response);
+            }
+            Ok(HostEvent::Finished(result)) => {
+                return match bridge.output_failure.take() {
+                    Some(error) => Err(error),
+                    None => result,
+                };
+            }
             Err(_) => return Err(failure("component deadline or worker failure")),
         }
     }
@@ -276,6 +302,82 @@ struct Bridge<'a> {
     step_seq: u64,
     random_counter: u64,
     message_bytes: usize,
+    held: HeldOutput,
+    held_limit: usize,
+    output_failure: Option<Error>,
+}
+
+/// One streamed frame's target, owned for the trip to the host thread.
+enum StreamTarget {
+    Console,
+    Finish { start: bool },
+    File(String),
+}
+
+impl StreamTarget {
+    fn stream(&self) -> JsCodeModeStream<'_> {
+        match self {
+            Self::Console => JsCodeModeStream::Console,
+            Self::Finish { start } => JsCodeModeStream::Finish { start: *start },
+            Self::File(path) => JsCodeModeStream::File(path),
+        }
+    }
+}
+
+/// The streamed result of a step whose host keeps no body store (a probe, a
+/// callable skill's JSON answer), held for its outcome within the
+/// component's memory budget.
+#[derive(Default)]
+struct HeldOutput {
+    console: Vec<u8>,
+    finish: Vec<u8>,
+    files: Vec<(String, Vec<u8>)>,
+    bytes: usize,
+}
+
+impl HeldOutput {
+    fn take(&mut self, target: StreamTarget, frame: Vec<u8>, limit: usize) -> Result<()> {
+        if let StreamTarget::Finish { start: true } = target {
+            self.bytes -= self.finish.len();
+            self.finish.clear();
+        }
+        self.bytes = self.bytes.saturating_add(frame.len());
+        if self.bytes > limit {
+            return Err(failure(
+                "streamed output exceeds what a host with no result store holds",
+            ));
+        }
+        match target {
+            StreamTarget::Console => self.console.extend_from_slice(&frame),
+            StreamTarget::Finish { .. } => self.finish.extend_from_slice(&frame),
+            StreamTarget::File(path) => match self.files.iter_mut().find(|(held, _)| *held == path)
+            {
+                Some((_, bytes)) => bytes.extend_from_slice(&frame),
+                None => self.files.push((path, frame)),
+            },
+        }
+        Ok(())
+    }
+
+    /// The step's outcome with what was held: the answer of a finished
+    /// step, else its console lines, and its files.
+    fn into_outcome(self, mut outcome: JsCodeModeStepOutcome) -> Result<JsCodeModeStepOutcome> {
+        let text = if outcome.done {
+            self.finish
+        } else {
+            self.console
+        };
+        if outcome.observation.is_empty() {
+            outcome.observation = String::from_utf8(text)
+                .map_err(|_| failure("streamed observation is not UTF-8"))?;
+        }
+        outcome.outputs.extend(
+            self.files
+                .into_iter()
+                .map(|(path, bytes)| JsCodeModeOutput::new(path, bytes)),
+        );
+        Ok(outcome)
+    }
 }
 
 struct State {
@@ -291,6 +393,11 @@ enum HostEvent {
         input: String,
         reply: mpsc::SyncSender<Result<String>>,
     },
+    Output {
+        target: StreamTarget,
+        frame: Vec<u8>,
+        reply: mpsc::SyncSender<Result<u64>>,
+    },
     Finished(Result<JsCodeModeStepOutcome>),
 }
 
@@ -299,17 +406,11 @@ enum HostEvent {
 const GUEST_ERROR_CHARS: usize = 2048;
 
 /// The guest's own error text for a failed step, so the model learns why its
-/// program stopped. A refusal the bootstrap raises names its bound.
+/// program stopped.
 fn guest_failure(message: &str) -> Error {
     let mut text: String = message.chars().take(GUEST_ERROR_CHARS).collect();
     if text.len() < message.len() {
         text.push_str(&format!(" … ({} bytes in all)", message.len()));
-    }
-    if message.starts_with("RangeError: output budget") {
-        text.push_str(
-            " (one step may emit at most 262,144 characters through console.log, finish \
-             and writeOutput together; emit less per step)",
-        );
     }
     Error::InvalidConfig(format!("guest reported step failure: {text}"))
 }
