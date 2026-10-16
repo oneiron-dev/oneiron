@@ -251,6 +251,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         short_id: String,
         content_hash: u8,
         view: View,
+        reader: &crate::memory::AssetConsumer,
     ) -> VaultReadResult<(CoreHydrateResponse, Option<ServedForm>)> {
         let hydrated = self
             .scoped_read
@@ -263,19 +264,25 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             short_id,
             content_hash,
             view,
+            reader,
             hydrated.value,
             &mut narrowing,
         )
     }
 
-    /// One hydrated item, and the text form it serves in place of an
+    /// One hydrated item, and the form it serves `reader` in place of an
     /// image's body: the caller records it before it answers.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one hydrated item: its method, ref, view, reader, row and receipt"
+    )]
     fn project_hydrate(
         &self,
         method: VaultReadMethod,
         short_id: String,
         content_hash: u8,
         view: View,
+        reader: &crate::memory::AssetConsumer,
         hydrated: Option<ReadRow>,
         narrowing: &mut crate::claim::ScopedReadReceipt,
     ) -> VaultReadResult<(CoreHydrateResponse, Option<ServedForm>)> {
@@ -306,32 +313,44 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             };
             return Ok((response, None));
         };
-        // A generated image is served the form a reader that declared no
-        // image input reads (OF-329): its ASSET_TEXT, read through this lane.
+        // A generated image is served the form `reader` reads (OF-329): its
+        // bytes, or its ASSET_TEXT, each read through this lane.
         let mut served = None;
         if entity_type == ENTITY_TYPE_ASSET {
-            let asset = crate::memory::hydrated_asset(&self.scoped_read, id, &mut |_| true)
-                .map_err(|error| engine_failure(method, &error))?;
+            let asset =
+                crate::memory::hydrated_asset(&self.scoped_read, id, reader, None, &mut |_| true)
+                    .map_err(|error| engine_failure(method, &error))?;
             narrowing.restrict_with(&asset.receipt);
-            if let crate::memory::HydratedAsset::Text { body, asset_text } = asset.value {
-                if let Some(producers) = self.producers {
-                    producers.list([asset_text]);
+            served = match asset.value {
+                crate::memory::HydratedAsset::Image { body, caption } => {
+                    if let Some(producers) = self.producers {
+                        producers.list(caption);
+                    }
+                    Some((body, ServedForm::image(id)))
                 }
-                served = Some((body, asset_text));
-            }
+                crate::memory::HydratedAsset::Text { body, asset_text } => {
+                    if let Some(producers) = self.producers {
+                        producers.list([asset_text]);
+                    }
+                    Some((body, ServedForm::text(id, asset_text)))
+                }
+                crate::memory::HydratedAsset::Stored | crate::memory::HydratedAsset::Omitted => {
+                    None
+                }
+            };
         }
         let item = entity_record_from_parts(
             &id,
             entity_type,
             learned_at,
             None,
-            served.as_ref().map_or(&body, |(text, _)| text),
+            served.as_ref().map_or(&body, |(form, _)| form),
             view,
         );
-        // A Standard item carries no body, so it serves no text.
+        // A Standard item carries no body, so it serves no form.
         let served = served
             .filter(|_| !matches!(view, View::Standard))
-            .map(|(_, asset_text)| ServedForm::text(id, asset_text));
+            .map(|(_, form)| form);
         let response = CoreHydrateResponse {
             narrowing: narrowing.clone(),
             status: CoreHydrateStatus::Live,
@@ -348,11 +367,13 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     fn hydrate_op(&self, request: &CoreHydrateRequest) -> VaultReadResult<CoreHydrateResponse> {
         const METHOD: VaultReadMethod = VaultReadMethod::Hydrate;
         let (short_id, content_hash) = parse_short_ref_request(request)?;
+        let view = request.view.unwrap_or(View::Full);
         let (response, served) = self.hydrate_ref(
             METHOD,
             short_id,
             content_hash,
-            request.view.unwrap_or(View::Full),
+            view,
+            &hydrate_reader(request.image_input, view),
         )?;
         self.scoped_read
             .commit_served_forms(served.as_slice())
@@ -366,6 +387,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     ) -> VaultReadResult<CoreBatchShortIdHydrateResponse> {
         const METHOD: VaultReadMethod = VaultReadMethod::HydrateMany;
         let view = request.view.unwrap_or(View::Full);
+        let reader = hydrate_reader(request.image_input, view);
         let parsed: Vec<_> = request
             .refs
             .iter()
@@ -401,6 +423,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     short_id,
                     content_hash,
                     view,
+                    &reader,
                     values.next().flatten(),
                     &mut narrowing,
                 )
@@ -410,7 +433,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 });
             results.push(batch_item_from_result(reference.clone(), result)?);
         }
-        // Every text the batch served is recorded in one write before it
+        // Every form the batch served is recorded in one write before it
         // answers.
         self.scoped_read
             .commit_served_forms(&served)
@@ -434,6 +457,12 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         }
         Ok(project_memory_timeline(&timeline))
     }
+}
+
+/// The reader a hydrate serves: one that reads images when its request says
+/// so and its `view` carries the body they would be served in.
+fn hydrate_reader(image_input: bool, view: View) -> crate::memory::AssetConsumer {
+    crate::memory::AssetConsumer::hydrate_reader(image_input && !matches!(view, View::Standard))
 }
 
 /// Mirrors the accepted route's budget application: the WIDENED internal

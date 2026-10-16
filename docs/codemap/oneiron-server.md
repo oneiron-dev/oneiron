@@ -106,7 +106,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
-| `src/api/feedback_inbox.rs` | src | s | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
+| `src/api/feedback_inbox.rs` | src | m | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
 | `src/api/feedback_inbox/flood.rs` | src | s | 4 crate-vis | — | The open inbox's flood cap: the one refusal its keyless intake makes |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/mod.rs` | src | s | 2 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
@@ -130,7 +130,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm/decision_read/tests.rs` | test | s | 1 crate-vis | — | The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check… |
 | `src/api/llm/tests.rs` | test | L | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 10 crate-vis | — | Tool execution dispatch across actors |
-| `src/api/mcp_gateway/admission.rs` | src | m | 9 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/admission.rs` | src | m | 10 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 4 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | L | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | s | 3 crate-vis | — | Code mode's `self.memory.<verb>`: the SDK verb table through the tool door |
@@ -246,7 +246,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-broker.rs` | src | s | — | — | `oneiron-broker serve`: the credential broker, run as its own OS user |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
-| `src/byte_line.rs` | src | s | 8 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
+| `src/byte_line.rs` | src | m | 11 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
 | `src/cli.rs` | src | m | 18 struct · 8 enum · 3 fn · 2 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +18 | — |
 | `src/cli/hook_args.rs` | src | s | 4 struct · 3 enum · 1 fn | HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs | `oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and… |
 | `src/cli/owner_args.rs` | src | m | 18 struct · 5 enum | BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs +15 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
@@ -281,18 +281,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/unauthenticated_bind_tests.rs` | test | s | — | — | Unauthenticated mode (`--insecure-allow-unauthenticated` with no `auth_secret`) admits a request with no… |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
 | `src/config/backup.rs` | src | s | 2 struct · 2 fn · 3 crate-vis | BackupConfig, BackupConfigOverride | The `[backup]` section: where local backups go, whether `serve` takes them on its own, how often, and how… |
+| `src/config/browser.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | BrowserConfig | `[browser]`: the guest a code run's `self.memory.browser.*` verbs drive |
 | `src/config/embedder.rs` | src | m | 6 struct · 5 enum · 7 fn · 4 const · 3 crate-vis | AutoDevicePrecedence, EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant +3 | The `[embedder]` section: provider selection and the keys each provider reads |
 | `src/config/embedder_shape.rs` | src | s | 2 enum · 2 fn · 2 crate-vis | EmbedderAttention, EmbedderOutputQuantization | Keys that override what a local checkpoint declares about its own shape |
 | `src/config/embedder_space.rs` | src | s | 3 crate-vis | — | The local provider's space id and the files that fill it, settled as one |
 | `src/config/embedder_tests.rs` | test | s | — | — | Resolution rows for the `[embedder]` section |
 | `src/config/feedback.rs` | src | s | 2 struct · 2 fn · 1 const · 5 crate-vis | FeedbackConfig, FeedbackInboxConfig | The `[feedback]` section: where the owner's feedback goes (OF-420) |
 | `src/config/import.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | ImportConfig, ImportConfigOverride | The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import… |
-| `src/config/keystore.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 4 crate-vis | KeystoreBackend, KeystoreConfig | The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b) |
+| `src/config/keystore.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 re-export · 4 crate-vis | KeystoreBackend, KeystoreConfig | The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b, P6c) |
 | `src/config/limits.rs` | src | m | 1 struct · 6 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
 | `src/config/limits_tests.rs` | test | s | — | — | Resolution rows for the `[limits]` section |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 2 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/mod.rs` | src | s | 9 mod · 14 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 10 mod · 15 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
 | `src/config/models/decision_read.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal | `[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it… |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 7 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
@@ -341,14 +342,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
 | `src/feedback_delivery.rs` | src | s | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
-| `src/handler/app_tier.rs` | src | s | 4 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
+| `src/handler/app_tier.rs` | src | m | 4 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
 | `src/handler/conn_state.rs` | src | s | 10 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
 | `src/handler/connection.rs` | src | m | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
-| `src/handler/documents.rs` | src | m | 2 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
+| `src/handler/documents.rs` | src | m | 4 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 4 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
 | `src/handler/federation.rs` | src | s | 1 crate-vis | — | Authenticated selector fetches with durable defer and current-grant replay |
 | `src/handler/hello.rs` | src | s | 3 crate-vis | — | First-frame protocol-version negotiation gate |
+| `src/handler/lag_resync.rs` | src | s | 1 crate-vis | — | A socket that fell behind the shared fan-out is told again what it may have missed; it is never closed for… |
+| `src/handler/lag_resync_tests.rs` | test | m | — | — | Lag never closes a socket (rule 5): a socket that fell behind the shared fan-out is told again what it may… |
 | `src/handler/lfs_chunks.rs` | src | s | 2 crate-vis | — | Versioned owner-authenticated chunk requests, disjoint from selector window mode |
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 3 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
@@ -356,7 +359,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 11 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
-| `src/handler/window_row_tests.rs` | test | m | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
+| `src/handler/window_row_tests.rs` | test | L | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
 | `src/handler/window_sync.rs` | src | m | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
 | `src/http_listener.rs` | src | m | 7 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/tests.rs` | test | m | 1 crate-vis | — | The listener's admission, end to end over real sockets (C4, and the rate law of ARCH-0044 C5): headers that… |
@@ -365,25 +368,26 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 2 fn · 18 mod · 1 re-export | — | Oneiron CRDT sync server library |
 | `src/linear_host.rs` | src | m | 2 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
-| `src/livequery.rs` | src | m | 23 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
-| `src/livequery/budget.rs` | src | s | 8 crate-vis | — | Retained app state has both a session ceiling and a shared hub ceiling |
-| `src/livequery/connection.rs` | src | m | 14 crate-vis | — | Socket attachment and bounded reconnect retention |
+| `src/livequery.rs` | src | m | 24 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
+| `src/livequery/budget.rs` | src | s | 7 crate-vis | — | Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never… |
+| `src/livequery/connection.rs` | src | m | 18 crate-vis | — | Socket attachment and bounded reconnect retention |
 | `src/livequery/device_local_tests.rs` | test | m | — | — | Sol on the device-local reads (F6, R2 F1 and F8, R3 F1): a live subscription keeps the pushes it derived… |
-| `src/livequery/error.rs` | src | s | 10 crate-vis | — | The HTTP facade error body on app frames |
+| `src/livequery/error.rs` | src | s | 12 crate-vis | — | The HTTP facade error body on app frames |
 | `src/livequery/history.rs` | src | s | 6 crate-vis | — | Retained scoped app payloads live in a separate journal, not the cursor document |
 | `src/livequery/membership.rs` | src | s | 1 crate-vis | — | Insertion/edge membership checks, separate from served entity dependencies |
 | `src/livequery/production_socket_tests.rs` | test | m | 6 crate-vis | — | Full production socket + Hub + BoundSource + engine writes |
-| `src/livequery/production_tests.rs` | test | XL | 8 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
+| `src/livequery/production_tests.rs` | test | XL | 9 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
 | `src/livequery/publication.rs` | src | m | 7 crate-vis | — | Revision-keyed publication lifecycle; one bounded owner per logical session |
 | `src/livequery/reads.rs` | src | s | 5 crate-vis | — | The eight existing WS read verbs call the engine facade, without write aliases |
 | `src/livequery/remediation_tests.rs` | test | s | — | — | — |
-| `src/livequery/residence.rs` | src | m | 2 crate-vis | — | Grant-scoped home-node reads for opened-item devices |
-| `src/livequery/residence/tests.rs` | test | s | — | — | — |
+| `src/livequery/residence.rs` | src | m | 3 crate-vis | — | Grant-scoped home-node reads for opened-item devices |
+| `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/livequery/routing.rs` | src | s | 5 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
+| `src/livequery/rule5_tests.rs` | test | m | 4 crate-vis | — | Rule five at the live-query rows (census rows 20 to 24): past a row the next session or subscription waits… |
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |
 | `src/livequery/source.rs` | src | m | 3 crate-vis | — | Authority-bound coarse projection |
 | `src/livequery/subscriptions/delivery.rs` | src | s | 2 crate-vis | — | — |
-| `src/livequery/subscriptions/mod.rs` | src | L | 20 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
+| `src/livequery/subscriptions/mod.rs` | src | L | 22 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
 | `src/livequery/test_wire.rs` | src | s | 4 crate-vis | — | Socket fixture codec |
 | `src/livequery/tests.rs` | test | m | — | — | — |
 | `src/livequery/wire.rs` | src | s | 11 crate-vis | — | Version-8 app envelopes |
@@ -482,7 +486,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 7 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
-| `src/protocol.rs` | src | m | 29 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
+| `src/protocol.rs` | src | m | 30 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
 | `src/runtime/config.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
 | `src/runtime/defaults.rs` | src | m | 5 struct · 11 fn · 6 crate-vis | RuntimeConfigOverride, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults, RuntimeRoleTarget, RuntimeRoleTargetOverride | Per-role default targets, explicitness tracking, and the full override-merge cluster |
 | `src/runtime/gpu.rs` | src | s | 4 struct · 1 enum · 12 fn · 2 const | GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError | Per-region single-writer GPU registry, suitable for a Durable Object owner |
@@ -490,15 +494,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/mode.rs` | src | s | 3 enum · 5 fn · 1 const · 2 crate-vis | RuntimeMode, RuntimeProviderKind, RuntimeRole | Runtime mode, provider-kind, and role taxonomies with string conversions |
 | `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
 | `src/server/board_publisher.rs` | src | s | 4 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
-| `src/server/core.rs` | src | m | 1 struct · 10 fn · 14 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/core.rs` | src | m | 1 struct · 11 fn · 15 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
 | `src/server/embedding.rs` | src | m | 6 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/housekeeping.rs` | src | s | 9 crate-vis | — | The host's half of the engine's housekeeping |
 | `src/server/housekeeping_tests.rs` | test | m | — | — | Done-means for host housekeeping: a running server, its lifecycle loop on a short tick over a vault on a… |
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
+| `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
-| `src/server/mod.rs` | src | s | 3 re-export · 5 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 3 re-export · 7 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/oversight.rs` | src | s | 1 enum · 5 crate-vis | OversightStartError | The healer oversight receipts (ARCH-0066 §8): each vault signs three counts about review work, coverage… |
+| `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
 | `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 6 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against `[limits].retrieval_query_bytes`, and the OF-520… |
 | `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_rerank.rs` | src | s | 5 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |

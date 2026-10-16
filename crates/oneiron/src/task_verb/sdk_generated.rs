@@ -144,6 +144,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "browser.open",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
+            ),
+            (
+                "browser.observe",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ObserveInput>(),
+            ),
+            (
+                "browser.find",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::FindInput>(),
+            ),
+            (
+                "browser.click",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ClickInput>(),
+            ),
+            (
+                "browser.type",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::TypeInput>(),
+            ),
+            (
+                "browser.select",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::SelectInput>(),
+            ),
+            (
+                "browser.wait_for",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::WaitForInput>(),
+            ),
+            (
+                "browser.expect",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ExpectInput>(),
+            ),
+            (
+                "browser.screenshot",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ScreenshotInput>(),
+            ),
+            (
                 "search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -547,6 +583,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
+        "browser.open" => {
+            let _input: oneiron_browser::OpenInput = decode(value.clone())?;
+        }
+        "browser.observe" => {
+            let _input: oneiron_browser::ObserveInput = decode(value.clone())?;
+        }
+        "browser.find" => {
+            let _input: oneiron_browser::FindInput = decode(value.clone())?;
+        }
+        "browser.click" => {
+            let _input: oneiron_browser::ClickInput = decode(value.clone())?;
+        }
+        "browser.type" => {
+            let _input: oneiron_browser::TypeInput = decode(value.clone())?;
+        }
+        "browser.select" => {
+            let _input: oneiron_browser::SelectInput = decode(value.clone())?;
+        }
+        "browser.wait_for" => {
+            let _input: oneiron_browser::WaitForInput = decode(value.clone())?;
+        }
+        "browser.expect" => {
+            let _input: oneiron_browser::ExpectInput = decode(value.clone())?;
+        }
+        "browser.screenshot" => {
+            let _input: oneiron_browser::ScreenshotInput = decode(value.clone())?;
+        }
         _ => return Err(MemoryError::bad_request("unknown SDK agent verb")),
     }
     Ok(())
@@ -587,6 +650,58 @@ pub fn invoke(
         "rooms.speak" => encode(rooms_speak(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     }
+}
+pub fn invoke_browser(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    verb: &str,
+    value: serde_json::Value,
+) -> Result<serde_json::Value, oneiron_browser::BrowserError> {
+    let invalid =
+        |error: serde_json::Error| oneiron_browser::BrowserError::Input(error.to_string());
+    let output = match verb {
+        "browser.open" => serde_json::to_value(browser_open(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.observe" => serde_json::to_value(browser_observe(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.find" => serde_json::to_value(browser_find(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.click" => serde_json::to_value(browser_click(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.type" => serde_json::to_value(browser_type(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.select" => serde_json::to_value(browser_select(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.wait_for" => serde_json::to_value(browser_wait_for(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.expect" => serde_json::to_value(browser_expect(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "browser.screenshot" => serde_json::to_value(browser_screenshot(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        _ => {
+            return Err(oneiron_browser::BrowserError::Input(format!(
+                "{verb} is not a browser verb"
+            )));
+        }
+    };
+    output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string()))
 }
 pub fn board_expand<S: crate::board_verb::LiveBoardSource>(
     context: &mut crate::board_verb::BoardVerbContext<'_, S>,
@@ -871,4 +986,58 @@ pub fn rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn browser_open(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::OpenInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.open(input)
+}
+pub fn browser_observe(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ObserveInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.observe(input)
+}
+pub fn browser_find(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::FindInput,
+) -> Result<oneiron_browser::FindOutput, oneiron_browser::BrowserError> {
+    driver.find(input)
+}
+pub fn browser_click(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ClickInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.click(input)
+}
+pub fn browser_type(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::TypeInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.type_text(input)
+}
+pub fn browser_select(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::SelectInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.select(input)
+}
+pub fn browser_wait_for(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::WaitForInput,
+) -> Result<oneiron_browser::WaitForOutput, oneiron_browser::BrowserError> {
+    driver.wait_for(input)
+}
+pub fn browser_expect(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ExpectInput,
+) -> Result<oneiron_browser::ExpectOutput, oneiron_browser::BrowserError> {
+    driver.expect(input)
+}
+pub fn browser_screenshot(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ScreenshotInput,
+) -> Result<oneiron_browser::ScreenshotOutput, oneiron_browser::BrowserError> {
+    driver.screenshot(input)
 }
