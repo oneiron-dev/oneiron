@@ -62,6 +62,14 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// What conversational signal does a received reaction carry? Host wording;
+/// the fixed labels are ack, agree, disagree, affect and none.
+pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
+    name: "conversation.reaction.meaning",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Replay scores, independent judge audits, blind preferences and skill tradeoffs.
 pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
     name: "skill_optimize.judgment",
@@ -108,15 +116,25 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// How should this parked contradiction settle (keep one member, hold both, dismiss or
+/// escalate)? Keyed by the contested predicates.
+pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_settle",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
     CRITIC_REVIEW,
     FANOUT_ASK,
+    REACTION_MEANING,
     SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
     CAMPAIGN_TASTE,
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    CONFLICT_SETTLE,
 ];

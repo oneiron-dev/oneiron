@@ -26,6 +26,7 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 mod agent_verbs;
+pub(super) mod host_doors;
 #[cfg(test)]
 pub(super) mod tests;
 
