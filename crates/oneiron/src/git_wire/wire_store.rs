@@ -59,6 +59,23 @@ impl GitWire<'_> {
         Ok(rows)
     }
 
+    /// Whether any ref effect of the repository at `identity` is still
+    /// prepared: a direct, staged or batched publish, whatever state the
+    /// origin record that owns it is in. A re-drive of a Published row is its
+    /// own attempt, which no origin row counts.
+    pub(crate) fn has_prepared_ref_effects(&self, identity: GitWireRepoIdentity) -> Result<bool> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let prefix = record_row_prefix_suffix(identity);
+        for (_, stored) in RECORDS.scan_from(&self.vault.store, &rtxn, &prefix)? {
+            if stored.state == GitWireRecordState::Prepared.as_str()
+                && stored.operation == super::GitWireOperation::PublishRefs.as_str()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn put_record(
         &self,
         repo: &GitWireRepo,
