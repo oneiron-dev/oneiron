@@ -335,6 +335,24 @@ impl Vault {
         ))
     }
 
+    /// The credential a checked connection presents to its provider: the
+    /// first one it declares. A served send reads its value only through the
+    /// credential door for the declared effector (OF-187).
+    pub fn verified_pack_connection_secret(
+        &self,
+        pack: &str,
+        connection: &str,
+    ) -> Result<PackSetupSecret> {
+        self.require_pack_connection_verified(pack, connection)?;
+        let txn = self.store.env.read_txn()?;
+        let (setup, _) = self.installed_pack_setup_in_txn(&txn, pack)?;
+        declared_connection(&setup.connections, connection)?
+            .secrets
+            .first()
+            .cloned()
+            .ok_or_else(|| invalid("the connection names no credential"))
+    }
+
     /// Every grant a run asks for that a setup connection serves needs one
     /// such connection checked. A pack without setup, and a grant no
     /// connection serves, ask nothing more.
