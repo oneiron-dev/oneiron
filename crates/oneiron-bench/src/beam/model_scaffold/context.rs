@@ -31,6 +31,8 @@ pub(super) fn own_trace(
     let mut capped = false;
     for _ in 0..effort.retrieval_steps {
         let (trace, _) = recent_steps(&steps, effort.token_budget)?;
+        // One oversized step is clipped here too, as the answer call clips it.
+        let trace = bounded_context(&trace, effort.token_budget);
         let input = serde_json::json!({"question": question, "trace": trace}).to_string();
         let (step, cost, cut) =
             session.invoke_capped(pin, CallPurpose::AnswerGen, prompt, &input)?;
