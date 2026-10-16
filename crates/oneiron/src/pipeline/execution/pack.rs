@@ -521,6 +521,7 @@ impl PipelineBuilder<'_> {
             (self.vector_search.is_some(), RetrievalSignal::Vector),
             (self.text_search.is_some(), RetrievalSignal::Text),
             (self.phonetic_search.is_some(), RetrievalSignal::Phonetic),
+            (!self.media_search.is_empty(), RetrievalSignal::MediaVector),
             (self.temporal_search.is_some(), RetrievalSignal::Temporal),
             (
                 self.ppr_search.is_some() || self.ppr_expand.is_some(),
@@ -551,6 +552,9 @@ impl PipelineBuilder<'_> {
             .is_some_and(|codes| !codes.is_empty())
         {
             signals.push(RetrievalSignal::Phonetic);
+        }
+        if !self.media_search.is_empty() {
+            signals.push(RetrievalSignal::MediaVector);
         }
         if self.temporal_search.is_some() {
             signals.push(RetrievalSignal::Temporal);

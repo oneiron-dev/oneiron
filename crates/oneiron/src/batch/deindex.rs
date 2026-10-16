@@ -212,6 +212,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(store, wtxn, id, None)?;
+    crate::embed::delete_media_vectors_in_txn(store, wtxn, id)?;
     crate::deletion::tear_derived_rows_in_txn(store, wtxn, id, true)?;
     crate::comm::clear_pending_stop_for_delete(store, wtxn, id)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;

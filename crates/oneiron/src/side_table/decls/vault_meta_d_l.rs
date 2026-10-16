@@ -239,6 +239,13 @@ side_tables! {
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;
+    /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
+    /// row (OF-370). Key: space key16 + id16.
+    EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
+    /// Media kind slot to declared space id (OF-370). Key: one input-kind byte.
+    EMBEDDING_SLOT: VaultMeta b"embedding/slot/" Named;
+    /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
+    EMBEDDING_SPACE: VaultMeta b"embedding/space/" Named;
     /// Pointer from an entity to its owning document, plus generation/pending-update counters. Key:
     /// hex32.
     ENTITY_DOC_HEAD: VaultMeta b"entity_doc:v1:head:" Named;
