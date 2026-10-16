@@ -410,7 +410,11 @@ impl PassExecutorFactory for ObservedFactory {
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
         self.prepare(guard)?;
-        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+        let resident = match (
+            &self.weaver,
+            &self.line,
+            self.resident_instruction.as_deref(),
+        ) {
             (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,
@@ -450,7 +454,11 @@ impl PassExecutorFactory for ObservedFactory {
     ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
         self.prepare(guard)?;
         let status = self.status.as_ref();
-        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+        let resident = match (
+            &self.weaver,
+            &self.line,
+            self.resident_instruction.as_deref(),
+        ) {
             (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,

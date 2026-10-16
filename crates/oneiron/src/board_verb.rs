@@ -72,6 +72,7 @@ pub fn render_current_keyframe(
     let legend = BoardLegend::canonical();
     render_board_block(
         &BoardFrame {
+            you: None,
             changes: None,
             header,
             legend: &legend,

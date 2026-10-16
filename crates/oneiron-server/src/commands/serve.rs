@@ -220,8 +220,12 @@ pub(super) async fn serve_with_config(
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
-    workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(&sync_server)));
-    workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(&sync_server)));
+    workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(
+        &sync_server,
+    )));
+    workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(
+        &sync_server,
+    )));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Attached folders rescan after the import queue starts (OF-554).
@@ -233,6 +237,9 @@ pub(super) async fn serve_with_config(
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
         workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
+    }
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
     }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());

@@ -369,7 +369,10 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
 /// The managed artifact origin: this vault's `/a/`, and its names under the
 /// artifact domains (`oneiron_vault_contract::artifact_origin`), behind the
 /// same freeze gate as the API socket.
-pub(super) fn build_managed_artifact_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> Router {
+pub(super) fn build_managed_artifact_app(
+    server: Arc<SyncServer>,
+    state: Arc<ManagedState>,
+) -> Router {
     let freeze = middleware::from_fn_with_state(state, refuse_frozen_writes);
     crate::build_artifact_app(server).layer(freeze)
 }

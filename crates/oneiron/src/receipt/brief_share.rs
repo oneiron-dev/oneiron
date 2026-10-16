@@ -44,9 +44,8 @@ pub(super) fn brief_share_receipts(
                 receipts.push(created);
             }
             if let Some(revoked_at) = share.revoked_at {
-                let revoked = brief_share_receipt(
-                    id, &share, &admission, &travel, &trace, revoked_at, true,
-                );
+                let revoked =
+                    brief_share_receipt(id, &share, &admission, &travel, &trace, revoked_at, true);
                 if query.matches(&revoked) {
                     receipts.push(revoked);
                 }
