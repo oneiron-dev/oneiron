@@ -1,8 +1,9 @@
 # Memory Wire — oneiron
 
-Memory Wire is the Oneiron developer profile. Start with `witness`, `recall`, and
-`receipts`. The same package also ships `claim_upsert` (`claimUpsert` in JS) and
-the other facade verbs listed under [API](#api). The verb set is generated from
+Memory Wire is the Oneiron developer profile. Start with `vault.witness`,
+`vault.recall`, and `vault.receipts`. The same package also ships
+`vault.claims.upsert` (the same path in JS) and the other facade verbs listed
+under [API](#api). The verb set is generated from
 `scripts/sdk/agent-verbs.json` by `scripts/sdk/generate.py`; the shipped stubs
 (`oneiron/__init__.pyi`) carry the typed signatures.
 There is no separate lite SDK and no alternate mutation path.
@@ -27,7 +28,7 @@ from oneiron import Oneiron
 
 memory = Oneiron.open()
 
-witnessed = memory.witness(
+witnessed = memory.vault.witness(
     {
         "conversation_ref": "11111111111111111111111111111111",
         "messages": [
@@ -41,7 +42,7 @@ witnessed = memory.witness(
     }
 )
 
-claimed = memory.claim_upsert(
+claimed = memory.vault.claims.upsert(
     {
         "id": "22222222222222222222222222222222",
         "predicate": "preference.travel.seat",
@@ -51,8 +52,8 @@ claimed = memory.claim_upsert(
         "source": "user_stated",
     }
 )
-recalled = memory.recall("window seat")
-receipts = memory.receipts()
+recalled = memory.vault.recall("window seat")
+receipts = memory.vault.receipts()
 
 print(json.dumps({
     "witnessed": witnessed,
@@ -94,20 +95,21 @@ created for the actor you want to act as instead.
 | `Oneiron.pair(link)` | `(handle, credential)`: a remote handle and the credential to store |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
-| `handle.witness(turn)` | `WitnessReceipt` |
-| `handle.claim_upsert(claim)` | `CommitReceipt` |
-| `handle.recall(query, ...)` | `MemoryPack` |
-| `handle.receipts(limit=100)` | `list[FacadeReceipt]` |
-| `handle.export(format=None)` | the live vault, serialized in one of the pack formats |
+| `handle.vault.witness(turn)` | `WitnessReceipt` |
+| `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
+| `handle.vault.recall(query, ...)` | `MemoryPack` |
+| `handle.vault.receipts(limit=100)` | `list[FacadeReceipt]` |
+| `handle.vault.export(format=None)` | the live vault, serialized in one of the pack formats |
 | `handle.cancel(task_ref)` | `TaskCancelReceipt` |
 | `handle.describe(task_ref=None)` | `TaskDescription`: one task card, or the whole TASKS section |
 | `handle.can(request)` | `TaskAskPreflight` |
 | `handle.peek(request)` | `list[TaskAskPersonEvidence]` |
-| `handle.key_value_get` / `_put` / `_delete` / `_search` / `_namespaces(request)` | exact, actor-owned keyed memory |
-| `handle.tasks.*` | `create`, `update`, `ask`, `wait`, `answer`, `outcomes` |
-| `handle.rooms.*` | `list`, `messages`, `render`, `find`, `get`, `trunk`, `claim`, `speak` |
+| `handle.ask(spec)` / `handle.wait(handle)` | an ask's receipt / its wait outcome |
+| `handle.vault.kv.get` / `put` / `delete` / `search` / `namespaces(request)` | exact, actor-owned keyed memory |
+| `handle.tasks.*` | `create`, `update`, `answer`, `outcomes` |
+| `handle.vault.rooms.*` | `list`, `messages`, `render`, `find`, `get`, `trunk`, `claim`, `speak` |
 
-`recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
+`vault.recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
 (default `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `as_of`
 (Unix seconds; the recall's reference time, default now) and `deadline_ms`.
@@ -128,7 +130,7 @@ Every failure is an `OneironError` carrying the engine's own vocabulary:
 from oneiron import Oneiron, OneironError
 
 try:
-    memory.recall("window seat", effort="high")
+    memory.vault.recall("window seat", effort="high")
 except OneironError as error:
     print(error.code, error.message, error.suggestions)
 ```

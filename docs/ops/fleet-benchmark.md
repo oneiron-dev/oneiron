@@ -23,9 +23,9 @@ owner's MacBook.
   Each remains allocated through every write/recall round and the hold interval.
   Matching WebSocket Ping/Pong probes before and after the interval prove the
   same sockets remain usable. There is no reconnect or retry path.
-- Each round sends one HTTP `facade/witness` per agent. The response receipt and
+- Each round sends one HTTP `facade/vault.witness` per agent. The response receipt and
   persisted MESSAGE content must match the submitted deterministic message.
-  Then each agent calls `recall` over its own held socket, using light effort
+  Then each agent calls `vault.recall` over its own held socket, using light effort
   and a unique alphabetic token. The result must contain that message: the
   MESSAGE item at its committed revision, or the TURN item that quotes it in
   `cited_messages`.

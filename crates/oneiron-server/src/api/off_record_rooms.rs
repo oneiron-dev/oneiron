@@ -86,7 +86,7 @@ struct Stretch {
 struct Witness {
     room: String,
     session_ref: String,
-    /// The turn, as `POST /v1/core/facade/witness` takes it; leave
+    /// The turn, as `POST /v1/core/facade/vault.witness` takes it; leave
     /// `conversation_ref` empty to write into the stretch's own conversation.
     turn: WitnessTurn,
     #[serde(default)]

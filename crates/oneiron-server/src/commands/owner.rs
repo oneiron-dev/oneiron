@@ -403,7 +403,7 @@ struct Exported<'a> {
 
 pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    let vault = open_vault(&config, "POST /v1/core/facade/export")?;
+    let vault = open_vault(&config, "POST /v1/core/facade/vault.export")?;
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;

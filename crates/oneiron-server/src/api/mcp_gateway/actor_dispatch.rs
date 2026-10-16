@@ -152,7 +152,7 @@ enum McpCallEffect {
 }
 
 impl McpCallEffect {
-    /// A generated verb's effect. `claim_upsert` proposes a new claim, or a
+    /// A generated verb's effect. `vault.claims.upsert` proposes a new claim, or a
     /// replacement that supersedes its head only once approved; one that names
     /// its `id` rewrites that claim in place, so the old value leaves at once.
     /// A booking page publication acts at once too, with or without an `id`:
@@ -166,7 +166,7 @@ impl McpCallEffect {
         arguments: &crate::mcp::McpVerbArguments,
     ) -> Self {
         let acts_at_once = || {
-            tool.name == oneiron::task_verb::sdk::AgentVerb::ClaimUpsert.as_str()
+            tool.name == oneiron::task_verb::sdk::AgentVerb::VaultClaimsUpsert.as_str()
                 && arguments.spec.clone().is_some_and(|spec| {
                     serde_json::from_value::<oneiron::memory::ClaimInput>(spec).is_ok_and(|input| {
                         input.id.is_some()

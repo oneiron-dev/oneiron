@@ -13,18 +13,18 @@ pub struct RoomTurnHandle<'v> {
     pub(super) memory: Memory<'v>,
 }
 
-/// The SDK verbs a room turn serves: recall, which reads through the lane,
-/// and the room verbs themselves. Every other verb is refused inside a turn.
+/// The SDK verbs a room turn serves: `vault.recall`, which reads through the
+/// lane, and the room verbs themselves. Every other verb is refused inside a turn.
 const ROOM_TURN_VERBS: &[&str] = &[
-    "recall",
-    "rooms.list",
-    "rooms.messages",
-    "rooms.render",
-    "rooms.find",
-    "rooms.get",
-    "rooms.trunk",
-    "rooms.claim",
-    "rooms.speak",
+    "vault.recall",
+    "vault.rooms.list",
+    "vault.rooms.messages",
+    "vault.rooms.render",
+    "vault.rooms.find",
+    "vault.rooms.get",
+    "vault.rooms.trunk",
+    "vault.rooms.claim",
+    "vault.rooms.speak",
 ];
 
 impl<'v> RoomTurnHandle<'v> {
@@ -74,7 +74,7 @@ impl<'v> RoomTurnHandle<'v> {
             .recall(query, effort, scope, limit, format, lease)
     }
 
-    /// The `recall` verb with the query vector `embed` returns, for a host
+    /// The `vault.recall` verb with the query vector `embed` returns, for a host
     /// that embeds the query; it reads through the same lane as
     /// [`Self::invoke`].
     pub fn recall_with_vector(

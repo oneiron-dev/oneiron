@@ -298,7 +298,7 @@ impl OffRecordSession<'_> {
             })
     }
 
-    /// `self.memory.put_claim` on a session-bound run.
+    /// `vault.claims.put` on a session-bound run.
     pub(crate) fn executor_put_claim_candidate(
         &self,
         route: &SessionWriteRoute,
@@ -319,7 +319,7 @@ impl OffRecordSession<'_> {
         )
     }
 
-    /// `self.memory.supersede_claim` on a session-bound run. ONE-1936's
+    /// `vault.claims.supersede` on a session-bound run. ONE-1936's
     /// stale-target guard lives INSIDE this trap and stays authoritative
     /// there; this only chooses the route.
     #[expect(
@@ -352,7 +352,7 @@ impl OffRecordSession<'_> {
         )
     }
 
-    /// `self.memory.put_edge` on a session-bound run.
+    /// `vault.edges.put` on a session-bound run.
     #[expect(
         clippy::too_many_arguments,
         reason = "mirrors the canonical put-edge trap arity exactly"

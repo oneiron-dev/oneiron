@@ -70,7 +70,7 @@ impl ProactivityPresentation {
         Ok(())
     }
 }
-/// Typed request payload for the existing `self.memory.put_claim` agent verb.
+/// Typed request payload for the existing `vault.claims.put` agent verb.
 /// The host may build it from a chat request; no natural-language parser or
 /// product persona is embedded in the engine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

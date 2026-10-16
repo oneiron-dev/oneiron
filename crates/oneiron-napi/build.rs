@@ -2,7 +2,7 @@
 //!
 //! Two jobs: the napi-rs setup this crate has always done, and the ONE-1441
 //! SDK-major assertion — the npm package's semver MAJOR must equal the engine's
-//! `MEMORY_PACK_VERSION`, because `recall` returns that pack shape and a
+//! `MEMORY_PACK_VERSION`, because `vault.recall` returns that pack shape and a
 //! caller's major version is the only thing telling them which shape they get.
 //!
 //! The check reads the DECLARATION in the engine source rather than importing

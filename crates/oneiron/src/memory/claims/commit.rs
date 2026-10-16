@@ -59,16 +59,16 @@ impl Memory<'_> {
         // anything is resolved, because it is not an authorization question —
         // an authorized caller breaks the chain exactly as thoroughly.
         //
-        // Every generic claim-write door routes through here (`commit`,
-        // `claim_upsert`, `seed_claims` via `commit_all`), so one guard covers
-        // all three.
+        // Every generic claim-write door routes through here (`vault.commit`,
+        // `vault.claims.upsert`, `vault.claims.seed` via `commit_all`), so one
+        // guard covers all three.
         // Keyed facts bind subject, envelope actor/class, worldless scope,
         // exact address, and replay identity together. A generic upsert's
         // subject+scope match must not supersede another actor's keyed fact.
         if input.predicate == super::key_value::PREDICATE {
             return Err(MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
-                "keyed memory is written through key_value_put",
+                "keyed memory is written through vault.kv.put",
                 &[
                     "Use the actor-bound keyed-memory door; generic claims cannot replace keyed facts.",
                 ],
@@ -152,7 +152,7 @@ impl Memory<'_> {
             if let Some(scope) = scope_rmpv.clone() {
                 candidate = candidate.with_scope(scope);
             }
-            let mut envelope = self.claim_envelope(source, "commit", approval)?;
+            let mut envelope = self.claim_envelope(source, "vault.commit", approval)?;
             let occurred = TimeRange {
                 start: occurred_at,
                 end: occurred_at,

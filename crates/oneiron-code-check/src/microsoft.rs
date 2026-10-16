@@ -30,7 +30,7 @@ const DRAIN: Duration = Duration::from_millis(100);
 /// level), a `require` call, a reference directive, an ambient module
 /// declaration (a nested one is an augmentation, resolved even in a script),
 /// or a Unicode escape that spells one of them. Matched without regard to
-/// case, so a program that merely mentions one (`self.memory.export`) is left
+/// case, so a program that merely mentions one (`vault.export`) is left
 /// unchecked too.
 const MODULE_NAMING: [&str; 6] = ["import", "export", "require", "reference", "module", "\\u"];
 /// `tsc --version` prints one short line.

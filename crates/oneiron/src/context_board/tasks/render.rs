@@ -35,7 +35,7 @@ pub fn failed_lane(section: &TasksSection) -> Vec<&TaskRow> {
 }
 
 /// Unfolds one intent's realizing jobs under its row — the engine seam
-/// behind `board.expand tasks.<id>`; the verb dispatch surface is ONE-1696.
+/// behind `describe` on card `tasks.<id>`; the verb dispatch surface is ONE-1696.
 /// Line order: the collapsed intent row first, then its realizing jobs in
 /// presence order, indented one level.
 #[must_use]

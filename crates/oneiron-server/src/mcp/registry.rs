@@ -361,7 +361,7 @@ impl McpConnectorActorRegistry {
         }
     }
 
-    /// The retained snapshot a later `board.expand`/`board.refresh` fences
+    /// The retained snapshot a later `describe`/`self.focus.refresh` fences
     /// against. `None` before this connection has ever rendered a board.
     #[must_use]
     pub fn board_snapshot(&self, connection: &StreamConnectionId) -> Option<McpBoardSnapshot> {

@@ -107,7 +107,7 @@ another actor.
   Each BaseStore put is a new operation and receives a fresh request ID.
 - Delete retracts only the bound actor/class's current claim. It preserves
   historical claims and gate receipts. It is not physical deletion, GDPR
-  erasure, or `safe_delete`, and grants no cross-actor owner authority.
+  erasure, or `vault.delete`, and grants no cross-actor owner authority.
 
 ## Tests
 

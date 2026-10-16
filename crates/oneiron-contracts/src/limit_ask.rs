@@ -19,7 +19,7 @@ const MEMORY_FALLBACK_BYTES: u64 = 256 << 20;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EngineLimit {
     /// Serialized bytes of one keyed-memory search filter
-    /// (`key_value_search`).
+    /// (`vault.kv.search`).
     KeyedFilterJsonBytes,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row

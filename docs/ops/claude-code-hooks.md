@@ -24,7 +24,7 @@ check).
 
 ```
 Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bind a vault (below)
-                                                       ──▶ oneiron mcp ──▶ serve: recall
+                                                       ──▶ oneiron mcp ──▶ serve: vault.recall
             ◀── stdout: the vault's line and the recalled lines, added to context
 
 Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
@@ -33,13 +33,13 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
 ```
 
 - **Recall** goes through `oneiron mcp` with the hooks' own read-only
-  credential. By default it calls `recall` at the `light` effort: no model
+  credential. By default it calls `vault.recall` at the `light` effort: no model
   call and no embedding, so it is fast and costs nothing. `--effort medium`
   embeds the query on the server's embedder, so a session finds what it
   worked on in other words; `high`, `xhigh` and `max` also rerank on the
   reranker the server's `[models]` routes, under the server's own budget
   (see [run-with-models.md](run-with-models.md#8-the-reranker)). A server that
-  does not list `recall` gets the lexical `memory.query` instead. The query is
+  does not list `vault.recall` gets the lexical `memory.query` instead. The query is
   the project's name: the git repository's folder name, or the working
   directory's.
 - **Write-back** needs no credential. `--queue` leaves one file that names the

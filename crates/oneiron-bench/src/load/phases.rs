@@ -112,8 +112,8 @@ impl Ctx<'_> {
 
     fn write_one(&self, agent: &Agent, record: &Record) -> (String, Sample) {
         let verb = match record {
-            Record::Turn { .. } => "witness",
-            Record::Claim { .. } => "claim_upsert",
+            Record::Turn { .. } => "vault.witness",
+            Record::Claim { .. } => "vault.claims.upsert",
         };
         (
             verb.to_owned(),

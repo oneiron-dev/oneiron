@@ -383,7 +383,7 @@ impl Memory<'_> {
 
 impl Memory<'_> {
     /// Complete snapshot for a room liveness fold; never silently truncates
-    /// the working-set census to the first `rooms.messages` page. Empty when
+    /// the working-set census to the first `vault.rooms.messages` page. Empty when
     /// the room Scope reads no turns.
     pub(super) fn room_turn_snapshot(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
         let worlds = self.room_read_worlds(room)?;

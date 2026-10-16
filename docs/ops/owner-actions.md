@@ -277,7 +277,7 @@ oneiron export --format md --out vault.md      # toon (default), md, json, yaml 
 oneiron export --format json > vault.json      # stdout when --out is omitted
 ```
 
-On a running server, `POST /v1/core/facade/export` with `{"format": "md"}` and an owner
+On a running server, `POST /v1/core/facade/vault.export` with `{"format": "md"}` and an owner
 credential. Each export tries to write a receipt (time, format, bytes, digest, who), and
 `doctor` shows the latest one recorded. The receipt is best effort: if it cannot be written the
 export still succeeds, a warning is logged, and `last_export` stays as it was. An export is a
@@ -412,7 +412,7 @@ save. An anonymous session keeps nothing at all and cannot be saved or put on re
   "backend": "local" | "remote_provider"}` starts one. `GET /v1/owner/off-record?session_ref=…`
   reads it.
 - `POST /v1/owner/off-record/witness` with `{"session_ref": "…", "turn": {…}}` writes a turn
-  into it; the turn has the shape `POST /v1/core/facade/witness` takes.
+  into it; the turn has the shape `POST /v1/core/facade/vault.witness` takes.
 - `POST /v1/owner/off-record/promote` with `{"session_ref": "…", "turn": "<turn id>"}` saves one
   turn through the ordinary write door.
 - `POST /v1/owner/off-record/save` with `{"session_ref": "…"}` saves every turn nobody saved yet,

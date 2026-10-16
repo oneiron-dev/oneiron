@@ -71,7 +71,7 @@ pub(crate) fn mcp_execute_code_admitted(server: &Arc<SyncServer>, actor: &McpCal
 }
 
 /// One generated verb call, whichever door it arrived at: a `tools/call` or a
-/// code-mode `self.memory.<verb>`. Both meet exactly this admission.
+/// code-mode call at the verb's full path. Both meet exactly this admission.
 pub(crate) fn mcp_admit_scoped_verb(
     server: &Arc<SyncServer>,
     tool: crate::mcp::McpGeneratedVerbTool,
@@ -82,8 +82,8 @@ pub(crate) fn mcp_admit_scoped_verb(
     mcp_admit_verb_scope(server, tool, arguments, actor)
 }
 
-/// One verb-table row a code run serves itself (`self.memory.search`,
-/// `put_claim`, …). No tool carries it, so the bound-verb ceiling names it by
+/// One verb-table row a code run serves itself (`vault.search`,
+/// `vault.claims.put`, …). No tool carries it, so the bound-verb ceiling names it by
 /// its row name. Its world/facet axis is the run's: `execute_code` admits no
 /// narrowed credential.
 pub(crate) fn mcp_admit_run_verb(
@@ -94,7 +94,7 @@ pub(crate) fn mcp_admit_run_verb(
 }
 
 /// One verb-table row only code mode serves, through a resource the host
-/// binds to the run (`self.memory.browser.*`). No tool carries it, so the
+/// binds to the run (`self.browser.*`). No tool carries it, so the
 /// bound-verb ceiling names it by its row name, and it acts outside the
 /// vault's world/facet axes, so a narrowed credential is refused.
 pub(crate) fn mcp_admit_host_verb(

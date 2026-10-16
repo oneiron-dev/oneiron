@@ -106,7 +106,7 @@ export type RecallScope = {
   kinds?: string[]
 }
 
-/** Options for {@link Oneiron.recall}. */
+/** Options for `vault.recall` on {@link Oneiron}. */
 export type RecallOptions = {
   /** Defaults to `medium`. */
   effort?: Effort

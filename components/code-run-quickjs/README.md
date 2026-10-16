@@ -77,15 +77,17 @@ Only workspace/output file paths are proposal targets; upload and skill files
 remain read-only. Native globals (`process`, `require`, `fetch`, `std`, `os`)
 are absent. No import loader can reintroduce them.
 
-First-party `self.memory` carries one async method per SDK verb-table row the
-host serves (`self.memory.recall(input)`, `self.memory.tasks.create(input)`).
+First-party code gets one async method per SDK verb-table row the host
+serves, at the row's full path (`vault.recall(input)`, `tasks.create(input)`,
+`self.focus.refresh(input)`, a bare `describe(input)`).
 Bootstrap builds them from the hidden `self.verbs` imports and then deletes
 `self.verbs`, so a row added to `scripts/sdk/agent-verbs.json` reaches the guest
 with no component rebuild. The memory reads and writes the run answers itself
-(`search`, `put_claim`, `supersede_claim`, `put_edge`) are rows of the same table,
-so they arrive the same way. A verb input is encoded once and the call sends
-that text. One holding a non-finite number, boxed or not, is refused before the
-call (`non_finite_verb_input`), since JSON would carry it as null; one JSON
+(`vault.search`, `vault.claims.put`, `vault.claims.supersede`,
+`vault.edges.put`) are rows of the same table, so they arrive the same way. A
+verb input is encoded once and the call sends that text. One holding a
+non-finite number, boxed or not, is refused before the call
+(`non_finite_verb_input`), since JSON would carry it as null; one JSON
 cannot carry at all is `invalid_verb_input`. A refused call throws a stable
 code, never prose, and so does the bridge's own argument check
 (`invalid_host_argument`).

@@ -106,7 +106,7 @@ pub struct McpCodeExecutionRequest<'a> {
     pub task: &'a str,
     /// The durable run id [`mcp_code_run_id`] derived for this handle.
     pub run_id: EntityId,
-    /// The door `self.memory.<verb>` takes: the SDK verb table under this
+    /// The door each code-mode verb call takes: the SDK verb table under this
     /// call's connector, with its admission and gate.
     pub verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
 }

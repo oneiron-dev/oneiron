@@ -1,4 +1,4 @@
-//! Code-mode composition: host-bound agents.spawn / tasks.ask / tasks.wait.
+//! Code-mode composition: host-bound agents.spawn / ask / wait.
 use super::HostSelfDispatcher;
 use crate::EntityId;
 use crate::agent_def::{

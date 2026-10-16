@@ -420,8 +420,8 @@ pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<
 /// mint an unattributed identity assertion with no status, and the export
 /// filter reads a link's consent rather than its provenance, so that forged
 /// link becomes exportable the moment a consent Claim names it. The facade and
-/// `self.memory` doors already refuse the kind; this is the same refusal at the
-/// engine's own edge builders.
+/// code-mode `vault.edges.put` doors already refuse the kind; this is the same
+/// refusal at the engine's own edge builders.
 ///
 /// Deliberately SEPARATE from [`validate_public_edge_kind`] rather than folded
 /// into it, on two axes:

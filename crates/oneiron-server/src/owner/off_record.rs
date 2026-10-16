@@ -54,7 +54,7 @@ pub(crate) struct Flip {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Witness {
     pub(crate) session_ref: String,
-    /// The turn, as `POST /v1/core/facade/witness` takes it; leave
+    /// The turn, as `POST /v1/core/facade/vault.witness` takes it; leave
     /// `conversation_ref` empty to write into the room's own conversation.
     pub(crate) turn: WitnessTurn,
     /// A summary of the turn; it stays in the room with the turn.

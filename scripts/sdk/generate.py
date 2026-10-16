@@ -56,7 +56,7 @@ def long_signature(params):
 def rust_type(value):
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
-SERVER_RECALL_DOC = "/// `POST /v1/core/facade/recall` → `SyncServer::recall_off_runtime`, the\n/// recall door every server transport shares: it embeds the query whenever\n/// the vault's embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
+SERVER_RECALL_DOC = "/// `POST /v1/core/facade/vault.recall` → `SyncServer::recall_off_runtime`, the\n/// recall door every server transport shares: it embeds the query whenever\n/// the vault's embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -180,7 +180,7 @@ def native_boundary(row, language):
         tail = napi_result(row['output']) if typed else 'serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))'
         body = f'{setup} let output = {call}.map_err(facade_error)?; {tail}'
     else:
-        encode_output = 'encode_recall(&output)' if row['name'] == 'recall' else 'encode(&output)'
+        encode_output = 'encode_recall(&output)' if row['name'] == 'vault.recall' else 'encode(&output)'
         if len(args) > 5:
             setup += ' let inner = &slf.inner; let py = slf.py();'
             call = call.replace('self.inner.', 'inner.', 1)
@@ -229,9 +229,92 @@ def ts_facade(row):
         body = f'{{ {setup} const result = {call}; return {result} }}'
     else:
         body = f'this.#client.{method}(' + ', '.join(arguments) + ')'
-    return '  ' + binding['docs']['ts'] + f'\n  {method}(' + ', '.join(declaration) + f'): {output} {{ return this.#call(() => {body}) }}\n'
+    return binding['docs']['ts'], ', '.join(declaration), output, body
 
-def python_facade(row, stub=False):
+# A facade row with no typed binding takes the generic agent-verb door; these
+# are the argument shapes its handle method spells out. Any other row takes its
+# whole input.
+TS_SHAPES = {
+    'wait': ('handle: TaskAskHandle, stepKey = "sdk.wait"', '{handle, step_key: stepKey}', 'TaskAskWait'),
+    'tasks.answer': ('handle: TaskAskHandle, word: TaskAskWord', '{handle, word}', 'TaskAskAnswer'),
+    'tasks.outcomes': ('handle: TaskAskHandle', 'handle', 'CalibrationPair[]'),
+    'vault.rooms.list': ('', '{}', 'unknown[]'),
+    'vault.rooms.messages': ('roomRef: string, after?: string, limit?: number', '{room_ref: roomRef, after, limit}', '{rows: unknown[]; next_after: string | null}'),
+    'vault.rooms.find': ('roomRef: string, after?: string, limit?: number', '{room_ref: roomRef, after, limit}', '{rows: unknown[]; next_after: string | null}'),
+    'vault.rooms.render': ('roomRef: string', '{room_ref: roomRef}', 'string[]'),
+    'vault.rooms.get': ('roomRef: string, turnRef: string', '{room_ref: roomRef, turn_ref: turnRef}', 'unknown'),
+    'vault.rooms.trunk': ('roomRef: string, turnRef: string', '{room_ref: roomRef, turn_ref: turnRef}', 'unknown'),
+    'vault.rooms.claim': ('roomRef: string, turnRef: string', '{room_ref: roomRef, turn_ref: turnRef}', 'unknown'),
+}
+PY_SHAPES = {
+    'wait': ('handle, step_key="sdk.wait"', 'handle: dict[str, Any], step_key: str = "sdk.wait"', '{"handle": handle, "step_key": step_key}'),
+    'tasks.answer': ('handle, word', 'handle: dict[str, Any], word: dict[str, Any]', '{"handle": handle, "word": word}'),
+    'tasks.outcomes': ('handle', 'handle: dict[str, Any]', 'handle'),
+    'vault.rooms.list': ('', '', '{}'),
+    'vault.rooms.messages': ('room_ref, after=None, limit=None', 'room_ref: str, after: str | None = None, limit: int | None = None', '{"room_ref": room_ref, "after": after, "limit": limit}'),
+    'vault.rooms.find': ('room_ref, after=None, limit=None', 'room_ref: str, after: str | None = None, limit: int | None = None', '{"room_ref": room_ref, "after": after, "limit": limit}'),
+    'vault.rooms.render': ('room_ref', 'room_ref: str', '{"room_ref": room_ref}'),
+    'vault.rooms.get': ('room_ref, turn_ref', 'room_ref: str, turn_ref: str', '{"room_ref": room_ref, "turn_ref": turn_ref}'),
+    'vault.rooms.trunk': ('room_ref, turn_ref', 'room_ref: str, turn_ref: str', '{"room_ref": room_ref, "turn_ref": turn_ref}'),
+    'vault.rooms.claim': ('room_ref, turn_ref', 'room_ref: str, turn_ref: str', '{"room_ref": room_ref, "turn_ref": turn_ref}'),
+}
+
+def ts_handle_verb(row):
+    'A facade verb on the generic door: its doc, parameters, result type and body.'
+    method = js_method(row['name'])
+    if row['name'] == 'ask':
+        params = ('...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, '
+                  'until?: number | null, defaultBranch?: TaskAskDefault]')
+        body = ('{ const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : '
+                '{who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; '
+                f'return this.#client.{method}(input) as TaskAskReceipt }}')
+        return '', params, 'TaskAskReceipt', body
+    params, value, output = TS_SHAPES.get(row['name'], ('input: Record<string, unknown>', 'input', 'unknown'))
+    return '', params, output, f'this.#client.{method}({value}) as {output}'
+
+def verb_tree(rows):
+    'The rows as their path tree: a segment can name a verb and hold verbs at once.'
+    tree = {}
+    for row in rows:
+        node, parts = tree, row['name'].split('.')
+        for part in parts[:-1]:
+            node = node.setdefault(part, {'row': None, 'children': {}})['children']
+        node.setdefault(parts[-1], {'row': None, 'children': {}})['row'] = row
+    return tree
+
+def ts_verb(row):
+    return ts_facade(row) if 'binding' in row else ts_handle_verb(row)
+
+def ts_members(tree, depth):
+    'One object literal per namespace: an arrow per verb, a nested literal per child namespace.'
+    pad, out = '  ' * depth, ''
+    for name, node in tree.items():
+        inner = ts_members(node['children'], depth + 1)
+        if node['row']:
+            doc, params, output, body = ts_verb(node['row'])
+            value = f'({params}): {output} => this.#call(() => {body})'
+            if node['children']: value = f'Object.assign({value}, {{\n{inner}{pad}}})'
+            out += (pad + doc + '\n' if doc else '') + f'{pad}{name}: {value},\n'
+        else:
+            out += f'{pad}{name}: {{\n{inner}{pad}}},\n'
+    return out
+
+def ts_class_verbs(tree):
+    'The facade class body: a bare verb is a method, a root a readonly namespace.'
+    out = ''
+    for name, node in tree.items():
+        members = ts_members(node['children'], 2)
+        if node['row'] and not node['children']:
+            doc, params, output, body = ts_verb(node['row'])
+            out += ('  ' + doc + '\n' if doc else '') + f'  {name}({params}): {output} {{ return this.#call(() => {body}) }}\n'
+        elif node['row']:
+            doc, params, output, body = ts_verb(node['row'])
+            out += ('  ' + doc + '\n' if doc else '') + f'  readonly {name} = Object.assign(({params}): {output} => this.#call(() => {body}), {{\n{members}  }})\n'
+        else:
+            out += f'  readonly {name} = {{\n{members}  }}\n'
+    return out
+
+def python_facade(row, stub=False, method_name=None):
     binding = row['binding']; args = binding['args']
     declaration = ['self']; values = []
     for n, a in enumerate(args):
@@ -246,9 +329,61 @@ def python_facade(row, stub=False):
     if binding.get('native') == 'agent_verb':
         values = ['json.dumps({' + ', '.join(json.dumps(a['name']) + ': ' + a['name'] for a in args) + '})']
     output = boundary_type(row['output'], 'py_stub' if stub else 'py')
-    signature = f'    def {row["name"]}(' + ', '.join(declaration) + f') -> {output}:'
+    signature = f'    def {method_name or leaf(row["name"])}(' + ', '.join(declaration) + f') -> {output}:'
     if stub: return signature + ' ...\n'
-    return signature + '\n        """' + binding['docs']['py'] + '"""\n        return json.loads(_translate(lambda: self._client.' + row['name'] + '(' + ', '.join(values) + ')))\n'
+    return signature + '\n        """' + binding['docs']['py'] + '"""\n        return json.loads(_translate(lambda: self._client.' + row['name'].replace('.', '_') + '(' + ', '.join(values) + ')))\n'
+
+def leaf(name):
+    return name.rsplit('.', 1)[-1]
+
+def python_handle_verb(row, stub=False, name=None):
+    'A facade verb on the generic door, as a method of its namespace.'
+    name, method = name or leaf(row['name']), row['name'].replace('.', '_')
+    if row['name'] == 'ask':
+        if stub:
+            return ('    @overload\n'
+                    f'    def {name}(self, spec_or_who: dict[str, Any]) -> Any: ...\n'
+                    '    @overload\n'
+                    f'    def {name}(self, spec_or_who: str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None, '
+                    'what: dict[str, Any], until: int | None = None, default: str = "ask_me") -> Any: ...\n')
+        return (f'    def {name}(self, spec_or_who, what=None, until=None, default="ask_me"):\n'
+                '        if what is None:\n'
+                '            input = spec_or_who\n'
+                '        else:\n'
+                '            who = {"people": [spec_or_who]} if isinstance(spec_or_who, str) else {"people": list(spec_or_who)} if isinstance(spec_or_who, (set, list, tuple)) else spec_or_who\n'
+                '            input = {"who": who, "what": what, "until": until, "default": default}\n'
+                f'        return json.loads(_translate(lambda: self._client.{method}(json.dumps(input))))\n')
+    params, typed, value = PY_SHAPES.get(row['name'], ('spec', 'spec: dict[str, Any]', 'spec'))
+    if stub: return f'    def {name}(self' + (', ' + typed if typed else '') + ') -> Any: ...\n'
+    return f'    def {name}(self' + (', ' + params if params else '') + f'):\n        return json.loads(_translate(lambda: self._client.{method}(json.dumps({value}))))\n'
+
+def python_verb(row, stub=False, name=None):
+    return python_facade(row, stub, name) if 'binding' in row else python_handle_verb(row, stub, name)
+
+def python_namespace_class(path):
+    return '_' + ''.join(part.title() for part in '_'.join(path).split('_')) + 'Verbs'
+
+def python_class_verbs(tree, stub=False):
+    'The facade class body: a bare verb is a method, a namespace a property whose class nests in it.'
+    members, classes = '', ''
+    def accessor(name, path):
+        cls = python_namespace_class(path)
+        body = ' ...' if stub else f'\n        return Oneiron.{cls}(self._client)'
+        return f'    @property\n    def {name}(self) -> "Oneiron.{cls}":{body}\n'
+    def namespace(path, node):
+        nonlocal classes
+        body = '' if stub else '    def __init__(self, client: _NativeClient) -> None:\n        self._client = client\n'
+        if node['row']: body += python_verb(node['row'], stub, '__call__')
+        nested = [(name, child) for name, child in node['children'].items() if child['children'] or not child['row']]
+        for name, child in node['children'].items():
+            body += accessor(name, path + [name]) if (name, child) in nested else python_verb(child['row'], stub)
+        classes += f'class {python_namespace_class(path)}:\n' + (body or '    ...\n')
+        for name, child in nested: namespace(path + [name], child)
+    for name, node in tree.items():
+        if node['row'] and not node['children']: members += python_verb(node['row'], stub)
+        else:
+            members += accessor(name, [name]); namespace([name], node)
+    return members + ''.join('    ' + line + '\n' if line else '\n' for line in classes.splitlines())
 
 def ts_native_signature(row):
     binding = native_binding(row); method = js_method(row['name'])
@@ -332,6 +467,12 @@ def mcp_input_dispatch(row):
     else:
         body += decode
         if name == 'describe':
+            # describe(card key) expands a board card, under the board's own
+            # scope and frame-epoch checks.
+            body += ('if let Some(key) = input.key.clone() {\n'
+                     '    let frame_epoch = input.frame_epoch;\n'
+                     '    return execute_mcp_board_verb(server, actor, served, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
+                     '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
             body += ('if input.task_ref.is_none() && !input.self_target {\n'
                      '    // The section is narrowed to this credential before its\n'
@@ -556,7 +697,7 @@ def outputs():
     server += '}\n'
     for r in facade_rows:
         method=r['name'].replace('.','_')
-        if r['name'] == 'recall': server += SERVER_RECALL_DOC
+        if r['name'] == 'vault.recall': server += SERVER_RECALL_DOC
         if r.get('admission', {}).get('owner_grade'):
             # A full-vault result must carry verifier-produced owner proof into
             # same-snapshot engine admission, never generic actor-only invoke.
@@ -695,7 +836,7 @@ def outputs():
         napi += native_boundary(r, 'napi')
         py += native_boundary(r, 'py')
     napi += '}\n'
-    ts = HEADER + 'export type AgentInvoke = (method: string, input: unknown) => unknown;\n'
+    ts = HEADER
     ts += '''export interface OutcomeBinding { source: {kind: "claim" | "event"; predicate: string} | {kind: "edge"; relation: string} | {kind: "stage"; campaign: string}; horizon: number; mapping: Record<string, boolean>; noise_weight: number; linked_by?: string | null }
 export interface CalibrationPair { prediction: unknown; probability: number; outcome: {answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number} }
 export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {peer: {actor_ref: string}} | {child: {actor_ref: string}} | {human: {actor_ref: string}};
@@ -733,61 +874,8 @@ export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Changed: 
 export type TaskAskWait = { Pending: {trap_ref: string} } | { Changed: {voided: string[]; generation: number} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
 export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]} | {kind: "self_card"; tail: string};
 export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" | "rejected"; effected: boolean; proposal_ref: string | null; gate_decision_ref: string | null; status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned" | null; cancel_requested: boolean; forced: boolean}
-export function agentVerbs(invoke: AgentInvoke) {
-  return {
 '''
-    for family in dict.fromkeys(r['name'].split('.')[0] for r in facade_rows if '.' in r['name']):
-        ts += family + ': {\n'
-        for r in facade_rows:
-            fam, _, verb = r['name'].partition('.')
-            if fam != family: continue
-            method=fam+verb.title()
-            if verb=='ask':
-                ts += ('ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, '
-                       'until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt {\n'
-                       '  const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : '
-                       '{who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]};\n'
-                       '  return invoke("tasksAsk", input) as TaskAskReceipt\n},\n')
-                continue
-            elif verb=='wait': decl='handle: TaskAskHandle, stepKey = "sdk.wait"';value='{handle, step_key: stepKey}';result='TaskAskWait'
-            elif verb=='answer':decl='handle: TaskAskHandle, word: TaskAskWord';value='{handle, word}';result='TaskAskAnswer'
-            elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
-            elif verb=='list':decl='';value='{}';result='unknown[]'
-            elif verb in ('messages', 'find'):decl='roomRef: string, after?: string, limit?: number';value='{room_ref: roomRef, after, limit}';result='{rows: unknown[]; next_after: string | null}'
-            elif verb=='render':decl='roomRef: string';value='{room_ref: roomRef}';result='string[]'
-            elif verb in ('get', 'trunk'):decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
-            elif verb=='claim':decl='roomRef: string, turnRef: string';value='{room_ref: roomRef, turn_ref: turnRef}';result='unknown'
-            else: decl='turn: Record<string, unknown>';value='turn';result='unknown'
-            ts += f'{verb}({decl}): {result} {{ return invoke("{method}", {value}) as {result} }},\n'
-        ts += '},\n'
-    ts += '}\n}\n'
     ts_native = '\n'.join(ts_native_signature(r) for r in facade_rows)
-    python = '# Generated by scripts/sdk/generate.py; edit agent-verbs.json instead.\n'
-    for family in dict.fromkeys(r['name'].split('.')[0] for r in facade_rows if '.' in r['name']):
-        python += f'class {family.title()}Verbs:\n    def __init__(self, call):\n        self._call = call\n'
-        for r in facade_rows:
-            fam, _, verb=r['name'].partition('.')
-            if fam!=family:continue
-            if verb=='ask':
-                python += ('    def ask(self, spec_or_who, what=None, until=None, default="ask_me"):\n'
-                           '        if what is None:\n'
-                           '            input = spec_or_who\n'
-                           '        else:\n'
-                           '            who = {"people": [spec_or_who]} if isinstance(spec_or_who, str) else {"people": list(spec_or_who)} if isinstance(spec_or_who, (set, list, tuple)) else spec_or_who\n'
-                           '            input = {"who": who, "what": what, "until": until, "default": default}\n'
-                           '        return self._call("tasks_ask", input)\n')
-                continue
-            if verb=='wait':params='handle, step_key="sdk.wait"';value='{"handle": handle, "step_key": step_key}'
-            elif verb=='answer':params='handle, word';value='{"handle": handle, "word": word}'
-            elif verb=='outcomes':params='handle';value='handle'
-            elif verb=='list':params='';value='{}'
-            elif verb in ('messages', 'find'):params='room_ref, after=None, limit=None';value='{"room_ref": room_ref, "after": after, "limit": limit}'
-            elif verb=='render':params='room_ref';value='{"room_ref": room_ref}'
-            elif verb in ('get', 'trunk'):params='room_ref, turn_ref';value='{"room_ref": room_ref, "turn_ref": turn_ref}'
-            elif verb=='claim':params='room_ref, turn_ref';value='{"room_ref": room_ref, "turn_ref": turn_ref}'
-            else:params='spec';value='spec'
-            comma=', ' if params else ''
-            python+=f'    def {verb}(self{comma}{params}):\n        return self._call("{fam}_{verb}", {value})\n'
     variants = {r['name']: ''.join(part.title() for part in r['name'].replace('.', '_').split('_')) for r in ROWS}
     catalog = HEADER + '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum AgentVerb { '
     catalog += ','.join(variants.values()) + ' }\nimpl AgentVerb {\n'
@@ -815,36 +903,12 @@ export function agentVerbs(invoke: AgentInvoke) {
             catalog += 'Self::' + variants[r['name']] + ' => &' + json.dumps(list(r.get(field, r['mcp_fields']))) + ',\n'
         catalog += '} }\n'
     catalog += '}\n'
-    python_stub = '# Generated by scripts/sdk/generate.py.\nfrom typing import Any, overload\n'
-    for family in dict.fromkeys(r['name'].split('.')[0] for r in facade_rows if '.' in r['name']):
-        python_stub += f'class {family.title()}Verbs:\n'
-        for row in ROWS:
-            fam, _, verb=row['name'].partition('.')
-            if fam!=family:continue
-            if verb=='ask':
-                python_stub += ('    @overload\n'
-                                '    def ask(self, spec_or_who: dict[str, Any]) -> Any: ...\n'
-                                '    @overload\n'
-                                '    def ask(self, spec_or_who: str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None, '
-                                'what: dict[str, Any], until: int | None = None, '
-                                'default: str = "ask_me") -> Any: ...\n')
-                continue
-            if verb=='wait': args='handle: dict[str, Any], step_key: str = "sdk.wait"'
-            elif verb=='answer':args='handle: dict[str, Any], word: dict[str, Any]'
-            elif verb in ('messages', 'find'):args='room_ref: str, after: str | None = None, limit: int | None = None'
-            elif verb=='render':args='room_ref: str'
-            elif verb in ('get', 'trunk'):args='room_ref: str, turn_ref: str'
-            elif verb=='claim':args='room_ref: str, turn_ref: str'
-            elif verb=='outcomes':args='handle: dict[str, Any]'
-            elif verb=='list':args=''
-            else:args='spec: dict[str, Any]'
-            python_stub += f'    def {verb}(self'+(', '+args if args else '')+') -> Any: ...\n'
     uniffi = HEADER + 'export_facade! {\n'
     for row in ROWS + DEFINITIONS:
         if 'uniffi' not in row: continue
         signature = row['uniffi']
         args = ', '.join(name + ': ' + typ for name, typ in signature['args'].items())
-        uniffi += f'"{js_method(row["name"])}" => fn {row["name"].replace('.', '_')}(&self, {args}) -> {signature["output"]};\n'
+        uniffi += f'"{row["name"]}" => fn {row["name"].replace('.', '_')}(&self, {args}) -> {signature["output"]};\n'
     uniffi += '}\n'
     files = {
         'crates/oneiron/src/task_verb/run_verb_catalog.rs': run_catalog(),
@@ -855,15 +919,13 @@ export function agentVerbs(invoke: AgentInvoke) {
         'crates/oneiron-remote/src/agent_verbs.rs':remote,
         'crates/oneiron-napi/src/facade/client/agent_verbs.rs':napi,
         'packages/oneiron/src/agent-verbs.ts':ts,
-        'crates/oneiron-py/python/oneiron/agent_verbs.py':python,
-        'crates/oneiron-py/python/oneiron/agent_verbs.pyi':python_stub,
     }
     for path, start, end, body in [
         ('crates/oneiron/src/board_verb.rs', '// BEGIN GENERATED BOARD CATALOG', '// END GENERATED BOARD CATALOG', None),
         ('crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs', '// BEGIN GENERATED MCP DISPATCH', '// END GENERATED MCP DISPATCH', mcp_dispatch()),
-        ('crates/oneiron-py/python/oneiron/__init__.pyi', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', ''.join(python_facade(r, stub=True) for r in ROWS if '.' not in r['name'])),
-        ('packages/oneiron/src/index.ts', '// BEGIN GENERATED FACADE VERBS', '// END GENERATED FACADE VERBS', ''.join(ts_facade(r) for r in ROWS if '.' not in r['name'])),
-        ('crates/oneiron-py/python/oneiron/__init__.py', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', ''.join(python_facade(r) for r in ROWS if '.' not in r['name'])),
+        ('crates/oneiron-py/python/oneiron/__init__.pyi', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows), stub=True)),
+        ('packages/oneiron/src/index.ts', '// BEGIN GENERATED FACADE VERBS', '// END GENERATED FACADE VERBS', ts_class_verbs(verb_tree(facade_rows))),
+        ('crates/oneiron-py/python/oneiron/__init__.py', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows))),
         ('crates/oneiron-py/src/lib.rs', '// BEGIN GENERATED AGENT VERBS', '// END GENERATED AGENT VERBS', py),
         ('packages/oneiron/src/native.ts', '// BEGIN GENERATED AGENT VERBS', '// END GENERATED AGENT VERBS', ts_native),
     ]:
@@ -875,7 +937,7 @@ export function agentVerbs(invoke: AgentInvoke) {
         if path.endswith('.rs'):
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)
             files[path] = result.stdout
-    files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs']})
+    files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs', 'crates/oneiron-py/python/oneiron/agent_verbs.py', 'crates/oneiron-py/python/oneiron/agent_verbs.pyi']})
     return files
 
 # The code-mode declarations a model is taught and a shadow type check reads.
@@ -885,13 +947,22 @@ export function agentVerbs(invoke: AgentInvoke) {
 # mode serves, so a table edit flags it without a build.
 CODE_MODE_DTS = 'crates/oneiron/src/task_verb/code-mode.d.ts'
 CODE_MODE_DTS_REGENERATE = 'ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron --lib code_mode_declarations_file_is_the_verb_table'
+# A declaration line opens a root, a namespace or a verb: `declare namespace
+# self {`, `declare const vault: {`, `declare function describe(input: …`,
+# `const focus: {`, `claims: {`, `upsert(input: …`, or a verb that holds
+# verbs, `diary: ((input: …) => Promise<unknown>) & {`.
+DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \{| \{)')
 def code_mode_dts_current():
     declared, scope = set(), []
     for line in (ROOT/CODE_MODE_DTS).read_text().splitlines():
         text = line.strip()
-        if text.endswith('{'): scope.append(text.split()[-2].rstrip(':'))
-        elif text in ('}', '};'): scope.pop()
-        elif '(input: ' in text: declared.add('.'.join(scope[2:] + [text[:text.index('(')]]))
+        if text in ('}', '};'):
+            scope.pop(); continue
+        head = DTS_LINE.match(text)
+        if not head: continue
+        name, form = head.groups()
+        if 'input' in form: declared.add('.'.join(scope + [name]))
+        if text.endswith('{'): scope.append(name)
     return declared == {r['name'] for r in ROWS + RUN_ROWS}
 
 def main():

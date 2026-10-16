@@ -144,7 +144,7 @@ pub(super) enum Record {
         conversation: usize,
         messages: Vec<String>,
     },
-    /// One claim through `claim_upsert`, with its own predicate so no claim
+    /// One claim through `vault.claims.upsert`, with its own predicate so no claim
     /// supersedes another.
     Claim {
         index: usize,

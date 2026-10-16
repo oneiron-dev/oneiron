@@ -25,7 +25,7 @@ export function memoryTools(memory) {
           }, required: ["author", "messageType", "content", "order"],
         } },
       }, ["conversationRef", "messages"]),
-      execute: (input) => memory.witness(input),
+      execute: (input) => memory.vault.witness(input),
     }),
     recall: tool({
       description: "Recall scoped memory. Values and scope are resolved by the engine now.",
@@ -40,12 +40,12 @@ export function memoryTools(memory) {
           } },
         } },
       }, ["query"]),
-      execute: ({ query, options }) => memory.recall(query, options),
+      execute: ({ query, options }) => memory.vault.recall(query, options),
     }),
     receipts: tool({
       description: "Read memory governance receipts, newest first.",
       inputSchema: schema({ limit: { type: "integer", minimum: 1, maximum: 1000 } }),
-      execute: ({ limit }) => memory.receipts(limit),
+      execute: ({ limit }) => memory.vault.receipts(limit),
     }),
   }
 }

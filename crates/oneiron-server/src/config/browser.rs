@@ -1,4 +1,4 @@
-//! `[browser]`: the guest a code run's `self.memory.browser.*` verbs drive.
+//! `[browser]`: the guest a code run's `self.browser.*` verbs drive.
 //!
 //! File-only, like `[models]`. Absent means no run has a browser, and every
 //! browser verb answers `browser_unbound`. Each bound below is a manifest
