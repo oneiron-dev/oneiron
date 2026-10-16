@@ -140,6 +140,8 @@ impl RecoveryArtifactFailure {
 
 /// Builds canonical shell bytes for a recovery artifact payload.
 pub fn encode_recovery_artifact(artifact_type: u16, payload: &[u8]) -> Result<Vec<u8>> {
+    // Never write a shell the loader would refuse to read.
+    artifact_size(HEADER_LEN.saturating_add(payload.len()))?;
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
     bytes.resize(HEADER_LEN, 0);
     bytes.extend_from_slice(payload);
@@ -201,29 +203,17 @@ const RECOVERY_ARTIFACT_MAX_BYTES: usize = CANONICAL_SNAPSHOT_MAX_BYTES;
 /// Reads a regular file of at most [`RECOVERY_ARTIFACT_MAX_BYTES`], judging its
 /// kind and size before reading; `None` when there is no file.
 fn read_bounded_artifact(path: &Path) -> Result<Option<Vec<u8>>> {
-    let file = match fs::metadata(path) {
-        Ok(meta) if meta.is_file() => fs::File::open(path)?,
-        Ok(_) => return Err(not_regular_artifact()),
+    let file = match quarantine::open_regular(path) {
+        Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(Error::Io(err)),
     };
-    let meta = file.metadata()?;
-    if !meta.is_file() {
-        return Err(not_regular_artifact());
-    }
-    artifact_size(usize::try_from(meta.len()).unwrap_or(usize::MAX))?;
+    artifact_size(usize::try_from(file.metadata()?.len()).unwrap_or(usize::MAX))?;
     let mut bytes = Vec::new();
     file.take(RECOVERY_ARTIFACT_MAX_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
     artifact_size(bytes.len())?;
     Ok(Some(bytes))
-}
-
-fn not_regular_artifact() -> Error {
-    Error::Io(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "recovery artifact is not a regular file",
-    ))
 }
 
 fn artifact_size(required: usize) -> Result<()> {

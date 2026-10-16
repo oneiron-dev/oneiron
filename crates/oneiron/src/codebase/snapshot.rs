@@ -220,10 +220,12 @@ impl RawValue for CodebaseSnapshot {
 }
 
 /// What a snapshot body may unfold into before its schema is read: a root
-/// map of six fields whose `files` array holds entry maps of three.
+/// map of six fields whose `files` array holds entry maps of three, and no
+/// field longer than a path.
 const SNAPSHOT_SHAPE: ShapeBudget = ShapeBudget {
     max_values: 7 * CODEBASE_SNAPSHOT_MAX_FILES as u64 + 64,
     max_depth: 4,
+    max_scalar_bytes: CODEBASE_FILE_PATH_MAX_BYTES,
 };
 
 pub fn decode_codebase_snapshot(bytes: &[u8]) -> Result<CodebaseSnapshot> {
@@ -232,6 +234,7 @@ pub fn decode_codebase_snapshot(bytes: &[u8]) -> Result<CodebaseSnapshot> {
             match over {
                 OverBudget::Values => "snapshot holds more values than its manifest allows",
                 OverBudget::Depth => "snapshot nests deeper than its manifest allows",
+                OverBudget::Scalar => "snapshot holds a field longer than its manifest allows",
             },
         )));
     }

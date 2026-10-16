@@ -359,8 +359,14 @@ fn a_snapshot_body_wider_than_any_manifest_is_refused_before_it_is_decoded() {
     assert!(peak < 1 << 20, "refused after holding {peak} bytes");
 
     // The largest manifest the schema admits still decodes.
-    let files = (0..CODEBASE_SNAPSHOT_MAX_FILES)
+    // The largest manifest the schema admits, its last path as long as a
+    // path may be, still decodes.
+    let files = (1..CODEBASE_SNAPSHOT_MAX_FILES)
         .map(|n| file(&format!("f/{n:06}"), 0))
+        .chain([file(
+            &format!("z/{}", "p".repeat(CODEBASE_FILE_PATH_MAX_BYTES - 2)),
+            0,
+        )])
         .collect();
     let largest = CodebaseSnapshot::new(
         "project.alpha",
