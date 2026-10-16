@@ -511,9 +511,12 @@ impl crate::Vault {
         if !counts.register(id, kind)? {
             return Ok(());
         }
+        // Copy the map before opening the snapshot: every copied witness was
+        // registered after its evidence committed, so the snapshot sees it.
+        let witnesses = counts.witnesses()?;
         let mut obsolete = Vec::new();
         let rtxn = self.store.env.read_txn()?;
-        for (id, entry) in counts.witnesses()? {
+        for (id, entry) in witnesses {
             match self.verify_tier1_witness_in_txn(&rtxn, id, &entry.kind) {
                 Ok(_) => {}
                 Err(Error::InvalidConfig(_)) => obsolete.push((id, entry.nonce)),
