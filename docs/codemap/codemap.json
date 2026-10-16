@@ -26363,6 +26363,7 @@
       "CalibratedVerdict",
       "ConfidenceBand",
       "ModelBinding",
+      "ModelDisposition",
       "ModelManifest",
       "ModelRole",
       "ModelSlot",
@@ -26375,8 +26376,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "enum": 5,
-      "fn": 13,
+      "enum": 6,
+      "fn": 15,
       "re-export": 2,
       "struct": 4
      }
@@ -60529,7 +60530,7 @@
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60766,6 +60767,26 @@
      "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openai_proxy/mod.rs",
+     "purpose": "OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openai_proxy/wire.rs",
+     "purpose": "The OpenAI chat-completions wire the proxy speaks (OF-445): a closed request body, and the reply built from…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -61981,7 +62002,7 @@
       "const": 1,
       "crate-vis": 4,
       "fn": 12,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 1
      }
     },
@@ -62200,6 +62221,23 @@
      "purpose": "JSON renderings of MessagePack claim values for command output",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DistillArgs",
+      "ExportArgs",
+      "OneironerCommand",
+      "PublishArgs"
+     ],
+     "path": "src/commands/oneironer.rs",
+     "purpose": "`oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 \"one base, two…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -62616,15 +62654,16 @@
       "OneironerConfigOverride",
       "OneironerMode",
       "OneironerProvider",
-      "OneironerRuntime"
+      "OneironerRuntime",
+      "OneironerTier"
      ],
      "path": "src/config/oneironer.rs",
      "purpose": "The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table",
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
-      "struct": 3
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -65970,7 +66009,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 243,
+     "files": 245,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66012,7 +66051,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66259,7 +66298,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 459,
+   "source_files": 462,
    "test_files": 182
   },
   "oneiron-spawn": {
