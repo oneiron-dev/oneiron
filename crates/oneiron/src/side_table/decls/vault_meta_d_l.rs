@@ -305,6 +305,11 @@ side_tables! {
     /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
     /// row (OF-370). Key: space key16 + id16.
     EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
+    /// A kind slot version move, open or concluded, with its last paired probe check (OF-370).
+    /// Key: candidate space id string.
+    EMBEDDING_MOVE: VaultMeta b"embedding/move/" Named;
+    /// A retrieval probe a space version move runs on both spaces (OF-370). Key: probe id16.
+    EMBEDDING_PROBE: VaultMeta b"embedding/probe/" Named;
     /// Media kind slot to declared space id (OF-370). Key: one input-kind byte.
     EMBEDDING_SLOT: VaultMeta b"embedding/slot/" Named;
     /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
