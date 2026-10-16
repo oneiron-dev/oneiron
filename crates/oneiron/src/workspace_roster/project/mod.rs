@@ -503,7 +503,10 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
         return Ok(None);
     }
-    decode(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    #[cfg(feature = "sync")]
+    let body = crate::entity_doc::resolve_record_body(store, txn, &id, body)?;
+    decode(&body).map(Some)
 }
 
 pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
