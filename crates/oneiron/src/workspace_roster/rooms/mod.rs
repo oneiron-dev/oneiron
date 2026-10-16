@@ -2,6 +2,7 @@
 mod history;
 mod hosting;
 mod liveness;
+mod participants;
 mod participation;
 #[cfg(test)]
 mod tests;
@@ -19,6 +20,7 @@ pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
+pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;
 pub(crate) use participation::{
