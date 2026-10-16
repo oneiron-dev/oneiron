@@ -415,6 +415,7 @@ impl Vault {
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
+        let stale_sweep = crate::federation::StaleSweepWatch::begin(self);
         let (result, approved_vad_ids, proactivity_changed, task_ids, retirement_staged) =
             self.store.group_write_as(callback, None, |wtxn| {
                 let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -456,6 +457,9 @@ impl Vault {
         if retirement_staged {
             self.finish_gate_decision_retirements_after_commit();
         }
+        // A replicated, replayed or composed authority row stamps the worlds
+        // of a pact it ended, as the authority door does (H213).
+        stale_sweep.finish()?;
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved. The
         // clock is observed only when there is an approval to consolidate.
