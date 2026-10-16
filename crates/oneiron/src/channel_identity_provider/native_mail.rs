@@ -127,35 +127,7 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         {
             return Err(invalid());
         }
-        let canonical = CanonicalMailSend::from_request(request)?;
-        let effect = ExternalEffectGateInput {
-            actor: GateActor {
-                actor_class: request.actor.actor_class.clone(),
-                actor_ref: request.actor.actor_ref.clone(),
-                delegation_grant_ref: None,
-            },
-            provenance: GateProvenanceHandles {
-                actor_entity_ref: Some(actor),
-                mail_content_ref: request.intent.content_ref.clone(),
-                ..GateProvenanceHandles::default()
-            },
-            verb: "send".into(),
-            channel: "email".into(),
-            channel_identity_ref: Some(identity_ref),
-            counterparty: Some(canonical.recipient),
-            brief_ref: canonical.brief_ref,
-            send_ref: Some(request.intent_ref.clone()),
-            standing_grant_ref: None,
-            scoped_mcp_call: None,
-            counterparty_first_touch: None,
-            counterparty_opted_out: false,
-            counterparty_opt_out_receipt_reason: None,
-            has_opted_in: request.gate.has_opted_in,
-            has_permission: request.gate.has_permission,
-            policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
-        };
-        let digest = crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)?;
-        vault.approve_once(owner, digest)
+        approve_canonical_mail_send_once(vault, owner, request, identity_ref, actor)
     }
 
     /// CID-5 health is a prerequisite for OFFERING cold-recipient autonomy,
@@ -291,6 +263,50 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
         event.payload_ref = mail.payload_ref;
         Ok(event)
     }
+}
+
+/// Owner approval for exactly one canonical mail send: the shared tail of the
+/// native-mail and member-mailbox (OF-374) approve doors. Each door checks its
+/// own sender shape first; this composes the one digest the Gate's mail lane
+/// looks up, so the owner approves the exact operation dispatch re-evaluates.
+/// A changed recipient, content or logical send ref is a different digest.
+pub(crate) fn approve_canonical_mail_send_once(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    request: &OutboundDispatchRequest,
+    identity_ref: EntityId,
+    actor: EntityId,
+) -> Result<ConsentReceipt> {
+    let invalid = || Error::InvalidConfig("invalid mail send envelope".into());
+    let canonical = CanonicalMailSend::from_request(request)?;
+    let effect = ExternalEffectGateInput {
+        actor: GateActor {
+            actor_class: request.actor.actor_class.clone(),
+            actor_ref: request.actor.actor_ref.clone(),
+            delegation_grant_ref: None,
+        },
+        provenance: GateProvenanceHandles {
+            actor_entity_ref: Some(actor),
+            mail_content_ref: request.intent.content_ref.clone(),
+            ..GateProvenanceHandles::default()
+        },
+        verb: "send".into(),
+        channel: "email".into(),
+        channel_identity_ref: Some(identity_ref),
+        counterparty: Some(canonical.recipient),
+        brief_ref: canonical.brief_ref,
+        send_ref: Some(request.intent_ref.clone()),
+        standing_grant_ref: None,
+        scoped_mcp_call: None,
+        counterparty_first_touch: None,
+        counterparty_opted_out: false,
+        counterparty_opt_out_receipt_reason: None,
+        has_opted_in: request.gate.has_opted_in,
+        has_permission: request.gate.has_permission,
+        policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
+    };
+    let digest = crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)?;
+    vault.approve_once(owner, digest)
 }
 
 /// One stable logical mail send, independent of approval availability and
@@ -514,6 +530,20 @@ fn native_mail_identity_in_txn(
     txn: &heed::RoTxn<'_>,
     identity_ref: EntityId,
 ) -> Result<Option<ChannelIdentity>> {
+    // Recognition reads the identity's channel and address heads (OF-272);
+    // the row is read for its custody only.
+    let Some(facts) =
+        crate::channel_identity::channel_identity_facts_in_txn(store, txn, &identity_ref)?
+    else {
+        return Ok(None);
+    };
+    if facts.channel != "email"
+        || !facts
+            .address_or_handle
+            .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
+    {
+        return Ok(None);
+    }
     let Some(raw) = store
         .port_entity_record(txn, &identity_ref)?
         .map(|row| row.encode())
@@ -525,15 +555,7 @@ fn native_mail_identity_in_txn(
     if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
         return Ok(None);
     }
-    let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if identity.channel() != "email"
-        || !identity
-            .address_or_handle()
-            .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
-    {
-        return Ok(None);
-    }
-    Ok(Some(identity))
+    decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
 
 /// Called only by the external-effect Gate on its own transaction. The

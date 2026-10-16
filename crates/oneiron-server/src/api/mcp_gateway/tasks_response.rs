@@ -457,6 +457,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         );
         object.insert("schemaRef".to_owned(), Value::String(correction.schema_ref));
     }
+    if let Some(stamp) = error.call_receipt
+        && let Some(object) = data.as_object_mut()
+    {
+        stamp.stamp_json(object);
+    }
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -578,6 +583,7 @@ fn mcp_agent_verb_input(
         "vault.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.export" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts" => a.spec.clone().ok_or_else(invalid),
+        "vault.receipts.get" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.get" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.put" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.delete" => a.spec.clone().ok_or_else(invalid),
@@ -809,6 +815,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.receipts" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.receipts.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.kv.get" => {
@@ -1321,6 +1330,14 @@ async fn execute_agent_verb_listing(
                     .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
             );
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.receipts.get" => {
+            let input: oneiron::receipt::CallReceiptRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_receipts_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.kv.get" => {

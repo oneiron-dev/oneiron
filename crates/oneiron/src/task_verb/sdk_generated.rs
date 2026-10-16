@@ -70,6 +70,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
             ),
             (
+                "vault.receipts.get",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
                 "vault.kv.get",
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueAddress>(),
             ),
@@ -386,6 +390,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "tasks.refuse",
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
+            (
+                "self.skills.call",
+                crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)
@@ -515,6 +523,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.receipts.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -981,6 +996,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
             )?;
         }
+        "vault.receipts.get" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
         "vault.kv.get" => {
             let _input: crate::memory::KeyValueAddress = decode(value.clone())?;
         }
@@ -1192,6 +1210,7 @@ pub fn invoke(
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
+        "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
         "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
@@ -1470,6 +1489,12 @@ pub fn vault_receipts(
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
     )
+}
+pub fn vault_receipts_get(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<crate::receipt::CallReceipt>> {
+    memory.call_receipt(&input.receipt_ref)
 }
 pub fn vault_kv_get(
     memory: &Memory<'_>,
