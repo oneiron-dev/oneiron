@@ -835,6 +835,30 @@
       }
     },
     {
+      "name": "vault.artifacts.review_slides",
+      "input": "crate::blob_artifact::SlideReviewSubmit",
+      "output": "crate::blob_artifact::SlideReviewOutcome",
+      "call": "memory.artifacts_review_slides(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep.\n",
+          "ts": "/** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */",
+          "py": "Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.propose_deck",
       "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::DeckProposeRequest",

@@ -52,6 +52,9 @@ oneiron-container = { path = "../oneiron-container" }
 oneiron-browser = { path = "../oneiron-browser", features = ["driver"] }
 # This install's this-device-only key slots (world privacy P6b).
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
+# The seal task (OF-415): the seal organ behind the organ host, and the
+# file-backed seal key.
+oneiron-organ-host = { path = "../oneiron-organ-host" }
 # The Dreamer's starter motor: the server owns the wake supervisor and the
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
@@ -66,8 +69,6 @@ oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
 oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
 # The paired-machine mesh listener (OF-535), behind the `mesh` feature.
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh"] }
-# The organ route on the mesh listener (OF-575), with it.
-oneiron-organ-host = { path = "../oneiron-organ-host", optional = true }
 # The model route on the mesh listener (OF-575), with it.
 oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 loro = "1.10"
@@ -209,4 +210,4 @@ default = ["code-sandbox-wasmtime"]
 code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
 # The paired-machine mesh listener (OF-535); off by default, and on only when
 # the host also names a bind address.
-mesh = ["dep:oneiron-llm-own-server", "dep:oneiron-mesh-transport", "dep:oneiron-organ-host"]
+mesh = ["dep:oneiron-llm-own-server", "dep:oneiron-mesh-transport"]

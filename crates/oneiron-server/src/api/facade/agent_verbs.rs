@@ -48,6 +48,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(vault_artifacts_release_wait),
         )
         .route(
+            "/vault.artifacts.review_slides",
+            post(vault_artifacts_review_slides),
+        )
+        .route(
             "/vault.artifacts.propose_deck",
             post(vault_artifacts_propose_deck),
         )
@@ -903,6 +907,22 @@ async fn vault_artifacts_release_wait(
         class,
         "vault.artifacts.release_wait",
         value,
+    )?))
+}
+async fn vault_artifacts_review_slides(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(&headers, "vault.artifacts.review_slides")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.artifacts.review_slides", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_artifacts_review_slides(&server, &auth, facade_input(value)?)
+            .await?,
     )?))
 }
 async fn vault_artifacts_propose_deck(

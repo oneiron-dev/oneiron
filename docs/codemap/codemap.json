@@ -4731,7 +4731,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -4985,6 +4985,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EsignSealRun"
+     ],
+     "path": "src/blob_artifact/esign/seal_run.rs",
+     "purpose": "The seal task's runner (ARCH-0064 section 7: the seal \"runs as a task, never inline in a request\")",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EsignSealInput",
       "EsignSealRequest",
       "EsignSealed",
@@ -5218,13 +5231,17 @@
       "NativeOutputRequest",
       "ProposalSettleRequest",
       "ReleasedWait",
+      "SlideReviewOutcome",
+      "SlideReviewSubmit",
+      "SlideReviewUnitInput",
+      "SlideUnitRefused",
       "UndoneKeep"
      ],
      "path": "src/blob_artifact/verbs.rs",
      "purpose": "The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every…",
      "surface": {
-      "fn": 11,
-      "struct": 13
+      "fn": 13,
+      "struct": 17
      }
     },
     {
@@ -43222,7 +43239,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 123
+      "fn": 124
      }
     },
     {
@@ -47501,7 +47518,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48889,7 +48906,7 @@
    },
    "over_bar": 99,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2947,
+   "source_files": 2948,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56462,7 +56479,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 105
+      "fn": 106
      }
     },
     {
@@ -56972,7 +56989,8 @@
      "surface": {
       "const": 7,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
+      "re-export": 1,
       "struct": 6,
       "trait": 1
      }
@@ -56985,6 +57003,19 @@
      "purpose": "The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FileSealKeys"
+     ],
+     "path": "src/seal/file_keys.rs",
+     "purpose": "A seal key held in files (OF-415): a PKCS#8 private key and its PEM certificate chain, named by the host's…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -57182,7 +57213,7 @@
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -57212,7 +57243,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 24,
+   "source_files": 25,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -57461,7 +57492,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 106
+      "fn": 107
      }
     },
     {
@@ -59830,7 +59861,7 @@
      "path": "src/api/esign.rs",
      "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -59851,6 +59882,16 @@
      "purpose": "Stateless field editor and capability-scoped ceremony presentation adapters",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/seal_worker.rs",
+     "purpose": "The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -59890,7 +59931,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -60330,7 +60371,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -65520,7 +65561,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 240,
+     "files": 241,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65809,7 +65850,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 454,
+   "source_files": 455,
    "test_files": 182
   },
   "oneiron-spawn": {

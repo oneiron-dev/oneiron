@@ -54,6 +54,39 @@ pub(crate) async fn vault_packs_put(
     .map_err(|_| internal("vault.packs.put"))?
 }
 
+/// `vault.artifacts.review_slides`: reviews an artifact's head through the
+/// host's decide() ladder as the bound actor, from the host's starting dial
+/// and bands, and holds the proposal for Keep or Discard. The ladder runs on
+/// a blocking thread, one call per unit.
+pub(crate) async fn vault_artifacts_review_slides(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::blob_artifact::SlideReviewSubmit,
+) -> MemoryResult<oneiron::blob_artifact::SlideReviewOutcome> {
+    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a slide review binds its proposal to an authenticated principal",
+            &["Present a slip paired from a link created with --principal-ref."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality());
+        let host = server.decision_host();
+        memory.artifacts_review_slides_through(
+            &input,
+            &server.decision_ladder().ladder(),
+            host.dial(oneiron::llm::decision::DecisionRung::Big),
+            &host.bands(),
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.artifacts.review_slides"))?
+}
+
 /// `ai.options`: the rows a call could use, where each runs, what it takes,
 /// the rates its native counts settle at, and what the media meter has left.
 pub(crate) async fn ai_options(
