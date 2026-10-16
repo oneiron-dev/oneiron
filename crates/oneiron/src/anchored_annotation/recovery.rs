@@ -378,7 +378,8 @@ impl Vault {
         }
         for thread in self.effect_annotation_threads_for_artifact_in_txn(wtxn, artifact_id)? {
             let locator = match thread.drift {
-                Some(drift) => (drift.pinned_version == restored && thread.anchor.version == restored)
+                Some(drift) => (drift.pinned_version == restored
+                    && thread.anchor.version == restored)
                     .then(|| thread.anchor.locator.clone()),
                 None if thread.anchor.version == restored => Some(thread.anchor.locator.clone()),
                 None => self.prior_locator_in_txn(wtxn, artifact_id, &thread, restored)?,

@@ -10,11 +10,11 @@ mod runtime;
 
 #[cfg(target_os = "linux")]
 mod boot;
-#[cfg(target_os = "linux")]
-mod native;
+mod conformance;
 #[cfg(target_os = "linux")]
 mod egress;
-mod conformance;
+#[cfg(target_os = "linux")]
+mod native;
 
 #[cfg(target_os = "linux")]
 pub use boot::run as run_production;
@@ -73,27 +73,36 @@ pub fn serve_localtest<T: Read + Write + 'static>(channel: T, workspace: &Path) 
     outcome.and(finish)
 }
 
-
 /// Production OCI guest entry. The engine's parent launcher has already
 /// installed Landlock/seccomp; this agent cannot be an in-process fallback.
 #[cfg(target_os = "linux")]
 pub fn serve_fenced_container() -> Result<()> {
     // SAFETY: identity queries have no preconditions.
     if unsafe { libc::geteuid() } == 0 || unsafe { libc::getpid() } == 1 {
-        return Err(Error::Runtime("container agent requires the non-root fence child"));
+        return Err(Error::Runtime(
+            "container agent requires the non-root fence child",
+        ));
     }
     let status = std::fs::read_to_string("/proc/self/status")?;
-    if !status.lines().any(|l| l == "NoNewPrivs:\t1")
-        || !status.lines().any(|l| l == "Seccomp:\t2") {
-        return Err(Error::Runtime("container agent requires the installed fence"));
+    if !status.lines().any(|l| l == "NoNewPrivs:\t1") || !status.lines().any(|l| l == "Seccomp:\t2")
+    {
+        return Err(Error::Runtime(
+            "container agent requires the installed fence",
+        ));
     }
     struct Channel;
     impl Read for Channel {
-        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> { std::io::stdin().read(bytes) }
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            std::io::stdin().read(bytes)
+        }
     }
     impl Write for Channel {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { std::io::stdout().write(bytes) }
-        fn flush(&mut self) -> std::io::Result<()> { std::io::stdout().flush() }
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            std::io::stdout().write(bytes)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            std::io::stdout().flush()
+        }
     }
     let root = Path::new("/tmp/oneiron-workspace");
     std::fs::create_dir(root)?;
@@ -107,7 +116,8 @@ pub fn serve_fenced_container() -> Result<()> {
     let outcome = match preparation {
         Ok((input, workspace)) => {
             let (returned, result) = runtime::execute(session, input, workspace);
-            session = returned; result
+            session = returned;
+            result
         }
         Err(error) => Err(error),
     };

@@ -672,7 +672,12 @@ impl crate::Vault {
         crate::context_pack::source_ranking::rank(
             &mut candidates,
             &Default::default(),
-            |candidate| (candidate.body.salience.unwrap_or(-1.0), Some(&candidate.body)),
+            |candidate| {
+                (
+                    candidate.body.salience.unwrap_or(-1.0),
+                    Some(&candidate.body),
+                )
+            },
         )?;
         Ok(candidates)
     }

@@ -108,7 +108,9 @@ impl AgentDispatcher<'_> {
             .ok_or(Error::EntityNotFound)?;
         let leader = EntityId::from_hex(&authority.leader)?;
         if input.target.agent_definition_ref()? != leader {
-            return Err(invalid("dispatch target is not the project's current leader"));
+            return Err(invalid(
+                "dispatch target is not the project's current leader",
+            ));
         }
         crate::task_verb::leader_task_body_in(self.vault, txn, task, leader)?;
         Ok(())
@@ -121,9 +123,14 @@ impl AgentDispatcher<'_> {
         match outcome {
             super::AgentDispatchOutcome::Dispatched(status)
             | super::AgentDispatchOutcome::Existing(status)
-                if status.attempt.task_ref.as_deref() == Some(task.to_hex().as_str()) => Ok(()),
+                if status.attempt.task_ref.as_deref() == Some(task.to_hex().as_str()) =>
+            {
+                Ok(())
+            }
             super::AgentDispatchOutcome::ProposedWiden(_) => Ok(()),
-            _ => Err(invalid("existing leader attempt belongs to a different task promise")),
+            _ => Err(invalid(
+                "existing leader attempt belongs to a different task promise",
+            )),
         }
     }
 
@@ -221,7 +228,8 @@ impl AgentDispatcher<'_> {
             .ok_or(Error::EntityNotFound)?;
         let leader = EntityId::from_hex(&authority.leader)?;
         let definition = self.dispatchable_definition_in_txn(&txn, &input.target)?;
-        if input.target.agent_definition_ref()? != leader && definition.forked_from != Some(leader) {
+        if input.target.agent_definition_ref()? != leader && definition.forked_from != Some(leader)
+        {
             return Err(invalid(
                 "attempt does not execute the project's current leader",
             ));
@@ -236,7 +244,9 @@ impl AgentDispatcher<'_> {
         let task_ref = EntityId::from_hex(task_ref)?;
         let (label, body) =
             crate::task_verb::leader_task_body_in(self.vault, &txn, task_ref, leader)?;
-        let (_, spawn_view) = self.vault.project_for_spawn_in_txn(&txn, Some(project_ref))?;
+        let (_, spawn_view) = self
+            .vault
+            .project_for_spawn_in_txn(&txn, Some(project_ref))?;
         let depth_remaining = input
             .depth_remaining
             .unwrap_or(0)

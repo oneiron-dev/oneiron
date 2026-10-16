@@ -35,8 +35,8 @@ use super::loro_support::{map_for_each_value_bytes, map_get_bytes};
 #[cfg(test)]
 use super::schema::create_window_doc;
 use super::selector::{SyncSelector, filtered_window_doc_for, granted_window_doc};
-use super::window::Withhold;
 use super::types::WindowKey;
+use super::window::Withhold;
 
 /// Collect the actor-readable lexical candidates before applying a
 /// residence grant: the bounded candidate window, so a narrowed residence
@@ -218,7 +218,15 @@ pub fn selected_item_blob(
     selector: &SyncSelector,
     item: EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    selected_item_blob_with(vault, source, window, scope, selector, Withhold::Unknown, item)
+    selected_item_blob_with(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Unknown,
+        item,
+    )
 }
 
 /// [`selected_item_blob`] for the machine a residence read serves.
@@ -346,7 +354,15 @@ pub fn promotion_snapshot(
     selector: &SyncSelector,
     readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<u8>>> {
-    promotion_snapshot_with(vault, source, window, scope, selector, Withhold::Unknown, readable)
+    promotion_snapshot_with(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Unknown,
+        readable,
+    )
 }
 
 /// [`promotion_snapshot`] for the machine a residence read serves: a window

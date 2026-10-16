@@ -41,7 +41,11 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<serde_json::Value> {
         let (vault, leased) = self.leader_attempt()?;
         AgentDispatcher::new(vault).leader_top_shapes(
-            &leased, team_shape_skill, executor, planner, at,
+            &leased,
+            team_shape_skill,
+            executor,
+            planner,
+            at,
         )
     }
 

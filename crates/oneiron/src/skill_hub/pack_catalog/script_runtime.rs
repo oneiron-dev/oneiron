@@ -144,11 +144,16 @@ impl Vault {
         transport: Arc<dyn CredentialReadTransport>,
     ) -> Result<PackScriptOutcome> {
         let run_id = EntityId::now();
-        let mut backend = crate::code_sandbox::microvm::select_backend_for_tier(SandboxGuestTier::Foreign)?
-            .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
+        let mut backend =
+            crate::code_sandbox::microvm::select_backend_for_tier(SandboxGuestTier::Foreign)?
+                .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
         backend.set_read_transport(transport);
         backend.set_egress(Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
-            Arc::clone(self), run_id, crate::code_sandbox::egress::EgressConfig::from_env().map_err(|e| crate::Error::InvalidConfig(e.to_string()))?)));
+            Arc::clone(self),
+            run_id,
+            crate::code_sandbox::egress::EgressConfig::from_env()
+                .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
+        )));
         self.run_script_pack_in_vm(request, backend, run_id)
     }
 
@@ -205,7 +210,9 @@ impl Vault {
             budget,
             now,
         } = request;
-        if !matches!(backend.name(), "firecracker" | "landlock-container") || receipt.pack_name != name {
+        if !matches!(backend.name(), "firecracker" | "landlock-container")
+            || receipt.pack_name != name
+        {
             return Err(invalid(
                 "foreign pack requires isolating code-mode backend and installed source",
             ));
@@ -285,8 +292,10 @@ impl Vault {
         let guest = image.clone().with_source(injected);
         let result = adapter.run(&guest, budget);
         let session_manifest = adapter.session_manifest();
-        let sandbox_receipt = session_manifest.as_ref().map(|manifest|
-            self.append_sandbox_manifest_receipt(run_id, manifest)).transpose()?;
+        let sandbox_receipt = session_manifest
+            .as_ref()
+            .map(|manifest| self.append_sandbox_manifest_receipt(run_id, manifest))
+            .transpose()?;
         let exit = result?;
         if exit.status != 0 {
             return Err(invalid("pack script failed in sandbox"));
@@ -384,7 +393,8 @@ impl Vault {
             Ok(())
         })?;
         Ok(PackScriptOutcome {
-            run_id,            inbound,
+            run_id,
+            inbound,
             verbs,
             wakes,
             session_manifest,

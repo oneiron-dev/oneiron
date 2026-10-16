@@ -34,8 +34,13 @@ pub enum DecisionClass {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnswerContract {
     Noul,
-    Choice { options: Vec<String> },
-    Score { min: f64, max: f64 },
+    Choice {
+        options: Vec<String>,
+    },
+    Score {
+        min: f64,
+        max: f64,
+    },
     /// Where the target the question names sits in an image the call carries: one box,
     /// or none when the target is absent.
     Box,

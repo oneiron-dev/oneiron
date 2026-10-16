@@ -129,11 +129,7 @@ async fn list(
         let open = vault
             .memory(actor, EdgeActorClass::Human)
             .at(locality)
-            .open_conflicts(
-                Some(&owner),
-                subject,
-                query.limit.unwrap_or(DEFAULT_LIMIT),
-            )
+            .open_conflicts(Some(&owner), subject, query.limit.unwrap_or(DEFAULT_LIMIT))
             .map_err(memory_refused)?;
         open.into_iter()
             .map(|conflict| view(vault, conflict))

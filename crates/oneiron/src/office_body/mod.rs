@@ -243,8 +243,9 @@ impl Vault {
                 None => live.fork(),
             };
             let before = target.oplog_vv();
-            let (minted, receipt) =
-                stamped(&target, *artifact, actor, made_by, "edit", |doc| apply_all(doc, ops))?;
+            let (minted, receipt) = stamped(&target, *artifact, actor, made_by, "edit", |doc| {
+                apply_all(doc, ops)
+            })?;
             let updates = target
                 .export(ExportMode::updates(&before))
                 .map_err(|_| invalid("office body update export"))?;
@@ -313,7 +314,9 @@ impl Vault {
             }
             let doc = self.load_doc(wtxn, fork, None)?;
             let (minted, receipt) =
-                stamped(&doc, record.artifact, actor, made_by, "fork", |doc| apply_all(doc, ops))?;
+                stamped(&doc, record.artifact, actor, made_by, "fork", |doc| {
+                    apply_all(doc, ops)
+                })?;
             docx::read(&doc)?;
             let frontier = self.store_doc(wtxn, fork, &doc)?;
             self.record_commit(wtxn, fork, &mut record.commits, &receipt)?;
@@ -367,7 +370,9 @@ impl Vault {
                 .get(&self.store, wtxn, &record.artifact)?
                 .ok_or(Error::EntityNotFound)?;
             if head.frontier != expected_head {
-                return Err(invalid("the body moved since the review; read the diff again"));
+                return Err(invalid(
+                    "the body moved since the review; read the diff again",
+                ));
             }
             let live = self.load_doc(wtxn, &record.artifact, Some(&head.frontier))?;
             let proposal = self.load_doc(wtxn, fork, None)?;
@@ -528,12 +533,7 @@ impl Vault {
         EXPORTS.get(&self.store, &txn, &version_key(artifact, version))
     }
 
-    fn load_doc(
-        &self,
-        txn: &RoTxn<'_>,
-        id: &EntityId,
-        frontier: Option<&[u8]>,
-    ) -> Result<LoroDoc> {
+    fn load_doc(&self, txn: &RoTxn<'_>, id: &EntityId, frontier: Option<&[u8]>) -> Result<LoroDoc> {
         let bytes = DOCS
             .get(&self.store, txn, id)?
             .ok_or(Error::CorruptedIndex("office body document missing"))?;
@@ -581,7 +581,9 @@ fn stamped<T>(
         || !made_by.process.is_valid()
         || made_by.inputs.len() > 1024
     {
-        return Err(invalid("the MadeBy envelope does not name this actor's process"));
+        return Err(invalid(
+            "the MadeBy envelope does not name this actor's process",
+        ));
     }
     doc.set_peer_id(LoroDoc::new().peer_id())
         .map_err(|_| invalid("office body peer"))?;

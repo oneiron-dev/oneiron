@@ -273,15 +273,25 @@ fn refs(values: &[String], required: bool) -> Result<()> {
 
 fn amount(value: Option<f64>) -> Result<()> {
     if value.is_some_and(|value| !value.is_finite() || value < 0.0) {
-        return Err(invalid("an offer amount is finite and non-negative, or unknown"));
+        return Err(invalid(
+            "an offer amount is finite and non-negative, or unknown",
+        ));
     }
     Ok(())
 }
 
 impl OfferModelPin {
     fn validate(&self) -> Result<()> {
-        bounded(&self.model, MAX_REF_BYTES, "an offered model names a bounded id")?;
-        bounded(&self.revision, MAX_REF_BYTES, "an offered model names its revision")?;
+        bounded(
+            &self.model,
+            MAX_REF_BYTES,
+            "an offered model names a bounded id",
+        )?;
+        bounded(
+            &self.revision,
+            MAX_REF_BYTES,
+            "an offered model names its revision",
+        )?;
         if let Some(hash) = &self.content_hash {
             bounded(hash, MAX_REF_BYTES, "an offered model hash is bounded")?;
         }
@@ -306,7 +316,11 @@ impl OfferCost {
 
 impl OfferOption {
     fn validate(&self) -> Result<()> {
-        bounded(&self.label, MAX_REF_BYTES, "an offer option names a bounded label")?;
+        bounded(
+            &self.label,
+            MAX_REF_BYTES,
+            "an offer option names a bounded label",
+        )?;
         self.model.validate()?;
         self.cost.validate()?;
         amount(self.score)?;
@@ -330,7 +344,11 @@ impl TrainingOfferDraft {
                 if *model == self.incumbent {
                     return Err(invalid("a switch offers a model other than the incumbent"));
                 }
-                bounded(licence, MAX_REF_BYTES, "a stock candidate names its licence")?;
+                bounded(
+                    licence,
+                    MAX_REF_BYTES,
+                    "a stock candidate names its licence",
+                )?;
                 bounded(source, MAX_REF_BYTES, "a stock candidate names its source")?;
             }
             OfferCandidate::TrainRecipe {
@@ -339,8 +357,16 @@ impl TrainingOfferDraft {
                 licence,
             } => {
                 base.validate()?;
-                bounded(recipe_ref, MAX_REF_BYTES, "a training offer names its recipe")?;
-                bounded(licence, MAX_REF_BYTES, "a training offer names the base licence")?;
+                bounded(
+                    recipe_ref,
+                    MAX_REF_BYTES,
+                    "a training offer names its recipe",
+                )?;
+                bounded(
+                    licence,
+                    MAX_REF_BYTES,
+                    "a training offer names the base licence",
+                )?;
             }
         }
         self.baseline.validate()?;
@@ -359,16 +385,26 @@ impl TrainingOfferDraft {
         refs(&self.workload.receipt_refs, true)?;
         self.cost.validate()?;
         if self.cost.currency != self.baseline.cost.currency {
-            return Err(invalid("the offer and its baseline are priced in one currency"));
+            return Err(invalid(
+                "the offer and its baseline are priced in one currency",
+            ));
         }
         if self.evidence.exposures.len() > MAX_REFS {
             return Err(invalid("an offer cites at most 64 cohort exposures"));
         }
         if let Some(rubric) = &self.evidence.rubric_revision {
-            bounded(rubric, MAX_REF_BYTES, "the evidence names a bounded rubric revision")?;
+            bounded(
+                rubric,
+                MAX_REF_BYTES,
+                "the evidence names a bounded rubric revision",
+            )?;
         }
         for line in self.evidence.losses.iter().chain(&self.evidence.risk) {
-            bounded(line, MAX_TEXT_BYTES, "an offer's loss and risk lines are bounded")?;
+            bounded(
+                line,
+                MAX_TEXT_BYTES,
+                "an offer's loss and risk lines are bounded",
+            )?;
         }
         match &self.destination {
             ComputeDestination::OnDevice => {}
@@ -411,9 +447,9 @@ pub fn record_training_offer(
     draft: TrainingOfferDraft,
     at: u64,
 ) -> Result<TrainingOffer> {
-    let authority = vault
-        .dreamer_attempt_authority(attempt)?
-        .ok_or(invalid("a training offer comes from an admitted Coach attempt"))?;
+    let authority = vault.dreamer_attempt_authority(attempt)?.ok_or(invalid(
+        "a training offer comes from an admitted Coach attempt",
+    ))?;
     if base_agent_for_facet(&authority.facet) != BaseAgent::Coach
         || authority.actor != vault.coach_authority()?.entity_ref()
     {
@@ -522,7 +558,9 @@ pub fn settle_training_offer(
         .iter()
         .any(|(row, _)| row.previous.as_ref() == Some(offer));
     if repeated {
-        return Err(invalid("a newer offer replaced this one; answer that instead"));
+        return Err(invalid(
+            "a newer offer replaced this one; answer that instead",
+        ));
     }
     vault.with_write_txn_grouped(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;

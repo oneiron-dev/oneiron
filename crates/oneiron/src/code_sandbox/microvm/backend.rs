@@ -20,12 +20,25 @@ use crate::error::CodeError;
 
 /// Virtualization backend able to run one propose-only guest.
 pub trait MicroVmBackend: Send + Sync {
-    fn set_read_transport(&mut self, _transport: std::sync::Arc<dyn super::CredentialReadTransport>) {}
+    fn set_read_transport(
+        &mut self,
+        _transport: std::sync::Arc<dyn super::CredentialReadTransport>,
+    ) {
+    }
     fn set_egress(&mut self, _relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) {}
-    fn session_manifest(&self, _vm: &MicroVmHandle) -> Option<oneiron_container::SessionManifest> { None }
-    fn start_session(&self, _spec: &oneiron_container::GuestSpec, _command: &[std::ffi::OsString],
-        _relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Result<oneiron_container::SessionTransport> {
-        Err(backend_error(self.name(), "native session image unavailable"))
+    fn session_manifest(&self, _vm: &MicroVmHandle) -> Option<oneiron_container::SessionManifest> {
+        None
+    }
+    fn start_session(
+        &self,
+        _spec: &oneiron_container::GuestSpec,
+        _command: &[std::ffi::OsString],
+        _relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<oneiron_container::SessionTransport> {
+        Err(backend_error(
+            self.name(),
+            "native session image unavailable",
+        ))
     }
 
     /// Stable backend label for diagnostics.
@@ -95,11 +108,24 @@ pub trait MicroVmBackend: Send + Sync {
 }
 
 impl MicroVmBackend for Box<dyn MicroVmBackend> {
-    fn set_read_transport(&mut self, transport: std::sync::Arc<dyn super::CredentialReadTransport>) { (**self).set_read_transport(transport); }
-    fn set_egress(&mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) { (**self).set_egress(relay); }
-    fn session_manifest(&self, vm: &MicroVmHandle) -> Option<oneiron_container::SessionManifest> { (**self).session_manifest(vm) }
-    fn start_session(&self, spec: &oneiron_container::GuestSpec, command: &[std::ffi::OsString],
-        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Result<oneiron_container::SessionTransport> {
+    fn set_read_transport(
+        &mut self,
+        transport: std::sync::Arc<dyn super::CredentialReadTransport>,
+    ) {
+        (**self).set_read_transport(transport);
+    }
+    fn set_egress(&mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) {
+        (**self).set_egress(relay);
+    }
+    fn session_manifest(&self, vm: &MicroVmHandle) -> Option<oneiron_container::SessionManifest> {
+        (**self).session_manifest(vm)
+    }
+    fn start_session(
+        &self,
+        spec: &oneiron_container::GuestSpec,
+        command: &[std::ffi::OsString],
+        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<oneiron_container::SessionTransport> {
         (**self).start_session(spec, command, relay)
     }
 
@@ -167,9 +193,13 @@ pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn 
         SandboxGuestTier::FirstPartyDreamer => Ok(None),
         SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => {
             if kvm_available() {
-                firecracker_backend().map(Some).ok_or_else(|| backend_unavailable(tier))
+                firecracker_backend()
+                    .map(Some)
+                    .ok_or_else(|| backend_unavailable(tier))
             } else {
-                container_backend().map(Some).ok_or_else(|| backend_unavailable(tier))
+                container_backend()
+                    .map(Some)
+                    .ok_or_else(|| backend_unavailable(tier))
             }
         }
     }
@@ -177,18 +207,36 @@ pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn 
 
 /// Browser/native sessions use the host's OCI runtime and image configuration,
 /// but the same KVM-first selection law as finite code runs.
-pub fn select_backend_for_session(tier: SandboxGuestTier, runtime: std::path::PathBuf,
-    image: &str) -> Result<Box<dyn MicroVmBackend>> {
-    if tier == SandboxGuestTier::FirstPartyDreamer { return Err(backend_unavailable(tier)); }
-    if kvm_available() { return firecracker_backend().ok_or_else(|| backend_unavailable(tier)); }
+pub fn select_backend_for_session(
+    tier: SandboxGuestTier,
+    runtime: std::path::PathBuf,
+    image: &str,
+) -> Result<Box<dyn MicroVmBackend>> {
+    if tier == SandboxGuestTier::FirstPartyDreamer {
+        return Err(backend_unavailable(tier));
+    }
+    if kvm_available() {
+        return firecracker_backend().ok_or_else(|| backend_unavailable(tier));
+    }
     #[cfg(target_os = "linux")]
-    { super::ContainerBackend::for_session(runtime, image).map(|b| Box::new(b) as Box<dyn MicroVmBackend>) }
+    {
+        super::ContainerBackend::for_session(runtime, image)
+            .map(|b| Box::new(b) as Box<dyn MicroVmBackend>)
+    }
     #[cfg(not(target_os = "linux"))]
-    { let _ = (runtime, image); Err(backend_unavailable(tier)) }
+    {
+        let _ = (runtime, image);
+        Err(backend_unavailable(tier))
+    }
 }
 
 fn kvm_available() -> bool {
-    cfg!(target_os = "linux") && std::fs::OpenOptions::new().read(true).write(true).open("/dev/kvm").is_ok()
+    cfg!(target_os = "linux")
+        && std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/kvm")
+            .is_ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -196,7 +244,9 @@ fn container_backend() -> Option<Box<dyn MicroVmBackend>> {
     super::ContainerBackend::detect().map(|b| Box::new(b) as Box<dyn MicroVmBackend>)
 }
 #[cfg(not(target_os = "linux"))]
-fn container_backend() -> Option<Box<dyn MicroVmBackend>> { None }
+fn container_backend() -> Option<Box<dyn MicroVmBackend>> {
+    None
+}
 
 pub(super) fn backend_unavailable(tier: SandboxGuestTier) -> Error {
     Error::Code(CodeError::MicroVmBackendUnavailable {

@@ -127,7 +127,10 @@ fn tracked(view: &BlockView) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocxChange {
     /// Replace a paragraph's text, keeping its role.
-    SetText { block: String, text: String },
+    SetText {
+        block: String,
+        text: String,
+    },
     /// Replace one table cell's text.
     SetCell {
         block: String,
@@ -136,13 +139,18 @@ pub enum DocxChange {
         text: String,
     },
     /// Move an imported block beside another.
-    Move { block: String, anchor: DocxAnchor },
+    Move {
+        block: String,
+        anchor: DocxAnchor,
+    },
     /// New paragraphs beside an imported block.
     Insert {
         anchor: DocxAnchor,
         paragraphs: Vec<DocxParagraph>,
     },
-    Delete { block: String },
+    Delete {
+        block: String,
+    },
 }
 
 /// A place beside an imported block, as the native writer addresses it.

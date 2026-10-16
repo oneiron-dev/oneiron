@@ -100,7 +100,10 @@ pub(super) fn bind_guest_listener(
 }
 
 pub(super) fn bind_guest_listener_port(
-    jail_root: &Path, uid: u32, gid: u32, port: u32,
+    jail_root: &Path,
+    uid: u32,
+    gid: u32,
+    port: u32,
 ) -> Result<(fs::File, std::path::PathBuf, UnixListener)> {
     let directory = fs::OpenOptions::new()
         .read(true)
@@ -169,7 +172,10 @@ pub(super) fn stage_images(
     Ok((jail_custody, jail_root, staged))
 }
 
-pub(super) fn machine_config(config: &FirecrackerHostConfig, budget: ExecutionBudget) -> serde_json::Value {
+pub(super) fn machine_config(
+    config: &FirecrackerHostConfig,
+    budget: ExecutionBudget,
+) -> serde_json::Value {
     json!({
         "boot-source": {
             "kernel_image_path":"/kernel",
@@ -190,7 +196,10 @@ pub(super) fn jailer_command(
 }
 
 pub(super) fn jailer_command_with_cpu(
-    config: &FirecrackerHostConfig, vm: &MicroVmHandle, budget: ExecutionBudget, cpu_millis: u32,
+    config: &FirecrackerHostConfig,
+    vm: &MicroVmHandle,
+    budget: ExecutionBudget,
+    cpu_millis: u32,
 ) -> Command {
     let mut command = oneiron_spawn::command(&config.jailer);
     // No environment passthrough, shell, NIC, daemonization, or extra host mounts.
@@ -222,10 +231,7 @@ pub(super) fn jailer_command_with_cpu(
         .arg("--cgroup")
         .arg("memory.swap.max=0")
         .arg("--cgroup")
-        .arg(format!(
-            "cpu.max={} 100000",
-            u64::from(cpu_millis) * 100
-        ))
+        .arg(format!("cpu.max={} 100000", u64::from(cpu_millis) * 100))
         .args(["--", "--no-api", "--config-file", "/machine.json"]);
     command
 }

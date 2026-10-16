@@ -43,7 +43,8 @@ impl<'v> ResidenceAdmission<'v> {
     ) -> Result<Self> {
         let txn = vault.store.env.read_txn()?;
         let context = ResidenceReadContext::load_in(vault, &txn, proof, peer, scope, selector)?;
-        let withheld = WorldPrivacyView::load_in(vault, &txn)?.withheld_for(context.destination())?;
+        let withheld =
+            WorldPrivacyView::load_in(vault, &txn)?.withheld_for(context.destination())?;
         Ok(Self {
             vault,
             context,

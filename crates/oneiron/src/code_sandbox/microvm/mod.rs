@@ -30,7 +30,9 @@ mod protocol;
 #[path = "../firecracker/snapshot.rs"]
 mod snapshot;
 #[cfg(target_os = "linux")]
-fn refused(detail: impl Into<String>) -> crate::Error { backend::backend_error("isolated-guest", detail) }
+fn refused(detail: impl Into<String>) -> crate::Error {
+    backend::backend_error("isolated-guest", detail)
+}
 
 mod backend;
 mod credential;
@@ -43,14 +45,14 @@ pub use self::adapter::MicroVmSandboxAdapter;
 pub use self::backend::DevProcessBackend;
 pub use self::backend::{
     DEV_BACKEND_NAME, MicroVmBackend, dev_backend_compiled, firecracker_backend_compiled,
-    select_backend_for_tier, select_backend_for_session,
+    select_backend_for_session, select_backend_for_tier,
 };
 pub use self::credential::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
     CredentialReadTransport, CredentialResolver, EGRESS_PROXY_NAME, SANDBOX_EGRESS_ABI_KEY_HOST,
     SANDBOX_EGRESS_ABI_KEY_SCHEME, egress_destination_from_args,
 };
-pub use self::handle::{ExecutionBudget, GuestImage, OciGuestImage, MicroVmExit, MicroVmHandle};
+pub use self::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle, OciGuestImage};
 #[cfg(all(unix, feature = "microvm-firecracker"))]
 pub(in crate::code_sandbox) use self::overlay::reap_overlay_scratch;
 pub use self::overlay::{collect_overlay_writes, prepare_overlay_handle};

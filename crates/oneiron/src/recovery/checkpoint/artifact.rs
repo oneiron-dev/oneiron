@@ -482,7 +482,11 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
         .checked_sub(8)
         .filter(|at| *at >= prelude.end)
         .ok_or_else(codec)?;
-    let manifest_at = u64::from_be_bytes(read_at(&mut file, footer_at, 8)?.try_into().map_err(|_| codec())?);
+    let manifest_at = u64::from_be_bytes(
+        read_at(&mut file, footer_at, 8)?
+            .try_into()
+            .map_err(|_| codec())?,
+    );
     if manifest_at < prelude.end || manifest_at > footer_at {
         return Err(codec());
     }

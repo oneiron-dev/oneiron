@@ -104,7 +104,10 @@ pub fn recover_vaults(steps: Vec<VaultRecoveryStep<'_>>) -> Vec<VaultRecoveryOut
 
 /// A seed's identity across a run, never its bytes.
 fn seed_fingerprint(seed: &RecoveryRootSeed) -> [u8; 32] {
-    blake3::derive_key("oneiron/recover-many/seed-fingerprint/v1", &seed.kit_bytes()[..])
+    blake3::derive_key(
+        "oneiron/recover-many/seed-fingerprint/v1",
+        &seed.kit_bytes()[..],
+    )
 }
 
 impl Vault {

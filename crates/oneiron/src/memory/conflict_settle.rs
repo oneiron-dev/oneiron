@@ -42,7 +42,11 @@ impl Memory<'_> {
             if open.len() >= limit {
                 break;
             }
-            if owner || self.conflict_review_grant(&txn, conflict.subject)?.is_some() {
+            if owner
+                || self
+                    .conflict_review_grant(&txn, conflict.subject)?
+                    .is_some()
+            {
                 open.push(conflict);
             }
         }

@@ -208,7 +208,12 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
             && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
             && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
         {
-            crate::sync::row_birth::stamp_carried_birth_in_txn(ctx.vault, &mut savepoint, doc, &id)?;
+            crate::sync::row_birth::stamp_carried_birth_in_txn(
+                ctx.vault,
+                &mut savepoint,
+                doc,
+                &id,
+            )?;
         }
         savepoint.commit()?;
     }

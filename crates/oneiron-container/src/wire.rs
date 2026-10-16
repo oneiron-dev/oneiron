@@ -30,12 +30,32 @@ pub(crate) struct Request {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Operation {
-    Socket { family: i32, kind: i32, protocol: i32 },
-    Connect { socket: u64, target: SocketAddr },
-    Send { socket: u64, target: Option<SocketAddr>, bytes: Vec<u8> },
-    Receive { socket: u64, max: usize, flags: i32 },
-    Peer { socket: u64, local: bool },
-    Describe { socket: u64 },
+    Socket {
+        family: i32,
+        kind: i32,
+        protocol: i32,
+    },
+    Connect {
+        socket: u64,
+        target: SocketAddr,
+    },
+    Send {
+        socket: u64,
+        target: Option<SocketAddr>,
+        bytes: Vec<u8>,
+    },
+    Receive {
+        socket: u64,
+        max: usize,
+        flags: i32,
+    },
+    Peer {
+        socket: u64,
+        local: bool,
+    },
+    Describe {
+        socket: u64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -71,7 +91,10 @@ pub(crate) fn read<T: DeserializeOwned>(stream: &mut impl Read) -> io::Result<T>
 
 pub(crate) fn send_fd(stream: &UnixStream, fd: RawFd) -> io::Result<()> {
     let mut byte = [0_u8];
-    let mut iov = libc::iovec { iov_base: byte.as_mut_ptr().cast(), iov_len: 1 };
+    let mut iov = libc::iovec {
+        iov_base: byte.as_mut_ptr().cast(),
+        iov_len: 1,
+    };
     let mut control = [0_usize; 8];
     // SAFETY: all pointers reference live, aligned storage for the syscall.
     unsafe {
@@ -94,7 +117,10 @@ pub(crate) fn send_fd(stream: &UnixStream, fd: RawFd) -> io::Result<()> {
 
 pub(crate) fn receive_fd(stream: &UnixStream) -> io::Result<OwnedFd> {
     let mut byte = [0_u8];
-    let mut iov = libc::iovec { iov_base: byte.as_mut_ptr().cast(), iov_len: 1 };
+    let mut iov = libc::iovec {
+        iov_base: byte.as_mut_ptr().cast(),
+        iov_len: 1,
+    };
     let mut control = [0_usize; 8];
     // SAFETY: recvmsg writes only into the live buffers supplied here. A
     // received SCM_RIGHTS descriptor is newly owned by this process.
@@ -105,15 +131,20 @@ pub(crate) fn receive_fd(stream: &UnixStream) -> io::Result<OwnedFd> {
         msg.msg_control = control.as_mut_ptr().cast();
         msg.msg_controllen = std::mem::size_of_val(&control);
         if libc::recvmsg(stream.as_raw_fd(), &mut msg, libc::MSG_CMSG_CLOEXEC) != 1
-            || msg.msg_flags & libc::MSG_CTRUNC != 0 {
+            || msg.msg_flags & libc::MSG_CTRUNC != 0
+        {
             return Err(io::Error::other("missing fence listener descriptor"));
         }
         let cmsg = libc::CMSG_FIRSTHDR(&msg);
-        if cmsg.is_null() || (*cmsg).cmsg_level != libc::SOL_SOCKET
+        if cmsg.is_null()
+            || (*cmsg).cmsg_level != libc::SOL_SOCKET
             || (*cmsg).cmsg_type != libc::SCM_RIGHTS
-            || (*cmsg).cmsg_len != libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as usize {
+            || (*cmsg).cmsg_len != libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as usize
+        {
             return Err(io::Error::other("invalid fence listener descriptor"));
         }
-        Ok(OwnedFd::from_raw_fd(std::ptr::read(libc::CMSG_DATA(cmsg).cast::<RawFd>())))
+        Ok(OwnedFd::from_raw_fd(std::ptr::read(
+            libc::CMSG_DATA(cmsg).cast::<RawFd>(),
+        )))
     }
 }

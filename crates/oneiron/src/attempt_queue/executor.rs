@@ -20,7 +20,11 @@ impl AttemptQueue<'_> {
         let mut txn = self.store.env.write_txn()?;
         self.require_skill_load_lease_in_txn(&txn, id, lease_owner, attempt_count)?;
         let record = self.set_executor_model_in_txn(
-            &mut txn, id, lease_owner, attempt_count, &fields.executor,
+            &mut txn,
+            id,
+            lease_owner,
+            attempt_count,
+            &fields.executor,
         )?;
         crate::receipt::put_attempt_pack_attribution_in_txn(self.store, &mut txn, id, fields)?;
         txn.commit()?;

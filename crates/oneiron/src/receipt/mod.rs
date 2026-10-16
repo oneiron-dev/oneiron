@@ -25,8 +25,7 @@ mod tests;
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, append_context_receipt_fields, append_pack_attribution_fields,
-    append_pack_manifest_fields,
-    memories_state_ref,
+    append_pack_manifest_fields, memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
@@ -40,8 +39,8 @@ pub use self::kernel::{
 };
 pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
 pub use self::pack_attribution::{
-    ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution,
-    UsedProvenanceEdge,
+    ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
+    SkillContribution, UsedProvenanceEdge,
 };
 pub(crate) use self::pack_attribution::{
     has_attempt_pack_attribution_in_txn, put_attempt_pack_attribution_in_txn,

@@ -7,11 +7,11 @@
 
 mod config;
 #[cfg(target_os = "linux")]
+mod egress;
+#[cfg(target_os = "linux")]
 mod launch;
 #[cfg(target_os = "linux")]
 mod oci_session;
-#[cfg(target_os = "linux")]
-mod egress;
 #[cfg(target_os = "linux")]
 mod protocol;
 #[cfg(target_os = "linux")]
@@ -117,7 +117,9 @@ impl FirecrackerBackend {
         let image = if let Some(oci) = &image.oci {
             resolved = oci_session::resolve(&oci.image, &image.source)?;
             &resolved
-        } else { image };
+        } else {
+            image
+        };
         validate_guest_budget(&budget)?;
         let config = self
             .config
@@ -154,17 +156,47 @@ impl FirecrackerBackend {
             Ok((exit, proposals)) => {
                 #[cfg(target_os = "linux")]
                 {
-                    let bytes = serde_json::to_vec(&launch::machine_config(config, budget)).map_err(|_| refused("VM evidence encoding"))?;
+                    let bytes = serde_json::to_vec(&launch::machine_config(config, budget))
+                        .map_err(|_| refused("VM evidence encoding"))?;
                     let hash = blake3::hash(&bytes).to_hex().to_string();
-                    state.manifest = Some(oneiron_container::SessionManifest {
-                        backend: "firecracker".into(), runtime: config.firecracker.display().to_string(),
-                        image: image.oci.as_ref().map(|i| i.image.clone()).unwrap_or_else(|| config.pins.rootfs.iter().map(|b| format!("{b:02x}")).collect()),
-                        argv_digest: hash.clone(), network: "no-nic; host-vsock".into(), seccomp: oneiron_container::GuestSeccomp::RuntimeDefault,
-                        generation: vm.id().to_owned(), fence_unproven: false,
-                        fence_proof: Some(oneiron_container::FenceProof { ruleset_hash: hash.clone(), seccomp_hash: blake3::hash(&config::read_regular_bounded(&config.firecracker, 256*1024*1024)?).to_hex().to_string(),
-                            network_routes: vec!["no NIC; host-owned vsock only".into()], network_evidence_digest: hash,
-                            sandbox_generation: vm.id().to_owned(), launcher_digest: config.pins.rootfs.iter().map(|b| format!("{b:02x}")).collect() }),
-                    });
+                    state.manifest =
+                        Some(oneiron_container::SessionManifest {
+                            backend: "firecracker".into(),
+                            runtime: config.firecracker.display().to_string(),
+                            image: image.oci.as_ref().map(|i| i.image.clone()).unwrap_or_else(
+                                || {
+                                    config
+                                        .pins
+                                        .rootfs
+                                        .iter()
+                                        .map(|b| format!("{b:02x}"))
+                                        .collect()
+                                },
+                            ),
+                            argv_digest: hash.clone(),
+                            network: "no-nic; host-vsock".into(),
+                            seccomp: oneiron_container::GuestSeccomp::RuntimeDefault,
+                            generation: vm.id().to_owned(),
+                            fence_unproven: false,
+                            fence_proof: Some(oneiron_container::FenceProof {
+                                ruleset_hash: hash.clone(),
+                                seccomp_hash: blake3::hash(&config::read_regular_bounded(
+                                    &config.firecracker,
+                                    256 * 1024 * 1024,
+                                )?)
+                                .to_hex()
+                                .to_string(),
+                                network_routes: vec!["no NIC; host-owned vsock only".into()],
+                                network_evidence_digest: hash,
+                                sandbox_generation: vm.id().to_owned(),
+                                launcher_digest: config
+                                    .pins
+                                    .rootfs
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect(),
+                            }),
+                        });
                 }
                 state.phase = Phase::Complete(proposals);
                 Ok(exit)
@@ -182,15 +214,33 @@ impl MicroVmBackend for FirecrackerBackend {
         self.state.lock().ok()?.get(vm.id())?.manifest.clone()
     }
 
-    fn start_session(&self, spec: &oneiron_container::GuestSpec, command: &[std::ffi::OsString],
-        relay: Arc<dyn oneiron_container::EgressRelay>) -> Result<oneiron_container::SessionTransport> {
+    fn start_session(
+        &self,
+        spec: &oneiron_container::GuestSpec,
+        command: &[std::ffi::OsString],
+        relay: Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<oneiron_container::SessionTransport> {
         #[cfg(target_os = "linux")]
-        { oci_session::start(self.config.as_ref().ok_or_else(|| refused("jailer profile unavailable"))?, spec, command, relay) }
+        {
+            oci_session::start(
+                self.config
+                    .as_ref()
+                    .ok_or_else(|| refused("jailer profile unavailable"))?,
+                spec,
+                command,
+                relay,
+            )
+        }
         #[cfg(not(target_os = "linux"))]
-        { let _ = (spec, command, relay); Err(refused("native VM requires Linux")) }
+        {
+            let _ = (spec, command, relay);
+            Err(refused("native VM requires Linux"))
+        }
     }
 
-    fn set_read_transport(&mut self, transport: Arc<dyn CredentialReadTransport>) { self.transport = Some(transport); }
+    fn set_read_transport(&mut self, transport: Arc<dyn CredentialReadTransport>) {
+        self.transport = Some(transport);
+    }
 
     fn name(&self) -> &'static str {
         FIRECRACKER_BACKEND_NAME

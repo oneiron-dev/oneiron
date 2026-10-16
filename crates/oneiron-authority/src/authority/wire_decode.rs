@@ -64,7 +64,12 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_GENESIS => {
             validate_keys(
                 entries,
-                &[OP_KEY_KIND, "device", "genesis_nonce", "recovery_secret_step"],
+                &[
+                    OP_KEY_KIND,
+                    "device",
+                    "genesis_nonce",
+                    "recovery_secret_step",
+                ],
             )?;
             let recovery = map_entries(required(entries, "recovery_secret_step")?)?;
             validate_keys(recovery, &["commitment", "outcome"])?;

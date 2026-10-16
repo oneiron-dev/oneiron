@@ -185,7 +185,9 @@ pub(super) fn delete_from_known_phonetic_codes(
         if updated.is_empty() {
             store.phonetic_index().delete(wtxn, code.as_bytes())?;
         } else {
-            store.phonetic_index().put(wtxn, code.as_bytes(), &updated)?;
+            store
+                .phonetic_index()
+                .put(wtxn, code.as_bytes(), &updated)?;
         }
     }
 

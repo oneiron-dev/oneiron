@@ -67,7 +67,14 @@ struct Acc {
     duplicates: u64,
 }
 
-type RowKey = (TypeRef, TeamPattern, Option<EntityId>, String, String, String);
+type RowKey = (
+    TypeRef,
+    TeamPattern,
+    Option<EntityId>,
+    String,
+    String,
+    String,
+);
 
 fn row_key(receipt: &TeamReceipt) -> RowKey {
     (
@@ -127,29 +134,31 @@ pub fn payoff_table(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<Pay
     let mean = |sum: f64, n: u64| (n > 0).then(|| sum / n as f64);
     Ok(rows
         .into_iter()
-        .map(|((type_ref, pattern, pattern_skill, models, shape, decided_by), acc)| {
-            #[allow(clippy::cast_precision_loss)]
-            let teams = acc.teams.max(1) as f64;
-            PayoffRow {
-                type_ref,
-                pattern,
-                pattern_skill,
-                models,
-                shape,
-                decided_by,
-                teams: acc.teams,
-                wins: acc.wins,
-                losses: acc.losses,
-                mean_spend: mean(acc.spend_sum, acc.spend_n),
-                mean_elapsed_secs: acc.elapsed_sum / teams,
-                mean_calls: acc.calls_sum / teams,
-                mean_coverage: mean(acc.coverage_sum, acc.coverage_n),
-                confessions: acc.confessions,
-                wait_by_reason: acc.wait,
-                mean_reuse_delay_secs: mean(acc.reuse_sum, acc.reuse_n),
-                duplicate_work: acc.duplicates,
-            }
-        })
+        .map(
+            |((type_ref, pattern, pattern_skill, models, shape, decided_by), acc)| {
+                #[allow(clippy::cast_precision_loss)]
+                let teams = acc.teams.max(1) as f64;
+                PayoffRow {
+                    type_ref,
+                    pattern,
+                    pattern_skill,
+                    models,
+                    shape,
+                    decided_by,
+                    teams: acc.teams,
+                    wins: acc.wins,
+                    losses: acc.losses,
+                    mean_spend: mean(acc.spend_sum, acc.spend_n),
+                    mean_elapsed_secs: acc.elapsed_sum / teams,
+                    mean_calls: acc.calls_sum / teams,
+                    mean_coverage: mean(acc.coverage_sum, acc.coverage_n),
+                    confessions: acc.confessions,
+                    wait_by_reason: acc.wait,
+                    mean_reuse_delay_secs: mean(acc.reuse_sum, acc.reuse_n),
+                    duplicate_work: acc.duplicates,
+                }
+            },
+        )
         .collect())
 }
 
@@ -208,7 +217,11 @@ pub fn planner_card(
         entry.score =
             entry.read.estimate.mean() + entry.read.estimate.bonus(total, PATTERN_EXPLORATION);
     }
-    entries.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.skill.cmp(&b.skill)));
+    entries.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.skill.cmp(&b.skill))
+    });
     Ok(PlannerCard {
         type_ref: type_ref.clone(),
         executor_mix,

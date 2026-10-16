@@ -177,7 +177,12 @@ impl FoldLedger {
     /// and are not already in the compacted prefix, cut to its steps past
     /// that prefix. A failed mark waits for the agent's next ask.
     #[must_use]
-    pub fn applicable(&self, completed: u64, prefix_end: Option<u64>, asked: bool) -> Vec<FoldMark> {
+    pub fn applicable(
+        &self,
+        completed: u64,
+        prefix_end: Option<u64>,
+        asked: bool,
+    ) -> Vec<FoldMark> {
         self.marks
             .iter()
             .filter(|mark| mark.through < completed && (asked || mark.failed.is_none()))
@@ -281,7 +286,9 @@ impl FoldLedger {
                     return Err(format!("a span runs forward: t{from}–t{through} is empty"));
                 }
                 if through > step {
-                    return Err(format!("step {through} has not run yet; this is step {step}"));
+                    return Err(format!(
+                        "step {through} has not run yet; this is step {step}"
+                    ));
                 }
                 if prefix_end.is_some_and(|end| through <= end) {
                     return Err(format!(
@@ -293,7 +300,11 @@ impl FoldLedger {
                     .folds
                     .iter()
                     .map(|fold| (fold.fold, fold.from, fold.through))
-                    .chain(self.marks.iter().map(|mark| (mark.fold, mark.from, mark.through)))
+                    .chain(
+                        self.marks
+                            .iter()
+                            .map(|mark| (mark.fold, mark.from, mark.through)),
+                    )
                     .find(|(_, first, last)| from <= *last && *first <= through);
                 if let Some((fold, first, last)) = overlap {
                     return Err(format!(
@@ -330,7 +341,10 @@ impl FoldLedger {
             SelfFoldCall::Unfold { fold } => {
                 let Some(record) = self.fold(*fold) else {
                     return Err(if self.marks.iter().any(|mark| mark.fold == *fold) {
-                        format!("{} is a pending mark; nothing is folded yet", fold_handle(*fold))
+                        format!(
+                            "{} is a pending mark; nothing is folded yet",
+                            fold_handle(*fold)
+                        )
                     } else {
                         format!("no fold {}", fold_handle(*fold))
                     });

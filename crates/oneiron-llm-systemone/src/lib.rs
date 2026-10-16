@@ -118,8 +118,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
                 );
             }
             let images = !assets.is_empty() || kind == "box";
-            let mut body =
-                json!({"model":model,"state":state,"questions":{"decision":question}});
+            let mut body = json!({"model":model,"state":state,"questions":{"decision":question}});
             if !assets.is_empty() {
                 body["assets"] = Value::Object(assets);
             }
@@ -131,11 +130,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
             if images {
                 post = post.header(IMAGES_HEADER, "true");
             }
-            let response = post
-                .json(&body)
-                .send()
-                .await
-                .map_err(transport_error)?;
+            let response = post.json(&body).send().await.map_err(transport_error)?;
             let status = response.status();
             if !status.is_success() {
                 return Err(if status.is_server_error() || status.as_u16() == 429 {
@@ -284,9 +279,9 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
             // answers null.
             let found = match value.get("box").ok_or_else(invalid)? {
                 Value::Null => None,
-                edges => Some(
-                    serde_json::from_value::<ImageBox>(edges.clone()).map_err(|_| invalid())?,
-                ),
+                edges => {
+                    Some(serde_json::from_value::<ImageBox>(edges.clone()).map_err(|_| invalid())?)
+                }
             };
             if found.is_some_and(|found| !found.is_valid()) {
                 return Err(invalid());

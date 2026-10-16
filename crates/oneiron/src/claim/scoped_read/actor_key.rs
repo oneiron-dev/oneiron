@@ -365,9 +365,9 @@ impl ScopedReadActorKey {
             return Ok(false);
         };
         crate::memory::owner_exemption_holds_in_txn(vault, txn, owner).map_err(|refusal| {
-            crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
-                Box::new(refusal),
-            ))
+            crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                refusal,
+            )))
         })
     }
 

@@ -173,7 +173,9 @@ impl Market {
         let mut best: BTreeMap<&str, f64> = BTreeMap::new();
         for submission in &self.submissions {
             if let Some(score) = submission.score {
-                let slot = best.entry(submission.agent.as_str()).or_insert(f64::NEG_INFINITY);
+                let slot = best
+                    .entry(submission.agent.as_str())
+                    .or_insert(f64::NEG_INFINITY);
                 *slot = slot.max(score);
             }
         }
@@ -188,11 +190,7 @@ fn bounded(text: &str, what: &'static str) -> Result<()> {
     Ok(())
 }
 
-fn update<T>(
-    vault: &Vault,
-    team_ref: &str,
-    f: impl FnOnce(&mut Market) -> Result<T>,
-) -> Result<T> {
+fn update<T>(vault: &Vault, team_ref: &str, f: impl FnOnce(&mut Market) -> Result<T>) -> Result<T> {
     vault.with_write_txn_grouped(|wtxn| {
         let mut market = MARKET
             .get(&vault.store, wtxn, &team_ref.to_owned())?
@@ -224,8 +222,14 @@ pub fn open_market(
     now: u64,
 ) -> Result<Market> {
     bounded(team_ref, "a team reference is 1..=256 bytes without NUL")?;
-    bounded(&referee.rule_ref, "a referee rule is 1..=256 bytes without NUL")?;
-    bounded(&referee.digest, "a referee digest is 1..=256 bytes without NUL")?;
+    bounded(
+        &referee.rule_ref,
+        "a referee rule is 1..=256 bytes without NUL",
+    )?;
+    bounded(
+        &referee.digest,
+        "a referee digest is 1..=256 bytes without NUL",
+    )?;
     if referee.signed_at > now {
         return Err(Error::InvalidClaimBody(
             "a market's referee is signed before the work",
@@ -243,7 +247,11 @@ pub fn open_market(
         return Err(Error::InvalidClaimBody("an island market has an island"));
     }
     let mut participants = BTreeMap::new();
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     let granted = ((pool as f64) * (1.0 - bounty_share)).floor() as u64;
     let share = granted / agents.len() as u64;
     for (i, agent) in agents.iter().enumerate() {
@@ -298,12 +306,20 @@ pub fn open_market(
 ///
 /// [`Error::InvalidClaimBody`] past the share, for an unknown or retired
 /// agent, or on a closed market; storage errors.
-pub fn spend_share(vault: &Vault, team_ref: &str, agent: &str, units: u64, now: u64) -> Result<u64> {
+pub fn spend_share(
+    vault: &Vault,
+    team_ref: &str,
+    agent: &str,
+    units: u64,
+    now: u64,
+) -> Result<u64> {
     update(vault, team_ref, |market| {
         let p = market.open_participant(agent)?;
         let left = (p.share + p.earned).saturating_sub(p.spent);
         if units > left {
-            return Err(Error::InvalidClaimBody("a spend never exceeds the agent's share"));
+            return Err(Error::InvalidClaimBody(
+                "a spend never exceeds the agent's share",
+            ));
         }
         p.spent += units;
         let left = left - units;
@@ -318,8 +334,17 @@ pub fn spend_share(vault: &Vault, team_ref: &str, agent: &str, units: u64, now: 
 ///
 /// [`Error::InvalidClaimBody`] for an unknown or retired agent, a closed
 /// market or a malformed reference; storage errors.
-pub fn submit(vault: &Vault, team_ref: &str, agent: &str, submission_ref: &str, now: u64) -> Result<()> {
-    bounded(submission_ref, "a submission reference is 1..=256 bytes without NUL")?;
+pub fn submit(
+    vault: &Vault,
+    team_ref: &str,
+    agent: &str,
+    submission_ref: &str,
+    now: u64,
+) -> Result<()> {
+    bounded(
+        submission_ref,
+        "a submission reference is 1..=256 bytes without NUL",
+    )?;
     update(vault, team_ref, |market| {
         market.open_participant(agent)?;
         if now < market.referee.signed_at {
@@ -353,7 +378,11 @@ pub fn peek_island(
     now: u64,
 ) -> Result<Vec<String>> {
     update(vault, team_ref, |market| {
-        let MarketMode::Islands { islands, peek_price } = market.mode else {
+        let MarketMode::Islands {
+            islands,
+            peek_price,
+        } = market.mode
+        else {
             return Err(Error::InvalidClaimBody("only an island market sells peeks"));
         };
         if island >= islands {
@@ -361,13 +390,22 @@ pub fn peek_island(
         }
         let p = market.open_participant(agent)?;
         if p.island == Some(island) {
-            return Err(Error::InvalidClaimBody("an agent reads its own island free"));
+            return Err(Error::InvalidClaimBody(
+                "an agent reads its own island free",
+            ));
         }
         if (p.share + p.earned).saturating_sub(p.spent) < peek_price {
-            return Err(Error::InvalidClaimBody("a peek is paid from the agent's share"));
+            return Err(Error::InvalidClaimBody(
+                "a peek is paid from the agent's share",
+            ));
         }
         p.spent += peek_price;
-        market.post(now, Some(agent), LedgerKind::PeekPaid { island }, peek_price);
+        market.post(
+            now,
+            Some(agent),
+            LedgerKind::PeekPaid { island },
+            peek_price,
+        );
         let members: Vec<String> = market
             .participants
             .iter()
@@ -467,7 +505,11 @@ pub fn halving_round(vault: &Vault, team_ref: &str, now: u64) -> Result<Vec<Stri
         let mut rest: Vec<&(String, Option<f64>, bool)> = active.iter().skip(keep_top).collect();
         // Protected exploration first, then the untried, then the next best.
         rest.sort_by_key(|a| (!a.2, a.1.is_some()));
-        kept.extend(rest.iter().take(wildcard_slots as usize).map(|a| a.0.clone()));
+        kept.extend(
+            rest.iter()
+                .take(wildcard_slots as usize)
+                .map(|a| a.0.clone()),
+        );
         let retired: Vec<String> = active
             .iter()
             .map(|a| a.0.clone())

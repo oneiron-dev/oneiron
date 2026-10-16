@@ -6,11 +6,11 @@ mod fixture;
 mod http;
 mod receipt;
 
-pub use receipt::EgressReceipt;
-use crate::{EntityId, Vault};
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
+use crate::{EntityId, Vault};
 use oneiron_container::{EgressRelay, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;
+pub use receipt::EgressReceipt;
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
@@ -28,8 +28,12 @@ pub struct EgressConfig {
 }
 impl Default for EgressConfig {
     fn default() -> Self {
-        Self { allowed_domains: None, request_timeout: Duration::from_secs(30),
-            max_response_bytes: 32 * 1024 * 1024, max_redirects: 3 }
+        Self {
+            allowed_domains: None,
+            request_timeout: Duration::from_secs(30),
+            max_response_bytes: 32 * 1024 * 1024,
+            max_redirects: 3,
+        }
     }
 }
 
@@ -52,125 +56,298 @@ pub struct OpenEgressProxy {
 impl OpenEgressProxy {
     #[must_use]
     pub fn new(vault: Arc<Vault>, run_id: EntityId, config: EgressConfig) -> Self {
-        Self { vault, run_id, config, resolutions: Mutex::new(HashMap::new()), fixture: None }
+        Self {
+            vault,
+            run_id,
+            config,
+            resolutions: Mutex::new(HashMap::new()),
+            fixture: None,
+        }
     }
     #[must_use]
     pub fn with_fixture(mut self, directory: Option<std::path::PathBuf>) -> Self {
-        self.fixture = directory; self
+        self.fixture = directory;
+        self
     }
     fn domain_allowed(&self, host: &str) -> bool {
-        self.config.allowed_domains.as_ref().is_none_or(|domains| domains.iter().any(|d| {
-            let domain = d.trim_end_matches('.').to_ascii_lowercase();
-            let host = host.trim_end_matches('.').to_ascii_lowercase();
-            host == domain || host.strip_suffix(&domain).is_some_and(|prefix| prefix.ends_with('.'))
-        }))
+        self.config.allowed_domains.as_ref().is_none_or(|domains| {
+            domains.iter().any(|d| {
+                let domain = d.trim_end_matches('.').to_ascii_lowercase();
+                let host = host.trim_end_matches('.').to_ascii_lowercase();
+                host == domain
+                    || host
+                        .strip_suffix(&domain)
+                        .is_some_and(|prefix| prefix.ends_with('.'))
+            })
+        })
     }
     fn address_allowed(&self, address: SocketAddr) -> bool {
-        global_address(address.ip()) && (self.config.allowed_domains.is_none()
-            || self.domain_allowed(&address.ip().to_string())
-            || self.resolutions.lock().ok().and_then(|m| m.get(&address.ip()).cloned())
-                .is_some_and(|names| names.iter().any(|name| self.domain_allowed(name))))
+        global_address(address.ip())
+            && (self.config.allowed_domains.is_none()
+                || self.domain_allowed(&address.ip().to_string())
+                || self
+                    .resolutions
+                    .lock()
+                    .ok()
+                    .and_then(|m| m.get(&address.ip()).cloned())
+                    .is_some_and(|names| names.iter().any(|name| self.domain_allowed(name))))
     }
     fn resolve(&self, host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
         let answer = (|| {
-            if !self.domain_allowed(host) { return Err(io::Error::new(io::ErrorKind::PermissionDenied, "owner egress allowlist")); }
+            if !self.domain_allowed(host) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "owner egress allowlist",
+                ));
+            }
             let name = host.to_owned();
             let (send, receive) = std::sync::mpsc::sync_channel(1);
             std::thread::spawn(move || {
-                let answer = (name.as_str(), port).to_socket_addrs().map(|a| a.collect::<Vec<_>>());
+                let answer = (name.as_str(), port)
+                    .to_socket_addrs()
+                    .map(|a| a.collect::<Vec<_>>());
                 let _ = send.send(answer);
             });
-            let addresses: Vec<_> = receive.recv_timeout(self.config.request_timeout).map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "engine DNS deadline"))??
-                .into_iter().filter(|a| global_address(a.ip())).collect();
-            if addresses.is_empty() { return Err(io::Error::new(io::ErrorKind::PermissionDenied, "no public address")); }
-            let mut resolutions = self.resolutions.lock().map_err(|_| io::Error::other("fence state poisoned"))?;
+            let addresses: Vec<_> = receive
+                .recv_timeout(self.config.request_timeout)
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "engine DNS deadline"))??
+                .into_iter()
+                .filter(|a| global_address(a.ip()))
+                .collect();
+            if addresses.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "no public address",
+                ));
+            }
+            let mut resolutions = self
+                .resolutions
+                .lock()
+                .map_err(|_| io::Error::other("fence state poisoned"))?;
             for address in &addresses {
                 let names = resolutions.entry(address.ip()).or_default();
-                if !names.iter().any(|n| n == host) { names.push(host.to_owned()); }
+                if !names.iter().any(|n| n == host) {
+                    names.push(host.to_owned());
+                }
             }
             Ok(addresses)
         })();
-        let bytes = answer.as_ref().ok().and_then(|a| serde_json::to_vec(a).ok()).unwrap_or_default();
-        let decision = if answer.is_ok() { PolicyClassifyDecision::Allow } else { PolicyClassifyDecision::Block };
-        self.record("dns", &format!("dns://{host}"), &bytes, decision, PolicyVerdictCategory::None, None)?;
+        let bytes = answer
+            .as_ref()
+            .ok()
+            .and_then(|a| serde_json::to_vec(a).ok())
+            .unwrap_or_default();
+        let decision = if answer.is_ok() {
+            PolicyClassifyDecision::Allow
+        } else {
+            PolicyClassifyDecision::Block
+        };
+        self.record(
+            "dns",
+            &format!("dns://{host}"),
+            &bytes,
+            decision,
+            PolicyVerdictCategory::None,
+            None,
+        )?;
         answer
     }
-    fn policy(&self, url: &str, bytes: &[u8]) -> io::Result<(PolicyClassifyDecision, PolicyVerdictCategory, Option<String>)> {
+    fn policy(
+        &self,
+        url: &str,
+        bytes: &[u8],
+    ) -> io::Result<(
+        PolicyClassifyDecision,
+        PolicyVerdictCategory,
+        Option<String>,
+    )> {
         // A read is still an outbound operation. The owner plane is opt-in;
         // its usual fail-open/Skipped semantics are unchanged.
-        let request = PolicyClassifyRequest::action(format!("{url}\n{}", String::from_utf8_lossy(bytes)))
-            .with_caller_ref(self.run_id.to_hex());
-        let enforcement = self.vault.enforce_policy_model(request).map_err(io::Error::other)?;
-        Ok((enforcement.verdict.decision, enforcement.verdict.category, enforcement.receipt_ref))
+        let request =
+            PolicyClassifyRequest::action(format!("{url}\n{}", String::from_utf8_lossy(bytes)))
+                .with_caller_ref(self.run_id.to_hex());
+        let enforcement = self
+            .vault
+            .enforce_policy_model(request)
+            .map_err(io::Error::other)?;
+        Ok((
+            enforcement.verdict.decision,
+            enforcement.verdict.category,
+            enforcement.receipt_ref,
+        ))
     }
-    fn record(&self, operation: &str, url: &str, bytes: &[u8], decision: PolicyClassifyDecision,
-        category: PolicyVerdictCategory, policy_receipt: Option<String>) -> io::Result<()> {
-        self.vault.append_egress_receipt(&EgressReceipt {
-            run_id: self.run_id, operation: operation.to_owned(), url: url.to_owned(),
-            content_hash: *blake3::hash(bytes).as_bytes(), content_bytes: bytes.len() as u64,
-            decision, category, policy_receipt,
-        }).map(|_| ()).map_err(io::Error::other)
+    fn record(
+        &self,
+        operation: &str,
+        url: &str,
+        bytes: &[u8],
+        decision: PolicyClassifyDecision,
+        category: PolicyVerdictCategory,
+        policy_receipt: Option<String>,
+    ) -> io::Result<()> {
+        self.vault
+            .append_egress_receipt(&EgressReceipt {
+                run_id: self.run_id,
+                operation: operation.to_owned(),
+                url: url.to_owned(),
+                content_hash: *blake3::hash(bytes).as_bytes(),
+                content_bytes: bytes.len() as u64,
+                decision,
+                category,
+                policy_receipt,
+            })
+            .map(|_| ())
+            .map_err(io::Error::other)
     }
     fn permits(decision: PolicyClassifyDecision) -> bool {
-        matches!(decision, PolicyClassifyDecision::Allow | PolicyClassifyDecision::Warn | PolicyClassifyDecision::Skipped(_))
+        matches!(
+            decision,
+            PolicyClassifyDecision::Allow
+                | PolicyClassifyDecision::Warn
+                | PolicyClassifyDecision::Skipped(_)
+        )
     }
 }
 impl EgressRelay for OpenEgressProxy {
     fn record_abandoned(&self, manifest: &oneiron_container::SessionManifest) -> io::Result<()> {
-        self.vault.append_sandbox_abandon_receipt(self.run_id, manifest).map(|_| ()).map_err(io::Error::other)
+        self.vault
+            .append_sandbox_abandon_receipt(self.run_id, manifest)
+            .map(|_| ())
+            .map_err(io::Error::other)
     }
 
     fn record_session(&self, manifest: &oneiron_container::SessionManifest) -> io::Result<()> {
-        self.vault.append_sandbox_manifest_receipt(self.run_id, manifest).map(|_| ()).map_err(io::Error::other)
+        self.vault
+            .append_sandbox_manifest_receipt(self.run_id, manifest)
+            .map(|_| ())
+            .map_err(io::Error::other)
     }
     fn authorize_datagram(&self, target: SocketAddr) -> io::Result<()> {
         let allowed = target.port() == 53 || self.address_allowed(target);
-        self.record("connect_udp", &format!("udp://{target}"), &[],
-            if allowed { PolicyClassifyDecision::Allow } else { PolicyClassifyDecision::Block }, PolicyVerdictCategory::None, None)?;
-        if allowed { Ok(()) } else { Err(io::Error::new(io::ErrorKind::PermissionDenied, "non-public datagram destination")) }
+        self.record(
+            "connect_udp",
+            &format!("udp://{target}"),
+            &[],
+            if allowed {
+                PolicyClassifyDecision::Allow
+            } else {
+                PolicyClassifyDecision::Block
+            },
+            PolicyVerdictCategory::None,
+            None,
+        )?;
+        if allowed {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "non-public datagram destination",
+            ))
+        }
     }
 
     fn connect(&self, target: SocketAddr) -> io::Result<TcpStream> {
         let url = format!("tcp://{target}");
         if !self.address_allowed(target) {
-            self.record("connect", &url, &[], PolicyClassifyDecision::Block, PolicyVerdictCategory::None, None)?;
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "non-public or ungranted destination"));
+            self.record(
+                "connect",
+                &url,
+                &[],
+                PolicyClassifyDecision::Block,
+                PolicyVerdictCategory::None,
+                None,
+            )?;
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "non-public or ungranted destination",
+            ));
         }
         let (decision, category, policy_receipt) = self.policy(&url, &[])?;
         self.record("connect", &url, &[], decision, category, policy_receipt)?;
-        if !Self::permits(decision) { return Err(io::Error::new(io::ErrorKind::PermissionDenied, "egress policy")); }
+        if !Self::permits(decision) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "egress policy",
+            ));
+        }
         TcpStream::connect_timeout(&target, self.config.request_timeout)
     }
     fn datagram(&self, target: SocketAddr, bytes: &[u8]) -> io::Result<Vec<u8>> {
-        if target.port() == 53 { return dns::answer(self, bytes); }
+        if target.port() == 53 {
+            return dns::answer(self, bytes);
+        }
         let url = format!("udp://{target}");
         if !self.address_allowed(target) {
-            self.record("datagram", &url, bytes, PolicyClassifyDecision::Block, PolicyVerdictCategory::None, None)?;
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "non-public or ungranted destination"));
+            self.record(
+                "datagram",
+                &url,
+                bytes,
+                PolicyClassifyDecision::Block,
+                PolicyVerdictCategory::None,
+                None,
+            )?;
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "non-public or ungranted destination",
+            ));
         }
         let (decision, category, policy_receipt) = self.policy(&url, bytes)?;
-        self.record("datagram_request", &url, bytes, decision, category.clone(), policy_receipt.clone())?;
+        self.record(
+            "datagram_request",
+            &url,
+            bytes,
+            decision,
+            category.clone(),
+            policy_receipt.clone(),
+        )?;
         if !Self::permits(decision) {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "egress policy"));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "egress policy",
+            ));
         }
-        let socket = UdpSocket::bind(if target.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" })?;
+        let socket = UdpSocket::bind(if target.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        })?;
         socket.set_read_timeout(Some(self.config.request_timeout))?;
         socket.connect(target)?;
         socket.send(bytes)?;
         let mut response = vec![0; 65536];
         let result = socket.recv(&mut response);
-        if let Ok(n) = result { response.truncate(n); } else { response.clear(); }
-        self.record("datagram_response", &url, &response, decision, category, policy_receipt)?;
+        if let Ok(n) = result {
+            response.truncate(n);
+        } else {
+            response.clear();
+        }
+        self.record(
+            "datagram_response",
+            &url,
+            &response,
+            decision,
+            category,
+            policy_receipt,
+        )?;
         result.map(|_| response)
     }
     fn fetch(&self, request: HttpRequest) -> io::Result<HttpResponse> {
-        if let Some(answer) = fixture::fetch(self, &request) { return answer; }
+        if let Some(answer) = fixture::fetch(self, &request) {
+            return answer;
+        }
         http::fetch(self, request)
     }
     fn transferred(&self, target: SocketAddr, content_hash: [u8; 32], bytes: u64) {
-        let receipt = EgressReceipt { run_id: self.run_id, operation: "stream_bytes".into(), url: format!("tcp://{target}"),
-            content_hash, content_bytes: bytes, decision: PolicyClassifyDecision::Allow,
-            category: PolicyVerdictCategory::None, policy_receipt: None };
+        let receipt = EgressReceipt {
+            run_id: self.run_id,
+            operation: "stream_bytes".into(),
+            url: format!("tcp://{target}"),
+            content_hash,
+            content_bytes: bytes,
+            decision: PolicyClassifyDecision::Allow,
+            category: PolicyVerdictCategory::None,
+            policy_receipt: None,
+        };
         if let Err(error) = self.vault.append_egress_receipt(&receipt) {
             tracing::error!(%error, "egress transfer receipt failed");
         }

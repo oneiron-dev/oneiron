@@ -62,7 +62,12 @@ impl Vault {
                     org_ref: None,
                 };
                 let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
-                OWNER_PROJECT_SLIP_CACHE.put(&self.store, &mut txn, &cache_key, &slip.to_token()?)?;
+                OWNER_PROJECT_SLIP_CACHE.put(
+                    &self.store,
+                    &mut txn,
+                    &cache_key,
+                    &slip.to_token()?,
+                )?;
                 slip
             }
         };

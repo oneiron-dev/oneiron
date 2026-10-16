@@ -44,8 +44,7 @@ pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
     encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
-    guest_share_envelope,
-    guest_share_envelope_body,
+    guest_share_envelope, guest_share_envelope_body,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;

@@ -5,9 +5,9 @@ use super::policy::{
 };
 use super::types::{invalid, paired_valid};
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt, DecisionRung,
-    DecisionTime, HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin, Reasoning,
-    ReasoningCause, StopCause, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
+    DecisionRung, DecisionTime, HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin,
+    Reasoning, ReasoningCause, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
@@ -736,10 +736,7 @@ impl DecisionLadder<'_> {
         };
         // A rung that abstained answered nothing.
         let answered = answered.filter(|_| outcome.answer != DecisionAnswer::Abstain);
-        let evidence_versions = images
-            .iter()
-            .map(|image| image.evidence.clone())
-            .collect();
+        let evidence_versions = images.iter().map(|image| image.evidence.clone()).collect();
         Ok(TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,

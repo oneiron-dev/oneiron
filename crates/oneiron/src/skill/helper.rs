@@ -336,7 +336,9 @@ pub fn gate_callable_helper(
     type_ref: &TypeRef,
     now: u64,
 ) -> Result<CallableGateVerdict> {
-    let record = vault.get_skill_record(skill)?.ok_or(Error::EntityNotFound)?;
+    let record = vault
+        .get_skill_record(skill)?
+        .ok_or(Error::EntityNotFound)?;
     if record.role != SkillRole::Callable || record.call.is_none() {
         return Err(invalid("only a callable skill takes the helper gate"));
     }
@@ -385,7 +387,10 @@ pub fn gate_callable_helper(
         Some((parent, _, _)) => reliability(vault, parent, executor, type_ref)?,
         None => None,
     };
-    let reliability_lower_bound = own.as_ref().filter(|e| e.runs > 0.0).map(|e| e.lower_bound());
+    let reliability_lower_bound = own
+        .as_ref()
+        .filter(|e| e.runs > 0.0)
+        .map(|e| e.lower_bound());
     let parent_reliability = parent_estimate
         .as_ref()
         .filter(|e| e.runs > 0.0)
@@ -430,7 +435,10 @@ pub fn gate_callable_helper(
 /// # Errors
 ///
 /// Storage errors.
-pub fn callable_gate_verdict(vault: &Vault, skill: &EntityId) -> Result<Option<CallableGateVerdict>> {
+pub fn callable_gate_verdict(
+    vault: &Vault,
+    skill: &EntityId,
+) -> Result<Option<CallableGateVerdict>> {
     let rtxn = vault.store.env.read_txn()?;
     GATE_VERDICT.get(&vault.store, &rtxn, skill)
 }
@@ -443,12 +451,15 @@ pub fn callable_gate_verdict(vault: &Vault, skill: &EntityId) -> Result<Option<C
 /// content changed since it was scored, or the skill is not a Candidate
 /// callable; the skill update door's errors.
 pub fn admit_callable_helper(vault: &Vault, skill: &EntityId, now: u64) -> Result<SkillRecord> {
-    let verdict = callable_gate_verdict(vault, skill)?
-        .ok_or(invalid("a helper activates only on a standing gate verdict"))?;
+    let verdict = callable_gate_verdict(vault, skill)?.ok_or(invalid(
+        "a helper activates only on a standing gate verdict",
+    ))?;
     if !verdict.accepted {
         return Err(invalid("the helper's gate verdict did not accept it"));
     }
-    let mut record = vault.get_skill_record(skill)?.ok_or(Error::EntityNotFound)?;
+    let mut record = vault
+        .get_skill_record(skill)?
+        .ok_or(Error::EntityNotFound)?;
     if record.role != SkillRole::Callable || record.lifecycle_status != SkillLifecycle::Candidate {
         return Err(invalid("only a Candidate callable helper activates here"));
     }
@@ -459,7 +470,15 @@ pub fn admit_callable_helper(vault: &Vault, skill: &EntityId, now: u64) -> Resul
     }
     record.lifecycle_status = SkillLifecycle::Active;
     record.approval_status = ClaimApprovalStatus::Approved;
-    vault.update_skill_record(skill, &record, TimeRange { start: now, end: now }, now)?;
+    vault.update_skill_record(
+        skill,
+        &record,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    )?;
     Ok(record)
 }
 
@@ -480,12 +499,22 @@ pub fn suspend_callable_helper(
         let rtxn = vault.store.env.read_txn()?;
         vault.verify_owner_write_actor_in_txn(&rtxn, owner)?;
     }
-    let mut record = vault.get_skill_record(skill)?.ok_or(Error::EntityNotFound)?;
+    let mut record = vault
+        .get_skill_record(skill)?
+        .ok_or(Error::EntityNotFound)?;
     if record.role != SkillRole::Callable {
         return Err(invalid("only a callable helper is suspended here"));
     }
     record.lifecycle_status = SkillLifecycle::Quarantined;
     record.approval_status = ClaimApprovalStatus::Approved;
-    vault.update_skill_record(skill, &record, TimeRange { start: now, end: now }, now)?;
+    vault.update_skill_record(
+        skill,
+        &record,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    )?;
     Ok(record)
 }

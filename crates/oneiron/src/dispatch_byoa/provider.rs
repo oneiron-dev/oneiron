@@ -78,7 +78,11 @@ impl DreamerProviderAdapter for ClaudeCodeRunner {
         "claude-code"
     }
     fn connector(&self, input: DreamerProviderInput) -> ByoaResult<ByoaConnectorSpec> {
-        cli(CLAUDE_CODE_PROGRAM, &["--print", "--output-format", "json"], input)
+        cli(
+            CLAUDE_CODE_PROGRAM,
+            &["--print", "--output-format", "json"],
+            input,
+        )
     }
 }
 pub struct CodexRunner;

@@ -272,8 +272,7 @@ async fn handle_connection(
                                 conn_state.locality,
                                 conn_state.peer_machine(server.vault()),
                                 &data,
-                            )
-                            else {
+                            ) else {
                                 continue;
                             };
                             let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {

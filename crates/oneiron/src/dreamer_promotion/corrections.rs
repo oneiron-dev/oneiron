@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 
 use super::*;
 use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
-use crate::dreamer_consolidation::{conflict_close_candidate, marker_ids as ids_at};
 use crate::dreamer_consolidation::resources::{ConsolidationFence, RowRevision};
+use crate::dreamer_consolidation::{conflict_close_candidate, marker_ids as ids_at};
 use crate::edge::EdgeKind;
 
 /// Grants `replacement` when the policy allows it, returning the prior the

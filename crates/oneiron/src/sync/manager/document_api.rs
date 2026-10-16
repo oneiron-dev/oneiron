@@ -67,8 +67,15 @@ impl WindowManager {
     ) -> Result<Vec<u8>> {
         selector::authorize_sync_selector(&self.vault, scope, selector)?;
         let source = self.open_window(window)?;
-        self.documents
-            .export_selected(id, &source.doc, window, scope, selector, withhold, remote_vv)
+        self.documents.export_selected(
+            id,
+            &source.doc,
+            window,
+            scope,
+            selector,
+            withhold,
+            remote_vv,
+        )
     }
 
     /// Grant-backed text-plane export. The entity's canonical ledger supplies
@@ -112,14 +119,6 @@ impl WindowManager {
         };
         let window = self.open_window(&key)?;
         self.documents
-            .export_selected(
-                id,
-                &window.doc,
-                &key,
-                scope,
-                selector,
-                withhold,
-                remote_vv,
-            )
+            .export_selected(id, &window.doc, &key, scope, selector, withhold, remote_vv)
     }
 }

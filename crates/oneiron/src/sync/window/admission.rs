@@ -8,7 +8,9 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::SyncError;
-use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD};
+use crate::registry::{
+    ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
+};
 use crate::sync::loro_support::{TombstoneIndex, map_for_each_value_bytes, map_get_bytes};
 use crate::{Error, Result};
 

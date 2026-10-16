@@ -69,7 +69,10 @@ pub enum BodyBlockKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocxBodyOp {
     /// Replace a paragraph's text by its shortest edit.
-    SetText { block: String, text: String },
+    SetText {
+        block: String,
+        text: String,
+    },
     Splice {
         block: String,
         at: usize,
@@ -88,9 +91,14 @@ pub enum DocxBodyOp {
         role: Option<String>,
         text: String,
     },
-    Delete { block: String },
+    Delete {
+        block: String,
+    },
     /// Place a block after `after`, or first.
-    Move { block: String, after: Option<String> },
+    Move {
+        block: String,
+        after: Option<String>,
+    },
 }
 
 /// Write the imported blocks into a fresh document.
@@ -201,7 +209,10 @@ pub(super) fn read(doc: &LoroDoc) -> Result<DocxBody> {
             id,
             kind,
             role: string(&entry, ROLE),
-            imported: matches!(entry.get(IMPORTED), Some(ValueOrContainer::Value(LoroValue::Bool(true)))),
+            imported: matches!(
+                entry.get(IMPORTED),
+                Some(ValueOrContainer::Value(LoroValue::Bool(true)))
+            ),
             locked: string(&entry, LOCK).is_some(),
             text,
             cells,
@@ -231,7 +242,8 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
     match op {
         DocxBodyOp::SetText { block, text: new } => {
             line(new)?;
-            let body = loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
+            let body =
+                loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
             body.update(new, UpdateOptions::default())
                 .map_err(|_| invalid("paragraph update"))?;
         }
@@ -242,8 +254,11 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
             insert,
         } => {
             line(insert)?;
-            let body = loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
-            let end = at.checked_add(*delete).ok_or_else(|| invalid("splice range"))?;
+            let body =
+                loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
+            let end = at
+                .checked_add(*delete)
+                .ok_or_else(|| invalid("splice range"))?;
             if end > body.len_unicode() {
                 return Err(invalid("splice range"));
             }
@@ -264,9 +279,16 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
                 .update(new, UpdateOptions::default())
                 .map_err(|_| invalid("cell update"))?;
         }
-        DocxBodyOp::InsertParagraph { after, role, text: new } => {
+        DocxBodyOp::InsertParagraph {
+            after,
+            role,
+            text: new,
+        } => {
             line(new)?;
-            if role.as_ref().is_some_and(|role| role.is_empty() || role.len() > 256) {
+            if role
+                .as_ref()
+                .is_some_and(|role| role.is_empty() || role.len() > 256)
+            {
                 return Err(invalid("paragraph role"));
             }
             let at = match after {
@@ -297,7 +319,9 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
             let from = position(block)?;
             let to = match after {
                 None => 0,
-                Some(after) if after == block => return Err(invalid("a block cannot follow itself")),
+                Some(after) if after == block => {
+                    return Err(invalid("a block cannot follow itself"));
+                }
                 // Positions after the moved block shift left once it leaves.
                 Some(after) => {
                     let anchor = position(after)?;

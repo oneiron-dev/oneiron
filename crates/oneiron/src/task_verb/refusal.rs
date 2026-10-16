@@ -132,9 +132,7 @@ impl Memory<'_> {
             }
             // Her dial, read live: the stored definition at her actor id and
             // this vault's kind.
-            if self
-                .vault()
-                .get_entity_type_in_txn(&*wtxn, &self.actor())?
+            if self.vault().get_entity_type_in_txn(&*wtxn, &self.actor())?
                 != Some(ENTITY_TYPE_AGENT_DEF)
             {
                 return Err(consult_refusal(

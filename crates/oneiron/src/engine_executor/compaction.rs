@@ -670,10 +670,7 @@ impl RunFrames {
                 .epochs
                 .iter()
                 .any(|(row, _)| row.covers(run_id, seq) && row.covers(run_id, seq - 1))
-                || self
-                    .folds
-                    .covering(seq)
-                    .is_some_and(|fold| fold.from < seq))
+                || self.folds.covering(seq).is_some_and(|fold| fold.from < seq))
     }
 }
 
