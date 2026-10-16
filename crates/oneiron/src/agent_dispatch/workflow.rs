@@ -87,6 +87,7 @@ impl AgentDispatcher<'_> {
             project_ref: spawn.project_ref.map(|id| id.to_hex()),
             budget: spawn.budget,
             spend: spawn.spend.as_ref().map(|spend| spend.scope.clone()),
+            room: spawn.room,
         };
         Ok((definition, intent))
     }
@@ -310,6 +311,13 @@ impl AgentDispatcher<'_> {
             .ok_or_else(|| invalid("workflow step is missing"))?;
         let launch = self.admit_leaf_in_txn(txn, record.root, requested, ordinal, now)?;
         frozen.launch = Some(launch.statement.clone());
+        // OF-531: a room-bound leaf re-proves its join at every release.
+        frozen.join = self.require_room_join_in_txn(
+            txn,
+            frozen.room.as_ref(),
+            requested,
+            launch.statement.parent_scope.as_ref(),
+        )?;
         let EnqueueDreamerAttemptOutcome::Enqueued(status) =
             self.runner.enqueue_with_task_ref_in_txn(
                 txn,

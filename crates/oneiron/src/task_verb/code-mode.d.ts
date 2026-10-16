@@ -160,9 +160,11 @@ declare const vault: {
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   rooms: {
     claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
+    consent(input: { grant: boolean; join_ref: string; part: "spend" | "membership" | "admission"; spend_scope?: string | null }): Promise<unknown>;
     find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     get(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
     host(input: { room_ref: string; session_ref?: string | null }): Promise<unknown>;
+    join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
