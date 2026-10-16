@@ -552,7 +552,7 @@ fn append_turns(log: &Path, session: &str, turns: &[(&str, Option<&str>, &str)])
         .lines()
         .count();
     for (index, (uuid, parent, text)) in turns.iter().enumerate() {
-        let user = (already + index) % 2 == 0;
+        let user = (already + index).is_multiple_of(2);
         let message = if user {
             json!({ "role": "user", "content": text })
         } else {
