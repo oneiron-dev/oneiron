@@ -7,8 +7,8 @@ use crate::extraction_eval::{
 use super::config::{campaign_split_dataset_ref, check_metric_pin};
 use super::judge::validate_taste;
 use super::{
-    CampaignConfig, CampaignDatasetRef, CampaignError, CampaignExecutableArm, CampaignResult,
-    CampaignTasteJudgment,
+    BlindCampaignJudgeInput, CampaignConfig, CampaignDatasetRef, CampaignError,
+    CampaignExecutableArm, CampaignResult, CampaignTaste, CampaignTasteDecisions,
 };
 
 /// Splits an AR-3 report may be produced for.
@@ -76,8 +76,8 @@ pub struct CampaignSplitReport {
     pub of360: Of360Ar3MetricTier,
     /// Raw observed cost row, retained unmodified.
     pub cost: CampaignCost,
-    /// Raw taste judgment, retained unmodified.
-    pub taste: CampaignTasteJudgment,
+    /// Raw taste the decision path answered, retained unmodified.
+    pub taste: CampaignTaste,
     /// Smoke-gate outcome.
     pub smoke: CampaignSmokeOutcome,
     /// Taste score after the smoke gate: zero when killed, raw when passed.
@@ -130,7 +130,8 @@ impl CampaignSplitReport {
     }
 }
 
-/// Evaluates one arm on one split through the landed OF-360 metric tier.
+/// Evaluates one arm on one split through the landed OF-360 metric tier, and
+/// asks its taste over the blind input through the host's decision ladder.
 ///
 /// This is the module's only OF-360 call site.
 #[expect(clippy::too_many_arguments)]
@@ -141,7 +142,8 @@ pub fn build_campaign_split_report(
     dataset: &Of360GoldDataset,
     run: &Of360ExtractionRun,
     cost: CampaignCost,
-    taste: CampaignTasteJudgment,
+    blind: &BlindCampaignJudgeInput,
+    taste: &CampaignTasteDecisions<'_>,
     smoke: CampaignSmokeOutcome,
 ) -> CampaignResult<CampaignSplitReport> {
     config.validate()?;
@@ -157,11 +159,12 @@ pub fn build_campaign_split_report(
         });
     }
     validate_cost(&cost)?;
-    validate_taste(&taste)?;
     validate_smoke(&smoke)?;
 
     let of360 = of360_ar3_metric_tier(dataset, run)?;
     check_metric_pin(&config.metric_pin, &of360.metric_definitions)?;
+    let taste = taste.taste(blind)?;
+    validate_taste(&taste)?;
     let metric_definition_digest = of360
         .metric_definitions
         .derivation_envelope
@@ -298,7 +301,7 @@ fn validate_arm_report(
     Ok(())
 }
 
-fn effective_taste_score(smoke: &CampaignSmokeOutcome, taste: &CampaignTasteJudgment) -> f64 {
+fn effective_taste_score(smoke: &CampaignSmokeOutcome, taste: &CampaignTaste) -> f64 {
     if smoke_is_killed(smoke) {
         0.0
     } else {

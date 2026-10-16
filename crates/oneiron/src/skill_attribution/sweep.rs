@@ -4,8 +4,8 @@ use super::codec::validate_evidence;
 use super::manifest_entry_names_skill;
 use super::projector::record_evidence_in_txn;
 use super::{
-    AttemptOutcome, AttributionJudge, FollowedState, OutcomeEvidence, RuleAttributionJudge,
-    attribution_judgments, read_attribution_cursor, run_attribution_projector_with_judge,
+    AttemptOutcome, AttributionDecisions, FollowedState, OutcomeEvidence, attribution_judgments,
+    read_attribution_cursor, run_attribution_projector_with_decisions,
 };
 use crate::attempt_queue::MAX_ATTEMPT_MANIFEST_ENTRIES;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_page};
@@ -58,21 +58,23 @@ pub struct AttributionSweepReport {
     pub failures: Vec<(String, Error)>,
 }
 
-/// One bounded receipt page. The rule judge stays the default; fact resolution is
+/// One bounded receipt page. The rule tier stays the default; fact resolution is
 /// a host seam because execution/coverage facts cannot be invented from a failure.
 pub fn run_task_attribution_sweep(
     vault: &Vault,
     limit: usize,
     source: &dyn ReceiptAttributionSource,
 ) -> Result<AttributionSweepReport> {
-    run_task_attribution_sweep_with_judge(vault, limit, source, &RuleAttributionJudge)
+    run_task_attribution_sweep_with_decisions(vault, limit, source, None)
 }
 
-pub fn run_task_attribution_sweep_with_judge(
+/// [`run_task_attribution_sweep`] through the host's decisions; `None` is the
+/// rule tier.
+pub fn run_task_attribution_sweep_with_decisions(
     vault: &Vault,
     limit: usize,
     source: &dyn ReceiptAttributionSource,
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
 ) -> Result<AttributionSweepReport> {
     let after = {
         let txn = vault.store.env.read_txn()?;
@@ -120,7 +122,7 @@ pub fn run_task_attribution_sweep_with_judge(
         let txn = vault.store.env.read_txn()?;
         APPLIED_CURSOR.get(&vault.store, &txn, &())?.unwrap_or(0)
     };
-    run_attribution_projector_with_judge(vault, read_attribution_cursor(vault)?, judge)?;
+    run_attribution_projector_with_decisions(vault, read_attribution_cursor(vault)?, decisions)?;
     let routed = read_attribution_cursor(vault)?;
     let judgments: Vec<_> = attribution_judgments(vault)?
         .into_iter()

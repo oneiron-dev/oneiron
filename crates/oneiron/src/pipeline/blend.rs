@@ -10,6 +10,7 @@ use crate::fusion;
 use crate::store::{RetrievalBlendWeights, RetrievalScoreComponent, Store, StoreRead};
 use crate::temporal::TemporalAnchorMode;
 
+use super::affect::{AffectRetrievalPolicy, affect_access_factor, stored_claim_vad};
 use super::filters::claim_status_gate_allows;
 use super::support::resolve_sigma_secs;
 use super::types::{
@@ -52,6 +53,9 @@ pub(super) struct RetrievalBlendConfig<'a> {
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
     /// Whether this call is the run's single decay-applying blend.
     pub(super) access_factor_application: AccessFactorApplication,
+    /// Arousal stretch and sensitivity floor over the read-side factor;
+    /// read only by the Apply blend.
+    pub(super) affect: AffectRetrievalPolicy,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -169,6 +173,7 @@ pub(super) fn blended_retrieval_scores(
             claim_gate,
             access_now_secs,
             config.access_factor_overrides,
+            &config.affect,
         )?;
     }
 
@@ -216,6 +221,11 @@ pub(super) fn blended_retrieval_scores(
 /// without a claim body — non-claims, unparseable envelopes, and the
 /// claims the gate suppresses (which are dropped downstream and never
 /// scored) — keep the neutral `1.0`.
+///
+/// The affect policy (OF-423) reshapes a live claim's derived factor: its
+/// stored arousal stretches the aging half-life, and a critical or aroused
+/// claim holds the availability floor. A caller override stays exact.
+#[expect(clippy::too_many_arguments)]
 fn populate_access_factors(
     inputs: &mut [fusion::RetrievalBlendInput],
     store: &StoreRead<'_>,
@@ -224,7 +234,9 @@ fn populate_access_factors(
     claim_gate: &mut ClaimStatusGateCache,
     now_secs: u64,
     overrides: Option<&HashMap<EntityId, f32>>,
+    affect: &AffectRetrievalPolicy,
 ) -> Result<()> {
+    let mut manifest = None;
     for input in inputs {
         if !claim_status_gate_allows(store, rtxn, &input.id, metadata_cache, claim_gate)? {
             continue;
@@ -236,9 +248,32 @@ fn populate_access_factors(
             continue;
         };
         let override_factor = overrides.and_then(|overrides| overrides.get(&input.id).copied());
-        input.access_factor =
-            crate::claim::claim_access_factor(body, meta.learned_at, now_secs, override_factor)?
-                .access_factor;
+        let derived =
+            crate::claim::claim_access_factor(body, meta.learned_at, now_secs, override_factor)?;
+        input.access_factor = if override_factor.is_none() && affect.shapes_access_factor() {
+            let arousal = stored_claim_vad(store, rtxn, &input.id)?.map(|vad| vad.arousal);
+            let critical = if affect.availability_floor.is_some() {
+                if manifest.is_none() {
+                    manifest = Some(crate::gate::resolve_policy_manifest(store.base(), rtxn)?);
+                }
+                manifest.as_ref().is_some_and(|manifest| {
+                    manifest.criticality_for_predicate(&body.predicate)
+                        == crate::gate::PolicyCriticality::Critical
+                })
+            } else {
+                false
+            };
+            affect_access_factor(
+                affect,
+                derived,
+                meta.learned_at,
+                now_secs,
+                arousal,
+                critical,
+            )
+        } else {
+            derived.access_factor
+        };
     }
 
     Ok(())

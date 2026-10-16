@@ -44,12 +44,17 @@ mod late_credit;
 mod pack_learning;
 pub use late_credit::{LateCreditReceipt, LateCreditShare, late_credit_receipt};
 pub use pack_learning::{AnchoredPackOutcome, project_anchored_pack_outcome};
+mod positive;
+pub use self::positive::{
+    PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
+    retire_positive_proposal, run_positive_attribution_pass,
+};
 mod projector;
 pub(crate) use self::projector::{
     draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn, withdraw_edit_proposal_in_txn,
 };
 mod split;
-pub(crate) use self::split::{classify_split, unclear_floor};
+pub(crate) use self::split::{classify_split, settled_split, unclear_floor};
 mod types;
 mod unclear;
 pub use self::unclear::{UnclearAttribution, unclear_attributions};
@@ -57,14 +62,16 @@ pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
 
 pub use self::audit::{
     AttributionAuditReport, AuditFixture, attribution_audit_reports, held_out_audit_fixtures,
-    run_attribution_audit, run_attribution_audit_with_judge,
+    run_attribution_audit, run_attribution_audit_with_decisions,
 };
 pub use self::judge::{
-    ATTRIBUTION_CALL_PURPOSE_NAME, AttributionJudge, RuleAttributionJudge, attribution_call_purpose,
+    ATTRIBUTION_CALL_PURPOSE_NAME, ATTRIBUTION_DIAL, AttributionDecisions, AttributionNotes,
+    AttributionRules, attribution_call_purpose,
 };
 pub use self::projector::{
     attribution_judgments, pending_edit_proposals, read_attribution_cursor,
-    record_attribution_evidence, run_attribution_projector, run_attribution_projector_with_judge,
+    record_attribution_evidence, run_attribution_projector,
+    run_attribution_projector_with_decisions,
 };
 pub use self::types::{
     AttemptOutcome, AttributionJudgment, AttributionLane, AttributionShare, AttributionSplit,
@@ -93,7 +100,7 @@ use rmpv::Value;
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
-    run_task_attribution_sweep, run_task_attribution_sweep_with_judge,
+    run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
 };
 
 pub use self::judge_supersession::{

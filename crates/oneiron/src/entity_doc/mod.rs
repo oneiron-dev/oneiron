@@ -8,9 +8,11 @@ mod citation_floor;
 mod document;
 mod forks;
 mod message_stream;
+pub mod office;
 mod pins;
 mod recovery;
 mod registry;
+pub mod review_explainer;
 mod side_keys;
 mod storage;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
@@ -25,6 +27,7 @@ pub(crate) use recovery::{
 mod verbs;
 
 pub use document::{Birth, EntityDoc, TextChange};
+pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use forks::{
     DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
 };

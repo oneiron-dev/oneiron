@@ -34,7 +34,8 @@ pub fn compaction_reply_schema() -> Value {
 
 /// What a compaction backend reads, as one JSON document: the span to cover
 /// (`from`, `through`), the summary's token ceiling, the lines it must keep
-/// word for word, the check the last try failed, and the window's messages.
+/// word for word, what the agent asked it to keep (`note`, or null), the
+/// check the last try failed, and the window's messages.
 /// The host's prompt explains these keys; no prose lives here.
 #[must_use]
 pub fn compaction_request_input(
@@ -45,6 +46,7 @@ pub fn compaction_request_input(
         request.turn_start,
         &request.window,
         &request.pins,
+        request.note.as_deref(),
         request.summary_token_budget,
         retry,
     )
@@ -54,6 +56,7 @@ fn input_document(
     turn_start: u64,
     window: &[CompactionWindowMessage],
     pins: &[String],
+    note: Option<&str>,
     summary_token_budget: u64,
     retry: Option<CompactionCheck>,
 ) -> Value {
@@ -62,6 +65,7 @@ fn input_document(
         "through": window.last().map_or(turn_start, |message| message.turn),
         "max_summary_tokens": summary_token_budget,
         "pins": pins,
+        "note": note,
         "retry": retry.map(CompactionCheck::as_str),
         "steps": window.iter().map(step_frame).collect::<Vec<_>>(),
     })
@@ -72,19 +76,21 @@ fn step_frame(message: &CompactionWindowMessage) -> Value {
 }
 
 /// The tokens [`compaction_request_input`] renders for `window` from
-/// `turn_start` with `pins`, on its costliest try (whichever retry it names),
-/// counted as a backend counts its input. The retry's name sits between
-/// fixed keys, so the costliest is found on an empty input.
+/// `turn_start` with `pins` and `note`, on its costliest try (whichever
+/// retry it names), counted as a backend counts its input. The retry's name
+/// sits between fixed keys, so the costliest is found on an empty input.
 pub(crate) fn compaction_input_tokens(
     turn_start: u64,
     window: &[CompactionWindowMessage],
     pins: &[String],
+    note: Option<&str>,
     summary_token_budget: u64,
 ) -> u64 {
     let render =
         |window: &[CompactionWindowMessage], pins: &[String], retry: Option<CompactionCheck>| {
             count_context_pack_tokens(
-                &input_document(turn_start, window, pins, summary_token_budget, retry).to_string(),
+                &input_document(turn_start, window, pins, note, summary_token_budget, retry)
+                    .to_string(),
             ) as u64
         };
     let retry = [
@@ -440,9 +446,15 @@ pub enum CompactionOff {
     SeatTooSmall,
     /// The host's backend failed in a way no retry fixes.
     BackendFailed,
-    /// The run lives in an off-record room, whose overlay compaction is not
-    /// built; its window stays raw.
+    /// The run lives in a room whose stretch keeps no summary of its own: an
+    /// anonymous room retains nothing, and a room already on record when the
+    /// run entered writes through its saver, which no epoch mint reaches. Its
+    /// window stays raw. A run in an off-record room compacts into the room's
+    /// overlay instead.
     OffRecordRun,
+    /// The run's agent profile gives its window to its own harness, which
+    /// compacts it: Oneiron never compacts it twice.
+    HarnessCompacts,
 }
 
 impl CompactionOff {
@@ -457,6 +469,7 @@ impl CompactionOff {
             Self::SeatTooSmall => "compaction_seat_too_small",
             Self::BackendFailed => "backend_failed",
             Self::OffRecordRun => "off_record_run",
+            Self::HarnessCompacts => "harness_compacts",
         }
     }
 }
