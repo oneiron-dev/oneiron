@@ -20,6 +20,18 @@ impl SyncClient {
             }
             _ => {}
         }
+        // On a federation lane a document frame is a peer's text: the peer's
+        // grant must still stand, and the row the text belongs to must be one
+        // this vault already admitted through the window gate (OF-149).
+        if let Some(peer) = &self.config.federation_peer {
+            peer.revalidate(&self.vault)
+                .map_err(super::federated::map_federated_admission_err)?;
+            if !self.vault.entity_exists(&frame.entity).map_err(storage)? {
+                return Err(TransportError::InvalidPayload(
+                    "federation document for a row this vault has not admitted",
+                ));
+            }
+        }
         let doc = self
             .manager
             .documents()

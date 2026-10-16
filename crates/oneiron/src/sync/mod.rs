@@ -94,7 +94,7 @@ pub use residence::discover_local_window_keys;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
-    FederationAdmissionRole, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest,
+    DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest,
     SyncSelector, SyncSelectorWorld, admit_federated_window_update, authorize_sync_selector,
     decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
     encode_sync_selector, filtered_window_doc,

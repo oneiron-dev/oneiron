@@ -83,7 +83,15 @@ impl SyncClient {
                 self.root_doc
                     .import(payload)
                     .map_err(|_| TransportError::InvalidPayload("root doc import failed"))?;
-                if let Err(err) = self.persist_root_state() {
+                // A federation peer's root names its windows for this lane to
+                // follow; it is not this vault's root, so none of it reaches
+                // the owner's d:root or lease mirror (OF-149).
+                let persisted = if self.config.federation_peer.is_some() {
+                    Ok(())
+                } else {
+                    self.persist_root_state()
+                };
+                if let Err(err) = persisted {
                     if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
                         return Err(TransportError::Storage(format!(
                             "persist root doc: {err}; root revert after import persist failure: {revert_err}"
