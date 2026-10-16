@@ -41,6 +41,7 @@ mod conflict_routes;
 mod cooperative_deletion_routes;
 mod decision_ask_routes;
 mod diary_routes;
+mod disclosure_routes;
 mod handoff_alarm_routes;
 mod history_routes;
 mod inbox_routes;
@@ -88,6 +89,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(conflict_routes::routes())
         .merge(diary_routes::routes())
+        .merge(disclosure_routes::routes())
         .merge(history_routes::routes())
         .merge(inbox_routes::routes())
         .merge(proactivity_routes::routes())
