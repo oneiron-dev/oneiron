@@ -151,6 +151,10 @@ declare const vault: {
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
   };
+  weave: {
+    digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
+  };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
   workspace: {
     work_companion: {

@@ -24,6 +24,8 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultWeaveReport,
+    VaultWeaveDigest,
     VaultPacksPut,
     VaultArtifactsView,
     VaultArtifactsExport,
@@ -126,6 +128,8 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultWeaveReport,
+        Self::VaultWeaveDigest,
         Self::VaultPacksPut,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
@@ -231,6 +235,8 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultWeaveReport => "vault.weave.report",
+            Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
@@ -332,6 +338,8 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultWeaveReport
+                | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -441,6 +449,8 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultWeaveReport
+                | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -582,6 +592,8 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultWeaveReport
+                | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -748,6 +760,8 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultWeaveReport => &["spec"],
+            Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
@@ -851,6 +865,8 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultWeaveReport => &["spec"],
+            Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],

@@ -560,6 +560,24 @@
       }
     },
     {
+      "name": "vault.weave.report",
+      "input": "crate::claim::WeaveReportRequest",
+      "output": "crate::claim::WeaveReportView",
+      "call": "memory.weave_report(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.digest",
+      "input": "crate::claim::WeaveDigestRequest",
+      "output": "Option<crate::claim::WeaveDigestView>",
+      "call": "memory.weave_digest(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",

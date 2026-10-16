@@ -204,6 +204,28 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     next = Some(due);
                 }
             }
+            // Each reader's weave digest schedule (OF-499) arms the same
+            // home-only cadence, and is as independent of the rest.
+            let weave = match self.vault.next_weave_digest_at() {
+                Ok(weave) => weave,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        ?error,
+                        "weave digest deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(at) = weave {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Micro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
+            }
         }
         // An unreadable home designation refuses Macro and digest, but
         // independent Micro/Meso/maintenance or commitment work continues.

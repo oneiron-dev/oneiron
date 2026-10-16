@@ -102,6 +102,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "vault.weave.report",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveReportRequest>(),
+            ),
+            (
+                "vault.weave.digest",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestRequest>(),
+            ),
+            (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
@@ -662,6 +670,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.kv.namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.report" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.digest" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1242,6 +1264,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.weave.report" => {
+            let _input: crate::claim::WeaveReportRequest = decode(value.clone())?;
+        }
+        "vault.weave.digest" => {
+            let _input: crate::claim::WeaveDigestRequest = decode(value.clone())?;
+        }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
@@ -1523,6 +1551,8 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
+        "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
@@ -1863,6 +1893,18 @@ pub fn vault_kv_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn vault_weave_report(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveReportRequest,
+) -> MemoryResult<crate::claim::WeaveReportView> {
+    memory.weave_report(None, &input)
+}
+pub fn vault_weave_digest(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveDigestRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestView>> {
+    memory.weave_digest(None, &input)
 }
 pub fn vault_packs_put(
     memory: &Memory<'_>,
