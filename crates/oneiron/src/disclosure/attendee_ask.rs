@@ -418,15 +418,26 @@ impl Vault {
         speaker_key: &str,
         roster_revision: u64,
     ) -> Result<Option<AttendeeIdentityChoice>> {
+        let txn = self.store.env.read_txn()?;
+        self.attendee_identity_in_txn(&txn, session_key, speaker_key, roster_revision)
+    }
+
+    /// [`Self::attendee_identity`] as `txn` reads it.
+    pub(crate) fn attendee_identity_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        session_key: &str,
+        speaker_key: &str,
+        roster_revision: u64,
+    ) -> Result<Option<AttendeeIdentityChoice>> {
         let ask_ref = attendee_ask_ref(session_key, speaker_key, roster_revision)?;
         let identity_ref = attendee_identity_ref(&ask_ref)?;
-        let txn = self.store.env.read_txn()?;
-        match self.ensure_decision_slot_open_in_txn(&txn, &attendee_identity_slot(&identity_ref)) {
+        match self.ensure_decision_slot_open_in_txn(txn, &attendee_identity_slot(&identity_ref)) {
             Ok(()) => return Ok(None),
             Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => {}
             Err(error) => return Err(error),
         }
-        let Some(body) = read_stored_claim_body(&self.store, &txn, &identity_ref)? else {
+        let Some(body) = read_stored_claim_body(&self.store, txn, &identity_ref)? else {
             return Ok(None);
         };
         if body.predicate != PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY
