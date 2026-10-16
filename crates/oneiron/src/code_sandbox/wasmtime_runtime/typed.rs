@@ -1,6 +1,6 @@
 //! Canonical typed WIT imports over the bounded engine-host channel.
 
-use super::{HostEvent, State, bindings::*, failure};
+use super::{HostEvent, State, StreamTarget, bindings::*, failure};
 use crate::Result;
 use crate::code_sandbox::SandboxBoundaryContract;
 use serde_json::{Value, json};
@@ -44,6 +44,26 @@ impl State {
             return Err(output);
         }
         Ok(value)
+    }
+
+    /// Sends one frame of the step's streamed result to the host thread. A
+    /// frame is not a host call: the step's fuel and deadline bound frames,
+    /// never the call budget, so a result's size never ends its step. A
+    /// refused frame traps the guest.
+    fn output(&mut self, target: StreamTarget, frame: Vec<u8>) -> wasmtime::Result<Reply<u64>> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.events
+            .send(HostEvent::Output {
+                target,
+                frame,
+                reply,
+            })
+            .map_err(|_| wasmtime::Error::msg("host bridge stopped"))?;
+        let len = response
+            .recv()
+            .map_err(|_| wasmtime::Error::msg("host bridge stopped"))?
+            .map_err(|_| wasmtime::Error::msg("streamed output refused"))?;
+        Ok(Ok(len))
     }
 }
 
@@ -166,6 +186,24 @@ pub(super) fn link_imports(
                     Ok((value,))
                 })
             }
+            "oneiron.output.text" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, State>,
+                 (target, start, frame): (String, bool, String)| {
+                    let target = match target.as_str() {
+                        "console" => StreamTarget::Console,
+                        "finish" => StreamTarget::Finish { start },
+                        _ => return Err(wasmtime::Error::msg("unknown streamed output target")),
+                    };
+                    Ok((cx.data_mut().output(target, frame.into_bytes())?,))
+                },
+            ),
+            "oneiron.output.bytes" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, State>, (path, frame): (String, Vec<u8>)| {
+                    Ok((cx.data_mut().output(StreamTarget::File(path), frame)?,))
+                },
+            ),
             "oneiron.random.bytes" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (length,): (u32,)| {
