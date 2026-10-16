@@ -658,7 +658,7 @@
      "path": "src/agent_dispatch/codec.rs",
      "purpose": "Pinned-key MessagePack codec plus payload/status decode helpers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -791,7 +791,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 4,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -948,6 +948,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeamRunStamp"
+     ],
+     "path": "src/agent_dispatch/team_stamp.rs",
+     "purpose": "OF-540 (c): the team run a dispatch works in, frozen at dispatch",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -988,9 +1001,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 7,
-      "fn": 24,
+      "fn": 25,
       "struct": 9
      }
     },
@@ -17447,6 +17460,34 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "IdentityActNow",
+      "IdentityActNowRequest",
+      "IdentityAnswerRequest",
+      "IdentityAsk",
+      "IdentityAskReason",
+      "IdentityAskView",
+      "IdentityCardCopy",
+      "IdentityDecisions",
+      "IdentityEffect",
+      "IdentityHint",
+      "IdentityOption",
+      "IdentityRuling",
+      "IdentitySettled"
+     ],
+     "path": "src/dreamer_runner/maintenance/identity.rs",
+     "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
+     "surface": {
+      "const": 4,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 8,
+      "struct": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -17456,7 +17497,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 5,
+      "mod": 6,
       "re-export": 3
      }
     },
@@ -25957,7 +25998,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 32,
+      "const": 33,
       "fn": 1,
       "struct": 1
      }
@@ -34103,8 +34144,9 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
+      "const": 3,
       "crate-vis": 1,
-      "fn": 18,
+      "fn": 19,
       "struct": 1
      }
     },
@@ -42590,7 +42632,7 @@
      "path": "src/tagging/provisional.rs",
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "fn": 5,
       "struct": 1
      }
@@ -42644,7 +42686,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 7,
       "struct": 5
@@ -43720,7 +43762,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 161
+      "fn": 163
      }
     },
     {
@@ -48042,7 +48084,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48518,7 +48560,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49498,9 +49540,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 108,
+   "over_bar": 109,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2988,
+   "source_files": 2990,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57098,7 +57140,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 139
+      "fn": 141
      }
     },
     {
@@ -58111,7 +58153,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 140
+      "fn": 142
      }
     },
     {
@@ -59492,6 +59534,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/identity.rs",
+     "purpose": "Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -59511,7 +59563,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 19,
       "re-export": 1,
       "struct": 2
@@ -66317,7 +66369,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66620,7 +66672,7 @@
    },
    "over_bar": 26,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 468,
+   "source_files": 469,
    "test_files": 182
   },
   "oneiron-spawn": {
