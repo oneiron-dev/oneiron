@@ -12882,7 +12882,7 @@
      "purpose": "AGENTS section projections — child agents and peer connections",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -12906,7 +12906,7 @@
      "path": "src/context_board/capabilities.rs",
      "purpose": "Turn-local capability hits and session-long loaded skill bodies",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -12937,7 +12937,7 @@
       "const": 7,
       "crate-vis": 1,
       "enum": 4,
-      "fn": 14,
+      "fn": 17,
       "struct": 12
      }
     },
@@ -13346,7 +13346,7 @@
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
       "crate-vis": 11,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -13582,7 +13582,7 @@
      "path": "src/context_board/worlds.rs",
      "purpose": "WORLDS scope-map projection over the turn's resolved world authority",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -30480,7 +30480,8 @@
      "path": "src/pipeline/world_authority.rs",
      "purpose": "Per-turn world authority, bound to the host's executing principal",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 6,
+      "fn": 1
      }
     },
     {
@@ -36053,6 +36054,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/hub_owner.rs",
+     "purpose": "Served hub skill doors (OF-213): the owner imports a skill from a configured hub ref, refetches one at its…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -36064,7 +36075,7 @@
      "path": "src/skill_hub/import_receipt.rs",
      "purpose": "Source receipts and admitted-publisher ingress beside content dedup, never in place of it",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 7,
       "struct": 2,
@@ -36124,7 +36135,7 @@
      "purpose": "Dependency-only OSV queries on dynamic installs, using the existing scan ledger",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "struct": 3,
@@ -36188,6 +36199,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/advisories.rs",
+     "purpose": "OSV advisories for a pack tree and each bundled skill (OF-213)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AgentPackFacets"
      ],
@@ -36224,7 +36245,7 @@
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Bundled skills traverse the same pinned hub import, scanner and provenance doors",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -36275,7 +36296,7 @@
      "path": "src/skill_hub/pack_catalog/hub_install.rs",
      "purpose": "Served hub install (OF-519, OF-213): the owner names a configured hub, a folder and a pin; fetch, the…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -36528,7 +36549,7 @@
      "path": "src/skill_hub/ref_sync.rs",
      "purpose": "Per-ref sync policy (ARCH-0053 §7: sync_policy per ref, not per hub)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -36690,7 +36711,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 6,
       "struct": 1
@@ -46150,7 +46171,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 70,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46390,7 +46411,7 @@
    },
    "over_bar": 72,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2787,
+   "source_files": 2789,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56593,6 +56614,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/board.rs",
+     "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -56629,7 +56660,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -56679,7 +56710,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -57539,7 +57570,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/pack_routes.rs",
@@ -62105,7 +62136,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 220,
+     "files": 221,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62343,9 +62374,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 18,
+   "over_bar": 19,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 402,
+   "source_files": 403,
    "test_files": 182
   },
   "oneiron-spawn": {
