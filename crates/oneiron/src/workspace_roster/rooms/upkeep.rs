@@ -71,9 +71,9 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
         turn_rows.row();
         let (_, turn_id) = row?;
         let turn = turn_in(vault, &txn, turn_id)?;
-        let mut kept = readable(&turn.turn_id)?;
+        let mut kept = readable(turn.turn_id.as_str())?;
         for parent in turn.reply_to.iter().chain(&turn.thread_of) {
-            kept = kept && readable(parent)?;
+            kept = kept && readable(parent.as_str())?;
         }
         if kept {
             turns.push(turn);
