@@ -262,9 +262,7 @@ impl Vault {
     ) -> Result<()> {
         shape(checkpoint)?;
         let fold = self.checkpoint_fold(txn, checkpoint)?;
-        if fold.vault_id != Some(checkpoint.vault_id)
-            || fold.roster != checkpoint.roster
-        {
+        if fold.vault_id != Some(checkpoint.vault_id) || fold.roster != checkpoint.roster {
             return Err(invalid_authority());
         }
         let transcript = authority_checkpoint_transcript(checkpoint)?;

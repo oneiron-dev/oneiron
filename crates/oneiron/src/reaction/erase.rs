@@ -40,6 +40,7 @@ fn with_echoes(
 ) -> Result<Vec<EntityId>> {
     let mut ids = Vec::new();
     for reaction in reactions {
+        ids.extend(super::outcomes::source_outcomes_in(vault, txn, reaction)?);
         for (echo, _) in
             family_claims_about(vault, txn, reaction, PREDICATE_CONVERSATION_REACTION_ECHO)?
         {
