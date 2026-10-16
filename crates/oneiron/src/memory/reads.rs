@@ -432,11 +432,27 @@ impl Memory<'_> {
         let reads: Vec<_> = hits.iter().map(|hit| PointRead::id(hit.id)).collect();
         let rows = lane.read(&reads, None)?;
         receipt.restrict_with(&rows.receipt);
-        let mut out = Vec::with_capacity(hits.len());
-        for (hit, row) in hits.iter().zip(rows.value) {
+        // Admitted hits rank by claim source, as the pack does.
+        let mut ranked = Vec::with_capacity(hits.len());
+        for (hit, row) in hits.into_iter().zip(rows.value) {
             let Some(row) = row else {
                 continue;
             };
+            let body = match row.body.as_deref() {
+                Some(body) if row.entity_type == ENTITY_TYPE_CLAIM => {
+                    Some(crate::claim::decode_claim_body(body, true)?)
+                }
+                _ => None,
+            };
+            ranked.push((hit, row, body));
+        }
+        let scores = crate::context_pack::source_ranking::rank(
+            &mut ranked,
+            &Default::default(),
+            |(hit, _, body)| (hit.score, body.as_ref()),
+        )?;
+        let mut out = Vec::with_capacity(ranked.len());
+        for ((hit, row, _), score) in ranked.into_iter().zip(scores) {
             let snippet = row
                 .body
                 .as_deref()
@@ -449,7 +465,7 @@ impl Memory<'_> {
             out.push(LexicalHit {
                 short_id: self.short_ref_or_hex(&hit.id)?,
                 kind: kind_string_for_type(row.entity_type),
-                score: hit.score,
+                score,
                 snippet,
             });
         }

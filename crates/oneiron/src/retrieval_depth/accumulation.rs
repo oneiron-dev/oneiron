@@ -196,12 +196,42 @@ impl DepthAccumulator {
         }
     }
 
+    /// Claims rank by source, as the pack does, before the cut. A backend
+    /// rerank owns the order it set, so a reranked read keeps it.
+    fn rank_sources(&mut self, scoped: &ScopedRead<'_>) -> Result<()> {
+        if self.order.is_empty()
+            || self
+                .retrieval_diagnostics
+                .succeeded
+                .contains(&RetrievalSignal::Rerank)
+        {
+            return Ok(());
+        }
+        let bodies = self.candidate_claim_bodies(scoped)?;
+        let mut rows: Vec<_> = std::mem::take(&mut self.order)
+            .into_iter()
+            .zip(bodies)
+            .collect();
+        let scores = &self.scores;
+        let ranked = crate::context_pack::source_ranking::rank(
+            &mut rows,
+            &Default::default(),
+            |(id, body)| (scores.get(id).copied().unwrap_or_default(), body.as_ref()),
+        )?;
+        for ((id, _), score) in rows.into_iter().zip(ranked) {
+            self.scores.insert(id, score);
+            self.order.push(id);
+        }
+        Ok(())
+    }
+
     pub(super) fn finish_scoped(
-        self,
+        mut self,
         scoped: &ScopedRead<'_>,
         limit: usize,
     ) -> Result<DepthSearchResult> {
         let requested = self.applied_filter();
+        self.rank_sources(scoped)?;
         let mut result = self.finish(limit);
         // Preserve the captured frontier and all channel receipts. Final admission
         // reads pinned bodies and current authority together, never a live replacement.

@@ -725,9 +725,30 @@ impl Memory<'_> {
                     scored.value
                 }
             };
-            hits.into_iter()
+            // Admitted seeds rank by claim source, as the pack does, before
+            // the cut. The body read only orders them; it admits nothing.
+            let reads: Vec<_> = hits.iter().map(|hit| PointRead::id(hit.id)).collect();
+            let mut seeds = Vec::with_capacity(hits.len());
+            for (hit, row) in hits.into_iter().zip(lane.read(&reads, None)?.value) {
+                let body = match row {
+                    Some(crate::claim::ReadRow {
+                        entity_type: ENTITY_TYPE_CLAIM,
+                        body: Some(body),
+                        ..
+                    }) => Some(crate::claim::decode_claim_body(&body, true)?),
+                    _ => None,
+                };
+                seeds.push((hit, body));
+            }
+            crate::context_pack::source_ranking::rank(
+                &mut seeds,
+                &Default::default(),
+                |(hit, body)| (hit.score, body.as_ref()),
+            )?;
+            seeds
+                .into_iter()
                 .take(PPR_SEED_LIMIT)
-                .map(|hit| hit.id)
+                .map(|(hit, _)| hit.id)
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
