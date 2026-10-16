@@ -28,7 +28,11 @@ pub fn run() -> Result<()> {
         return Err(Error::Runtime("production agent requires root Linux PID 1"));
     }
     mount_system()?;
-    if fs::read_to_string("/proc/cmdline").unwrap_or_default().split_whitespace().any(|a| a == "oneiron.native_session=1") {
+    if fs::read_to_string("/proc/cmdline")
+        .unwrap_or_default()
+        .split_whitespace()
+        .any(|a| a == "oneiron.native_session=1")
+    {
         return crate::native::run();
     }
     let mut session = Session::new(connect_vsock()?);
@@ -284,7 +288,9 @@ fn mount(
     Ok(())
 }
 
-pub(crate) fn connect_vsock() -> Result<File> { connect_vsock_port(52) }
+pub(crate) fn connect_vsock() -> Result<File> {
+    connect_vsock_port(52)
+}
 
 pub(crate) fn connect_vsock_port(port: u32) -> Result<File> {
     // SAFETY: socket has no pointer arguments and returns a new owned fd.
@@ -295,10 +301,22 @@ pub(crate) fn connect_vsock_port(port: u32) -> Result<File> {
     // SAFETY: successful socket returned an owned descriptor, now managed by File.
     let socket = unsafe { File::from_raw_fd(fd) };
     if port == 53 {
-        let timeout = libc::timeval { tv_sec: 1, tv_usec: 0 };
+        let timeout = libc::timeval {
+            tv_sec: 1,
+            tv_usec: 0,
+        };
         for option in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
             // SAFETY: timeout is a live timeval with its exact socket length.
-            if unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, option, (&timeout as *const libc::timeval).cast(), std::mem::size_of_val(&timeout) as libc::socklen_t) } != 0 {
+            if unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    option,
+                    (&timeout as *const libc::timeval).cast(),
+                    std::mem::size_of_val(&timeout) as libc::socklen_t,
+                )
+            } != 0
+            {
                 return Err(std::io::Error::last_os_error().into());
             }
         }

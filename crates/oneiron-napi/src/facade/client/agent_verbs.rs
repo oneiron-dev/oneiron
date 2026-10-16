@@ -512,9 +512,48 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_host(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.host", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_sharing(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.sharing", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_companions_sharing_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.companions.sharing.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_work_companion_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.work_companion.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_consent(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.consent", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_work_companion_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.work_companion.set", input)
             .map_err(facade_error)
     }
     #[napi]

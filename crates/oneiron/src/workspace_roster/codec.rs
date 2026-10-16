@@ -1,5 +1,6 @@
 //! Roster reads, journal records, and canonical onboarding encodings.
 
+use super::records::PresetRow;
 use super::*;
 use crate::error::{GateError, RecordError};
 use crate::ports::EntityStoreRead;
@@ -106,7 +107,6 @@ pub(super) fn write_journal(
     } else {
         None
     };
-    intent.required_companion()?;
     let row = OnboardingJournalRow {
         onboarding_id: intent.onboarding_id.clone(),
         intent_digest: record.intent_digest,
@@ -201,22 +201,45 @@ fn reserve_member_in_txn(
             "member already has a different workspace onboarding",
         ));
     }
-    if let Some(companion) = &intent.companion_birth {
-        if let Some(prior) = COMPANION_PRINCIPAL.get(&vault.store, txn, &companion.person_ref)?
-            && prior != intent.person_ref
-        {
-            return Err(invalid(
-                "companion person already belongs to a different principal",
-            ));
-        }
-        COMPANION_PRINCIPAL.put(&vault.store, txn, &companion.person_ref, &intent.person_ref)?;
+    // Brought or born, one companion PERSON belongs to one principal.
+    let companion = intent.companion.person_ref();
+    if let Some(prior) = COMPANION_PRINCIPAL.get(&vault.store, txn, &companion)?
+        && prior != intent.person_ref
+    {
+        return Err(invalid(
+            "companion person already belongs to a different principal",
+        ));
     }
+    COMPANION_PRINCIPAL.put(&vault.store, txn, &companion, &intent.person_ref)?;
     MEMBER_INTENT.put(&vault.store, txn, &key, digest)?;
     Ok(())
 }
 
+/// The principal whose onboarding claimed `companion` here, if one did.
+pub(super) fn companion_principal_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    companion: &EntityId,
+) -> Result<Option<EntityId>> {
+    COMPANION_PRINCIPAL.get(&vault.store, txn, companion)
+}
+
 pub(super) fn preset_value(preset: &WorkspaceRosterPreset) -> Value {
-    Value::Map(vec![
+    Value::Map(preset_entries(preset))
+}
+
+/// The stored row: the preset's own entries, then the owner's policy.
+pub(super) fn preset_row_value(row: &PresetRow) -> Value {
+    let mut entries = preset_entries(&row.preset);
+    entries.push((
+        Value::from("work_companion"),
+        Value::from(row.work_companion.as_str()),
+    ));
+    Value::Map(entries)
+}
+
+fn preset_entries(preset: &WorkspaceRosterPreset) -> Vec<(Value, Value)> {
+    vec![
         (
             Value::from("schema_version"),
             Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -249,23 +272,31 @@ pub(super) fn preset_value(preset: &WorkspaceRosterPreset) -> Value {
             Value::from("house_identity_ref"),
             optional_ref(preset.house_identity_ref),
         ),
-    ])
+    ]
 }
 
 pub(super) fn read_preset(
     vault: &Vault,
     workspace_ref: &str,
 ) -> Result<Option<WorkspaceRosterPreset>> {
+    Ok(read_preset_row(vault, workspace_ref)?.map(|row| row.preset))
+}
+
+pub(super) fn read_preset_row(vault: &Vault, workspace_ref: &str) -> Result<Option<PresetRow>> {
     let rtxn = vault.store.env.read_txn()?;
     PRESET.get(&vault.store, &rtxn, &workspace_ref.to_owned())
 }
 
-pub(super) fn decode_preset(bytes: &[u8]) -> Result<WorkspaceRosterPreset> {
+pub(super) fn decode_preset_row(bytes: &[u8]) -> Result<PresetRow> {
     let entries = decode_map(bytes)?;
     if required(&entries, "schema_version")?.as_u64() != Some(WORKSPACE_ROSTER_SCHEMA_VERSION) {
         return Err(invalid("workspace preset schema_version is unsupported"));
     }
-    Ok(WorkspaceRosterPreset {
+    let work_companion = required(&entries, "work_companion")?
+        .as_str()
+        .and_then(WorkCompanionPolicy::parse)
+        .ok_or_else(|| invalid("workspace preset work_companion is unrecognized"))?;
+    let preset = WorkspaceRosterPreset {
         workspace_ref: required_str(&entries, "workspace_ref")?,
         workspace_vault_id: required(&entries, "workspace_vault_id")?
             .as_u64()
@@ -275,6 +306,10 @@ pub(super) fn decode_preset(bytes: &[u8]) -> Result<WorkspaceRosterPreset> {
         house_display_name: optional_string(&entries, "house_display_name")?,
         house_actor_ref: required_ref(&entries, "house_actor_ref")?,
         house_identity_ref: optional_entity(&entries, "house_identity_ref")?,
+    };
+    Ok(PresetRow {
+        preset,
+        work_companion,
     })
 }
 
@@ -338,10 +373,7 @@ pub(super) fn intent_digest(intent: &MemberOnboardingIntent) -> Result<[u8; 32]>
 }
 
 pub(super) fn intent_canonical_value(intent: &MemberOnboardingIntent) -> Result<Value> {
-    let companion = match &intent.companion_birth {
-        Some(companion) => companion_canonical_value(companion)?,
-        None => Value::Nil,
-    };
+    let companion = companion_choice_canonical_value(&intent.companion)?;
     Ok(Value::Map(vec![
         (
             Value::from("onboarding_id"),
@@ -368,7 +400,7 @@ pub(super) fn intent_canonical_value(intent: &MemberOnboardingIntent) -> Result<
             Value::from("grant_bundle"),
             grant_bundle_canonical_value(&intent.grant_bundle),
         ),
-        (Value::from("companion_birth"), companion),
+        (Value::from("companion"), companion),
         (
             Value::from("delegated_mailbox"),
             intent
@@ -393,6 +425,31 @@ pub(super) fn grant_bundle_canonical_value(bundle: &MemberGrantBundle) -> Value 
             optional_ref(bundle.companion_profile_grant_ref),
         ),
     ])
+}
+
+/// The choice as the request states it. A brought companion's consent proof
+/// is checked where she is bound and is no part of what the request is.
+pub(super) fn companion_choice_canonical_value(choice: &CompanionChoice) -> Result<Value> {
+    Ok(match choice {
+        CompanionChoice::Bring {
+            person,
+            actor,
+            work_facet,
+            ..
+        } => Value::Map(vec![
+            (Value::from("choice"), Value::from("bring")),
+            (Value::from("person_ref"), Value::from(person.to_hex())),
+            (Value::from("actor_ref"), Value::from(actor.to_hex())),
+            (
+                Value::from("work_facet_ref"),
+                Value::from(work_facet.to_hex()),
+            ),
+        ]),
+        CompanionChoice::Work(birth) => Value::Map(vec![
+            (Value::from("choice"), Value::from("work")),
+            (Value::from("birth"), companion_canonical_value(birth)?),
+        ]),
+    })
 }
 
 pub(super) fn companion_canonical_value(companion: &CompanionBirthIntent) -> Result<Value> {
@@ -676,17 +733,21 @@ pub(super) fn require_mailbox_revision(vault: &Vault, revision: Option<usize>) -
     Ok(())
 }
 
+/// `suggested`: the policy in force now recommends a work companion to this
+/// member, who brought her own.
 pub(super) fn outcome_of(
     intent: &MemberOnboardingIntent,
     completed_at: u64,
+    suggested: bool,
 ) -> MemberOnboardingOutcome {
     MemberOnboardingOutcome {
         onboarding_id: intent.onboarding_id.clone(),
         person_ref: intent.person_ref,
         actor_ref: intent.actor_ref,
         federation_grant_ref: intent.grant_bundle.federation_grant_ref,
-        companion_person_ref: intent.companion_birth.as_ref().map(|c| c.person_ref),
-        companion_actor_ref: intent.companion_birth.as_ref().map(|c| c.actor_ref),
+        companion_person_ref: Some(intent.companion.person_ref()),
+        companion_actor_ref: Some(intent.companion.actor_ref()),
+        work_companion_suggested: suggested,
         delegated_identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
         completed_at,
     }

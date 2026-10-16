@@ -35,7 +35,7 @@ pub use self::keys::{
     COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ENTITY_TYPE_COMPANION_REGISTER,
 };
 pub use self::model::{
-    CompanionExpression, CompanionRecordKey, CompanionRecordKind, CompanionScope, CompanionSubject,
+    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKey,
 };
 pub use self::persona::{CompiledPersona, PERSONA_CHANGE_PREDICATE, PersonaChange, PersonaMadeBy};
 pub(crate) use self::persona::{body_fields as persona_body_fields, validated_persona_baseline};

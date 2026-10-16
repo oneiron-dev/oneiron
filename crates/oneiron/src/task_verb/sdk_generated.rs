@@ -210,9 +210,29 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.rooms.host",
+                crate::code_run::vault_read::request_schema::<RoomHostRequest>(),
+            ),
+            (
+                "vault.rooms.sharing",
+                crate::code_run::vault_read::request_schema::<RoomRefRequest>(),
+            ),
+            (
+                "vault.companions.sharing.get",
+                crate::code_run::vault_read::request_schema::<CompanionSharingRequest>(),
+            ),
+            (
+                "vault.workspace.work_companion.get",
+                crate::code_run::vault_read::request_schema::<WorkspaceRefRequest>(),
+            ),
+            (
                 "vault.rooms.consent",
                 crate::code_run::vault_read::request_schema::<crate::workspace_roster::ConsentAnswer>(
                 ),
+            ),
+            (
+                "vault.workspace.work_companion.set",
+                crate::code_run::vault_read::request_schema::<WorkCompanionSetRequest>(),
             ),
             (
                 "self.skills.save",
@@ -706,7 +726,42 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.rooms.host" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.sharing" => {
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room_ref")?.clone(),
+            );
+            &["room_ref"]
+        }
+        "vault.companions.sharing.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.work_companion.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.consent" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.work_companion.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -960,8 +1015,23 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.join" => {
             let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
         }
+        "vault.rooms.host" => {
+            let _input: RoomHostRequest = decode(value.clone())?;
+        }
+        "vault.rooms.sharing" => {
+            let _input: RoomRefRequest = decode(value.clone())?;
+        }
+        "vault.companions.sharing.get" => {
+            let _input: CompanionSharingRequest = decode(value.clone())?;
+        }
+        "vault.workspace.work_companion.get" => {
+            let _input: WorkspaceRefRequest = decode(value.clone())?;
+        }
         "vault.rooms.consent" => {
             let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
+        }
+        "vault.workspace.work_companion.set" => {
+            let _input: WorkCompanionSetRequest = decode(value.clone())?;
         }
         "self.skills.save" => {
             let _input: crate::skill::helper::SkillSaveRequest = decode(value.clone())?;
@@ -1090,7 +1160,18 @@ pub fn invoke(
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
+        "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
+        "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
+        "vault.companions.sharing.get" => {
+            encode(vault_companions_sharing_get(memory, decode(value)?)?)
+        }
+        "vault.workspace.work_companion.get" => {
+            encode(vault_workspace_work_companion_get(memory, decode(value)?)?)
+        }
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
+        "vault.workspace.work_companion.set" => {
+            encode(vault_workspace_work_companion_set(memory, decode(value)?)?)
+        }
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
@@ -1523,11 +1604,51 @@ pub fn vault_rooms_join(
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_join(&input)
 }
+pub fn vault_rooms_host(
+    memory: &Memory<'_>,
+    input: RoomHostRequest,
+) -> MemoryResult<crate::workspace_roster::RoomStanding> {
+    memory.rooms_host(
+        crate::EntityId::from_hex(&input.room_ref)?,
+        input
+            .session_ref
+            .as_deref()
+            .map(crate::EntityId::from_hex)
+            .transpose()?,
+    )
+}
+pub fn vault_rooms_sharing(
+    memory: &Memory<'_>,
+    input: RoomRefRequest,
+) -> MemoryResult<crate::workspace_roster::RoomSharingView> {
+    memory.rooms_sharing(crate::EntityId::from_hex(&input.room_ref)?)
+}
+pub fn vault_companions_sharing_get(
+    memory: &Memory<'_>,
+    input: CompanionSharingRequest,
+) -> MemoryResult<crate::workspace_roster::CompanionSharingView> {
+    memory.companion_sharing_get(&crate::workspace_roster::CompanionSharingTarget {
+        companion: crate::EntityId::from_hex(&input.companion_ref)?,
+        contact: crate::EntityId::from_hex(&input.contact_ref)?,
+    })
+}
+pub fn vault_workspace_work_companion_get(
+    memory: &Memory<'_>,
+    input: WorkspaceRefRequest,
+) -> MemoryResult<crate::workspace_roster::WorkCompanionPolicy> {
+    memory.workspace_work_companion_get(&input.workspace_ref)
+}
 pub fn vault_rooms_consent(
     memory: &Memory<'_>,
     input: crate::workspace_roster::ConsentAnswer,
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_consent(&input)
+}
+pub fn vault_workspace_work_companion_set(
+    memory: &Memory<'_>,
+    input: WorkCompanionSetRequest,
+) -> MemoryResult<crate::workspace_roster::WorkCompanionPolicy> {
+    memory.workspace_work_companion_set(&input.workspace_ref, input.policy)
 }
 pub fn self_skills_save(
     memory: &Memory<'_>,

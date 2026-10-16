@@ -45,7 +45,12 @@ pub enum AgentVerb {
     VaultRoomsClaim,
     VaultRoomsSpeak,
     VaultRoomsJoin,
+    VaultRoomsHost,
+    VaultRoomsSharing,
+    VaultCompanionsSharingGet,
+    VaultWorkspaceWorkCompanionGet,
     VaultRoomsConsent,
+    VaultWorkspaceWorkCompanionSet,
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
@@ -116,7 +121,12 @@ impl AgentVerb {
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
         Self::VaultRoomsJoin,
+        Self::VaultRoomsHost,
+        Self::VaultRoomsSharing,
+        Self::VaultCompanionsSharingGet,
+        Self::VaultWorkspaceWorkCompanionGet,
         Self::VaultRoomsConsent,
+        Self::VaultWorkspaceWorkCompanionSet,
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
@@ -190,7 +200,12 @@ impl AgentVerb {
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
             Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsHost => "vault.rooms.host",
+            Self::VaultRoomsSharing => "vault.rooms.sharing",
+            Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
+            Self::VaultWorkspaceWorkCompanionGet => "vault.workspace.work_companion.get",
             Self::VaultRoomsConsent => "vault.rooms.consent",
+            Self::VaultWorkspaceWorkCompanionSet => "vault.workspace.work_companion.set",
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
@@ -260,7 +275,12 @@ impl AgentVerb {
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsHost
+                | Self::VaultRoomsSharing
+                | Self::VaultCompanionsSharingGet
+                | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultRoomsConsent
+                | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
@@ -338,7 +358,12 @@ impl AgentVerb {
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsHost
+                | Self::VaultRoomsSharing
+                | Self::VaultCompanionsSharingGet
+                | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultRoomsConsent
+                | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
@@ -438,7 +463,12 @@ impl AgentVerb {
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsHost
+                | Self::VaultRoomsSharing
+                | Self::VaultCompanionsSharingGet
+                | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultRoomsConsent
+                | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
@@ -492,6 +522,7 @@ impl AgentVerb {
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::AiImage
@@ -559,7 +590,12 @@ impl AgentVerb {
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsSharing => &["room_ref"],
+            Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
@@ -631,7 +667,12 @@ impl AgentVerb {
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsSharing => &["room_ref"],
+            Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],

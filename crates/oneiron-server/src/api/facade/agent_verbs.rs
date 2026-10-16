@@ -55,7 +55,21 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.claim", post(vault_rooms_claim))
         .route("/vault.rooms.speak", post(vault_rooms_speak))
         .route("/vault.rooms.join", post(vault_rooms_join))
+        .route("/vault.rooms.host", post(vault_rooms_host))
+        .route("/vault.rooms.sharing", post(vault_rooms_sharing))
+        .route(
+            "/vault.companions.sharing.get",
+            post(vault_companions_sharing_get),
+        )
+        .route(
+            "/vault.workspace.work_companion.get",
+            post(vault_workspace_work_companion_get),
+        )
         .route("/vault.rooms.consent", post(vault_rooms_consent))
+        .route(
+            "/vault.workspace.work_companion.set",
+            post(vault_workspace_work_companion_set),
+        )
         .route("/self.skills.save", post(self_skills_save))
         .route("/self.skills.fork", post(self_skills_fork))
         .route("/self.skills.callables", post(self_skills_callables))
@@ -917,6 +931,86 @@ async fn vault_rooms_join(
         value,
     )?))
 }
+async fn vault_rooms_host(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.rooms.host",
+        value,
+    )?))
+}
+async fn vault_rooms_sharing(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.rooms.sharing",
+        value,
+    )?))
+}
+async fn vault_companions_sharing_get(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.companions.sharing.get",
+        value,
+    )?))
+}
+async fn vault_workspace_work_companion_get(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.workspace.work_companion.get",
+        value,
+    )?))
+}
 async fn vault_rooms_consent(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -934,6 +1028,26 @@ async fn vault_rooms_consent(
         actor,
         class,
         "vault.rooms.consent",
+        value,
+    )?))
+}
+async fn vault_workspace_work_companion_set(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.workspace.work_companion.set",
         value,
     )?))
 }
