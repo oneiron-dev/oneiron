@@ -15,6 +15,8 @@
 //! - `validate` — cross-cutting validators and the surface compiler.
 
 mod atom;
+mod default_vault;
+pub use default_vault::{DefaultVaultInput, DefaultVaultItem, compose_default_vault};
 mod guest;
 mod instrument;
 mod intent;

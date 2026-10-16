@@ -312,7 +312,7 @@ impl ThreadLensSendProgress {
     }
 }
 
-fn entry_node(index: usize, entry: &ThreadLensEntry) -> Result<crate::lens::LensNode> {
+pub(crate) fn entry_node(index: usize, entry: &ThreadLensEntry) -> Result<crate::lens::LensNode> {
     let mut node = crate::lens::LensNode::new(
         atom_id(format!("thread-entry-{index}"))?,
         LensAtom::ThreadEntry(ThreadEntryAtom {
