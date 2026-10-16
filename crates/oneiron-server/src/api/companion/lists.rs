@@ -8,8 +8,8 @@ use crate::error::{ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::extract::{Query, State, rejection::QueryRejection};
 use axum::response::Json;
-use oneiron::ErrorKind;
 use oneiron::access_grant::AccessGrantScope;
+use oneiron::psych_profile::{PsychProfileKey, psych_profile_entity_id};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -17,14 +17,20 @@ use utoipa::{IntoParams, ToSchema};
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct PersonaListQuery {
+    /// PERSON whose granted companion profiles are listed.
     person_ref: String,
     principal_ref: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct PersonaListRow {
-    persona_ref: String,
+    /// PERSON the profile describes.
     person_ref: String,
+    /// FACET the grant is bounded to; null is a person-wide grant, listed at
+    /// the PERSON's unfaceted profile.
+    facet_ref: Option<String>,
+    /// PSYCH_PROFILE id derived from PERSON x FACET, with no WORLD.
+    profile_ref: String,
     /// Persisted PsychProfile compact tier; no generation on list reads.
     #[serde(rename = "personalityCompact", default)]
     personality_compact: Option<String>,
@@ -35,7 +41,7 @@ pub(crate) struct PersonasListResponse {
     items: Vec<PersonaListRow>,
 }
 
-/// List only personas for which the caller has a live, exact profile grant.
+/// List only the PERSON's profiles the caller holds a live profile grant for.
 #[utoipa::path(get, path = "/v1/companion/personas", params(PersonaListQuery),
     responses((status = 200, body = PersonasListResponse),
               (status = 400, body = ApiErrorEnvelope),
@@ -55,20 +61,25 @@ pub(crate) async fn list_personas(
             .transpose()?,
     )?;
     let person = parse_entity_id_param(&req.person_ref, "person_ref")?;
-    let personas = server
+    let facets = server
         .vault
-        .authorized_companion_profile_personas(&principal, &person)
-        .map_err(|e| companion_engine_error("persona grant list failed", e))?;
-    let mut items = Vec::with_capacity(personas.len());
-    for persona in personas {
-        let profile = match server.vault.get_live_psych_profile(&persona) {
-            Ok(profile) => profile,
-            Err(error) if error.kind() == ErrorKind::InvalidEntityType => None,
-            Err(error) => return Err(companion_engine_error("persona profile read failed", error)),
-        };
+        .authorized_companion_profile_facets(&principal, &person)
+        .map_err(|e| companion_engine_error("profile grant list failed", e))?;
+    let mut items = Vec::with_capacity(facets.len());
+    for facet in facets {
+        let profile_ref = psych_profile_entity_id(&PsychProfileKey {
+            person,
+            facet,
+            world: None,
+        });
+        let profile = server
+            .vault
+            .get_live_psych_profile(&profile_ref)
+            .map_err(|error| companion_engine_error("profile read failed", error))?;
         items.push(PersonaListRow {
-            persona_ref: persona.to_hex(),
             person_ref: person.to_hex(),
+            facet_ref: facet.map(|facet| facet.to_hex()),
+            profile_ref: profile_ref.to_hex(),
             personality_compact: profile.map(|p| p.compact),
         });
     }
@@ -153,15 +164,18 @@ fn grant_content_preview(scope: &AccessGrantScope) -> Option<String> {
             "relationshipClaims in space {}",
             space_ref.to_hex()
         )),
-        AccessGrantScope::CompanionProfile { .. } => {
-            scope.companion_profile_refs().map(|(person, persona)| {
-                format!(
-                    "companion_profile for person {} persona {}",
-                    person.to_hex(),
-                    persona.to_hex()
-                )
-            })
-        }
+        AccessGrantScope::CompanionProfile {
+            person_ref,
+            facet_ref: None,
+        } => Some(format!("companion_profile for person {}", person_ref.to_hex())),
+        AccessGrantScope::CompanionProfile {
+            person_ref,
+            facet_ref: Some(facet_ref),
+        } => Some(format!(
+            "companion_profile for person {} facet {}",
+            person_ref.to_hex(),
+            facet_ref.to_hex()
+        )),
         _ => None,
     }
 }

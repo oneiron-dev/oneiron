@@ -626,10 +626,12 @@ pub(super) fn ensure_companion_profile_grant(
     companion: &CompanionBirthIntent,
     writer: &WriteActor,
 ) -> Result<()> {
+    // The member reads the companion PERSON's profile at every facet; the
+    // work facet is the companion's association, not a bound on the grant.
     let expected = AccessGrant::companion_profile_read(
         intent.person_ref,
-        intent.person_ref,
         companion.person_ref,
+        None,
         intent.occurred_at,
     );
     let id = companion.profile_grant_ref;

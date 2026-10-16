@@ -8,7 +8,8 @@ use super::keys::{
     COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ERR_INVALID_COMPANION_TASK_PAYLOAD, KEY_TASK,
     KEY_TASK_SCHEMA_VERSION, KEY_TASK_SCOPE, KEY_TASK_SUBJECT,
 };
-use super::model::{CompanionRecordKey, CompanionScope, CompanionSubject};
+use super::codec::invalid_companion;
+use super::model::{CompanionScope, CompanionSubject, CompanionTaskKey};
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
@@ -23,11 +24,11 @@ use std::io::Cursor;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CompanionTaskKind {
-    /// Rebuild or refresh context assembly state for a companion record.
+    /// Rebuild or refresh context assembly state for a companion target.
     Context,
-    /// Refresh derived profile/persona state for a companion record.
+    /// Refresh derived profile state for a companion target.
     Profile,
-    /// Consolidate companion memory material for a companion record.
+    /// Consolidate companion memory material for a companion target.
     Memory,
     /// Generate a goodbye artifact after an amicable relationship ending.
     GoodbyeArtifact,
@@ -62,12 +63,13 @@ impl CompanionTaskKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanionTask {
     pub kind: CompanionTaskKind,
-    pub key: CompanionRecordKey,
+    pub key: CompanionTaskKey,
 }
 
 impl CompanionTask {
-    /// Constructs a companion task, validating the referenced companion key.
-    pub fn new(kind: CompanionTaskKind, key: CompanionRecordKey) -> Result<Self> {
+    /// Constructs a companion task, validating the key's shape. Whether a
+    /// PERSON target is live is judged at enqueue, in the admitting write.
+    pub fn new(kind: CompanionTaskKind, key: CompanionTaskKey) -> Result<Self> {
         key.validate()?;
         Ok(Self { kind, key })
     }
@@ -195,6 +197,7 @@ impl<'a> CompanionQueue<'a> {
     pub fn enqueue(&self, input: EnqueueCompanionTask) -> Result<EnqueueCompanionTaskOutcome> {
         let payload = encode_companion_task_payload(&input.task)?;
         let outcome = self.vault.with_write_txn_grouped(|txn| {
+            check_task_target(self.vault, txn, &input.task.key)?;
             crate::ports::JobQueue::port_job_enqueue(
                 self.vault,
                 txn,
@@ -456,7 +459,7 @@ fn decode_companion_task_payload_value(value: &Value) -> Result<CompanionTask> {
             "unsupported companion task schema_version",
         ));
     }
-    let key = CompanionRecordKey {
+    let key = CompanionTaskKey {
         scope: scope.ok_or(invalid_companion_task(
             "missing required companion task field scope",
         ))?,
@@ -480,9 +483,23 @@ fn companion_scope_dedupe_key(scope: &CompanionScope) -> String {
     }
 }
 
+/// A PERSON-targeted task is admitted only for a live PERSON.
+fn check_task_target(vault: &Vault, txn: &heed::RoTxn<'_>, key: &CompanionTaskKey) -> Result<()> {
+    let CompanionSubject::Person { person_ref } = &key.subject else {
+        return Ok(());
+    };
+    match crate::vault::live_entity_row_in_txn(&vault.store, txn, person_ref)? {
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            ..
+        } => Ok(()),
+        _ => Err(invalid_companion("companion task target must be a live PERSON")),
+    }
+}
+
 fn companion_subject_dedupe_key(subject: &CompanionSubject) -> String {
     match subject {
-        CompanionSubject::Persona { persona_ref } => format!("persona:{}", persona_ref.to_hex()),
+        CompanionSubject::Person { person_ref } => format!("person:{}", person_ref.to_hex()),
         CompanionSubject::Relationship {
             source_ref,
             target_ref,

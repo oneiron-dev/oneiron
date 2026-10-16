@@ -1,4 +1,4 @@
-//! Typed companion record domain: kinds, scopes, subjects, provenance, and records.
+//! Typed companion task domain: scopes, PERSON/relationship subjects, and task keys.
 
 use super::codec::invalid_companion;
 use crate::claim::{
@@ -7,31 +7,31 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-/// Companion record kind.
+/// Companion task subject kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
-pub enum CompanionRecordKind {
-    /// PERSON-targeted expression/task key; not a companion record body.
-    Persona,
-    /// A relationship record between two entities in a companion scope.
+pub enum CompanionSubjectKind {
+    /// One PERSON identity.
+    Person,
+    /// A relationship between two entities in a companion scope.
     Relationship,
 }
 
-impl CompanionRecordKind {
-    /// Returns the pinned on-disk string for this record kind.
+impl CompanionSubjectKind {
+    /// Returns the pinned payload string for this subject kind.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Persona => "persona",
+            Self::Person => "person",
             Self::Relationship => "relationship",
         }
     }
 
-    /// Parses a pinned on-disk record kind string.
+    /// Parses a pinned payload subject kind string.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "persona" => Some(Self::Persona),
+            "person" => Some(Self::Person),
             "relationship" => Some(Self::Relationship),
             _ => None,
         }
@@ -87,14 +87,13 @@ impl CompanionScope {
     }
 }
 
-/// PERSON or relationship subject addressed by an expression or task key.
-/// Companion record bodies admit relationship subjects only.
+/// PERSON or relationship subject addressed by a companion task key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CompanionSubject {
-    /// PERSON identity target for expression and task keys.
-    Persona { persona_ref: EntityId },
-    /// Relationship record subject.
+    /// One PERSON identity; admission requires it to be a live PERSON.
+    Person { person_ref: EntityId },
+    /// Relationship subject.
     Relationship {
         source_ref: EntityId,
         target_ref: EntityId,
@@ -102,13 +101,13 @@ pub enum CompanionSubject {
 }
 
 impl CompanionSubject {
-    /// Constructs a persona record subject.
+    /// Constructs a PERSON subject.
     #[must_use]
-    pub const fn persona(persona_ref: EntityId) -> Self {
-        Self::Persona { persona_ref }
+    pub const fn person(person_ref: EntityId) -> Self {
+        Self::Person { person_ref }
     }
 
-    /// Constructs a relationship record subject.
+    /// Constructs a relationship subject.
     #[must_use]
     pub const fn relationship(source_ref: EntityId, target_ref: EntityId) -> Self {
         Self::Relationship {
@@ -117,12 +116,12 @@ impl CompanionSubject {
         }
     }
 
-    /// Returns this subject's record kind.
+    /// Returns this subject's kind.
     #[must_use]
-    pub const fn kind(&self) -> CompanionRecordKind {
+    pub const fn kind(&self) -> CompanionSubjectKind {
         match self {
-            Self::Persona { .. } => CompanionRecordKind::Persona,
-            Self::Relationship { .. } => CompanionRecordKind::Relationship,
+            Self::Person { .. } => CompanionSubjectKind::Person,
+            Self::Relationship { .. } => CompanionSubjectKind::Relationship,
         }
     }
 }
@@ -169,26 +168,26 @@ impl CompanionExpression {
     }
 }
 
-/// Stable lookup key for companion records.
+/// Stable target of a companion task: a scope and a PERSON or relationship.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CompanionRecordKey {
+pub struct CompanionTaskKey {
     /// Scope boundary.
     pub scope: CompanionScope,
-    /// Relationship or PERSON target.
+    /// PERSON or relationship target.
     pub subject: CompanionSubject,
 }
 
-impl CompanionRecordKey {
-    /// Constructs a PERSON-targeted expression or task key.
+impl CompanionTaskKey {
+    /// Constructs a PERSON-targeted task key.
     #[must_use]
-    pub const fn persona(scope: CompanionScope, persona_ref: EntityId) -> Self {
+    pub const fn person(scope: CompanionScope, person_ref: EntityId) -> Self {
         Self {
             scope,
-            subject: CompanionSubject::persona(persona_ref),
+            subject: CompanionSubject::person(person_ref),
         }
     }
 
-    /// Constructs a relationship lookup key.
+    /// Constructs a relationship task key.
     #[must_use]
     pub const fn relationship(
         scope: CompanionScope,

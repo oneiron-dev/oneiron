@@ -29,18 +29,20 @@ use utoipa::ToSchema;
 #[schema(example = json!({
     "kind": "companion_profile",
     "person_ref": "11111111111111111111111111111111",
-    "persona_ref": "22222222222222222222222222222222"
+    "facet_ref": "22222222222222222222222222222222"
 }))]
 pub(crate) struct CompanionAccessGrantScopePayload {
     /// Scope discriminator. Currently only `companion_profile` is accepted.
     #[schema(example = "companion_profile")]
     kind: String,
-    /// Person scope for the companion profile.
+    /// PERSON whose companion profile the grant covers.
     #[schema(example = "11111111111111111111111111111111")]
     person_ref: String,
-    /// Persona/profile entity receiving scoped access.
+    /// FACET the grant is bounded to. Absent or null covers the PERSON at
+    /// every facet; a named facet covers that facet only.
+    #[serde(default)]
     #[schema(example = "22222222222222222222222222222222")]
-    persona_ref: String,
+    facet_ref: Option<String>,
 }
 
 /// Request body for creating a companion AccessGrant.
@@ -50,7 +52,7 @@ pub(crate) struct CompanionAccessGrantScopePayload {
     "scope": {
         "kind": "companion_profile",
         "person_ref": "11111111111111111111111111111111",
-        "persona_ref": "22222222222222222222222222222222"
+        "facet_ref": "22222222222222222222222222222222"
     },
     "created_at": 1700000000
 }))]
@@ -129,12 +131,12 @@ pub(crate) async fn create_companion_access_grant(
     let grant_id = parse_optional_entity_id(req.id.as_deref(), "id")?;
     let principal_ref = parse_entity_id_param(&req.principal_ref, "principal_ref")?;
     require_companion_access_grant_write_for_principal(&auth, &principal_ref)?;
-    let (person_ref, persona_ref) = companion_scope_entity_refs(&req.scope)?;
+    let (person_ref, facet_ref) = companion_scope_entity_refs(&req.scope)?;
     let created_at = req.created_at.unwrap_or_else(unix_seconds_now);
     let mut grant = oneiron::AccessGrant::companion_profile_read(
         principal_ref,
         person_ref,
-        persona_ref,
+        facet_ref,
         created_at,
     );
     grant.expires_at = req.expires_at;
@@ -215,7 +217,7 @@ pub(crate) async fn revoke_companion_access_grant(
 
 pub(crate) fn companion_scope_entity_refs(
     scope: &CompanionAccessGrantScopePayload,
-) -> Result<(oneiron::EntityId, oneiron::EntityId), ApiError> {
+) -> Result<(oneiron::EntityId, Option<oneiron::EntityId>), ApiError> {
     if scope.kind != "companion_profile" {
         return Err(ApiError::bad_request(
             "scope.kind must be companion_profile",
@@ -223,22 +225,26 @@ pub(crate) fn companion_scope_entity_refs(
         ));
     }
     let person_ref = parse_entity_id_param(&scope.person_ref, "scope.person_ref")?;
-    let persona_ref = parse_entity_id_param(&scope.persona_ref, "scope.persona_ref")?;
-    Ok((person_ref, persona_ref))
+    let facet_ref = scope
+        .facet_ref
+        .as_deref()
+        .map(|facet_ref| parse_entity_id_param(facet_ref, "scope.facet_ref"))
+        .transpose()?;
+    Ok((person_ref, facet_ref))
 }
 
 pub(crate) fn companion_access_grant_response(
     id: &oneiron::EntityId,
     grant: &oneiron::AccessGrant,
 ) -> CompanionAccessGrantResponse {
-    let (person_ref, persona_ref) = grant
+    let (person_ref, facet_ref) = grant
         .scope
         .companion_profile_refs()
         .expect("companion access grants only expose companion_profile scopes");
     CompanionAccessGrantResponse {
         id: id.to_hex(),
         principal_ref: grant.principal_ref.to_hex(),
-        scope: companion_scope_response(&person_ref, &persona_ref),
+        scope: companion_scope_response(&person_ref, facet_ref.as_ref()),
         capability: grant.capability.as_str().to_owned(),
         status: grant
             .effective_status_at(unix_seconds_now())
@@ -252,11 +258,11 @@ pub(crate) fn companion_access_grant_response(
 
 pub(crate) fn companion_scope_response(
     person_ref: &oneiron::EntityId,
-    persona_ref: &oneiron::EntityId,
+    facet_ref: Option<&oneiron::EntityId>,
 ) -> CompanionAccessGrantScopePayload {
     CompanionAccessGrantScopePayload {
         kind: "companion_profile".to_owned(),
         person_ref: person_ref.to_hex(),
-        persona_ref: persona_ref.to_hex(),
+        facet_ref: facet_ref.map(|facet_ref| facet_ref.to_hex()),
     }
 }

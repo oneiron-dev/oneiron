@@ -336,7 +336,7 @@ pub use crate::compaction::{
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
-    CompanionExpression, CompanionRecordKind, CompanionScope, CompanionSubject, CompanionTaskKind,
+    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
     EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
 };
 pub use crate::config::{

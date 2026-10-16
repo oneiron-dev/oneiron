@@ -51,7 +51,7 @@ pub(super) const KEY_REVOKED_AT: &str = ACCESS_GRANT_BODY_KEYS[6];
 pub(super) const SCOPE_KEY_KIND: &str = "kind";
 
 pub(super) const SCOPE_KEYS_COMPANION_PROFILE: [&str; 3] =
-    [SCOPE_KEY_KIND, "person_ref", "persona_ref"];
+    [SCOPE_KEY_KIND, "person_ref", "facet_ref"];
 
 pub(super) const SCOPE_KEYS_CALENDAR: [&str; 3] = [SCOPE_KEY_KIND, "calendar_ref", "rung"];
 
@@ -232,7 +232,7 @@ pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
         ]),
         AccessGrantScope::CompanionProfile {
             person_ref,
-            persona_ref,
+            facet_ref,
         } => Value::Map(vec![
             (
                 Value::from(SCOPE_KEYS_COMPANION_PROFILE[0]),
@@ -244,7 +244,7 @@ pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
             ),
             (
                 Value::from(SCOPE_KEYS_COMPANION_PROFILE[2]),
-                Value::from(persona_ref.to_hex()),
+                facet_ref.map_or(Value::Nil, |facet_ref| Value::from(facet_ref.to_hex())),
             ),
         ]),
         AccessGrantScope::Calendar { calendar_ref, rung } => Value::Map(vec![
@@ -307,10 +307,10 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
                     entries,
                     SCOPE_KEYS_COMPANION_PROFILE[1],
                 )?)?,
-                persona_ref: decode_entity_ref(required_value(
-                    entries,
-                    SCOPE_KEYS_COMPANION_PROFILE[2],
-                )?)?,
+                facet_ref: match required_value(entries, SCOPE_KEYS_COMPANION_PROFILE[2])? {
+                    Value::Nil => None,
+                    facet_ref => Some(decode_entity_ref(facet_ref)?),
+                },
             })
         }
         SCOPE_KIND_CALENDAR => {
