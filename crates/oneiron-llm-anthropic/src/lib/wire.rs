@@ -368,7 +368,7 @@ pub fn classify_anthropic_status(
         return FatalLlmError::ContentFiltered.into();
     }
     if limit::is_limit_status(status, body) {
-        return limit::limit_refusal(headers, body).into();
+        return limit::limit_refusal(status, headers, body).into();
     }
     // A request error's status is the answer, whatever type its body names.
     if matches!(status, 400 | 404 | 413 | 422) {
@@ -381,7 +381,7 @@ pub fn classify_anthropic_status(
         .and_then(JsonValue::as_str)
     {
         match error_type {
-            "rate_limit_error" => return limit::limit_refusal(headers, body).into(),
+            "rate_limit_error" => return limit::limit_refusal(status, headers, body).into(),
             "overloaded_error" | "api_error" => return RetryableLlmError::ServerError.into(),
             "authentication_error" | "permission_error" => return FatalLlmError::Auth.into(),
             "invalid_request_error" | "not_found_error" => {

@@ -12,6 +12,7 @@ use crate::context_pack::EmptyReason;
 use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -241,6 +242,10 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// The run's deadline. While a channel stage is open every candidate the
     /// scope gate reads is one of its checkpoints.
     pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
+    /// A pack's disclosure clamp, met at candidate generation (P7): a row the
+    /// audience may not read takes no channel slot. `None` with the owner
+    /// alone or outside a pack.
+    pub(super) disclosure: Option<&'a crate::disclosure::DisclosureContext>,
 }
 
 #[derive(Default)]
@@ -589,44 +594,77 @@ impl WorldAuthoritySet {
         &self.worlds
     }
 
-    /// What both sets admit. It holds no more worlds than either, so it
-    /// stays inside the cap.
+    /// This authority as the One Scope worlds axis: base reality is the
+    /// ordinary member `base_world_id` (R13), and an empty set is bottom.
+    /// Base has its own boolean here: a listed id equal to the reserved base
+    /// id cannot stand in for it.
     #[must_use]
-    pub(crate) fn meet(&self, other: &Self) -> Self {
-        Self {
-            include_base: self.include_base && other.include_base,
-            worlds: self.worlds.intersection(&other.worlds).copied().collect(),
+    pub fn scope_axis(&self) -> ScopeAxis<ScopeId> {
+        let base = crate::claim::base_world_id();
+        self.worlds
+            .iter()
+            .filter(|id| **id != base)
+            .copied()
+            .chain(self.include_base.then_some(base))
+            .map(ScopeId)
+            .collect()
+    }
+
+    /// A Scope worlds axis as an authority set, or `None` when the axis is
+    /// open: an open axis names no worlds to list.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the named set exceeds
+    /// [`MAX_WORLD_ACCESS_MEMBERS`].
+    pub fn from_scope_axis(axis: &ScopeAxis<ScopeId>) -> Result<Option<Self>> {
+        let base = ScopeId(crate::claim::base_world_id());
+        match axis {
+            ScopeAxis::All => Ok(None),
+            ScopeAxis::Bottom => Ok(Some(Self::default())),
+            ScopeAxis::Some(ids) => Self::new(
+                ids.contains(&base),
+                ids.iter().filter(|id| **id != base).map(|id| id.0),
+            )
+            .map(Some),
         }
     }
 
-    /// Membership of an ordinary claim world, or base reality for non-claims.
-    pub(crate) fn admits(&self, world: Option<EntityId>) -> bool {
-        world.map_or(self.include_base, |world| self.worlds.contains(&world))
+    /// What both sets admit: the meet on the Scope worlds axis. It holds no
+    /// more worlds than either, so it stays inside the cap.
+    #[must_use]
+    pub(crate) fn meet(&self, other: &Self) -> Self {
+        // Two named sets meet at a named set or bottom, never the open axis.
+        Self::from_scope_axis(&self.scope_axis().meet(&other.scope_axis()))
+            .ok()
+            .flatten()
+            .unwrap_or_default()
     }
 
-    /// Whether every member of `self` is also a member of `allowed`.
+    /// Membership of an ordinary claim world, or base reality for non-claims:
+    /// the worlds axis's `contains`, without building the axis per row.
+    pub(crate) fn admits(&self, world: Option<EntityId>) -> bool {
+        match world.filter(|world| *world != crate::claim::base_world_id()) {
+            Some(world) => self.worlds.contains(&world),
+            None => self.include_base,
+        }
+    }
+
+    /// Whether every member of `self` is also a member of `allowed`: the
+    /// Scope worlds axis's narrowing order.
     ///
     /// Base reality is a MEMBER of this containment, not a side channel:
     /// asking for base without an owner grant for base is a widening and is
     /// refused like any world id would be.
     #[must_use]
     pub fn is_subset_of(&self, allowed: &Self) -> bool {
-        (!self.include_base || allowed.include_base) && self.worlds.is_subset(&allowed.worlds)
+        self.scope_axis().is_narrowing_of(&allowed.scope_axis())
     }
 
     /// Whether this authority admits nothing at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        !self.include_base && self.worlds.is_empty()
-    }
-
-    /// The narrowing fold of two owner grants: base survives only if BOTH
-    /// rows grant it, and a world survives only if BOTH rows list it.
-    pub(super) fn intersect(&self, other: &Self) -> Self {
-        Self {
-            include_base: self.include_base && other.include_base,
-            worlds: self.worlds.intersection(&other.worlds).copied().collect(),
-        }
+        self.scope_axis().is_bottom()
     }
 }
 

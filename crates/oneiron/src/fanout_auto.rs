@@ -16,10 +16,11 @@
 //!    covers the ask short-circuits to its ruling. A proposed row, an amend
 //!    posture, a band-less or over-ceiling budget row, and an `Err` all
 //!    escalate — a row this engine cannot read is uncertainty, not absence.
-//! 3. Only when the typed read returns no row at all does the classifier
-//!    enter. An absent classifier escalates, a history-read failure escalates,
-//!    and otherwise the injected [`FanoutAskClassifier`] rules once and its
-//!    verdict is returned verbatim.
+//! 3. Only when the typed read returns no row at all does the shared decision
+//!    path enter. Absent host decisions escalate, a history-read failure
+//!    escalates, and otherwise the host's [`FanoutDecisions`] ladder answers
+//!    one typed question once and its verdict is returned verbatim. An
+//!    abstention or a failed run escalates.
 //!
 //! # What this module is not
 //!
@@ -28,10 +29,10 @@
 //! is a thin private conversion around that public API.
 //!
 //! It bundles no model. There is no provider client, no prompt template, no
-//! credential, no retry loop, and no engine-side training state:
-//! [`FanoutAskClassifier`] is an injected trait implementation and the engine
-//! accepts only the closed verdict vocabulary, so a host that cannot decode a
-//! token surfaces as a classifier error rather than as a guess.
+//! credential, no retry loop, and no engine-side training state: the host's
+//! [`FanoutDecisions`] carries its ladder and its own wording, and the closed
+//! verdict vocabulary is the question's only options, so anything else is no
+//! answer and escalates rather than becoming a guess.
 //!
 //! It never resumes, dispatches, or deletes a plan. `Deny` and
 //! `EscalateToHuman` both land on ONE-1719's existing approval surface, which
@@ -42,6 +43,7 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::edit_distance::escalation::{
     EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
@@ -50,9 +52,15 @@ use crate::edit_distance::escalation::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::llm::decision::catalogue::FANOUT_ASK;
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    DecisionRung, Reversibility,
+};
 use crate::outbound_chokepoint::{
     FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutPlan,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::vault::Vault;
 
 #[cfg(test)]
@@ -65,10 +73,8 @@ mod tests;
 /// What an ES-07 ask resolves to.
 ///
 /// Closed at three arms with pinned wire tokens `allow`, `deny`, and
-/// `escalate-to-human`. A host may serialize the classifier's inputs however
-/// it likes, but the engine decodes only these three: an unknown token is a
-/// decode failure in the host adapter, which reaches this module as a
-/// classifier error and therefore escalates.
+/// `escalate-to-human`. They are the ask's only options: any other answer, or
+/// none, is no verdict and therefore escalates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FanoutAskVerdict {
@@ -79,6 +85,13 @@ pub enum FanoutAskVerdict {
     /// Nobody here is entitled to rule; a human sees it.
     EscalateToHuman,
 }
+
+/// The verdict's options, by their pinned wire tokens.
+const VERDICTS: [(&str, FanoutAskVerdict); 3] = [
+    ("allow", FanoutAskVerdict::Allow),
+    ("deny", FanoutAskVerdict::Deny),
+    ("escalate-to-human", FanoutAskVerdict::EscalateToHuman),
+];
 
 /// Why this fan-out is being asked about, carrying the magnitude a budget ask
 /// cannot be judged without.
@@ -107,6 +120,15 @@ impl FanoutAskTrigger {
             Self::Unsure => EscalationTrigger::Unsure,
             Self::Policy => EscalationTrigger::Policy,
             Self::Budget { .. } => EscalationTrigger::Budget,
+        }
+    }
+
+    /// The trigger's wire kind, which keys the ask's question.
+    const fn token(self) -> &'static str {
+        match self {
+            Self::Unsure => "unsure",
+            Self::Policy => "policy",
+            Self::Budget { .. } => "budget",
         }
     }
 
@@ -161,10 +183,10 @@ pub struct FanoutAskContext {
 }
 
 // ---------------------------------------------------------------------------
-// The classifier seam
+// The shared decision path
 // ---------------------------------------------------------------------------
 
-/// One past human ruling, flattened for a classifier that has no business
+/// One past human ruling, flattened for a decision state that has no business
 /// decoding ED-01's Δ.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -177,7 +199,7 @@ pub enum FanoutHistoryRuling {
     Amend,
 }
 
-/// One `(scope, trigger)` pair's ruling history, as the classifier sees it.
+/// One `(scope, trigger)` pair's ruling history, as the decision sees it.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FanoutDecisionHistory {
     /// Approvals recorded for the exact `(scope, trigger)` key.
@@ -191,11 +213,11 @@ pub struct FanoutDecisionHistory {
     pub last_rulings: Vec<FanoutHistoryRuling>,
 }
 
-/// The only classifier-facing carrier for ONE-1719's crate-internal plan and
-/// estimate.
+/// The only carrier of ONE-1719's crate-internal plan and estimate into the
+/// decision's state.
 ///
 /// Fields stay private and the accessors expose four projections only, so a
-/// host never reads — and can never be handed — the plan representation
+/// provider never reads — and can never be handed — the plan representation
 /// itself.
 pub struct FanoutClassifierView<'a> {
     plan: &'a FanoutPlan,
@@ -248,25 +270,91 @@ impl<'a> FanoutClassifierView<'a> {
     }
 }
 
-/// The injected ES-07 classifier.
-///
-/// Provider-neutral by construction: it sees the ask, the four view
-/// projections, and the normalized history, and answers with the closed
-/// vocabulary. Where the answer comes from is entirely the host's business.
-pub trait FanoutAskClassifier {
-    /// Rules on one ask.
-    ///
-    /// # Errors
-    ///
-    /// Any failure — no model available, a transport problem, or a token
-    /// outside [`FanoutAskVerdict`] that the host adapter could not decode.
-    /// Every one of them escalates to a human.
-    fn classify(
+/// The dial an ES-07 ask runs under unless the host picks another. It ends
+/// below Human: an escalation already lands on ONE-1719's approval surface, so
+/// the ladder queues no second ask.
+pub const FANOUT_ASK_DIAL: DecisionDial = DecisionDial {
+    first: DecisionRung::Local,
+    ceiling: DecisionRung::Big,
+    band: DecisionBand {
+        low: 0.35,
+        high: 0.65,
+    },
+};
+
+/// The shared decision path an ES-07 ask goes through: the host's ladder, the
+/// principal the answer is for, the dial and learned bands, the host's wording
+/// of the question, and the call's clock. A provider sees the parent task only
+/// as an evidence id; the ask, the four view projections and the normalized
+/// history are its bounded state.
+pub struct FanoutDecisions<'a> {
+    pub ladder: DecisionLadder<'a>,
+    pub principal: EntityId,
+    pub dial: DecisionDial,
+    pub bands: DecisionBandPolicy,
+    pub wording: String,
+    pub deadline: &'a RetrievalDeadline,
+}
+
+impl FanoutDecisions<'_> {
+    /// Rules on one ask: `None` when the ladder abstains or answers outside
+    /// the vocabulary. The question is keyed by the ask's trigger, so each
+    /// trigger learns its own bands.
+    fn rule(
         &self,
         context: &FanoutAskContext,
         view: &FanoutClassifierView<'_>,
         history: &FanoutDecisionHistory,
-    ) -> Result<FanoutAskVerdict>;
+    ) -> Result<Option<FanoutAskVerdict>> {
+        let question = FANOUT_ASK.question(
+            &[context.trigger.token().as_bytes()],
+            self.wording.clone(),
+            AnswerContract::Choice {
+                options: VERDICTS
+                    .iter()
+                    .map(|(label, _)| (*label).to_owned())
+                    .collect(),
+            },
+        )?;
+        // Allowing starts outbound consults, so a cut abstains rather than
+        // taking a held answer.
+        let decision = self.ladder.run(
+            &question,
+            self.principal,
+            &[context.task_ref],
+            &ask_state(context, view, history),
+            self.dial,
+            &self.bands,
+            Reversibility::OutboundEffect,
+            self.deadline,
+        )?;
+        Ok(match &decision.answer {
+            DecisionAnswer::Choice(answer) => VERDICTS
+                .iter()
+                .find(|(label, _)| *label == answer.as_str())
+                .map(|(_, verdict)| *verdict),
+            _ => None,
+        })
+    }
+}
+
+/// The ask's bounded state: the ask itself, the view's four projections and
+/// the normalized history.
+fn ask_state(
+    context: &FanoutAskContext,
+    view: &FanoutClassifierView<'_>,
+    history: &FanoutDecisionHistory,
+) -> Value {
+    json!({
+        "scope": context.scope,
+        "trigger": context.trigger,
+        "question": context.question,
+        "peer_count": view.peer_count(),
+        "total_count": view.total_count(),
+        "per_peer_counts": view.per_peer_counts(),
+        "plan_digest": view.plan_digest(),
+        "history": history,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +369,7 @@ pub trait FanoutAskClassifier {
 ///
 /// The evaluation order is the module's whole contract:
 ///
-/// | condition | classifier invoked? | result |
+/// | condition | ladder asked? | result |
 /// |---|---:|---|
 /// | blank `scope` or blank `question` | no | `EscalateToHuman`, before any storage read |
 /// | accepted standing approval covers the ask | no | `Allow` |
@@ -290,16 +378,16 @@ pub trait FanoutAskClassifier {
 /// | standing budget row whose ceiling is under the ask | no | `EscalateToHuman` |
 /// | standing row proposed, or an amend posture | no | `EscalateToHuman` |
 /// | typed standing read returns `Err` | no | `EscalateToHuman` |
-/// | no standing row, classifier absent | no | `EscalateToHuman` |
+/// | no standing row, decisions absent | no | `EscalateToHuman` |
 /// | no standing row, history read fails | no | `EscalateToHuman` |
-/// | no standing row, classifier rules | once | the classifier's verdict |
-/// | no standing row, classifier errors | once | `EscalateToHuman` |
+/// | no standing row, the ladder answers | once | its verdict |
+/// | no standing row, the ladder abstains or fails | once | `EscalateToHuman` |
 pub(crate) fn classify_fan_out_ask(
     vault: &Vault,
     context: &FanoutAskContext,
     plan: &FanoutPlan,
     estimate: &FanoutEstimate,
-    inner: Option<&dyn FanoutAskClassifier>,
+    inner: Option<&FanoutDecisions<'_>>,
 ) -> FanoutAskVerdict {
     // The defensive floor: a hand-built blank context never reaches storage.
     if is_blank(&context.scope) || is_blank(&context.question) {
@@ -316,7 +404,7 @@ pub(crate) fn classify_fan_out_ask(
         return standing_verdict(&row, context.trigger.budget_magnitude());
     }
 
-    let Some(classifier) = inner else {
+    let Some(decisions) = inner else {
         return FanoutAskVerdict::EscalateToHuman;
     };
     let Ok(stats) = escalation_stats(vault, &context.scope, trigger) else {
@@ -324,8 +412,10 @@ pub(crate) fn classify_fan_out_ask(
     };
 
     let view = FanoutClassifierView::new(plan, estimate);
-    classifier
-        .classify(context, &view, &decision_history(&stats))
+    decisions
+        .rule(context, &view, &decision_history(&stats))
+        .ok()
+        .flatten()
         .unwrap_or(FanoutAskVerdict::EscalateToHuman)
 }
 
@@ -352,7 +442,7 @@ fn standing_verdict(row: &StandingPolicy, ask_band: Option<u64>) -> FanoutAskVer
     }
 }
 
-/// ED-06's folded history, flattened for the classifier.
+/// ED-06's folded history, flattened for the decision state.
 fn decision_history(stats: &EscalationStats) -> FanoutDecisionHistory {
     FanoutDecisionHistory {
         approve: stats.approve,
@@ -398,14 +488,14 @@ fn is_blank(value: &str) -> bool {
 pub struct LearningFanoutAutoDecider<'a> {
     vault: &'a Vault,
     context: FanoutAskContext,
-    classifier: Option<&'a dyn FanoutAskClassifier>,
+    decisions: Option<&'a FanoutDecisions<'a>>,
 }
 
 impl<'a> LearningFanoutAutoDecider<'a> {
-    /// Binds one ask context and an optional classifier to a vault.
+    /// Binds one ask context and the host's optional decisions to a vault.
     ///
-    /// The classifier is optional because an accepted standing row answers
-    /// without one; absence is resolved only after the storage read finds no
+    /// The decisions are optional because an accepted standing row answers
+    /// without them; absence is resolved only after the storage read finds no
     /// standing row.
     ///
     /// # Errors
@@ -415,7 +505,7 @@ impl<'a> LearningFanoutAutoDecider<'a> {
     pub fn new(
         vault: &'a Vault,
         context: FanoutAskContext,
-        classifier: Option<&'a dyn FanoutAskClassifier>,
+        decisions: Option<&'a FanoutDecisions<'a>>,
     ) -> Result<Self> {
         if is_blank(&context.scope) {
             return Err(Error::InvalidConfig(
@@ -430,7 +520,7 @@ impl<'a> LearningFanoutAutoDecider<'a> {
         Ok(Self {
             vault,
             context,
-            classifier,
+            decisions,
         })
     }
 }
@@ -441,14 +531,14 @@ impl FanoutAutoDecider for LearningFanoutAutoDecider<'_> {
         plan: &FanoutPlan,
         estimate: &FanoutEstimate,
     ) -> Result<FanoutAutoDisposition> {
-        // Delegated unconditionally: an accepted standing row has to survive a
-        // missing classifier, so classifier absence cannot be decided here.
+        // Delegated unconditionally: an accepted standing row has to survive
+        // missing decisions, so their absence cannot be decided here.
         Ok(disposition_of(classify_fan_out_ask(
             self.vault,
             &self.context,
             plan,
             estimate,
-            self.classifier,
+            self.decisions,
         )))
     }
 }

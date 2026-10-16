@@ -4,10 +4,10 @@
 //!
 //! The supervisor runs on its own thread with its own current-thread runtime:
 //! a wake pass does LMDB work inline and must not stall request handlers.
-//! Triggers are the driver's: the attempt-queue deadline lane (never a poll)
-//! plus pushed session hints. A sitting ends on the idle floor, the hard
-//! ceiling or an explicit end, and its turns are enqueued for consolidation
-//! atomically with the end.
+//! Triggers are the driver's: the attempt-queue deadline lane (never a poll),
+//! the wake policy's one quiet timer and pushed session hints. A sitting
+//! ends on the idle floor, the hard ceiling or an explicit end, and its turns
+//! are enqueued for consolidation atomically with the end.
 use std::sync::Arc;
 
 use oneiron::dreamer_consolidation::{
@@ -21,9 +21,10 @@ use oneiron::{
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, Vault, WakeAttemptContext, WriteActor,
 };
 use oneiron_driver::{
-    AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher, HybridTick,
+    AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher, HybridTick, IdleSample,
     PassExecutorFactory, PushTick, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks,
-    ShutdownHandle, TimerTick, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
+    ShutdownHandle, TimerTick, WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig,
+    WakeSupervisorReport,
 };
 
 use super::policy::extraction_egress;
@@ -51,6 +52,8 @@ pub(super) struct DreamerStart {
     /// The owner lets extraction leave the device.
     pub(super) egress: bool,
     pub(super) status: Arc<StatusCell>,
+    /// The host's liveness for the wake policy's idle recipes.
+    pub(super) idle: IdleSample,
 }
 
 impl DreamerHost {
@@ -121,9 +124,21 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         settings,
         egress,
         status,
+        idle,
     } = start;
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault)?;
+        // The nightly harness audit reads this; a failed record never stops
+        // the Dreamer.
+        if let Err(error) = super::harness::record_tuning_config(
+            &vault,
+            &runtime,
+            &seat,
+            &settings,
+            now_ms() / 1_000,
+        ) {
+            tracing::warn!(%error, "dreamer tuning config not recorded");
+        }
         let factory = ObservedFactory {
             vault: Arc::clone(&vault),
             runtime,
@@ -141,11 +156,21 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         )?;
         let (push, _wake, hints) =
             PushTick::channel(settings.idle_floor_secs.saturating_mul(1_000));
+        // The wake policy (ARCH-0026 #wake) reads its rows on each tick and
+        // arms one quiet timer; a due recipe lands as a durable receipt the
+        // deadline lane then drives.
         let ticks = SessionTicks::new(
-            HybridTick::new(
-                TimerTick::new(AttemptQueueDeadlines::new(&vault, node_id).for_worker(LEASE_OWNER)),
-                push,
-            ),
+            WakePolicyTicks::new(
+                HybridTick::new(
+                    TimerTick::new(
+                        AttemptQueueDeadlines::new(&vault, node_id).for_worker(LEASE_OWNER),
+                    ),
+                    push,
+                ),
+                &vault,
+                idle,
+                Arc::new(now_ms),
+            )?,
             lifecycle,
         );
         let config =

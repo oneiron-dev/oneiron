@@ -420,6 +420,43 @@ impl AttemptQueue<'_> {
         Ok(record)
     }
 
+    /// Returns one leased try to the ready index as the SAME try: the lease
+    /// clears and the row queues again under its own id, so whatever is keyed
+    /// by that id (a Dreamer step memo, say) still holds. A parked attempt
+    /// whose signal arrived resumes this way. `false` when `lease_owner` no
+    /// longer holds the row's lease; nothing changes then.
+    pub(crate) fn release_lease_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        lease_owner: &str,
+        now: u64,
+    ) -> Result<bool> {
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, id.as_bytes())? else {
+            return Err(invalid_transition("release", "missing"));
+        };
+        let mut record = decode_record(&raw_record, id)?;
+        if record.state != AttemptState::Leased
+            || record.lease_owner.as_deref() != Some(lease_owner)
+        {
+            return Ok(false);
+        }
+        record.state = AttemptState::Queued;
+        record.lease_owner = None;
+        record.scheduled_at = None;
+        record.backoff_until = None;
+        record.updated_at = now;
+        let encoded = encode_record(&record)?;
+        self.store
+            .attempt_records
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
+        let ready_key = ready_key(ready_at(&record), record.id);
+        self.store
+            .attempt_ready
+            .put(wtxn, &ready_key, record.id.as_bytes())?;
+        Ok(true)
+    }
+
     /// Returns expired leases to the ready index under LMDB's single-writer
     /// invariant. Cleanup never assigns a replacement owner; reclaim still
     /// happens through [`Self::claim`]'s atomic admission step.

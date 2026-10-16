@@ -18,6 +18,7 @@ pub(in crate::sync) use document_admission::{
 mod edge;
 mod held_retire;
 mod note_admission;
+mod peer_confidence;
 mod scope;
 mod text_egress;
 pub(crate) use note_admission::admit_note_in_txn;
@@ -47,6 +48,7 @@ pub use self::codec::{
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;
+pub use self::peer_confidence::{DEFAULT_FEDERATED_CONFIDENCE_SCALE, PeerConfidence};
 
 #[cfg(test)]
 use self::{authorize::*, codec::*};

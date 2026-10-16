@@ -1,8 +1,12 @@
 mod codec;
+mod document_view;
 mod keys;
 mod rust_source;
 mod semantic_diff;
 mod storage;
+pub use document_view::{
+    CodeAttributedChange, CodeUnitBlame, render_attributed_semantic_diff, render_op,
+};
 pub use semantic_diff::{
     CodeContentVersion, CodeSemanticChange, code_text_diff, render_code_semantic_diff,
     semantic_code_diff,
@@ -30,6 +34,7 @@ pub use self::types::{
     CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
 };
 
+pub(crate) use self::codec::code_symbol_entity_path;
 pub(crate) use self::storage::delete_code_symbol_manifest_in_txn;
 
 // The flat code_symbol.rs module used to provide these names to the sibling test

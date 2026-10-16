@@ -467,7 +467,6 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         } => state.roster.contains_key(&device.key),
         AuthorityOp::Genesis { .. }
         | AuthorityOp::RevokeDevice { .. }
-        | AuthorityOp::RetiredCeiling { .. }
         | AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }

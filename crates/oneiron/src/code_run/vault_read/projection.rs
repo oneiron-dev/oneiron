@@ -194,6 +194,7 @@ pub(super) fn project_context_pack(
         narrowing,
         results: pack.results.iter().map(project_context_entity).collect(),
         neighbors: pack.neighbors.iter().map(project_context_entity).collect(),
+        instruction_files: pack.instruction_files.clone(),
         stats: project_pack_stats(&pack.stats),
         empty: pack.empty.as_ref().map(project_empty_context),
         limit_clamped: false,
