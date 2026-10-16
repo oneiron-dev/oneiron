@@ -141,6 +141,12 @@ side_tables! {
     SHARE_BRIEF_ADMISSION: VaultMeta b"share:brief:admission:v1:" Raw;
     /// One-way deletion fence for a brief identity. Key: id16; value: the one-byte marker `1`.
     SHARE_BRIEF_DELETE_RESERVATION: VaultMeta b"share:brief:deleting:v1:" Raw;
+    /// The born-with text one brief share lets travel (OF-491), fixed in the transaction that
+    /// admits the share. Key: id16(share).
+    SHARE_BRIEF_TRAVEL: VaultMeta b"share:brief:travel:v1:" Named;
+    /// One artifact export's travel receipt (OF-491): the copy, its digest, who sent it and the
+    /// born-with fields that left with it; never the exported bytes. Key: u64be(sequence).
+    SHARE_EXPORT_TRAVEL: VaultMeta b"share:export:travel:v1:" Named;
     /// One-time record of the initial membership/policy defaults applied when a shared vault was
     /// created. Key: ().
     /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).

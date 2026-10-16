@@ -547,7 +547,8 @@ impl Vault {
     /// Project the body onto its imported package and land it as the artifact's
     /// next version: a DOCX body as one tracked revision, an XLSX body as its
     /// changed cells and names, recalculated. The projection is deterministic
-    /// in the body frontier, the author and the export time. A deck exports
+    /// in the body's content, the author and the export time; no vault ref (a
+    /// frontier, an input hash) enters the file (OF-491). A deck exports
     /// through [`Self::export_pptx_body`].
     pub fn export_office_body(
         &self,
@@ -632,12 +633,7 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at)? {
             Some((bytes, _, recalc)) => (bytes, recalc),
-            None => recalc_xlsx(
-                &self.body_source(artifact, &head)?,
-                limits,
-                at,
-                &head.frontier,
-            )?,
+            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at)?,
         };
         let book = read_xlsx_cells(&bytes, limits)
             .map_err(|_| invalid("the projected workbook could not be read"))?;
@@ -688,10 +684,19 @@ impl Vault {
             if changes.is_empty() {
                 return Ok(None);
             }
+            let date = timestamp(at)?.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            // The group names this revision by what it changes, not by the
+            // vault frontier it was read at: frontiers never leave (OF-491).
+            let mut group = blake3::Hasher::new();
+            group.update(b"oneiron.office_body.docx_revision_group.v1\0");
+            for part in [author, date.as_str(), format!("{changes:?}").as_str()] {
+                group.update(&(part.len() as u64).to_le_bytes());
+                group.update(part.as_bytes());
+            }
             let revision = DocxRevision {
                 author: author.to_owned(),
-                date: timestamp(at)?.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-                group: blake3::hash(&head.frontier).to_hex()[..16].to_owned(),
+                date,
+                group: group.finalize().to_hex()[..16].to_owned(),
             };
             let bytes = project_docx(
                 &self.body_source(artifact, head)?,
@@ -709,7 +714,7 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let projected = project_xlsx(&self.body_source(artifact, head)?, &changes, limits)
             .map_err(|_| invalid("the body could not be projected onto its package"))?;
-        let (bytes, recalc) = recalc_xlsx(&projected, limits, at, &head.frontier)?;
+        let (bytes, recalc) = recalc_xlsx(&projected, limits, at)?;
         Ok(Some((bytes, changes.len(), recalc)))
     }
 
@@ -922,16 +927,12 @@ fn three_way(
 }
 
 /// Recalculate a projected workbook in process at `at` (UTC), seeded by the
-/// body frontier, so the result is deterministic in both. A workbook the engine
-/// refuses is marked to recalculate when it is opened instead.
-fn recalc_xlsx(
-    bytes: &[u8],
-    limits: Limits,
-    at: u64,
-    frontier: &[u8],
-) -> Result<(Vec<u8>, Option<String>)> {
+/// projected package, so the result is deterministic in both and no vault
+/// frontier reaches the file (OF-491). A workbook the engine refuses is marked
+/// to recalculate when it is opened instead.
+fn recalc_xlsx(bytes: &[u8], limits: Limits, at: u64) -> Result<(Vec<u8>, Option<String>)> {
     let mut seed = [0u8; 8];
-    seed.copy_from_slice(&blake3::hash(frontier).as_bytes()[..8]);
+    seed.copy_from_slice(&blake3::hash(bytes).as_bytes()[..8]);
     let clock = RecalcClock::new(timestamp(at)?, 0, u64::from_le_bytes(seed))
         .ok_or_else(|| invalid("office body recalc clock"))?;
     match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {

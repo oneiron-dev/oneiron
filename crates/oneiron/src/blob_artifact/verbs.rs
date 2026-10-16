@@ -18,6 +18,7 @@ use crate::error::Error;
 use crate::memory::{Memory, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
+use crate::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -35,9 +36,13 @@ pub struct ArtifactExportRequest {
     pub artifact_ref: String,
     #[serde(default)]
     pub version: Option<u64>,
+    /// The born-with text to send with the file; absent sends none (OF-491).
+    #[serde(default)]
+    pub travel: Option<TravelChoice>,
 }
 
-/// One version's export file, its bytes base64.
+/// One version's export file, its bytes base64, with the born-with text the
+/// sharer chose to send. Its made_by stays home; `vault.artifacts.view` reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactExportFile {
     pub artifact_ref: String,
@@ -46,7 +51,7 @@ pub struct ArtifactExportFile {
     pub name: String,
     pub media_type: String,
     pub content_hash: String,
-    pub made_by: MadeBy,
+    pub born_with: BornWith,
     pub content_base64: String,
 }
 
@@ -213,25 +218,35 @@ impl Memory<'_> {
             .blob_artifact_view(&entity(&input.artifact_ref)?)?)
     }
 
-    /// `vault.artifacts.export`: one version's export file.
+    /// `vault.artifacts.export`: one version's export file, with the born-with
+    /// text the caller chose to send and a share receipt listing it.
     pub fn artifacts_export(
         &self,
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
-        let Some(file) = self
-            .vault()
-            .export_blob_artifact(&entity(&input.artifact_ref)?, input.version)?
+        let vault = self.vault();
+        let Some(file) = vault.export_blob_artifact(&entity(&input.artifact_ref)?, input.version)?
         else {
             return Ok(None);
         };
+        let born_with = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact)
+            .project(vault.born_with_text(&file.artifact_id, Some(&file.made_by))?);
+        let content_hash = super::hash_hex(&file.content_hash);
+        vault.record_export_travel(
+            file.artifact_id.to_hex(),
+            file.version,
+            content_hash.clone(),
+            &self.actor(),
+            &born_with,
+        )?;
         Ok(Some(ArtifactExportFile {
             artifact_ref: file.artifact_id.to_hex(),
             version: file.version,
             kind: file.kind,
             name: file.name,
             media_type: file.media_type,
-            content_hash: super::hash_hex(&file.content_hash),
-            made_by: file.made_by,
+            content_hash,
+            born_with,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
         }))
     }
