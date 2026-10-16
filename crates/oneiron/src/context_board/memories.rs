@@ -173,6 +173,10 @@ pub struct MemoryRow {
     pub tier: MemoryTier,
     #[serde(default)]
     pub snippet: Option<String>,
+    /// `<pack>/<hook>` when a hook block pins this row (ARCH-0080 §11,
+    /// OI-1 = A): the tag the board shows beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<String>,
     /// The exact revision this row's body was served at, where the read
     /// pinned one. Board history records it, never LIVE in its place. Not on
     /// the wire: board refs stay as they were.

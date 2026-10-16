@@ -324,9 +324,21 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(CoreContextPackRequest::named_refs)
         .unwrap_or_default();
+    // The hook blocks that reach this board's session: timed pins on its
+    // MEMORIES and TASKS rows (ARCH-0080 §11, OI-1 = A).
+    let hook_pins = server
+        .vault
+        .board_hook_pins(
+            req.session
+                .as_ref()
+                .and_then(|s| s.session_id.as_deref())
+                .unwrap_or_default(),
+            None,
+        )
+        .map_err(|error| super::core_engine_error("board hook blocks failed", error))?;
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
-            let memories = resolve_memories_request(
+            let mut memories = resolve_memories_request(
                 &server.vault,
                 req.memories.as_ref(),
                 req.session.as_ref(),
@@ -334,6 +346,7 @@ pub(crate) async fn context_board_hydrate(
                 retrieval.retrieval_budget_shape(),
                 &auth,
             )?;
+            memories.hook_pins = hook_pins.clone();
             let (pack, memories, cursor) =
                 run_context_pack(&server, &auth, retrieval, Some(memories)).await?;
             (Some(pack), memories, cursor)
@@ -411,6 +424,7 @@ pub(crate) async fn context_board_hydrate(
         memories.as_ref(),
         hits,
         &observed_reads,
+        &hook_pins,
     )?;
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
@@ -524,6 +538,15 @@ pub(crate) async fn context_board_hydrate(
             )?;
         }
         None => within_standing_budget(&response)?,
+    }
+    // The response is final: each hook block it carried spends a delivery. A
+    // failed record leaves the block to show again, never to vanish unseen.
+    let mut hook_blocks = parts.hook_blocks.clone();
+    if let Some(memories) = &response.memories {
+        hook_blocks.extend(memories.hook_blocks_delivered(&hook_pins));
+    }
+    if let Err(error) = server.vault.record_board_hook_deliveries(&hook_blocks) {
+        tracing::warn!(kind = ?error.kind(), "board hook delivery record failed");
     }
     let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {

@@ -89,6 +89,9 @@ pub(crate) struct ContextBoardCompanionControls {
 pub(crate) struct MemoriesRequest {
     pub(crate) memory_board_budget: Option<oneiron::MemoriesBudget>,
     pub(crate) pinned_refs: Vec<String>,
+    /// The hook blocks reaching this board, pinned after the explicit and
+    /// manifest pins (ARCH-0080 §11).
+    pub(crate) hook_pins: Vec<oneiron::context_board::HookPin>,
     pub(crate) session_scope_id: String,
     pub(crate) session_id: String,
     pub(crate) companion: Option<oneiron::CompanionAssembly>,
@@ -208,6 +211,10 @@ pub(crate) struct ContextBoardMemoryRow {
     tier: String,
     /// Escaped only at rendering, absent for foreign index-only rows.
     snippet: Option<String>,
+    /// `<pack>/<hook>` when a hook block pins this row; absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "local/remind")]
+    hook: Option<String>,
 }
 
 /// MEMORIES section envelope.
@@ -294,6 +301,7 @@ pub(crate) fn resolve_memories_request(
     Ok(MemoriesRequest {
         memory_board_budget,
         pinned_refs,
+        hook_pins: Vec::new(),
         session_scope_id: session_scope_id.to_owned(),
         session_id: session_id.to_owned(),
         companion: Some(companion),

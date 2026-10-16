@@ -177,6 +177,8 @@ pub(super) struct BoardParts {
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
     pub(super) named: Vec<EntityId>,
+    /// The hook blocks whose task rows TASKS tagged.
+    pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
 }
 
 /// Assembles every section the board renders for this caller.
@@ -188,6 +190,7 @@ pub(super) fn board_parts(
     memories: Option<&oneiron::MemoriesSection>,
     hits: &[CapabilityHit],
     reads: &SessionReadSet,
+    hook_pins: &[oneiron::context_board::HookPin],
 ) -> Result<BoardParts, ApiError> {
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
@@ -244,13 +247,14 @@ pub(super) fn board_parts(
     }
 
     // TASKS, with the project view as its first detail row.
-    let tasks = match &memory {
+    let mut tasks = match &memory {
         Some(memory) => readable_task_rows(auth, read, memory)?,
         None => oneiron::context_board::TasksSection {
             rows: Vec::new(),
             overflow: None,
         },
     };
+    let hook_blocks = tasks.tag_hook_pins(hook_pins);
     named.extend(
         tasks
             .rows
@@ -359,6 +363,7 @@ pub(super) fn board_parts(
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         agents: agents.rows.into_iter().map(|row| row.line).collect(),
         named,
+        hook_blocks,
     })
 }
 
