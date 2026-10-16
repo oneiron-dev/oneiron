@@ -5,11 +5,15 @@
 //! is distinct from the logical export's entity/claim transformation format.
 //!
 //! A result body kept as a file beside `data.mdb` (OF-597) is not in any row:
-//! the image lists every one its rows name, and the snapshot streams each
-//! into a `bodies/` directory beside the image, shared by the images there and
-//! named by digest, before the image is written. A restore streams them back,
-//! checking each digest, before the rows naming them land. Their line indexes
+//! the image lists every one its rows name, and the snapshot seals each into
+//! the same artifact after the image. A restore streams them back, each chunk
+//! opened and checked, before the rows naming them land. Their line indexes
 //! are rebuilt, never restored.
+//!
+//! Nothing leaves in the clear: the image and its bodies are one sealed
+//! artifact under a key derived from the vault data key (`artifact`), opened
+//! and checked whole before anything is decoded or made.
+mod artifact;
 mod authority_plane;
 mod decisions;
 mod rebuild;
@@ -22,9 +26,9 @@ use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::{Read, Write},
     path::{Path, PathBuf},
 };
+pub use artifact::{ArtifactKind, CheckpointKey};
 pub use tiers::{StorageTier, storage_tier};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -49,9 +53,6 @@ struct CheckpointImage {
     databases: BTreeMap<String, CanonicalRows>,
     /// Each result body file the rows name: its BLAKE3 and length.
     bodies: Vec<([u8; 32], u64)>,
-    /// Where the image was read from, for the bodies beside it.
-    #[serde(skip)]
-    source: PathBuf,
 }
 
 impl CheckpointImage {
@@ -143,6 +144,17 @@ impl SideRestoreSource<'_> {
             Source::Open(_) => None,
         }
     }
+    /// The key the artifact at `checkpoint` opens with. A vault open in this
+    /// process gives its own ([`Vault::checkpoint_key`]); one read off the
+    /// disk is never opened, so this install's keystore unlocks the key from
+    /// the device wrap the artifact carries
+    /// ([`CheckpointKey::unlock_on_this_device`]).
+    pub fn checkpoint_key(&self, checkpoint: &Path) -> Result<CheckpointKey> {
+        match &self.0 {
+            Source::Open(vault) => vault.checkpoint_key(),
+            Source::Disk { dir, .. } => CheckpointKey::unlock_on_this_device(checkpoint, dir),
+        }
+    }
     /// The source's live custody state, read now, at a restore's start.
     fn capture(&self) -> Result<LiveCustody> {
         match &self.0 {
@@ -183,30 +195,18 @@ pub struct RestoreReport {
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
 }
-/// The directory beside the image at `path` its result bodies are in.
-fn checkpoint_bodies_path(path: &Path) -> PathBuf {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .join("bodies")
-}
-/// Reads and structurally checks one image; returns it with its checkpoint id.
-fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
-    let mut file = std::fs::File::open(path)?;
-    let mut header = [0; 41];
-    file.read_exact(&mut header)?;
-    if &header[..9] != b"ONEIRONC1" {
-        return Err(codec_error());
-    }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    let digest = blake3::hash(&bytes);
-    if digest.as_bytes() != &header[9..] {
-        return Err(codec_error());
-    }
-    let mut image: CheckpointImage = rmp_serde::from_slice(&bytes).map_err(|_| codec_error())?;
-    image.source = path.to_path_buf();
+/// Opens one sealed artifact with `key` and structurally checks its image;
+/// returns the image, its checkpoint id and the bodies it carries.
+fn read_image<'k>(
+    path: &Path,
+    key: &'k CheckpointKey,
+) -> Result<(CheckpointImage, String, artifact::SealedBodies<'k>)> {
+    let opened = artifact::open_artifact(path, key)?;
+    let image: CheckpointImage =
+        rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != 2
+        || image.created_at != opened.created_at
+        || image.bodies != opened.bodies.list()
         || image.databases.len() != DB_MANIFEST.len()
         || DB_MANIFEST
             .iter()
@@ -229,12 +229,16 @@ fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
     }) {
         return Err(codec_error());
     }
-    Ok((image, digest.to_hex().to_string()))
+    let id = blake3::Hash::from(opened.image_id).to_hex().to_string();
+    Ok((image, id, opened.bodies))
 }
 impl Vault {
-    /// Create-new output only. Checkpoint id hashes the entire canonical image.
+    /// Create-new output only: one sealed artifact under this vault's
+    /// checkpoint key ([`Vault::checkpoint_key`]), unlocking the vault key with
+    /// this device's wrap when this handle does not hold it. Checkpoint id
+    /// hashes the entire canonical image.
     pub fn snapshot_checkpoint(&self, path: &Path, created_at: u64) -> Result<String> {
-        self.snapshot_checkpoint_checked(path, created_at, None)
+        self.snapshot_checkpoint_checked(path, created_at, None, ArtifactKind::Checkpoint)
     }
     /// [`Vault::snapshot_checkpoint`] on an owner's request. The proof is
     /// rechecked in the snapshot's own read transaction, so an owner whose
@@ -251,19 +255,34 @@ impl Vault {
         path: &Path,
         created_at: u64,
     ) -> Result<String> {
-        self.snapshot_checkpoint_checked(path, created_at, Some(owner))
+        self.snapshot_checkpoint_checked(path, created_at, Some(owner), ArtifactKind::Checkpoint)
+    }
+    /// An owner's backup: [`Vault::snapshot_checkpoint`] sealed as a backup,
+    /// and on `owner`'s request, when given, as
+    /// [`Vault::snapshot_checkpoint_as`].
+    pub fn snapshot_backup(
+        &self,
+        path: &Path,
+        created_at: u64,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> Result<String> {
+        self.snapshot_checkpoint_checked(path, created_at, owner, ArtifactKind::Backup)
     }
     fn snapshot_checkpoint_checked(
         &self,
         path: &Path,
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
+        kind: ArtifactKind,
     ) -> Result<String> {
+        self.unlock_vault_key()?;
         let _custody = self.store.gate_custody_read_guard()?;
         let txn = self.store.env.read_txn()?;
         if let Some(owner) = owner {
             owner.revalidate_in_txn(self, &txn)?;
         }
+        // The vault key's wraps the artifact carries are the rows' own.
+        let (carried, key) = self.checkpoint_seal_in_txn(&txn)?;
         // Refuse a checkpoint that cannot read CURRENT exterior custody; it
         // cannot package key bytes to paper over a missing/shredded key.
         self.store.for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
@@ -365,46 +384,45 @@ impl Vault {
             databases.insert(entry.name.into(), rows);
         }
         drop(txn);
-        // Body files are immutable once named, so the ones the snapshot's rows
-        // name read the same after its transaction. Each is whole beside the
-        // image before the image exists.
-        #[cfg(unix)]
-        if !bodies.is_empty() {
-            let source = self.store.body_dir()?;
-            let target = crate::store::BodyDir::at_path(&checkpoint_bodies_path(path), true)?
-                .ok_or(Error::InvariantViolation(
-                    "checkpoint body directory missing",
-                ))?;
-            for (digest, len) in &bodies {
-                let mut file = source
-                    .open_body(digest, *len)?
-                    .ok_or(Error::CorruptedIndex("code-run result body file missing"))?;
-                target.import(digest, *len, &mut file)?;
-            }
-        }
         let image = CheckpointImage {
             version: 2,
             created_at,
             databases,
             bodies,
-            source: PathBuf::new(),
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
-        let digest = blake3::hash(&bytes);
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        // A checkpoint contains canonical private data and device key material.
+        // Body files are immutable once named, so the ones the snapshot's rows
+        // name read the same after its transaction. Each is sealed into the
+        // artifact after the image, and never lands anywhere in the clear.
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(path)?;
-        file.write_all(b"ONEIRONC1")?;
-        file.write_all(digest.as_bytes())?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        Ok(digest.to_hex().to_string())
+        let body_dir = if image.bodies.is_empty() {
+            None
+        } else {
+            Some(self.store.body_dir()?)
+        };
+        let open_body = |digest: &[u8; 32], len: u64| -> Result<std::fs::File> {
+            #[cfg(unix)]
+            if let Some(file) = match &body_dir {
+                Some(dir) => dir.open_body(digest, len)?,
+                None => None,
+            } {
+                return Ok(file);
+            }
+            #[cfg(not(unix))]
+            let _ = (digest, len);
+            Err(Error::CorruptedIndex("code-run result body file missing"))
+        };
+        let id = artifact::write_artifact(
+            path,
+            &key,
+            kind,
+            &carried,
+            created_at,
+            &bytes,
+            &image.bodies,
+            open_body,
+        )?;
+        Ok(blake3::Hash::from(id).to_hex().to_string())
     }
     /// Restore, wake and migrate use the same fail-closed path, with no tail replay.
     /// Model-dependent vectors enter the normal pending-embedding queue; no vector
@@ -416,18 +434,25 @@ impl Vault {
     /// the way to `destination` (or, replacing a vault, on the way to it): a
     /// directory not this user's or root's, or one a group or other may write
     /// without its sticky bit. Nothing is made there.
+    ///
+    /// Every restore opens the sealed artifact at `path` with `key` (the
+    /// vault's [`Vault::checkpoint_key`], or one [`CheckpointKey::unlock`]
+    /// unlocked from a wrap it carries) and checks it whole before it makes
+    /// anything; another vault's, or one that does not open, is refused.
     pub fn restore_checkpoint(
         path: &Path,
+        key: &CheckpointKey,
         destination: &Path,
         config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
-        let (mut image, checkpoint_id) = read_image(path)?;
+        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
         let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
+            bodies,
             destination,
             config,
             reason,
@@ -447,17 +472,19 @@ impl Vault {
     /// not `source`'s.
     pub fn restore_checkpoint_beside(
         path: &Path,
+        key: &CheckpointKey,
         destination: &Path,
         config: VaultConfig,
         source: &SideRestoreSource<'_>,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
         let live = source.capture()?;
-        let (mut image, checkpoint_id) = read_image(path)?;
+        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
         let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
+            bodies,
             destination,
             config,
             RestoreReason::Restore,
@@ -557,6 +584,7 @@ impl Vault {
     /// The copy joins as a new machine; `current` stays the machine it is.
     pub fn restore_checkpoint_keeping_authority(
         path: &Path,
+        key: &CheckpointKey,
         destination: &Path,
         config: VaultConfig,
         current: &Self,
@@ -564,6 +592,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         Self::restore_with_current_authority(
             path,
+            key,
             destination,
             config,
             current,
@@ -578,6 +607,7 @@ impl Vault {
     /// mints and retires no key.
     pub fn restore_checkpoint_replacing(
         path: &Path,
+        key: &CheckpointKey,
         staging: &Path,
         config: VaultConfig,
         current: &Self,
@@ -585,6 +615,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         Self::restore_with_current_authority(
             path,
+            key,
             staging,
             config,
             current,
@@ -594,6 +625,7 @@ impl Vault {
     }
     fn restore_with_current_authority(
         path: &Path,
+        key: &CheckpointKey,
         destination: &Path,
         config: VaultConfig,
         current: &Self,
@@ -602,7 +634,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         // An archived vault's live state is not its custody's.
         current.store.refuse_archived()?;
-        let (mut image, checkpoint_id) = read_image(path)?;
+        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;
         // Two live vaults never answer as one machine (wp-keys I7).
@@ -612,6 +644,7 @@ impl Vault {
         let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
+            bodies,
             destination,
             config,
             RestoreReason::Restore,
@@ -632,9 +665,11 @@ impl Vault {
     /// Restores `image` into `destination`. The made directory, the forked
     /// custody and the copy come back in that order, so a caller's bindings,
     /// dropped in reverse, close the copy before the others go.
+    #[allow(clippy::too_many_arguments)]
     fn restore_image(
         image: CheckpointImage,
         checkpoint_id: String,
+        bodies: artifact::SealedBodies<'_>,
         destination: &Path,
         config: VaultConfig,
         reason: RestoreReason,
@@ -685,21 +720,18 @@ impl Vault {
         #[cfg(test)]
         fail_at(RestoreStep::FirstOpen)?;
         made.holds(&vault.store)?;
-        // The bodies land, each checked against its digest, before any row
-        // naming them does.
+        // The bodies land, read back through their sealed chunks and each
+        // checked against its digest, before any row naming them does.
         #[cfg(unix)]
         if !image.bodies.is_empty() {
-            let source =
-                crate::store::BodyDir::at_path(&checkpoint_bodies_path(&image.source), false)?
-                    .ok_or(Error::CorruptedIndex("checkpoint result bodies missing"))?;
+            let mut bodies = bodies;
             let target = vault.store.body_dir()?;
-            for (digest, len) in &image.bodies {
-                let mut file = source
-                    .open_body(digest, *len)?
-                    .ok_or(Error::CorruptedIndex("checkpoint result body missing"))?;
-                target.import(digest, *len, &mut file)?;
+            for (index, (digest, len)) in image.bodies.iter().enumerate() {
+                target.import(digest, *len, &mut bodies.body(index))?;
             }
         }
+        #[cfg(not(unix))]
+        drop(bodies);
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
