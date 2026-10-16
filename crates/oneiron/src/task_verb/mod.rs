@@ -54,7 +54,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
-pub(crate) use wire_decode::{TaskBinding, task_binding};
+pub(crate) use wire_decode::{TaskBinding, leader_task_body_in, task_binding};
 mod wire_encode;
 
 #[cfg(test)]
@@ -161,6 +161,9 @@ pub(crate) use symbol_lease::forget_symbols;
 
 mod recall_door;
 pub mod sdk;
+mod sdk_connector;
+mod sdk_host;
+mod sdk_self;
 
 #[cfg(test)]
 mod ask_outcome_tests;
