@@ -309,6 +309,13 @@ pub trait HeldOutReplayScorer {
     fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
         Ok(Vec::new())
     }
+
+    /// A measured, not judged, score for one named goal axis, such as an
+    /// output archive's coverage floor. `None` scores the axis as a typed
+    /// decision on the shared ladder.
+    fn measured_axis(&self, _case: &HeldOutReplayCase<'_>, _axis: &str) -> Result<Option<f32>> {
+        Ok(None)
+    }
 }
 
 /// The [`CallPurpose`] a replay scorer's LLM tier must stamp.

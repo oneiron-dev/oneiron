@@ -215,6 +215,14 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         self.inner.record_decision(question, decision, state)
     }
 
+    /// The coverage floor is measured from the archive, never judged.
+    fn measured_axis(&self, case: &HeldOutReplayCase<'_>, axis: &str) -> Result<Option<f32>> {
+        if axis == "coverage" {
+            return self.comparison.score_case(case).map(Some);
+        }
+        self.inner.measured_axis(case, axis)
+    }
+
     fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
         self.comparison.score_case(case)?;
         let axes = self.inner.goal_axes(case)?;

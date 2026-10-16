@@ -9,8 +9,9 @@
 //! trade, and a mixed vector escalates rather than promotes.
 use serde::{Deserialize, Serialize};
 
+use super::super::archive::CampaignArchivePin;
 use super::super::beam_promotion::SealedRefereeMeasurement;
-use super::super::general::{DecideRules, Measurement, Verdict};
+use super::super::general::{DecideRules, Measurement, MetricRole, Verdict};
 use super::{
     CandidateRef, ResearchBudgetRead, ResearchGoalPin, ResearchTarget, binding, campaign_error,
     check_goal_current, hex, invalid, nodes_in_txn, policy_digest, pruned_lineage,
@@ -26,17 +27,6 @@ use crate::{AttemptId, EntityId, Result, Vault};
 /// root attempt then candidate attempt.
 const BASIS: SideTable<([u8; 16], [u8; 16]), PromotionBasis, Named> =
     SideTable::new(&side_table::AUTORESEARCH_BASIS);
-
-/// The per-cell output archive the candidate's makers drew on, as pinned by
-/// the archive projector. Opaque here: the archive is rebuilt from refs and
-/// scoring receipts by its own owner, never stored by the loop.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArchivePin {
-    pub archive_id: String,
-    pub version: String,
-    pub digest: String,
-}
 
 /// The held-out decision, as decided by the campaign's dominance rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +72,10 @@ pub struct CampaignPromotionReceipt {
     pub config_sha256: String,
     pub goal: Option<ResearchGoalPin>,
     pub policy_digest: String,
-    pub archive: Option<ArchivePin>,
+    /// The per-cell output archive the candidate's makers drew on (OF-545),
+    /// rebuilt by its owner from refs and scoring receipts, and its version.
+    pub archive: Option<CampaignArchivePin>,
+    pub archive_version: Option<String>,
     pub cohort: EntityId,
     /// The candidate serving, then the promotion serving when promoted.
     pub exposures: Vec<EntityId>,
@@ -109,7 +102,10 @@ pub struct PromotionBasis {
     pub config_sha256: String,
     pub goal: Option<ResearchGoalPin>,
     pub policy_digest: String,
-    pub archive: Option<ArchivePin>,
+    /// The per-cell output archive the candidate's makers drew on (OF-545),
+    /// rebuilt by its owner from refs and scoring receipts, and its version.
+    pub archive: Option<CampaignArchivePin>,
+    pub archive_version: Option<String>,
     pub incumbent_held_out: Measurement,
     pub candidate_held_out: Measurement,
     pub call: HeldOutCall,
@@ -173,14 +169,15 @@ pub(super) fn crossover_earned(vault: &Vault, root: AttemptId) -> Result<bool> {
 /// escalated tradeoff waits for the goal's tradeoff ladder.
 /// # Errors
 /// An unbound campaign, an OF-366 campaign (it promotes through its own
-/// measure-once door), a moved goal, the incumbent as candidate, a candidate
+/// measure-once door), a moved goal, an archive pin of another campaign or
+/// none under a coverage floor, the incumbent as candidate, a candidate
 /// or incumbent without held-out evidence, a buggy or pruned candidate, an
 /// already-decided candidate, or storage errors.
 pub fn promotion_basis(
     vault: &Vault,
     root: AttemptId,
     candidate: AttemptId,
-    archive: Option<ArchivePin>,
+    archive: Option<CampaignArchivePin>,
     at: u64,
 ) -> Result<PromotionBasis> {
     let binding = binding(vault, root)?;
@@ -190,6 +187,25 @@ pub fn promotion_basis(
         ));
     }
     check_goal_current(vault, &binding)?;
+    let coverage_floor = binding
+        .config
+        .metric_set
+        .axes
+        .iter()
+        .any(|axis| axis.name == "coverage" && axis.role == MetricRole::Floor);
+    let archive_version = match &archive {
+        Some(pin) => {
+            if pin.campaign_id() != binding.config.campaign_id {
+                return Err(invalid("the archive pin belongs to another campaign"));
+            }
+            Some(pin.version().map_err(campaign_error)?)
+        }
+        // Skill coverage may never shrink: a coverage floor reads the archive.
+        None if coverage_floor => {
+            return Err(invalid("a coverage floor needs the campaign's archive pin"));
+        }
+        None => None,
+    };
     let incumbent = research_incumbent(vault, root)?;
     if candidate == incumbent {
         return Err(invalid("the incumbent is not its own candidate"));
@@ -230,6 +246,7 @@ pub fn promotion_basis(
         goal: binding.goal.clone(),
         policy_digest: policy_digest(&policy)?,
         archive,
+        archive_version,
         incumbent_held_out: before.measurement.clone(),
         candidate_held_out: after.measurement.clone(),
         call: match decision.verdict() {
@@ -408,6 +425,7 @@ pub fn promote_measured(
         goal: binding.goal.clone(),
         policy_digest: policy_digest(&policy)?,
         archive: basis.archive.clone(),
+        archive_version: basis.archive_version.clone(),
         cohort,
         exposures,
         sufficiency: card,

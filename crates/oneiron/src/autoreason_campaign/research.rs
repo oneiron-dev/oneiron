@@ -49,7 +49,7 @@ pub use budget::{
     settle_research_work,
 };
 pub use promotion::{
-    ArchivePin, CampaignPromotionReceipt, ConfirmationOutcome, ConfirmationReceipt, HeldOutCall,
+    CampaignPromotionReceipt, ConfirmationOutcome, ConfirmationReceipt, HeldOutCall,
     PromotionBasis, PromotionDisposition, promote_measured, promotion_basis,
     research_incumbent, research_promotions, reserve_confirmation,
 };

@@ -143,6 +143,9 @@ impl dyn HeldOutReplayScorer + '_ {
     }
 
     pub(crate) fn score_named_axis(&self, case: &HeldOutReplayCase<'_>, axis: &str) -> Result<f32> {
+        if let Some(measured) = self.measured_axis(case, axis)? {
+            return Ok(measured);
+        }
         score(
             self,
             &format!("axis.{axis}"),
