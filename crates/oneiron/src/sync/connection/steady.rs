@@ -12,16 +12,14 @@ use crate::sync::types::parse_window_key_str;
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
 
-use super::session::EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS;
+use super::session::{EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS};
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
 impl SyncConnection {
     /// Steady-state event loop: multiplexes WS reads, local updates, and debounce.
     pub(super) async fn steady_state(
         &self,
-        ws_stream: tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
+        ws_stream: crate::sync::carrier::SyncSocket,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         local_rx: &mut mpsc::UnboundedReceiver<LocalUpdate>,
@@ -45,6 +43,12 @@ impl SyncConnection {
         let mut ephemeral_housekeeping =
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // One residence upkeep at a time (authority catch-up, then the sealed
+        // relay), on its own sockets, off this loop.
+        let mut sealed_relay =
+            tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
+        sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
         // A residence-mode switch closes this socket; the next connect sends
         // the new mode's hello. A live lane never changes mode.
         let mut mode_rx = self.mode.subscribe();
@@ -246,6 +250,39 @@ impl SyncConnection {
                     }
                     if !debounce_buffer.is_empty() || !document_buffer.is_empty() {
                         debounce_deadline = Some(Instant::now() + Duration::from_millis(debounce_ms));
+                    }
+                }
+
+                _ = sealed_relay.tick() => {
+                    if self.config.client_config.federation_peer.is_none()
+                        && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
+                    {
+                        let manager = std::sync::Arc::clone(&self.manager);
+                        let config = self.client_config();
+                        let events = event_tx.clone();
+                        sealed_task = Some(tokio::spawn(async move {
+                            // An opened machine's windows carry only the
+                            // authority rows they hold: take the rest first
+                            // (OF-469).
+                            if config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                                && let Err(error) =
+                                    crate::sync::client::catch_up_authority(manager.vault(), &config)
+                                        .await
+                                && !matches!(error, crate::sync::TransportError::InvalidPayload(_))
+                            {
+                                let _ = events.send(SyncEvent::Error(format!(
+                                    "Authority catch-up failed: {error}"
+                                )));
+                            }
+                            match crate::sync::client::relay_sealed_windows(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Sealed window relay failed: {error}"
+                                    )));
+                                }
+                            }
+                        }));
                     }
                 }
 

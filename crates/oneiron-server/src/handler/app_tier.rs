@@ -275,8 +275,17 @@ pub(super) fn handle_app_message_with_connection(
             )?]
         } else if request.method.starts_with("residence.") {
             let bound = auth.clone();
-            crate::livequery::residence_rpc(server, &bound, request, &mut state.residence_index)?
-                .queued(conn)
+            // The machine this socket proved, judged again now: residence
+            // reads serve it by its own world read settings (OF-534 G6).
+            let peer = state.peer_machine(&server.vault);
+            crate::livequery::residence_rpc(
+                server,
+                &bound,
+                peer,
+                request,
+                &mut state.residence_index,
+            )?
+            .queued(conn)
         } else {
             crate::livequery::bound_rpc_reply(server, auth, request)?.queued(conn)
         };

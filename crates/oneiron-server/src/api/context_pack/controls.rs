@@ -1,6 +1,7 @@
 //! Request DTOs, control structs, and shared limit constants for context-pack assembly.
 
 use super::super::default_limit;
+use super::media_query::ContextPackMediaQuery;
 use super::resolve::{default_context_neighbors, default_true, resolved_context_pack_depth};
 use crate::projection::View;
 use serde::Deserialize;
@@ -280,6 +281,11 @@ pub(crate) struct CoreContextPackRequest {
     #[serde(default, rename = "query_vector", alias = "queryVector")]
     #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
     pub(super) query_vector: Option<Vec<f32>>,
+    /// Optional media query (OF-370), embedded by the server into one
+    /// declared space and searched as one more ranked list beside `query`
+    /// and `query_vector`.
+    #[serde(default)]
+    pub(super) media: Option<ContextPackMediaQuery>,
     /// Maximum primary candidates to retrieve. A limit past 1,000 is served
     /// at 1,000 and the response's `limit_clamped` says so.
     #[serde(default = "default_limit")]
@@ -396,6 +402,11 @@ impl CoreContextPackRequest {
         let (_, _, max_neighbors, _) =
             resolved_context_pack_depth(self.depth.as_ref(), self.edge_hop, self.max_neighbors);
         (self.limit, max_neighbors)
+    }
+
+    /// The room this retrieval is read in, as the caller spelled it.
+    pub(crate) fn conversation_id(&self) -> Option<&str> {
+        self.conversation_id.as_deref()
     }
 
     /// The rows this request names by ref: its contacts and its reader's

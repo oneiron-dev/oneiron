@@ -177,6 +177,7 @@ const fn halts(decision: PolicyClassifyDecision) -> bool {
     matches!(
         decision,
         PolicyClassifyDecision::Block
+            | PolicyClassifyDecision::Reword
             | PolicyClassifyDecision::RouteToHelp
             | PolicyClassifyDecision::Hold
     )

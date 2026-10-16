@@ -40,6 +40,14 @@ impl DreamerWakeDriver<'_> {
                 worker.milestones = self.milestones.clone();
                 worker.tournament_candidate = self.tournament_candidate.clone();
                 worker.consolidation_only = index != 0;
+                if index == 0 {
+                    worker.skill_optimizer = self.skill_optimizer.as_ref().map(|optimizer| {
+                        crate::dreamer_runner::maintenance::CoachSkillOptimizer {
+                            author: optimizer.author,
+                            scorer: optimizer.scorer,
+                        }
+                    });
+                }
                 worker
             })
             .collect();

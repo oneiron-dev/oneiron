@@ -126,6 +126,12 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         status,
         idle,
     } = start;
+    // Stewardship follow-up drafts ride this thread and stop with it.
+    tokio::spawn(super::stewardship::draft_loop(
+        Arc::clone(&vault),
+        Arc::clone(&runtime),
+        settings.pass_budget_units,
+    ));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault)?;
         // The nightly harness audit reads this; a failed record never stops

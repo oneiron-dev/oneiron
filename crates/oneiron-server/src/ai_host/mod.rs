@@ -35,12 +35,15 @@ mod policy;
 mod status;
 mod step;
 mod step_failure;
+mod stewardship;
 mod sync_wake;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+mod turn_actions;
 mod turns;
+pub(crate) mod waves;
 mod workflows;
 
 pub(crate) use policy::route_dreamer_extraction;
@@ -272,6 +275,13 @@ impl AiHandle {
         self.hints.as_ref()?;
         let (vault, handle) = (Arc::clone(vault), self.clone());
         Some(tokio::task::spawn_blocking(move || {
+            // An agent waking under a dial its owner moved notes the move in
+            // its own diary before it acts again (OF-533).
+            if let WakeTurnSubject::Agent { id, .. } = subject
+                && let Err(error) = vault.note_refusal_dial_change(id)
+            {
+                tracing::warn!(%error, agent = %id.to_hex(), "refusal dial note not written");
+            }
             // Queued or not, the turn is news to the wake policy: the pass
             // the hint takes re-reads its rows and re-arms its quiet timer.
             match vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
@@ -427,6 +437,7 @@ impl AiHost {
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
         host.handle = handle;
+        turn_actions::spawn(&vault, &host.handle);
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn. It
         // settles before start returns, so it reads only those turns: one

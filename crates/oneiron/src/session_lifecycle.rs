@@ -225,9 +225,13 @@ impl SessionClosePredicate {
 pub struct SessionEndWake {
     pub session: EntityId,
     pub plans: Vec<ConsolidationPartitionPlan>,
+    /// The Meso watermark this preview was taken against. Close rebuilds
+    /// the round in its own transaction, so a late arrival or a competing
+    /// planner cannot make this preview skip consolidation.
     pub planned_watermark: u64,
     pub planned_turn_ids: Vec<EntityId>,
-    /// Preview of this sitting's newest turn, not a global watermark advance.
+    /// Preview of this sitting's newest effective dirty key, bounded by store
+    /// time. This never advances the global Meso watermark.
     pub advance_watermark_to: Option<u64>,
 }
 
@@ -521,6 +525,7 @@ impl Vault {
         &self,
         txn: &RwTxn<'_>,
         session: &EntityId,
+        admission_time: u64,
     ) -> Result<Vec<EntityId>> {
         let mut turns = Vec::new();
         for row in SESSION_TURNS.iter_from(&self.store, txn, session.as_bytes())? {
@@ -531,7 +536,9 @@ impl Vault {
             let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
                 continue;
             };
-            if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
+            if header.entity_type != crate::registry::ENTITY_TYPE_TURN
+                || header.learned_at > admission_time
+            {
                 continue;
             }
             let facts = crate::dreamer_consolidation::decode_turn_body(
@@ -556,8 +563,11 @@ impl Vault {
     ) -> Result<SessionEndWake> {
         let scope = DreamerConsolidationScope::Meso;
         let watermark = read_watermark_in_txn(self, txn, scope)?;
-        let ids = self.session_turn_ids_in_txn(txn, session)?;
-        let turns = read_partition_turns_in_txn(self, txn, scope, &ids)?;
+        let admission_time = crate::ports::job_recorded_at_in_txn(&self.store, txn)?;
+        let ids = self.session_turn_ids_in_txn(txn, session, admission_time)?;
+        let mut turns = read_partition_turns_in_txn(self, txn, scope, &ids)?;
+        turns.retain(|turn| turn.learned_at <= admission_time);
+        let ids = turns.iter().map(|turn| turn.turn_id).collect();
         let edged: Vec<_> = turns
             .iter()
             .filter(|turn| turn.conversation.is_some())
@@ -669,9 +679,17 @@ impl Vault {
         // that arrived after the preview. Never advance the global watermark
         // past another still-open session's turns.
         let scope = DreamerConsolidationScope::Meso;
+        let wake = self.plan_session_end_wake_in_txn(wtxn, &id)?;
         let current = read_watermark_in_txn(self, wtxn, scope)?;
-        let ids = self.session_turn_ids_in_txn(wtxn, &id)?;
-        enqueue_partition_attempts_in_txn(self, wtxn, scope, &ids, &current, None, now)?;
+        enqueue_partition_attempts_in_txn(
+            self,
+            wtxn,
+            scope,
+            &wake.planned_turn_ids,
+            &current,
+            None,
+            now,
+        )?;
 
         Ok(Some(EndedSession {
             session: id,

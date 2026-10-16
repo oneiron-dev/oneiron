@@ -614,6 +614,16 @@ impl Memory<'_> {
         owner.owner_authored_write_in_txn(self.vault, txn).map(Some)
     }
 
+    /// The owner proof a host bound ([`Self::with_owner_authorship`]), for a
+    /// door that revalidates it itself; `None` on a surface that writes for
+    /// someone else.
+    pub(crate) fn owner_authorship(&self) -> Option<&crate::consent::AuthenticatedOwner> {
+        if self.host_origin.is_some() || self.machine_signer.is_some() {
+            return None;
+        }
+        self.owner_authorship.as_ref()
+    }
+
     /// Binds this surface's claim writes to a host-owned origin: every claim
     /// door then stamps the origin's source, lineage and provenance, and the
     /// caller's declared source is not read. Approval still follows from that

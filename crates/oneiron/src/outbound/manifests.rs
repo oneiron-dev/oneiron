@@ -406,7 +406,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                         "chat_id": "string",
                         "message_id": "host-local message handle",
                         "glyph": "tapback glyph",
-                        "emoji_vocabulary": ["👍", "👎", "❤️", "😂", "‼️", "❓"]
+                        "emoji_vocabulary": crate::reaction::IMESSAGE_TAPBACK_GLYPHS
                     }),
                     OutboundInterruptionClass::Ambient,
                     OutboundDeliverySemanticsKind::ReactionTarget,

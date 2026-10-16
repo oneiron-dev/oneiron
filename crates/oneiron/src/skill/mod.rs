@@ -8,6 +8,8 @@
 mod call;
 mod codec;
 mod doors;
+mod graph;
+pub mod helper;
 mod identity;
 mod lifecycle;
 mod pack_load;
@@ -22,6 +24,10 @@ mod tests;
 pub use self::call::execute_callable_skill;
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
+pub use self::graph::{
+    GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult,
+    GraphSkillStage, execute_graph_workflow_skill,
+};
 pub use self::identity::{
     SKILL_CONTENT_HASH_HEX_LEN, SKILL_TREE_HASH_DOMAIN, SKILL_TREE_PATH_MAX_BYTES,
     SkillContentHash, canonical_skill_tree_hash, cross_check_declared_content_hash,

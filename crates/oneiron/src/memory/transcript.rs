@@ -70,6 +70,12 @@ pub struct TranscriptMessage {
     pub text: String,
     /// The metadata its writer gave it (an imported message's provenance).
     pub metadata: Option<serde_json::Value>,
+    /// A reply whose latest generation ended without finishing its answer
+    /// (cut off, failed, cancelled or recovered after a crash): what it says
+    /// is all that was saved, and Continue or Retry act on it.
+    pub incomplete: bool,
+    /// A stream is open on it now.
+    pub generating: bool,
 }
 
 /// Where a transcript page starts: after the turn with this time and id.
@@ -95,21 +101,30 @@ fn sort_key(key: &TurnKey) -> (u64, [u8; 16]) {
     (key.0, *key.1.as_bytes())
 }
 
-/// A readable MESSAGE view as a transcript message; `None` for one that is
-/// hidden or holds no text.
-fn transcript_message(view: &EntityView) -> Option<(u64, TranscriptMessage)> {
-    let body = view.body.as_ref()?;
+/// A readable MESSAGE view as a transcript message, with its completion;
+/// `None` for one that is hidden, or holds no text and is complete. An empty
+/// incomplete message stays: Continue and Retry act on it.
+fn transcript_message(
+    view: &EntityView,
+    completion: impl FnOnce() -> MemoryResult<MessageCompletion>,
+) -> MemoryResult<Option<(u64, TranscriptMessage)>> {
+    let Some(body) = view.body.as_ref() else {
+        return Ok(None);
+    };
     let field = |name: &str| body.get(name).and_then(serde_json::Value::as_str);
+    if body.get("is_visible").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
     let text = field("content").unwrap_or_default();
-    if body.get("is_visible").and_then(serde_json::Value::as_bool) != Some(true) || text.is_empty()
-    {
-        return None;
+    let completion = completion()?;
+    if text.is_empty() && !completion.incomplete {
+        return Ok(None);
     }
     let order = body
         .get("order")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
-    Some((
+    Ok(Some((
         order,
         TranscriptMessage {
             id: view.id_hex.clone(),
@@ -122,8 +137,10 @@ fn transcript_message(view: &EntityView) -> Option<(u64, TranscriptMessage)> {
                 .get("metadata")
                 .filter(|value| !value.is_null())
                 .cloned(),
+            incomplete: completion.incomplete,
+            generating: completion.generating,
         },
-    ))
+    )))
 }
 
 impl Memory<'_> {
@@ -226,6 +243,8 @@ impl Memory<'_> {
                 receipt: read,
             } = self.read_views(lane, &targets)?;
             receipt.restrict_with(&read);
+            // Each readable message's completion, read in one snapshot.
+            let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             let (turn_views, mut message_views) = views.split_at(chunk.len());
             for ((key, ids), turn_view) in chunk.iter().zip(&members).zip(turn_views) {
                 let (own, rest) = message_views.split_at(ids.len());
@@ -236,11 +255,14 @@ impl Memory<'_> {
                 if turn.occurred_start != key.0 {
                     return Ok(None);
                 }
-                let mut messages: Vec<_> = own
-                    .iter()
-                    .flatten()
-                    .filter_map(transcript_message)
-                    .collect();
+                let mut messages = Vec::new();
+                for (id, view) in ids.iter().zip(own) {
+                    let Some(view) = view else {
+                        continue;
+                    };
+                    let completion = || Ok(message_completion_in_txn(self.vault, &txn, id)?);
+                    messages.extend(transcript_message(view, completion)?);
+                }
                 if messages.is_empty() {
                     continue;
                 }
