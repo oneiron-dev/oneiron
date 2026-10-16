@@ -118,6 +118,16 @@ pub(super) fn fail_once_in_txn(
     txn: &mut heed::RwTxn<'_>,
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
+    // OF-220: the TASK fails before the try's lease clears.
+    crate::task_verb::highway_runner::report_leased_task_in_txn(
+        vault,
+        txn,
+        input.attempt_id,
+        crate::task_verb::highway_runner::RunnerSettle::Failed {
+            error: &input.evidence.stable_reason,
+            retryable: false,
+        },
+    )?;
     let failed = new_failure(crate::ports::JobQueue::port_job_fail(
         vault,
         txn,

@@ -493,6 +493,13 @@ impl<'a> DreamerRunnerStore<'a> {
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome = self.vault.with_write_txn_grouped(|wtxn| {
+            // OF-220: a TASK's durable result lands before the lease clears.
+            crate::task_verb::highway_runner::report_leased_task_in_txn(
+                self.vault,
+                wtxn,
+                attempt_id,
+                crate::task_verb::highway_runner::RunnerSettle::Done,
+            )?;
             let outcome = crate::ports::JobQueue::port_job_complete(
                 self.vault,
                 wtxn,
@@ -569,6 +576,16 @@ impl<'a> DreamerRunnerStore<'a> {
                     "agent retry requires a dispatch attempt",
                 ));
             }
+            // OF-220: the TASK requeues before its try's lease clears.
+            crate::task_verb::highway_runner::report_leased_task_in_txn(
+                self.vault,
+                txn,
+                source.id,
+                crate::task_verb::highway_runner::RunnerSettle::Failed {
+                    error: input.last_error.as_deref().unwrap_or_default(),
+                    retryable: true,
+                },
+            )?;
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
@@ -596,6 +613,16 @@ impl<'a> DreamerRunnerStore<'a> {
                         "agent dispatch failures require typed detector evidence",
                     ));
                 }
+                // OF-220: the TASK fails before its try's lease clears.
+                crate::task_verb::highway_runner::report_leased_task_in_txn(
+                    self.vault,
+                    wtxn,
+                    attempt_id,
+                    crate::task_verb::highway_runner::RunnerSettle::Failed {
+                        error: &input.reason,
+                        retryable: false,
+                    },
+                )?;
                 let outcome = crate::ports::JobQueue::port_job_fail(
                     self.vault,
                     wtxn,

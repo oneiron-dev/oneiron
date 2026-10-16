@@ -65,6 +65,8 @@ pub(super) fn settle_in(
     now: u64,
 ) -> Result<Option<TaskAskResult>> {
     if let Some(result) = read_result(vault, txn, id)? {
+        // A replay runs the continuation again; it acts at most once.
+        super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
         return Ok(Some(result));
     }
     let Some(group) = ask_record::read_group(vault, txn, id)? else {
@@ -236,6 +238,8 @@ pub(super) fn settle_in(
     ask_record::put(vault, txn, reference, SETTLEMENT, &result, now)?;
     super::ask_facade::signal_waiters(vault, txn, id, now.saturating_mul(1000))
         .map_err(|_| ask_record::invalid())?;
+    // OF-220: an engine block's ask moves its TASK in the settling commit.
+    super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
     Ok(Some(result))
 }
 

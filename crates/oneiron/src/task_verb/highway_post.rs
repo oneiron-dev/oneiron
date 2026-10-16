@@ -159,7 +159,7 @@ fn changed_arguments() -> MemoryError {
 
 /// Writes the Assigned fact for an addressed lane: who the TASK is for, as
 /// an immutable companion fact, so the body's `assignee` stays display.
-fn put_assignment_fact_in_txn(
+pub(super) fn put_assignment_fact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
@@ -185,7 +185,7 @@ fn put_assignment_fact_in_txn(
     Ok(())
 }
 
-fn settle_refusal(error: MemoryError) -> Error {
+pub(super) fn settle_refusal(error: MemoryError) -> Error {
     Error::InvalidConfig(format!(
         "task proposal settlement refused: {}",
         error.message
@@ -779,7 +779,7 @@ pub(crate) fn settle_task_proposal_in_txn(
 }
 
 /// The proposer of a settled claim, refused when it is the approver.
-fn proposer_of(claim: &ClaimBody, approver: Option<WriteActor>) -> Result<EntityId> {
+pub(super) fn proposer_of(claim: &ClaimBody, approver: Option<WriteActor>) -> Result<EntityId> {
     let proposer = crate::claim::session_claim_producer(claim)
         .ok_or(Error::InvariantViolation("task proposal names no producer"))?;
     if approver.is_some_and(|approver| approver.entity_ref() == proposer) {
@@ -788,6 +788,22 @@ fn proposer_of(claim: &ClaimBody, approver: Option<WriteActor>) -> Result<Entity
         ));
     }
     Ok(proposer)
+}
+
+/// The actor class a claim's write envelope stamped into its evidence:
+/// immutable, unlike its subject or any approver.
+pub(super) fn envelope_actor_class(claim: &ClaimBody) -> Option<EdgeActorClass> {
+    let Value::Map(entries) = claim.evidence.as_ref()? else {
+        return None;
+    };
+    let mut classes = entries.iter().filter(|(key, _)| {
+        key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY)
+    });
+    let (_, class) = classes.next()?;
+    if classes.next().is_some() {
+        return None;
+    }
+    EdgeActorClass::try_from_u8(u8::try_from(class.as_u64()?).ok()?)
 }
 
 fn class_of(byte: u8) -> Result<EdgeActorClass> {
@@ -807,10 +823,12 @@ fn settle_post(
     let Value::Map(entries) = &claim.value else {
         return Ok(());
     };
-    // A brief-less create proposal carries no post stamp; its approval stays
-    // the claim edit it always was.
+    // A brief-less create proposal carries no post stamp: it lands from
+    // its stored create fields.
     let Some(stamp_value) = task_body_optional(entries, TASK_POST_STAMP_KEY)? else {
-        return Ok(());
+        return super::proposal_create::settle_create_in_txn(
+            vault, wtxn, claim_id, claim, approver, now,
+        );
     };
     let stamp: PostStamp = from_value(stamp_value).ok_or(Error::Record(
         crate::error::RecordError::InvalidTaskBody("tasks.proposal.post"),
