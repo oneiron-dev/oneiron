@@ -4,7 +4,7 @@ use super::*;
 use crate::llm::FinishReason;
 
 impl ConsolidationExecutor<'_> {
-    pub(super) fn extraction_request(
+    pub(in crate::dreamer_consolidation) fn extraction_request(
         call: &RoleCall<'_>,
         partition: &ConsolidationPartitionKey,
         transcript: &str,
@@ -66,7 +66,7 @@ impl ConsolidationExecutor<'_> {
     /// breaking a rule such as the predicate grammar, or one in a reply
     /// stored before the step checked candidates) is not written, and is
     /// counted.
-    pub(super) fn decode_candidates(
+    pub(in crate::dreamer_consolidation) fn decode_candidates(
         partition: &ConsolidationPartitionKey,
         response: &LlmResponse,
         resources: &BranchResources<'_>,
@@ -140,7 +140,14 @@ fn decode_candidate(
             let held = named
                 .as_str()
                 .and_then(entity_id_from_hex)
-                .and_then(|id| resources.prior(id).ok());
+                .and_then(|id| resources.prior(id).ok())
+                .filter(|prior| {
+                    resources
+                        .source_version(&prior.claim_id)
+                        .is_ok_and(|version| {
+                            scope.allows_read(&version) && scope.allows_write(&version)
+                        })
+                });
             Some(held.ok_or_else(|| {
                 invalid_consolidation("extracted correction names a claim the branch does not hold")
             })?)
@@ -209,6 +216,13 @@ fn decode_candidate(
     let mut evidence_turn_refs: Vec<_> = locators.iter().map(|entry| entry.source_id()).collect();
     evidence_turn_refs.sort_unstable();
     evidence_turn_refs.dedup();
+    for id in &evidence_turn_refs {
+        if !scope.allows_read(&resources.source_version(id)?) {
+            return Err(invalid_consolidation(
+                "extracted evidence crossed its child slice",
+            ));
+        }
+    }
     // A claim drawn from two projects' turns has no one audience, and a
     // project-bound branch writes only its own project's.
     let project = resources

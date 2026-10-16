@@ -196,85 +196,10 @@ impl Memory<'_> {
         consult_kind: Option<&super::ConsultResultKind>,
     ) -> MemoryResult<TaskResultReceipt> {
         let (terminal, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
-            let mut body = read_body(self.vault(), &*wtxn, task_ref)?;
-            self.require_execution_writer(&body)?;
-            // Local compare-and-set: one replica settles a task once. A
-            // byte-identical replay is the network retrying rather than a
-            // second result, so it reports the winner and mutates nothing.
-            if let Some(existing) = body.terminal() {
-                if existing == landed {
-                    if let Some(super::ConsultResultKind::Answer { option, .. }) = consult_kind
-                        && !super::ask_record::replay_answer_option_matches(
-                            self.vault(), &*wtxn, task_ref, &body, self.actor(),
-                            existing, option.as_ref(),
-                        )?
-                    {
-                        return Err(consult_refusal(
-                            MEMORY_CODE_INVALID_STATE,
-                            "ask answer option differs from the settled word",
-                            "Read the settled ask evidence; a different option is not a replay.",
-                        ));
-                    }
-                    return Ok((existing.clone(), true));
-                }
-                return Err(consult_refusal(
-                    MEMORY_CODE_INVALID_STATE,
-                    "task is already terminal",
-                    "Read the settled terminal record; a converged terminal task is immutable.",
-                ));
-            }
-            // The OTHER settled half. A deferring ladder terminal handed the
-            // case to a follow-on and left this row live on purpose, so the
-            // check above reads `None` while the ladder is already immutable.
-            // Landing a terminal record here would overwrite it with one whose
-            // `ladder`, `counter_task_ref` and result linkage are all absent —
-            // the escalation's disposition erased by a late result. Nothing
-            // reopens a settled ladder, so this is refused rather than merged.
-            if body.settled_ladder_disposition().is_some() {
-                return Err(consult_refusal(
-                    MEMORY_CODE_INVALID_STATE,
-                    "this task's ladder already settled and handed the case to a follow-on",
-                    "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
-                ));
-            }
-            // A consult past its deadline is the expiry sweep's to settle, even
-            // before the sweep has run: the engine's clock decides, never the
-            // reported completion time. An identical replay was answered above.
-            if consult_kind.is_some()
-                && body.ttl.is_some_and(|ttl| {
-                    ttl.deadline_at < self.vault().store.clock.now_recorded_at()
-                })
-            {
-                return Err(consult_refusal(
-                    MEMORY_CODE_INVALID_STATE,
-                    "the consult's deadline has passed",
-                    "A late answer does not land; the expiry sweep settles the consult.",
-                ));
-            }
-            let option = match consult_kind {
-                Some(super::ConsultResultKind::Answer { option, .. }) => option.as_ref(),
-                _ => None,
-            };
-            let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), (landed, option), at)?;
-            body.state = Some(TaskExecutionState::Terminal(landed.clone()));
-            let encoded = encode_task_verb_body(body);
-            self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
-            if let Some(group) = ask_group {
-                super::ask_settlement::settle_in(self.vault(), wtxn, group, self.vault().store.clock.now_recorded_at())?;
-            }
-
-            // The TASK put above is announced after commit; the board
-            // publisher (`context_board::stream::publish`) routes it.
-            Ok((landed.clone(), false))
+            let body = read_body(self.vault(), &*wtxn, task_ref)?;
+            self.settle_task_terminal_in_txn(wtxn, task_ref, body, landed, at, consult_kind)
         })?;
-
-        // The terminal record is committed before the signal goes out, so a
-        // crash in this gap loses nothing: `reconcile_peer_result_signals`
-        // replays the edge from the local binding index.
-        send_peer_result_signal(self.vault(), task_ref, at)?;
-        // A sibling's answer settles the HANDLE, without rewriting siblings.
-        // The local wait index is also re-driven at registration/startup.
-        crate::llm::reconcile_peer_result_signals(self.vault(), at)?;
+        self.signal_task_settled(task_ref, at)?;
 
         Ok(TaskResultReceipt {
             task_ref,
@@ -283,10 +208,107 @@ impl Memory<'_> {
         })
     }
 
+    /// The settling half of [`Self::settle_task_terminal`], inside the
+    /// caller's write transaction, over a body the caller already read. The
+    /// agent's self-refusal door (`super::refusal`) settles a decline through
+    /// here so a task still settles in exactly one place; the caller sends
+    /// [`Self::signal_task_settled`] after commit.
+    pub(super) fn settle_task_terminal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        mut body: TaskVerbBody,
+        landed: &TaskTerminalRecord,
+        at: u64,
+        consult_kind: Option<&super::ConsultResultKind>,
+    ) -> MemoryResult<(TaskTerminalRecord, bool)> {
+        self.require_execution_writer(&body)?;
+        // Local compare-and-set: one replica settles a task once. A
+        // byte-identical replay is the network retrying rather than a
+        // second result, so it reports the winner and mutates nothing.
+        if let Some(existing) = body.terminal() {
+            if existing == landed {
+                if let Some(super::ConsultResultKind::Answer { option, .. }) = consult_kind
+                    && !super::ask_record::replay_answer_option_matches(
+                        self.vault(), &*wtxn, task_ref, &body, self.actor(),
+                        existing, option.as_ref(),
+                    )?
+                {
+                    return Err(consult_refusal(
+                        MEMORY_CODE_INVALID_STATE,
+                        "ask answer option differs from the settled word",
+                        "Read the settled ask evidence; a different option is not a replay.",
+                    ));
+                }
+                return Ok((existing.clone(), true));
+            }
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "task is already terminal",
+                "Read the settled terminal record; a converged terminal task is immutable.",
+            ));
+        }
+        // The OTHER settled half. A deferring ladder terminal handed the
+        // case to a follow-on and left this row live on purpose, so the
+        // check above reads `None` while the ladder is already immutable.
+        // Landing a terminal record here would overwrite it with one whose
+        // `ladder`, `counter_task_ref` and result linkage are all absent —
+        // the escalation's disposition erased by a late result. Nothing
+        // reopens a settled ladder, so this is refused rather than merged.
+        if body.settled_ladder_disposition().is_some() {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "this task's ladder already settled and handed the case to a follow-on",
+                "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
+            ));
+        }
+        // A consult past its deadline is the expiry sweep's to settle, even
+        // before the sweep has run: the engine's clock decides, never the
+        // reported completion time. An identical replay was answered above.
+        if consult_kind.is_some()
+            && body.ttl.is_some_and(|ttl| {
+                ttl.deadline_at < self.vault().store.clock.now_recorded_at()
+            })
+        {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "the consult's deadline has passed",
+                "A late answer does not land; the expiry sweep settles the consult.",
+            ));
+        }
+        let option = match consult_kind {
+            Some(super::ConsultResultKind::Answer { option, .. }) => option.as_ref(),
+            _ => None,
+        };
+        let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), (landed, option), at)?;
+        body.state = Some(TaskExecutionState::Terminal(landed.clone()));
+        let encoded = encode_task_verb_body(body);
+        self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
+        if let Some(group) = ask_group {
+            super::ask_settlement::settle_in(self.vault(), wtxn, group, self.vault().store.clock.now_recorded_at())?;
+        }
+
+        // The TASK put above is announced after commit; the board
+        // publisher (`context_board::stream::publish`) routes it.
+        Ok((landed.clone(), false))
+    }
+
+    /// The after-commit half of a settlement. The terminal record is
+    /// committed before the signal goes out, so a crash in this gap loses
+    /// nothing: `reconcile_peer_result_signals` replays the edge from the
+    /// local binding index.
+    pub(super) fn signal_task_settled(&self, task_ref: EntityId, at: u64) -> MemoryResult<()> {
+        send_peer_result_signal(self.vault(), task_ref, at)?;
+        // A sibling's answer settles the HANDLE, without rewriting siblings.
+        // The local wait index is also re-driven at registration/startup.
+        crate::llm::reconcile_peer_result_signals(self.vault(), at)?;
+        Ok(())
+    }
+
     /// The one actor allowed to write execution facts on this TASK: the
     /// addressed executor, or the owner when the assignee is the local Dreamer,
     /// which has no actor row of its own.
-    fn require_execution_writer(&self, body: &TaskVerbBody) -> MemoryResult<()> {
+    pub(super) fn require_execution_writer(&self, body: &TaskVerbBody) -> MemoryResult<()> {
         let expected = match body.assignee.and_then(TaskAssignee::entity_ref) {
             Some(entity_ref) => entity_ref,
             None => EntityId::from_hex(&body.owner_ref).map_err(|_| {

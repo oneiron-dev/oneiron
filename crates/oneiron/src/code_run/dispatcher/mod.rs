@@ -2,7 +2,9 @@ mod agent_verb;
 mod coordination;
 mod emission;
 mod envelope;
+mod fold_verbs;
 mod human_speech;
+mod leader;
 mod memory_verbs;
 mod wake_policy;
 
@@ -404,6 +406,7 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
+            SelfCall::Fold(call) => self.dispatch_fold(&call, site),
         }
     }
 }

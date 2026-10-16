@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
+use super::refusal::TaskRefusalRecord;
 use super::terminal_state::{ConsultResultSummary, TaskExecutionState, TaskTerminalRecord};
 use super::verb_kind::TaskAssignee;
 use crate::error::RecordError;
@@ -287,12 +288,26 @@ fn task_execution_state_value(state: &TaskExecutionState) -> Value {
     }
 }
 
+/// The one self-refusal a TASK carries (OF-533).
+fn task_refusal_record_value(record: &TaskRefusalRecord) -> Value {
+    Value::Map(vec![
+        (Value::from("by"), entity_ref_value(record.by)),
+        (Value::from("domain"), Value::from(record.domain.as_str())),
+        (Value::from("level"), Value::from(record.level.as_str())),
+        (
+            Value::from("reason_ref"),
+            consult_payload_ref_value(record.reason_ref),
+        ),
+        (Value::from("at"), Value::from(record.at)),
+    ])
+}
+
 pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
     let mirror_fields = body.mirror_fields.as_ref().map_or(Value::Nil, |fields| {
         let encoded = rmp_serde::to_vec_named(fields).expect("serializing task mirror fields");
         rmpv::decode::read_value(&mut encoded.as_slice()).expect("typed mirror MessagePack")
     });
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (Value::from("mirror_fields"), mirror_fields),
         (Value::from("role"), Value::from(body.role)),
         (
@@ -338,17 +353,16 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
         ),
         (Value::from("provenance"), body.provenance),
         (Value::from("created_at"), Value::from(body.created_at)),
-    ]);
-    // OF-220: the brief key is written only when a brief exists, so a TASK
-    // without one keeps its exact bytes.
-    let value = match (value, body.brief.as_ref()) {
-        (Value::Map(mut entries), Some(brief)) => {
-            entries.push((Value::from("brief"), stored_brief_value(brief)));
-            Value::Map(entries)
-        }
-        (value, _) => value,
-    };
-    canonical_bytes(&value)
+    ];
+    // Elided when absent, so a task nobody refused keeps its bytes.
+    if let Some(refusal) = &body.refusal {
+        entries.push((Value::from("refusal"), task_refusal_record_value(refusal)));
+    }
+    // OF-220: elided the same way, so a TASK without a brief keeps its bytes.
+    if let Some(brief) = &body.brief {
+        entries.push((Value::from("brief"), stored_brief_value(brief)));
+    }
+    canonical_bytes(&Value::Map(entries))
 }
 
 /// The stored brief as named MessagePack, the shape `mirror_fields` uses.
