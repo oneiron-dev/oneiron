@@ -48,24 +48,21 @@ pub(crate) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
 }
 
 impl Vault {
-    // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper
-    // was removed — both sync replay surfaces now route through the
-    // reason-aware `apply_replayed_tombstone`, and a bare purge entry point
-    // would be an invitation to bypass the ARCH-0038 reason semantics.
+    // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper was removed — both sync
+    // replay surfaces now route through the reason-aware `apply_replayed_tombstone`, and a bare
+    // purge entry point would be an invitation to bypass the ARCH-0038 reason semantics.
 
     // -----------------------------------------------------------------
     // ARCH-0050 R6 L2 code-memory doors (ONE-1608).
     //
-    // Every wrapper here opens ONE transaction, delegates to the internal
-    // `crate::code_memory` implementation, and commits exactly once on
-    // success. None exposes `Store`, `RoTxn`, or `RwTxn`; the public
-    // contract suite reaches only these methods.
+    // Every wrapper here opens ONE transaction, delegates to the internal `crate::code_memory`
+    // implementation, and commits exactly once on success. None exposes `Store`, `RoTxn`, or
+    // `RwTxn`; the public contract suite reaches only these methods.
     // -----------------------------------------------------------------
 
-    // Read/write/list helpers intentionally remain behind `feature = "sync"`
-    // instead of `cfg(test)` because the sync bridge regression suite is an
-    // integration test crate. Production bridge code still uses direct
-    // transactional `sync_state` access when multiple keys must update
+    // Read/write/list helpers intentionally remain behind `feature = "sync"` instead of `cfg(test)`
+    // because the sync bridge regression suite is an integration test crate. Production bridge code
+    // still uses direct transactional `sync_state` access when multiple keys must update
     // atomically.
 
     // ─── Tree Query API ───────────────────────────────────────
@@ -565,6 +562,7 @@ impl Vault {
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
             message_streams: Default::default(),
+            live_rows: Default::default(),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
