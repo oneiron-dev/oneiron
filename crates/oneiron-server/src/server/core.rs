@@ -250,7 +250,7 @@ impl SyncServer {
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),
                 &vault,
-            ),
+            )?,
             wire_telemetry,
             vault,
             root_doc,

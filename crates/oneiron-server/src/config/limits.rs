@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use oneiron::origin::smart_http::ScanBounds;
 use serde::Deserialize;
 
 use crate::http_listener::ConnectionLimits;
@@ -67,6 +68,14 @@ pub struct LimitsConfig {
     /// How long a git or LFS transfer may go without moving a byte, in
     /// milliseconds, before it is ended and its worker and child freed.
     pub transfer_idle_timeout_ms: u64,
+    /// The most bytes one pushed blob may hold for the push door to scan it.
+    /// The door holds one blob at a time, so this is a memory floor per blob,
+    /// never a cap on a push; by default a sixty-fourth of the machine's
+    /// memory.
+    pub git_scan_blob_bytes: u64,
+    /// The free disk a push's door scan leaves while its hook frames the
+    /// pushed blobs.
+    pub git_scan_disk_floor_bytes: u64,
     /// How long work may wait for its turn, in milliseconds: a request
     /// timeout, not a limit. A wait that reaches it ends with nothing started.
     pub queue_wait_timeout_ms: u64,
@@ -93,6 +102,8 @@ impl Default for LimitsConfig {
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
             transfer_idle_timeout_ms: 300_000,
+            git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
+            git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
         }
@@ -145,6 +156,8 @@ impl LimitsConfig {
             embedder_answer_bytes,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
+            git_scan_blob_bytes,
+            git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
             disk_reserve_bytes,
         } = over;
@@ -162,6 +175,11 @@ impl LimitsConfig {
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
+        set(&mut self.git_scan_blob_bytes, git_scan_blob_bytes);
+        set(
+            &mut self.git_scan_disk_floor_bytes,
+            git_scan_disk_floor_bytes,
+        );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
     }
@@ -185,10 +203,20 @@ impl LimitsConfig {
             ("embedder_answer_bytes", self.embedder_answer_bytes),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
+            ("git_scan_blob_bytes", self.git_scan_blob_bytes),
+            ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
+            }
+        }
+        for (key, value) in [
+            ("git_scan_blob_bytes", self.git_scan_blob_bytes),
+            ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
+        ] {
+            if value > ScanBounds::MAX_BYTES {
+                anyhow::bail!("limits.{key} must be at most {}", ScanBounds::MAX_BYTES);
             }
         }
         // A byte row is a claim on the machine: one too small for a single
@@ -200,6 +228,11 @@ impl LimitsConfig {
             );
         }
         Ok(())
+    }
+
+    /// The push door's scan bounds.
+    pub(crate) fn scan_bounds(&self) -> oneiron::Result<ScanBounds> {
+        ScanBounds::new(self.git_scan_blob_bytes, self.git_scan_disk_floor_bytes)
     }
 }
 
@@ -224,6 +257,8 @@ pub(super) struct LimitsConfigOverride {
     pub(super) embedder_answer_bytes: Option<u64>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
+    pub(super) git_scan_blob_bytes: Option<u64>,
+    pub(super) git_scan_disk_floor_bytes: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,
     pub(super) disk_reserve_bytes: Option<u64>,
 }

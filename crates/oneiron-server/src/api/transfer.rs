@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use futures_util::StreamExt;
+use oneiron::origin::smart_http::ScanBounds;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
@@ -120,6 +121,8 @@ pub(crate) struct Transfers {
     shown_page: Mutex<Option<u64>>,
     pub(crate) questions: Arc<LimitQuestions>,
     pub(crate) idle: Duration,
+    /// The floors a push's door scan keeps.
+    pub(crate) scan: ScanBounds,
     pub(crate) wait: Duration,
 }
 
@@ -130,7 +133,7 @@ impl Transfers {
         limits: &LimitsConfig,
         questions: Arc<LimitQuestions>,
         vault: &oneiron::Vault,
-    ) -> Self {
+    ) -> oneiron::Result<Self> {
         let wait = limits.queue_wait();
         let half = usize::try_from(limits.lfs_memory_bytes / 2).unwrap_or(usize::MAX);
         let open_files = crate::machine::raise_open_file_limit();
@@ -152,7 +155,7 @@ impl Transfers {
         }
         let lfs_reads = Arc::new(ByteLine::new(LimitRow::LfsMemoryBytes, half));
         OriginReads::lend(vault, &lfs_reads, &questions, wait);
-        Self {
+        Ok(Self {
             git: Admission::new(LimitRow::GitExchanges, Arc::clone(&questions), git, wait),
             pushes: Mutex::default(),
             lfs: Admission::new(LimitRow::LfsTransfers, Arc::clone(&questions), lfs, wait),
@@ -169,8 +172,9 @@ impl Transfers {
             shown_page: Mutex::default(),
             questions,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
+            scan: limits.scan_bounds()?,
             wait,
-        }
+        })
     }
 
     /// A git exchange's permit, at its principal's turn. Callers without a

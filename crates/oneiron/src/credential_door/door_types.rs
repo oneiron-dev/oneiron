@@ -149,17 +149,33 @@ pub(crate) enum DoorDenyReason {
 /// One pushed blob as the transport hands it to the door. A data seam: the
 /// quarantine extraction that fills it belongs to the transport owner.
 ///
-/// `Debug` redacts `added_lines` — those bytes are exactly the ones that may
-/// be secret-shaped, and a diagnostic print is not a place for them.
+/// `Debug` redacts `content` — those bytes are exactly the ones that may be
+/// secret-shaped, and a diagnostic print is not a place for them.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct PushedBlob {
     /// Repository-relative path of the blob.
     pub(crate) path: String,
     /// The blob's object id (hex).
     pub(crate) oid: String,
-    /// Diff-ADDED lines only, as raw bytes. Context and removed lines are not
-    /// the door's business; added bytes are what a push makes durable.
-    pub(crate) added_lines: Vec<Vec<u8>>,
+    /// The blob's whole content as raw bytes: what the push makes durable.
+    pub(crate) content: Vec<u8>,
+}
+
+impl PushedBlob {
+    /// The content as lines, split on `\n` with no line reshaped: a trailing
+    /// newline ends the last line rather than adding an empty one, an empty
+    /// blob has no line, and CR, NUL and every other byte survive untouched.
+    /// Each line borrows the content, so a blob costs the door its own bytes
+    /// and nothing per line.
+    pub(crate) fn lines(&self) -> impl Iterator<Item = &[u8]> {
+        let content = (!self.content.is_empty()).then_some(self.content.as_slice());
+        content.into_iter().flat_map(|content| {
+            content
+                .strip_suffix(b"\n")
+                .unwrap_or(content)
+                .split(|byte| *byte == b'\n')
+        })
+    }
 }
 
 impl std::fmt::Debug for PushedBlob {
@@ -168,8 +184,8 @@ impl std::fmt::Debug for PushedBlob {
             .field("path", &self.path)
             .field("oid", &self.oid)
             .field(
-                "added_lines",
-                &format_args!("<redacted {} added lines>", self.added_lines.len()),
+                "content",
+                &format_args!("<redacted {} bytes>", self.content.len()),
             )
             .finish()
     }

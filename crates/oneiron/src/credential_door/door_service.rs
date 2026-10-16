@@ -201,10 +201,10 @@ fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<&'static str>> {
             });
         }
     }
-    for line in &blob.added_lines {
+    for line in blob.lines() {
         reject_unscannable(&blob.path, line)?;
     }
-    for line in &blob.added_lines {
+    for line in blob.lines() {
         if let Some(reason) = scan_file_content(&blob.path, line) {
             return Ok(Some(reason));
         }
