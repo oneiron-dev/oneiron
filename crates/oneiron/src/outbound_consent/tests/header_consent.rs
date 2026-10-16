@@ -8,16 +8,7 @@ use crate::outbound_grant::StandingOutboundGrant;
 use serde_json::{Value, json};
 
 fn owner(vault: &Vault) -> AuthenticatedOwner {
-    let actor = entity(0xB1);
-    vault
-        .put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"tool owner",
-        )
-        .unwrap();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(
             actor,

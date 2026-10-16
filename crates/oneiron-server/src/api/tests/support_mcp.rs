@@ -372,6 +372,7 @@ pub(super) fn bind_mcp_test_code_host() {
                 crate::mcp::McpEngineNativeCodeHost::new(
                     provider,
                     crate::mcp::CodeRunLimits::default(),
+                    std::sync::Arc::default(),
                 ),
             )),
             "the execute_code host binds once per process",

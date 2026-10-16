@@ -853,7 +853,7 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
 
     // A standing block session reads the agent's claims as its reader: a
     // reader slip scoped to one world withholds the other world's claim.
-    let agent = put_person(&vault, 0x63)?;
+    let agent = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let world = put_world(&vault, 0x64)?;
     let elsewhere = put_world(&vault, 0x65)?;
     let owner = vault.authenticate_owner(
@@ -946,8 +946,9 @@ fn put_world(vault: &Vault, byte: u8) -> Result<EntityId> {
 fn a_foreign_owner_proof_opens_no_standing_block() -> Result<()> {
     let (_dir, vault) = test_vault();
     let (_other_dir, other) = test_vault();
-    let owner_id = put_person(&vault, 0x71)?;
-    put_person(&other, 0x71)?;
+    // Each vault's embedded owner: one id, the same in both.
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    other.ensure_embedded_owner_actor().expect("embedded owner");
     let agent = put_person(&vault, 0x72)?;
     let world = put_world(&vault, 0x73)?;
     let foreign = other.authenticate_owner(

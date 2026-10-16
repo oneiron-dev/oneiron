@@ -6,11 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::evidence::local_repo_ref;
+use super::exchange_idle::Progress;
 use super::paths::serve_failed;
 use super::serve::ServeSink;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWire};
 use crate::origin::lfs::lfs_repo_id;
 
@@ -72,6 +73,8 @@ pub(super) struct AdvertisedRefGate<'a> {
     repo_dir: PathBuf,
     /// Whether the projection may wait for a writer holding the repository.
     wait_for_repository: bool,
+    /// The exchange's idle clock, held still while the projection runs.
+    clock: &'a Progress,
     inner: &'a mut dyn ServeSink,
     /// Off until the CGI headers prove this really is an advertisement.
     gating: bool,
@@ -82,6 +85,10 @@ pub(super) struct AdvertisedRefGate<'a> {
     emitted_ref: bool,
     projection: Option<AdvertisementProjection>,
     unresolved: bool,
+    /// The projection waited for room to check published LFS objects past
+    /// its deadline: which refs it holds cannot be told, so the exchange
+    /// fails rather than hide refs that may be whole.
+    waited_out: bool,
 }
 
 impl<'a> AdvertisedRefGate<'a> {
@@ -89,12 +96,14 @@ impl<'a> AdvertisedRefGate<'a> {
         vault: &Arc<Vault>,
         repo_dir: &Path,
         wait_for_repository: bool,
+        clock: &'a Progress,
         inner: &'a mut dyn ServeSink,
     ) -> Self {
         Self {
             vault: Arc::clone(vault),
             repo_dir: repo_dir.to_path_buf(),
             wait_for_repository,
+            clock,
             inner,
             gating: false,
             carry: Vec::new(),
@@ -103,6 +112,7 @@ impl<'a> AdvertisedRefGate<'a> {
             emitted_ref: false,
             projection: None,
             unresolved: false,
+            waited_out: false,
         }
     }
 
@@ -163,7 +173,11 @@ impl<'a> AdvertisedRefGate<'a> {
         if self.capabilities.is_none() {
             self.capabilities = capabilities.map(<[u8]>::to_vec);
         }
-        if !self.keeps_advertised_ref(oid, name) {
+        let keeps = self.keeps_advertised_ref(oid, name);
+        if self.waited_out {
+            return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
+        }
+        if !keeps {
             return Ok(());
         }
         let mut payload = Vec::with_capacity(line.len());
@@ -256,6 +270,11 @@ impl<'a> AdvertisedRefGate<'a> {
         if self.projection.is_some() || self.unresolved {
             return;
         }
+        // The projection is the server's own work, and it may wait for room
+        // to check published LFS objects with its own deadline: the client
+        // is not idle meanwhile.
+        let clock = self.clock;
+        let _still = clock.hold_still();
         match resolve_advertisement_projection(
             &self.vault,
             &self.repo_dir,
@@ -263,7 +282,10 @@ impl<'a> AdvertisedRefGate<'a> {
             self.wait_for_repository,
         ) {
             Ok(projection) => self.projection = Some(projection),
-            Err(_) => self.unresolved = true,
+            Err(error) => {
+                self.unresolved = true;
+                self.waited_out = matches!(error, Error::Code(CodeError::LfsReadRoomWaitedOut));
+            }
         }
     }
 
