@@ -167,12 +167,6 @@ pub struct ProjectConversationRequest {
 pub struct ProjectCardRequest {
     pub card_id: String,
 }
-/// `vault.projects.goal.intake`: one project.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectRefRequest {
-    pub project_ref: String,
-}
 /// `vault.projects.dismiss_card`'s result: `false` when the card was
 /// dismissed already.
 #[derive(Debug, Clone, Serialize, Deserialize)]
