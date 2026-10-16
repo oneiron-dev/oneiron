@@ -34,6 +34,10 @@ enum CompactOutcome {
     /// no carrier overwritten) and the window deferred; a clean re-run
     /// re-reads the quiesced window and compacts.
     RacedDefer,
+    /// A legal hold names a row this compaction would destroy (OF-470): the
+    /// write txn is ABORTED and the window stays as it is, its obligation
+    /// with it, until the hold lifts.
+    HeldDefer,
 }
 
 /// Window snapshot carriers (`d:w:{key}`). Key: string (the window label).
@@ -138,6 +142,15 @@ pub(super) fn compact_all_windows(
         if let Some(hex) = label.strip_prefix("e:") {
             let id = EntityId::from_hex(hex)?;
             let erase = erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
+            // A held document keeps its bytes (OF-470): it waits, as a live
+            // one does. Its erase checks the hold again in its own txn.
+            if erase && document_held(vault, id)? {
+                run.windows_deferred_held += 1;
+                if matches!(state, WindowSweepState::AllCompacted) {
+                    state = WindowSweepState::Deferred;
+                }
+                continue;
+            }
             match vault.compact_document_for_sweep(id, erase) {
                 Ok(false) => {
                     run.windows_deferred_live += 1;
@@ -190,6 +203,15 @@ pub(super) fn compact_all_windows(
                 // ONLY from AllCompacted — it must never overwrite a Failed
                 // (which routes to retry and consumes retry_state) nor an
                 // existing Deferred.
+                if matches!(state, WindowSweepState::AllCompacted) {
+                    state = WindowSweepState::Deferred;
+                }
+            }
+            Ok(CompactOutcome::HeldDefer) => {
+                tracing::warn!(
+                    "sweep: a legal hold names a row this window would erase — deferred"
+                );
+                run.windows_deferred_held += 1;
                 if matches!(state, WindowSweepState::AllCompacted) {
                     state = WindowSweepState::Deferred;
                 }
@@ -292,6 +314,12 @@ fn compact_window_with(
         import_doc(&doc, bytes)?;
     }
 
+    // A shallow snapshot drops every row's history, and the erased and
+    // withdrawn rows' bytes with it: each row the window carries, live or
+    // tombstoned, is one this compaction destroys. A legal hold on any of
+    // them keeps the whole window (OF-470), judged in the write txn below.
+    let destroyed = carried_ids(&doc);
+
     // §8c.2 live-map residue scrub: a concurrent re-put that won LWW over
     // the tombstone commit's key-delete leaves erased payload LIVE in the
     // map. Remove every entities/edges key referencing an erased id —
@@ -349,6 +377,7 @@ fn compact_window_with(
     // `Ok` arm that commits nothing — the `d:w:`/`sv:` puts live AFTER the
     // re-read+compare, so an early return can never clobber a newer carrier.
     let raced = std::cell::Cell::new(false);
+    let held = std::cell::Cell::new(false);
     let result = vault.with_write_txn_grouped(|wtxn| {
         // Finding 4 (anti-clobber): re-read `d:w:` and compare byte-for-byte
         // against the snapshot captured in the read phase — `Option<Vec<u8>>`
@@ -383,6 +412,17 @@ fn compact_window_with(
             ));
         }
 
+        // A legal hold keeps every row it names (OF-470): one this
+        // compaction would destroy keeps the window as it is.
+        if let Err(refused) = vault.store.reject_legal_holds_in_txn(
+            wtxn,
+            &destroyed,
+            &crate::store::legal_hold::HoldActor::TIMER,
+        ) {
+            held.set(true);
+            return Err(refused);
+        }
+
         // Race-free: the shallow snapshot reflects the durable window.
         // Replace the persistence triple, prune the now-subsumed `u:w:`
         // rows, and re-assert `fr:w:`. The current set matched the merged
@@ -413,8 +453,30 @@ fn compact_window_with(
         // clobbered. Surface a deferral, not a failure (no retry_state
         // consumed); the obligation stays for the quiesced re-run.
         Err(_) if raced.get() => Ok(CompactOutcome::RacedDefer),
+        Err(_) if held.get() => Ok(CompactOutcome::HeldDefer),
         Err(err) => Err(err),
     }
+}
+
+/// Every row id window `doc` carries, live or tombstoned.
+#[cfg(feature = "sync")]
+fn carried_ids(doc: &loro::LoroDoc) -> Vec<EntityId> {
+    let mut ids = BTreeSet::new();
+    for map in ["entities", "tombstones"] {
+        doc.get_map(map).for_each(|key, _| {
+            if let Ok(id) = EntityId::from_hex(key) {
+                ids.insert(id);
+            }
+        });
+    }
+    ids.into_iter().collect()
+}
+
+/// Whether a standing legal hold names entity document `id`.
+#[cfg(feature = "sync")]
+fn document_held(vault: &Vault, id: EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    crate::store::legal_hold::held_in_txn(&vault.store, &rtxn, id.as_bytes())
 }
 
 /// Whether entity document `id` goes with a due withdrawn generation: its

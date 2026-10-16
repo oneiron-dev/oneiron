@@ -41,6 +41,12 @@ pub(crate) fn compact(vault: &Vault, id: EntityId, erased: bool) -> Result<()> {
             return Ok(());
         }
         if erased {
+            // A held document keeps its bytes (OF-470).
+            vault.store.reject_legal_holds_in_txn(
+                txn,
+                &[id],
+                &crate::store::legal_hold::HoldActor::TIMER,
+            )?;
             return crate::note::delete_document_in_txn(&vault.store, txn, &id);
         }
         let doc = load(vault, txn, id)?;
