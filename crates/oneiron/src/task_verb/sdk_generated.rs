@@ -365,6 +365,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "vault.projects.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ProjectProposalRequest,
+                >(),
+            ),
+            (
+                "vault.projects.proposals",
+                crate::code_run::vault_read::request_schema::<ProjectConversationRequest>(),
+            ),
+            (
+                "vault.projects.dismiss_card",
+                crate::code_run::vault_read::request_schema::<ProjectCardRequest>(),
+            ),
+            (
+                "vault.projects.confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ProjectCardConfirmRequest,
+                >(),
+            ),
+            (
+                "vault.projects.goal.intake",
+                crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
+            ),
+            (
                 "vault.rooms.join",
                 crate::code_run::vault_read::request_schema::<crate::workspace_roster::JoinRequest>(
                 ),
@@ -1218,6 +1242,41 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.projects.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.dismiss_card" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.confirm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.goal.intake" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.join" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1807,6 +1866,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
+        "vault.projects.propose" => {
+            let _input: crate::workspace_roster::ProjectProposalRequest = decode(value.clone())?;
+        }
+        "vault.projects.proposals" => {
+            let _input: ProjectConversationRequest = decode(value.clone())?;
+        }
+        "vault.projects.dismiss_card" => {
+            let _input: ProjectCardRequest = decode(value.clone())?;
+        }
+        "vault.projects.confirm" => {
+            let _input: crate::workspace_roster::ProjectCardConfirmRequest = decode(value.clone())?;
+        }
+        "vault.projects.goal.intake" => {
+            let _input: ProjectRefRequest = decode(value.clone())?;
+        }
         "vault.rooms.join" => {
             let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
         }
@@ -2117,6 +2191,13 @@ pub fn invoke(
         "vault.rooms.reply_strips" => encode(vault_rooms_reply_strips(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "vault.projects.propose" => encode(vault_projects_propose(memory, decode(value)?)?),
+        "vault.projects.proposals" => encode(vault_projects_proposals(memory, decode(value)?)?),
+        "vault.projects.dismiss_card" => {
+            encode(vault_projects_dismiss_card(memory, decode(value)?)?)
+        }
+        "vault.projects.confirm" => encode(vault_projects_confirm(memory, decode(value)?)?),
+        "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
         "vault.projects.goal.revisions" => {
@@ -2899,6 +2980,39 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn vault_projects_propose(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ProjectProposalRequest,
+) -> MemoryResult<crate::genui::ProjectProposalCard> {
+    memory.projects_propose(&input)
+}
+pub fn vault_projects_proposals(
+    memory: &Memory<'_>,
+    input: ProjectConversationRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::ProjectCardRecord>> {
+    memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)
+}
+pub fn vault_projects_dismiss_card(
+    memory: &Memory<'_>,
+    input: ProjectCardRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProjectCardDismissal> {
+    Ok(ProjectCardDismissal {
+        dismissed: memory.projects_dismiss_card(&input.card_id)?,
+        card_id: input.card_id,
+    })
+}
+pub fn vault_projects_confirm(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ProjectCardConfirmRequest,
+) -> MemoryResult<crate::workspace_roster::ProjectMintReceipt> {
+    memory.projects_confirm(&input)
+}
+pub fn vault_projects_goal_intake(
+    memory: &Memory<'_>,
+    input: ProjectRefRequest,
+) -> MemoryResult<crate::workspace_roster::ProjectGoalInterviewContext> {
+    memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)
 }
 pub fn vault_rooms_join(
     memory: &Memory<'_>,

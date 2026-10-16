@@ -775,6 +775,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_projects_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.projects.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_projects_proposals(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.proposals")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.projects.proposals", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_projects_dismiss_card(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.dismiss_card")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.projects.dismiss_card", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_projects_confirm(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.confirm")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.projects.confirm", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_projects_goal_intake(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.goal.intake")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.projects.goal.intake", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_rooms_join(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.rooms.join")?;
         let output = py

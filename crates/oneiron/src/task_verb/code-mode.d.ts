@@ -160,10 +160,15 @@ declare const vault: {
     put(input: { files: object[] }): Promise<unknown>;
   };
   projects: {
+    confirm(input: { action_id: string; card_id: string; occurred_at: number }): Promise<unknown>;
+    dismiss_card(input: { card_id: string }): Promise<unknown>;
     goal: {
       dismiss(input: { expected_goal_ref: string; project_ref: string; question_digest: string }): Promise<unknown>;
+      intake(input: { project_ref: string }): Promise<unknown>;
       revisions(input: { project_ref: string }): Promise<unknown>;
     };
+    proposals(input: { conversation_ref: string }): Promise<unknown>;
+    propose(input: { card_id: string; goal: object; picks: object; source_message_ref: string }): Promise<unknown>;
     route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
