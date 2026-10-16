@@ -35,7 +35,7 @@ doctest = false
 [dependencies]
 heed.workspace = true
 base64 = "0.22"
-oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
 # `[models.code_mode.check]`: the type checkers shadow mode runs.
 oneiron-code-check = { version = "0.1.0", path = "../oneiron-code-check" }
 # Supervisor ⇄ vault child-process contract, consumed READ-ONLY: managed serve
@@ -48,6 +48,7 @@ oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 # Every subprocess starts with only the descriptors it is named.
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 # Code mode's browser: a Chromium guest in a container, driven over CDP.
+oneiron-container = { path = "../oneiron-container" }
 oneiron-browser = { path = "../oneiron-browser", features = ["driver"] }
 # This install's this-device-only key slots (world privacy P6b).
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }

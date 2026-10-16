@@ -375,6 +375,26 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 /v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…` (or `?run_ref=…`), `POST /v1/owner/runs/approve` or
 `/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
 
+## Settle an open contradiction
+
+When two claims disagree and nothing settled them, the vault keeps a `conflict.open` marker
+beside both, and both stay active. An observed want next to a stated one is held this way:
+the observed one never outranks what you said. The marker stays open until you answer it.
+
+- `GET /v1/owner/conflicts` (optionally `?subject=<32 hex>&limit=<n>`): every unanswered
+  marker, oldest first, with its contested predicates and each member's value, source,
+  approval and lifecycle.
+- `POST /v1/owner/conflicts/settle` with `{"marker": "…", "settlement": "keep", "keep": "…"}`
+  keeps that member and supersedes every other live member with it. `"hold_both"` leaves every
+  member active, and `"dismiss"` says the marker named no real contradiction; neither takes a
+  `keep`. A generated claim still never supersedes what you stated.
+
+Each answer writes a `conflict.resolved` claim naming the marker, plus one receipt. The marker
+itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
+may settle that subject's conflicts too, but an agent never closes a claim you stated. The
+Dreamer asks its decision ladder only about conflicts its own delegation covers. Anything it
+can't settle stays here for you.
+
 ## Review cleanup
 
 The cleanup job files away husks: a person an extraction minted and never learned anything

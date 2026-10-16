@@ -39,6 +39,15 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
         SelfCall::TasksWait(handle) => {
             request_map(vec![("handle", entity_id_value(handle.group_ref))])
         }
+        SelfCall::TasksRefuse(call) => request_map(vec![
+            (
+                "task_ref",
+                call.task_ref.map_or(Value::Nil, entity_id_value),
+            ),
+            ("domain", Value::from(call.domain.as_str())),
+            ("reason_ref", Value::from(call.reason_ref.as_str())),
+            ("at", Value::from(call.at)),
+        ]),
         SelfCall::AgentVerb(call) => request_map(vec![
             ("verb", Value::from(call.verb.as_str())),
             ("input", Value::from(call.input.to_string())),
@@ -263,6 +272,12 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("kind", Value::from("fold")),
             ("json", Value::from(json.as_str())),
         ]),
+        SelfDispatchOutcome::TaskRefusal(result) => request_map(vec![
+            ("kind", Value::from("task_refusal")),
+            ("task_ref", entity_id_value(result.task_ref)),
+            ("level", Value::from(result.level.as_str())),
+            ("replay", Value::Boolean(result.replay)),
+        ]),
         SelfDispatchOutcome::WakePolicyWritten(policy) => {
             request_map(vec![
                 ("kind", Value::from("wake_policy_written")),
@@ -297,6 +312,16 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         )),
         "fold" => Ok(SelfDispatchOutcome::Fold(
             str_value(map_get(entries, "json")?)?.to_owned(),
+        )),
+        "task_refusal" => Ok(SelfDispatchOutcome::TaskRefusal(
+            super::SelfTaskRefusalResult {
+                task_ref: entity_value(map_get(entries, "task_ref")?)?,
+                level: crate::agent_def::RefusalLevel::parse(str_value(map_get(
+                    entries, "level",
+                )?)?)
+                .ok_or_else(|| invalid_code_run_replay("invalid refusal level"))?,
+                replay: bool_value(map_get(entries, "replay")?)?,
+            },
         )),
         "wake_policy_written" => {
             let policy: crate::dreamer_wake::DreamerWakePolicy =
@@ -468,6 +493,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "vault.agents.put" => Ok(SelfEffect::AgentsPut),
         "tasks.ask" => Ok(SelfEffect::TasksAsk),
         "tasks.wait" => Ok(SelfEffect::TasksWait),
+        "tasks.refuse" => Ok(SelfEffect::TasksRefuse),
         "self.memory.search" => Ok(SelfEffect::MemorySearch),
         "self.memory.write_fixture" => Ok(SelfEffect::MemoryWriteFixture),
         "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),

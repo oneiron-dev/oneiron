@@ -15,6 +15,7 @@ mod prior;
 pub(super) use prior::standing;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
+mod slices;
 mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};

@@ -68,6 +68,8 @@ side_tables! {
     /// Empty marker: this channel pointer changed and its publication has not reached the sync
     /// server yet. Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
+    /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
@@ -265,6 +267,9 @@ side_tables! {
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
+    /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
+    /// rung per reminder window. Key: id16 of the ask's proposal.
+    COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;
     /// Immutable tested snapshot of a code document at one exact operation frontier (document id + op
     /// fold hash). Key: hash32 + hash32.
     CODE_DOCUMENT_FRONTIER: VaultMeta b"code_document:frontier:v1:" Named;
