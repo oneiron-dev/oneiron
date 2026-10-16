@@ -100,11 +100,28 @@ pub(super) async fn serve_with_config(
     //
     // On a blocking thread because the endpoint probe is a blocking HTTP call,
     // which must not run on a runtime worker.
+    // The batch lane's rented GPU pods (ARCH-0019 §5), when `[gpu]` names
+    // them: the pool polls their health while serve runs, and the endpoint
+    // embedder sends its document batches through a lease on one. A vault
+    // bound to an account has each pod's answer sealed to that account.
+    let gpu = config
+        .gpu
+        .clone()
+        .map(crate::runtime::GpuPool::new)
+        .transpose()?;
+    let gpu_poller = gpu
+        .as_ref()
+        .map(crate::runtime::GpuPool::spawn_health_poller);
+    let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok()));
     let embedder_config = config.embedder.clone();
     let embedder = crate::logging::off_runtime("embedder slot task", move || {
         // The server's sink before a host chooses one: the log.
         let receipts = Arc::new(crate::models::ServerReceipts::default());
-        crate::embedder::build_slot(embedder_config.as_ref(), receipts)
+        let slot = crate::embedder::build_slot(embedder_config.as_ref(), receipts)?;
+        if let (Some(slot), Some((pool, scope))) = (&slot, gpu_route) {
+            crate::embedder::route_batches_through(slot, pool, scope)?;
+        }
+        anyhow::Ok(slot)
     })
     .await??;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
@@ -172,6 +189,7 @@ pub(super) async fn serve_with_config(
         Some(Box::new((pass, awake.hold())) as Box<dyn Send>)
     }));
     let mut workers = sync_server.spawn_slot_workers();
+    workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]

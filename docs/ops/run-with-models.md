@@ -748,3 +748,37 @@ spent, the reset if any, and the choices). Answer it with
 `POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
 `top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
 `add_account` close the question and leave the offer parked until its reset.
+
+## 12. Batch GPU pods (`[gpu]`)
+
+Re-embeds and backfills are retry-tolerant, so they may run on rented GPU
+pods, spot capacity included (ARCH-0019 §5). Queries never do: they stay on
+the configured `[embedder]` endpoint. Name one region's pods:
+
+```toml
+[gpu]
+region = "tokyo"
+# Optional: the pods' bearer key. The endpoint's own key never goes to a pod.
+api_key_env = "ONEIRON_GPU_POD_KEY"
+# Defaults: health_path = "/health", ready_path = "/v1/models", poll_seconds = 15.
+
+[[gpu.pods]]
+id = "pod-a"
+url = "https://pod-a.example:8000/v1"
+capacity = 4
+```
+
+`serve` polls each pod at start and then every `poll_seconds`. A pod is
+healthy when it answers at all (transport), answers `health_path` with a 2xx
+(app), and answers `ready_path` with a 2xx (inference). Both paths resolve
+against the pod's origin, so `/health` on `https://pod-a.example:8000/v1` is
+`https://pod-a.example:8000/health`. Each document batch
+of the endpoint embedder takes a lease on one healthy pod, picked from two at
+random by load. The lease renews every 60 s and ends when the batch does. A
+lease that lapses mid-batch (the pod was preempted or failed a poll) drops
+that batch's answer, and the worker sends it again. With no healthy pod, the
+batch goes to the `[embedder]` endpoint. Pods must serve the endpoint's model:
+an answer that names another model, or makes vectors another way, is refused
+as the endpoint's would be. On a vault bound to an account, each pod's answer
+is sealed to that account before it is read. Pod URLs follow the endpoint's
+rules: HTTPS unless loopback, and no credential or query in the URL.
