@@ -94,5 +94,5 @@ use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 #[cfg(test)]
 use rmpv::Value;
 
-pub(crate) use peer_wait::resume_peer_result_steps;
+pub(crate) use peer_wait::{resume_peer_result_steps, resume_signalled_steps};
 pub(crate) use types::StepEffectBinding;

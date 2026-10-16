@@ -341,12 +341,18 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
 fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
     if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
     {
-        // Maintenance is vault-local and does not need Macro home election.
+        // Maintenance and the wake policy's recipe receipts are vault-local
+        // and do not need Macro home election.
         Some(DreamerConsolidationScope::Micro)
     } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)
-    } else if kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND {
+    } else if kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+    {
+        // Cleanup admits only on a Timer pass at Macro scope, so its
+        // deadline arms one, on the elected home alone.
         Some(DreamerConsolidationScope::Macro)
     } else {
         None

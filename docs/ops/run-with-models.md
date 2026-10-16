@@ -264,8 +264,20 @@ guard. If the server is killed mid-pass, the next start requeues the
 interrupted attempt and runs it once more; durable steps that already have a
 response are not paid for again. A pass that ran out of budget is parked on a
 budget trap instead, and a restart leaves it parked: only the trap's resume
-signal lets it spend again. `SIGTERM` or Ctrl-C stops cleanly: a pass in
-flight reaches its attempt boundary first.
+signal lets it spend again. Once that signal (or a consent answer, or a
+person's response) is sent, here or on a peer that syncs it in, the next pass
+resumes the parked attempt as the same try. `SIGTERM` or Ctrl-C stops cleanly:
+a pass in flight reaches its attempt boundary first.
+
+Beside sittings, the Dreamer's wake policy (ARCH-0026) wakes its three
+recipes from the vault's wake-policy row: Continuous after landed turns,
+Weave on accumulation, a quiet window or the longest wait, and Nightly on its
+cadence. Continuous reads new turns through the sieve. Nightly queues the
+vault cleanup pass and the Coach's retrieval tune. Weave's input waits in the
+policy outbox for its recipe body. Each wake waits for no running chat turn,
+no running workflow and `idle_secs` of quiet since the last turn. A peer's sync apply wakes the
+Dreamer too, so turns another host wrote are read without waiting for a local
+one.
 
 ## 4. Chat
 

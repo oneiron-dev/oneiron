@@ -15,6 +15,7 @@ mod legibility;
 mod policy;
 mod projector;
 mod recipe;
+mod recipe_wake;
 mod scheduling;
 mod settlement;
 mod sieve;

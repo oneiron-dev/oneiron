@@ -382,3 +382,42 @@ pub(crate) fn resume_peer_result_steps(vault: &Vault, now_ms: u64) -> Result<usi
     }
     Ok(resumed)
 }
+
+/// Wake-pass resume of attempt-scoped traps whose signal is already Sent: a
+/// consent answer, a budget grant or a person's response. Only this
+/// device's bindings are walked, and consume re-checks each one against its
+/// private row, so a synced claim never names what resumes. Delegated waits
+/// stay the peer sweep's. One trap that fails its checks is logged and
+/// left; it never stops the pass.
+pub(crate) fn resume_signalled_steps(vault: &Vault, now_ms: u64) -> Result<usize> {
+    let runner = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    let mut resumed = 0;
+    for (anchor, binding) in super::trap_binding::trap_bindings(vault)? {
+        // A step-only wait resumes its step, never an attempt.
+        if binding.park_owner != super::trap::trap_park_owner(&anchor) {
+            continue;
+        }
+        let head = match trap_head(vault, &anchor) {
+            Ok((_, head)) => head,
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "trap head unreadable; not resumed");
+                continue;
+            }
+        };
+        if head.state != DreamerTrapState::Sent || head.kind == DreamerTrapKind::PeerResult {
+            continue;
+        }
+        let trap = TrapRef {
+            trap_claim_id: anchor,
+            kind: head.kind,
+            step_hash: binding.step_hash,
+        };
+        match super::trap::consume_trap_signal(vault, &runner, &trap, now_ms.max(head.at)) {
+            Ok(_) => resumed += 1,
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "signalled trap not resumed");
+            }
+        }
+    }
+    Ok(resumed)
+}

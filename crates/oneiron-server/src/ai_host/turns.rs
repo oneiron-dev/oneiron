@@ -39,6 +39,12 @@ impl TurnTracker {
         }
     }
 
+    /// Whether a chat turn is running now: the Dreamer's wake policy waits
+    /// for none before an idle recipe.
+    pub(crate) fn running(&self) -> bool {
+        self.0.active.load(Ordering::SeqCst) > 0
+    }
+
     /// Waits up to `grace` for running turns, stops the rest, and waits up
     /// to `grace` again for them to cancel.
     pub(crate) async fn shutdown(&self, grace: Duration) {
