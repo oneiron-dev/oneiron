@@ -305,6 +305,14 @@ pub trait HeldOutReplayScorer {
         state: &serde_json::Value,
     ) -> Result<()>;
 
+    /// Engine-projected coverage evidence, not a host-authored score. The
+    /// comparison binds both replay bodies to one pinned output archive.
+    fn coverage_floor(
+        &self,
+    ) -> Option<&crate::autoreason_campaign::coverage::CoverageFloorComparison> {
+        None
+    }
+
     /// Declarations only; the authenticated goal still owns the axis set.
     fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
         Ok(Vec::new())
