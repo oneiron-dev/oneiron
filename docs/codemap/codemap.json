@@ -25745,6 +25745,7 @@
       "RunEvent",
       "RunReceipt",
       "RunReceiptSink",
+      "RunTokenUsage",
       "TeacherReport"
      ],
      "path": "src/llm/run_admission/receipt.rs",
@@ -25752,7 +25753,7 @@
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 5,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -61677,7 +61678,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 9,
       "struct": 3
      }
@@ -61692,8 +61693,8 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 4,
-      "fn": 15,
+      "crate-vis": 5,
+      "fn": 16,
       "re-export": 12,
       "struct": 2
      }
@@ -61761,7 +61762,7 @@
      "purpose": "Where the server's run receipts go by default: one structured log line per row",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -62308,7 +62309,7 @@
      "path": "src/runtime/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -62351,6 +62352,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "VaultUsage"
+     ],
+     "path": "src/runtime/usage.rs",
+     "purpose": "Trusted-host attribution of served run settlements to one vault",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/server/board_publisher.rs",
      "purpose": "The board publisher: committed TASK writes reach STREAM subscribers",
@@ -62378,7 +62393,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 15,
-      "fn": 11,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -62658,10 +62673,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Money",
+      "UsageAllocation",
       "UsageCostInput",
       "UsageCostRates",
       "UsageCounter",
@@ -62670,6 +62686,7 @@
       "UsageMode",
       "UsageRecordResult",
       "UsageRollup",
+      "UsageRun",
       "UsageTokenCounts"
      ],
      "path": "src/usage/model.rs",
@@ -62678,7 +62695,7 @@
       "crate-vis": 3,
       "enum": 2,
       "fn": 6,
-      "struct": 8
+      "struct": 10
      }
     },
     {
@@ -63347,7 +63364,7 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "runtime": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63377,7 +63394,7 @@
     "usage": {
      "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
@@ -63405,7 +63422,7 @@
    },
    "over_bar": 20,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 422,
+   "source_files": 423,
    "test_files": 182
   },
   "oneiron-spawn": {
