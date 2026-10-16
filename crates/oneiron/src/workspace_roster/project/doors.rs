@@ -68,8 +68,10 @@ impl Vault {
 
     /// A board holder of the fork anchor writes `next` (a fresh v3 sibling
     /// over the anchor, or a contender) with the envelope in one transaction.
-    /// `prior` must equal the current resolution tips at the anchor. Refused
-    /// unless the fold with both has `next` as its head.
+    /// The fork is the frontier's own, or one a parent cycle leaves open: the
+    /// fork and the cycle are one decision (ruling (a)). `prior` must equal
+    /// the fork's causal resolution tips (ruling (b)). Refused unless the
+    /// fold with both has `next` as its head, in every world of a cycle.
     pub fn resolve_project_fork(
         &self,
         id: EntityId,
@@ -91,20 +93,29 @@ impl Vault {
                 let Some(frontier) = reader.frontier(id)? else {
                     return Err(Error::EntityNotFound);
                 };
-                let ProjectDisposition::Fork {
-                    anchor,
-                    rank: ProjectRank::Board,
-                    ..
-                } = frontier.disposition
-                else {
-                    return Err(unresolved(id, "no board fork to resolve"));
+                let tips = match frontier.disposition {
+                    ProjectDisposition::Fork {
+                        anchor,
+                        rank: ProjectRank::Board,
+                        resolution_tips,
+                        ..
+                    } => {
+                        if anchor != resolution.anchor {
+                            return Err(unresolved(id, "the resolution names another anchor"));
+                        }
+                        resolution_tips
+                    }
+                    ProjectDisposition::ParentCycle { forks, .. } => {
+                        let Some(fork) = forks.into_iter().find(|fork| {
+                            fork.anchor == resolution.anchor && fork.rank == ProjectRank::Board
+                        }) else {
+                            return Err(unresolved(id, "no board fork to resolve"));
+                        };
+                        fork.resolution_tips
+                    }
+                    _ => return Err(unresolved(id, "no board fork to resolve")),
                 };
-                if anchor != resolution.anchor {
-                    return Err(unresolved(id, "the resolution names another anchor"));
-                }
-                let held = held_in_txn(&self.store, txn, id, kind)?;
-                let cx = reader.door_cx(id, &held)?;
-                if cx.resolution_tips(anchor)? != resolution.prior {
+                if tips.into_iter().collect::<Vec<_>>() != resolution.prior {
                     return Err(unresolved(
                         id,
                         "the resolution must build on the current resolution tips",
@@ -142,10 +153,12 @@ impl Vault {
 
     /// The owner's seal (ruling F2 condition 2, decision 10). The door builds
     /// `next` with `authority` over the held revision `over`, stores it as the
-    /// PROJECT row (content kept), and seals it with `supersedes` = the
-    /// current seal tips. The owner-project signer signs both the state and
-    /// the seal (decision 3). A snapshot already held is never published
-    /// again, and seals move strictly forward in time.
+    /// PROJECT row (content kept), and seals it with `supersedes` = every
+    /// owner seal no seal retires yet, whether or not its target stands: an
+    /// undefined seal is retired, never made to look valid (ruling (c)). The
+    /// owner-project signer signs both the state and the seal (decision 3). A
+    /// snapshot already held is never published again, and seals move
+    /// strictly forward in time.
     pub fn seal_project(
         &self,
         owner: &AuthenticatedOwner,
@@ -175,7 +188,7 @@ impl Vault {
                 }
                 let anchor = revision::anchor_of(&held, over)
                     .ok_or_else(|| unresolved(id, "a seal builds on a held state"))?;
-                let supersedes = cx.seal_tips()?;
+                let supersedes = cx.seal_status()?.tips.clone();
                 for tip in &supersedes {
                     if let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip)
                         && seal.signed_at >= signed_at
@@ -243,7 +256,7 @@ impl Vault {
             let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                 .ok_or_else(invalid)?;
             let held = held_in_txn(&self.store, txn, id, kind)?;
-            let sealed = reader.door_cx(id, &held)?.seal_tips()?
+            let sealed = reader.door_cx(id, &held)?.seal_status()?.tips
                 == std::collections::BTreeSet::from([envelope_hash]);
             let installed = sealed
                 && reader.frontier(id)?.is_some_and(|frontier| {
