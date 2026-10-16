@@ -14392,7 +14392,6 @@
      "kind": "src",
      "notable": [
       "CriticLens",
-      "CriticReliability",
       "CritiqueArtifact",
       "CritiqueArtifactStore",
       "CritiqueProvenance",
@@ -14400,20 +14399,18 @@
       "CritiqueTriage",
       "CritiqueTriageScores",
       "CritiqueVerdict",
-      "LensCatalog",
-      "ReliabilityOutcomeEvent",
-      "ReliabilityOutcomeSource"
+      "LensCatalog"
      ],
      "path": "src/critic.rs",
      "purpose": "Multi-critic review node primitives",
      "surface": {
-      "const": 5,
+      "const": 3,
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 22,
+      "enum": 2,
+      "fn": 14,
       "mod": 1,
-      "re-export": 1,
-      "struct": 9
+      "re-export": 3,
+      "struct": 7
      }
     },
     {
@@ -14433,8 +14430,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CriticReliability",
+      "ReliabilityOutcomeSource"
+     ],
+     "path": "src/critic/reliability.rs",
+     "purpose": "Read-only critic weights from the shared measured-state projector",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CriticReviewInput",
       "ReviewArtifactKind",
+      "ReviewCritic",
       "ReviewRequest",
       "ReviewResult"
      ],
@@ -14444,8 +14458,23 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 1,
-      "re-export": 2,
-      "struct": 3
+      "re-export": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CriticPrediction",
+      "ReviewDissent"
+     ],
+     "path": "src/critic/review/dissent.rs",
+     "purpose": "Testable overruled predictions: attributed opinions and bound standing questions, never critique claims",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -14453,19 +14482,20 @@
      "kind": "src",
      "notable": [],
      "path": "src/critic/review/outcomes.rs",
-     "purpose": "Anchored outcomes, Beta updates and repeat-finding reads",
+     "purpose": "Anchored review outcomes feed the shared measured-state projector",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -44609,7 +44639,7 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -45619,7 +45649,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2740,
+   "source_files": 2742,
    "test_files": 903
   },
   "oneiron-android": {
