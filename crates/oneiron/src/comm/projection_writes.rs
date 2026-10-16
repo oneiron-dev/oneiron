@@ -310,8 +310,9 @@ pub(super) fn matching_claims_in_txn(
         }
         // A held row only restricts: a standing opt-out counts held or not;
         // a held touch, grant or closed head's boundary is skipped.
-        if !(claim.is_standing() && matches!(claim.value, CommClaimValue::OptOut { .. }))
-            && !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)?
+        let restricts = claim.is_standing() && matches!(claim.value, CommClaimValue::OptOut { .. });
+        if !(restricts
+            || crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)?)
         {
             continue;
         }
