@@ -6,14 +6,12 @@
 //! prose, and the slate is always shown before anything is granted.
 use super::slate::{
     ConnectorGrantSlate, SlateDisposition, SlateDraftRow, SlateOwnerOverride, SlateRow,
-    SlateToolManifest, declaration_expands, new_slate, read_slate_in_store_txn,
-    scan_slates_in_txn,
+    SlateToolManifest, declaration_expands, new_slate, read_slate_in_store_txn, scan_slates_in_txn,
 };
 use crate::error::{Error, Result};
 use crate::llm::decision::catalogue::CONNECTOR_SLATE_DRAFT;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::Store;
@@ -106,7 +104,8 @@ impl SlatePastRulings {
             let ask = count(SlateDisposition::AlwaysAsk);
             let never = count(SlateDisposition::NeverAllow);
             let strict = ask + never;
-            let total = strict + count(SlateDisposition::Auto) + count(SlateDisposition::AlwaysAllow);
+            let total =
+                strict + count(SlateDisposition::Auto) + count(SlateDisposition::AlwaysAllow);
             if strict < PAST_RULING_MIN_CONNECTORS || strict * 2 <= total {
                 continue;
             }
@@ -448,7 +447,9 @@ impl Vault {
         drafter: &ConnectorSlateDrafter<'_>,
     ) -> Result<ConnectorSlateRedraft> {
         if instruction.trim().is_empty() || instruction.len() > 4096 {
-            return Err(Error::InvalidConfig("invalid slate re-draft instruction".into()));
+            return Err(Error::InvalidConfig(
+                "invalid slate re-draft instruction".into(),
+            ));
         }
         let (slate, rulings) = {
             let txn = self.store.env.read_txn()?;

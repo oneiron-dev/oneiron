@@ -24,6 +24,7 @@ mod attenuation;
 mod codec;
 mod context;
 mod dispatch;
+mod fanout_statement;
 mod healer_context;
 mod healer_repair;
 pub(crate) use healer_context::validate as validate_healer_case;
@@ -56,6 +57,9 @@ mod workflow_tests;
 
 pub use self::widen_record::ContextWidenProposal;
 
+pub use self::fanout_statement::{
+    ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass,
+};
 pub use self::launch::{
     LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,
 };
@@ -67,11 +71,11 @@ pub use self::spend_record::{
     SpendState,
 };
 
+pub(crate) use self::codec::attempt_task_type_ref;
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
     encode_agent_dispatch_input,
 };
-pub(crate) use self::codec::attempt_task_type_ref;
 pub use self::dispatch::AgentDispatcher;
 pub use self::planner::{
     AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,

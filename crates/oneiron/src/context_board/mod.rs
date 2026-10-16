@@ -7,6 +7,8 @@ mod agents;
 mod agents_fanout;
 pub(crate) use agents_fanout::fanout_agent_rows;
 mod capabilities;
+mod explain;
+pub use explain::{GateExplanation, MemoryExplanation};
 mod inbox;
 pub use inbox::assemble_inbox_section;
 mod observations;
@@ -22,7 +24,7 @@ mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{
     ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
-    ProposalReason, ServedLifecycle, SessionReadSet,
+    ProposalReason, ServedLifecycle, ServedWhy, SessionReadSet,
 };
 pub(crate) use room::scope_worlds;
 pub use room::{

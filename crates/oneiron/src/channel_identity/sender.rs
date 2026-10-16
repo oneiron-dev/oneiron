@@ -104,8 +104,8 @@ pub(crate) fn enrich_dispatch_channel_identity(
                 // verdict independent of a stale cross-channel enrichment.
                 // Provider email rails map to the email class here too. The
                 // class is the identity's channel head (OF-272).
-                let same_class = super::channel_identity_facts_in_txn(store, txn, &id)?
-                    .is_none_or(|facts| {
+                let same_class =
+                    super::channel_identity_facts_in_txn(store, txn, &id)?.is_none_or(|facts| {
                         normalize_channel_class(&facts.channel)
                             == normalize_channel_class(connector_key)
                     });
