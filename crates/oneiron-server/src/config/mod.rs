@@ -24,7 +24,7 @@ pub use embedder::{
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
 };
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
-pub use feedback::FeedbackConfig;
+pub use feedback::{CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};
 pub use limits::LimitsConfig;

@@ -140,17 +140,9 @@ fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
             drifted: true
         }
     );
-    // Facade reads verify the bound actor row, so the reader is a stored person.
-    let reader = EntityId::now();
-    vault
-        .put_entity(
-            &reader,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"reader",
-        )
-        .unwrap();
+    // Facade reads verify the bound actor row, so the reader is the vault's
+    // own stored owner, who reads every pinned revision.
+    let reader = vault.ensure_embedded_owner_actor().unwrap();
     let memory = vault.memory(reader, crate::EdgeActorClass::Human);
     assert_eq!(
         memory

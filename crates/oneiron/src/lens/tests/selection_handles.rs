@@ -26,6 +26,7 @@ fn span_fixture() -> Result<SpanFixture> {
     put_person(&vault, &target)?;
     let actor =
         crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
+    crate::test_util::bind_test_owner(&vault, actor_id);
     let owner = vault.authenticate_owner(
         actor_id,
         "principal:span-test",

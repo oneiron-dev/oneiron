@@ -417,16 +417,28 @@ already hold.
 - `POST /v1/core/off-record/witness` with `{"room": "…", "session_ref": "…", "turn": {…}}`: a
   member speaks into it. Leave each message's `id` out: the stretch gives every message its own,
   and a turn that names one is refused (400) while the stretch is off record.
-- `POST /v1/core/off-record/save` with `{"room": "…", "session_ref": "…"}`: a person keeps the
-  whole talk in their own vault. Only a live owner of this vault saves here; anyone else is
-  refused, and nothing is written. If an ordinary write has since put a message at the order of
-  one said into a turn this stretch saved, the save keeps nothing and answers 409 (`conflict`,
-  naming the turn); the talk stays in the room until it closes, and an export still takes it.
+- `POST /v1/core/off-record/save` with `{"room": "…", "session_ref": "…"}`: a holder of this
+  vault's write grant keeps the whole talk in it. The grant is held by a live owner of this vault,
+  a member of a shared vault whose grant writes its content, or one of this vault's own agents, on
+  their own slip with `core:write` over the whole vault. Anyone else is refused, and nothing is
+  written: a person gets 403 with advice to export, an agent gets 403 with `requiredScope`
+  `core:write` and advice to ask a holder through `suggest-save`. If an ordinary write has since
+  put a message at the order of one said into a turn this stretch saved, the save keeps nothing
+  and answers 409 (`conflict`, naming the turn); the talk stays in the room until it closes, and
+  an export still takes it.
+- `POST /v1/core/off-record/save-from-here` with `{"room": "…", "session_ref": "…"}`: a holder
+  puts the stretch on record, as your own `mode` route does. Later turns are saved as they land,
+  while the holder still holds the grant and stays in the room.
 - `POST /v1/core/off-record/export` with `{"room": "…", "session_ref": "…"}` (`core:read`): any
   person in the room takes an export file of the turns their membership lets them see. It writes
   no vault.
-- `POST /v1/core/off-record/suggest-save` with `{"room": "…", "session_ref": "…"}`: an agent
-  suggests a save. It saves nothing.
+- `POST /v1/core/off-record/suggest-save` with `{"room": "…", "session_ref": "…"}`
+  (`core:propose` or `core:write`): an agent suggests a save. It saves nothing, and it waits,
+  shown under `waiting_suggestions` in the room, until a holder answers it.
+- `POST /v1/core/off-record/confirm-save` and `POST /v1/core/off-record/decline-save`, with the
+  same body: a holder answers the waiting suggestions. A confirm is the holder's own save of the
+  whole talk; a decline keeps nothing. Either answers 409 (`no_suggestion`) when nothing waits.
+  Any save answers the suggestions waiting when it ran.
 - `GET /v1/core/off-record?room=…&session_ref=…` reads the stretch and the notices from the
   times your membership shows you.
 
@@ -435,10 +447,10 @@ routes above address a room's stretch as `room:<conversation id>:<session_ref>`,
 you are on that room's roster; a name you pick for `POST /v1/owner/off-record` may not start
 with `room:`.
 
-Every save, export and suggestion posts a notice to the room (`saved_talk`, `saved_turn`,
-`saving_from_here`, `exported`, `save_suggested`), with who and when, never the content. A save
-that finds nothing new to keep posts one too. Your own `promote` and `mode` above post one too
-when the stretch runs in a room. A 1:1 with your own companion posts none: a stretch you start
+Every save, export, suggestion and decline posts a notice to the room (`saved_talk`, `saved_turn`,
+`saving_from_here`, `exported`, `save_suggested`, `save_declined`), with who and when, never the
+content. A save that finds nothing new to keep posts one too. Your own `promote` and `mode`
+above post one too when the stretch runs in a room. A 1:1 with your own companion posts none: a stretch you start
 with `POST /v1/owner/off-record` has no room, and a room that holds only you and this vault's own
 agents has nobody else to tell. Someone outside the room gets the same 404 as for a stretch that
 does not exist.
@@ -447,8 +459,9 @@ A save keeps what the room showed you, as an export does: the visible messages o
 membership shows you. An agent's hidden messages (its own reasoning) and turn summaries stay out.
 
 Putting a room on record saves into your vault only while you are in the room and own the vault
-on a live credential. Each later turn checks that again. Once you leave, or lose the vault or
-the credential, saving stops: the stretch goes back off record and the room hears
+on a live credential (for a holder's `save-from-here`, while they hold the grant on a live slip).
+Each later turn checks that again. Once you leave, or lose the vault or the credential, saving
+stops: the stretch goes back off record and the room hears
 `saving_stopped`. A turn caught in that moment is refused with `409`, and nothing of it is kept;
 say it again to keep it off record.
 
@@ -489,6 +502,39 @@ owners sending the same bundle are two sends. The send is an ordinary outbound e
 `external:send` on the feedback channel to you, it is held (`"outcome": "held"`) and nothing
 leaves. A bundle carries no vault text. A written note is refused until the engine redacts notes
 in the vault (OF-420).
+
+A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
+unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET
+/v1/owner/status` shows the effective `feedback` setting. Every send still asks you first.
+
+## Keep an open feedback inbox
+
+A server can take feedback from anyone, with no key and no moderation (ARCH-0056 #open-inbox).
+It is off unless you turn it on:
+
+```toml
+[feedback.inbox]
+enabled = true            # ONEIRON_FEEDBACK_INBOX
+notes_per_sender = 20     # notes one sender may leave in an hour
+notes_per_hour = 2000     # notes the inbox takes in an hour, from everyone
+
+[limits]
+feedback_inbox_bytes = 131072   # the most one note may carry
+```
+
+Then `GET /v1/feedback?text=…` (optionally `&category=bug`, `papercut`, `confusion` or
+`feature-wish`) lands one note, and so does `POST /v1/feedback` with a plain-text, form or JSON
+(`{"text": …}`) body, or the MessagePack bundle another vault's `collector` send delivers. The
+reply is `202 {"received": true}` and nothing else. Every attempt the cap lets through counts, an empty or unreadable one too.
+Past either count a sender gets `429` with
+`retry-after` and `details.state = "feedback_inbox_flood"`; an IPv6 sender is counted by its
+/64. Behind a reverse proxy, list it in `trusted_proxies` so the proxy's `X-Forwarded-For` names
+the sender; otherwise every caller is counted by its own connection. A longer note gets `413`,
+and a disk at its `disk_reserve_bytes` floor gets `507`.
+
+The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inbox?after=<seq>
+&limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
+carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
 
 ## Saved queries after a pack update
 

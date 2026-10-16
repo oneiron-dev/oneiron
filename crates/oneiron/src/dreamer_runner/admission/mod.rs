@@ -210,6 +210,22 @@ impl DreamerRunnerStore<'_> {
         self.admit_next_kind(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, input)
     }
 
+    /// Atomically admits the next queued Coach heal attempt for a host Coach.
+    ///
+    /// Per-device, like SKILL-OPT: the attempt's only output is a proposal.
+    /// The wake driver never calls this; the Coach's model turn is the host's,
+    /// as an `agent.dispatch` healer's is.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_coach_heal(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(super::COACH_HEAL_ATTEMPT_KIND, input)
+    }
+
     /// Home-aware consolidation admission.
     ///
     /// MICRO/MESO admission remains per-device. MACRO admission requires the

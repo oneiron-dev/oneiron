@@ -71,7 +71,7 @@ fn fill_turn(vault: &crate::Vault, turn: &EntityId, vector: &[f32]) {
 fn a_turn_found_by_its_message_word_keeps_that_keyword_evidence() {
     let query = [1.0_f32, 0.0, 0.0, 0.0];
     let (_dir, vault) = open_embedding_vault();
-    let facade = facade_for(&vault, put_person(&vault, 0xE1));
+    let facade = facade_for(&vault, put_owner(&vault));
     let turn = witness_turn(
         &facade,
         0xE2,
@@ -116,7 +116,7 @@ fn a_turn_found_by_its_message_word_keeps_that_keyword_evidence() {
 fn a_turn_only_scope_finds_a_turn_by_its_messages_words() {
     const SAID: &str = "the solar panel replacement is booked";
     let (_dir, vault) = open_vault();
-    let facade = facade_for(&vault, put_person(&vault, 0xE4));
+    let facade = facade_for(&vault, put_owner(&vault));
     witness_turn(
         &facade,
         0xE5,
@@ -158,7 +158,7 @@ fn a_turn_only_scope_finds_a_turn_by_its_messages_words() {
 #[test]
 fn several_messages_of_one_turn_leave_room_for_the_next_turn() {
     let (_dir, vault) = open_vault();
-    let facade = facade_for(&vault, put_person(&vault, 0xE7));
+    let facade = facade_for(&vault, put_owner(&vault));
     witness_turn(
         &facade,
         0xE8,

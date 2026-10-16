@@ -47,6 +47,7 @@ mod fold_schedule;
 mod fold_state;
 mod handoff_equivocation;
 mod history_transfer;
+mod host_actor;
 mod host_re_root;
 mod import_order;
 mod ingest_observation;

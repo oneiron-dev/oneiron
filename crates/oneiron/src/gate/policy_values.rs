@@ -7,6 +7,9 @@ use rmpv::Value;
 pub(super) enum PolicyValueKey {
     CommOptOutPosture,
     ProposalCheckThreshold,
+    ProviderCooldownDefaultSeconds,
+    ProviderCooldownMaxSeconds,
+    ProviderCooldownMaxWaitSeconds,
     ScopePrecedence,
 }
 impl PolicyValueKey {
@@ -14,6 +17,9 @@ impl PolicyValueKey {
         match value {
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
             "proposal_check_threshold" => Some(Self::ProposalCheckThreshold),
+            "provider_cooldown_default_seconds" => Some(Self::ProviderCooldownDefaultSeconds),
+            "provider_cooldown_max_seconds" => Some(Self::ProviderCooldownMaxSeconds),
+            "provider_cooldown_max_wait_seconds" => Some(Self::ProviderCooldownMaxWaitSeconds),
             "scope_precedence" => Some(Self::ScopePrecedence),
             _ => None,
         }
@@ -22,6 +28,9 @@ impl PolicyValueKey {
         match self {
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::ProposalCheckThreshold => "proposal_check_threshold",
+            Self::ProviderCooldownDefaultSeconds => "provider_cooldown_default_seconds",
+            Self::ProviderCooldownMaxSeconds => "provider_cooldown_max_seconds",
+            Self::ProviderCooldownMaxWaitSeconds => "provider_cooldown_max_wait_seconds",
             Self::ScopePrecedence => "scope_precedence",
         }
     }
@@ -36,9 +45,14 @@ impl PolicyValueKey {
                 scope,
                 PolicyRowScope::Vault | PolicyRowScope::World(_) | PolicyRowScope::Project(_)
             ),
-            // External effects carry no trusted origin yet, and the meta-rule
-            // is read at vault scope only.
-            Self::CommOptOutPosture | Self::ScopePrecedence => scope == PolicyRowScope::Vault,
+            // External effects carry no trusted origin yet, the meta-rule is
+            // read at vault scope only, and an offer's cooldown is the
+            // deployment's, never one world's.
+            Self::CommOptOutPosture
+            | Self::ProviderCooldownDefaultSeconds
+            | Self::ProviderCooldownMaxSeconds
+            | Self::ProviderCooldownMaxWaitSeconds
+            | Self::ScopePrecedence => scope == PolicyRowScope::Vault,
         }
     }
 }
@@ -68,6 +82,9 @@ impl PolicyPrecedence {
 pub(super) enum PolicyValue {
     CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
     ProposalCheckThreshold(u64),
+    ProviderCooldownDefaultSeconds(u64),
+    ProviderCooldownMaxSeconds(u64),
+    ProviderCooldownMaxWaitSeconds(u64),
     ScopePrecedence(PolicyPrecedence),
 }
 impl PolicyValue {
@@ -79,6 +96,19 @@ impl PolicyValue {
             (Self::ProposalCheckThreshold(a), Self::ProposalCheckThreshold(b)) => {
                 Self::ProposalCheckThreshold(a.min(b))
             }
+            // A longer rest never sends a call to a refusing provider sooner
+            // than any trusted row asks.
+            (Self::ProviderCooldownDefaultSeconds(a), Self::ProviderCooldownDefaultSeconds(b)) => {
+                Self::ProviderCooldownDefaultSeconds(a.max(b))
+            }
+            (Self::ProviderCooldownMaxSeconds(a), Self::ProviderCooldownMaxSeconds(b)) => {
+                Self::ProviderCooldownMaxSeconds(a.max(b))
+            }
+            // A call waits for a cooling chain no longer than every trusted
+            // row allows.
+            (Self::ProviderCooldownMaxWaitSeconds(a), Self::ProviderCooldownMaxWaitSeconds(b)) => {
+                Self::ProviderCooldownMaxWaitSeconds(a.min(b))
+            }
             _ => unreachable!("policy values for different keys never compose"),
         }
     }
@@ -86,7 +116,10 @@ impl PolicyValue {
     pub(super) fn as_str(self) -> String {
         match self {
             Self::CommOptOutPosture(value) => value.as_str().to_owned(),
-            Self::ProposalCheckThreshold(value) => value.to_string(),
+            Self::ProposalCheckThreshold(value)
+            | Self::ProviderCooldownDefaultSeconds(value)
+            | Self::ProviderCooldownMaxSeconds(value)
+            | Self::ProviderCooldownMaxWaitSeconds(value) => value.to_string(),
             Self::ScopePrecedence(value) => value.as_str().to_owned(),
         }
     }
@@ -275,6 +308,18 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                 PolicyValueKey::ProposalCheckThreshold => {
                     PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)
                 }
+                PolicyValueKey::ProviderCooldownDefaultSeconds => {
+                    PolicyValue::ProviderCooldownDefaultSeconds(cooldown_seconds(raw)?)
+                }
+                PolicyValueKey::ProviderCooldownMaxSeconds => {
+                    PolicyValue::ProviderCooldownMaxSeconds(cooldown_seconds(raw)?)
+                }
+                PolicyValueKey::ProviderCooldownMaxWaitSeconds => {
+                    PolicyValue::ProviderCooldownMaxWaitSeconds(
+                        raw.as_u64()
+                            .filter(|seconds| *seconds <= PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS)?,
+                    )
+                }
                 PolicyValueKey::ScopePrecedence => {
                     PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
                 }
@@ -394,6 +439,47 @@ pub(super) fn shipped_default_proposal_check_threshold() -> u64 {
         .and_then(|row| row["value"].as_u64())
         .filter(|value| *value > 0)
         .expect("shipped proposal check threshold")
+}
+
+/// The longest rest a cooldown row may name: a provider's monthly window.
+const PROVIDER_COOLDOWN_CEILING_SECONDS: u64 = 31 * 86_400;
+/// The longest a call may wait for a cooling chain: an hour. Zero never waits.
+const PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS: u64 = 3_600;
+
+fn cooldown_seconds(raw: &Value) -> Option<u64> {
+    raw.as_u64()
+        .filter(|seconds| (1..=PROVIDER_COOLDOWN_CEILING_SECONDS).contains(seconds))
+}
+
+/// The shipped rows: the rest of an offer whose refusal names no reset, the
+/// longest rest any refusal may ask, and the longest a call waits for a
+/// cooling chain.
+pub(super) fn shipped_default_provider_cooldown() -> (u64, u64, u64) {
+    let defaults: serde_json::Value =
+        serde_json::from_str(include_str!("policy_value_defaults.json"))
+            .expect("valid shipped policy defaults");
+    let rows = defaults.as_array().expect("shipped policy rows");
+    let seconds = |key: &str, ceiling: u64| {
+        rows.iter()
+            .find(|row| row["key"] == key && row["scope"]["level"] == "vault")
+            .and_then(|row| row["value"].as_u64())
+            .filter(|value| *value <= ceiling)
+            .expect("shipped provider cooldown row")
+    };
+    (
+        seconds(
+            "provider_cooldown_default_seconds",
+            PROVIDER_COOLDOWN_CEILING_SECONDS,
+        ),
+        seconds(
+            "provider_cooldown_max_seconds",
+            PROVIDER_COOLDOWN_CEILING_SECONDS,
+        ),
+        seconds(
+            "provider_cooldown_max_wait_seconds",
+            PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS,
+        ),
+    )
 }
 
 pub(super) fn precedence_row(rows: &[PolicyValueRow]) -> Option<&PolicyValueRow> {
