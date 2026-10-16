@@ -58,7 +58,7 @@ pub(super) fn task_entity_census_by_role(
     keep: impl Fn(Option<TaskRole>) -> bool,
 ) -> usize {
     vault
-        .entities_by_type_page(ENTITY_TYPE_TASK, None, TASK_PRESENCE_SCAN_CAP)
+        .entities_by_type_page(ENTITY_TYPE_TASK, None, 4_096)
         .expect("task entities")
         .into_iter()
         .filter(|task_ref| keep(task_entity_role(vault, *task_ref).expect("task role")))

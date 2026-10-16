@@ -132,8 +132,10 @@ type Read<'a> = Box<dyn Fn() -> Result<usize> + 'a>;
 /// Seeds `PAST` rows for `scan` and hands back what its read serves and the
 /// read, or `None` for a scan whose fixture lives with its own tests: the
 /// origin's table (`origin::smart_http::scan_cap_tests::
-/// no_origin_scan_refuses_for_its_row_count`) and the mesh bind
-/// (`authority::tests::machine_identity::a_mesh_bind_reads_past_the_old_machine_cap`).
+/// no_origin_scan_refuses_for_its_row_count`), the mesh bind
+/// (`authority::tests::machine_identity::a_mesh_bind_reads_past_the_old_machine_cap`),
+/// and the task, ask and room scans (their own `task_verb`, `context_board`
+/// and `workspace_roster::rooms` tests).
 fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
     let src = id(0x51, 0);
     match scan {
@@ -144,7 +146,14 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
             assert!(EngineScan::ORIGIN.contains(&scan));
             None
         }
-        EngineScan::MachineRows => None,
+        EngineScan::MachineRows
+        | EngineScan::TaskCensusRows
+        | EngineScan::AskWordRows
+        | EngineScan::RoomThreadTasks
+        | EngineScan::ReadSetRows
+        | EngineScan::RoomPageRows
+        | EngineScan::RoomHistoryRows
+        | EngineScan::TaskBoardRows => None,
         EngineScan::AccessGrantRows => {
             // Index rows whose grants are gone: read, skipped, never served.
             vault

@@ -87,8 +87,12 @@ fn text_only_reader_hydrates_an_image_asset_as_its_asset_text() {
         Some(serde_json::json!({"text": "the whole page"}))
     );
 
-    // An image with no ASSET_TEXT has no form for this reader: it fails closed.
+    // An image with no ASSET_TEXT keeps the body it was hydrated with: its
+    // fields name the image, and its bytes stay out.
     let bare = image_asset(&vault, 0xC6);
-    let refused = memory.hydrate(&[bare.to_hex()]).unwrap_err();
-    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND);
+    let views = memory.hydrate(&[bare.to_hex()]).expect("hydrate").value;
+    let body = views[0].body.as_ref().expect("stored body");
+    assert_eq!(body["mime_type"], "image/png");
+    assert_eq!(body["bytes"], serde_json::Value::Null);
+    assert!(body.get("form").is_none(), "{body}");
 }
