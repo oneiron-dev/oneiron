@@ -136,6 +136,7 @@ pub(super) fn vault_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         &BTreeMap::new(),
         &observations,
         crate::HostingPrivacyPosture::default(),
+        None,
     )
 }
 
