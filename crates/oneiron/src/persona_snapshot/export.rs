@@ -7,7 +7,7 @@ use super::codec::{
     decode_persona_snapshot_export_body, encode_persona_snapshot_export_body, hash_hex,
     invalid_snapshot,
 };
-use super::compile::{markdown_safe_line, verify_compile_against_stamp};
+use super::compile::{markdown_code_span, markdown_safe_line, verify_compile_against_stamp};
 use super::types::{
     MEMORY_PACK_LITE_SCHEMA_VERSION, PersonaSnapshotArtifact, PersonaSnapshotCompile,
     PersonaSnapshotExportConsent, PersonaSnapshotExportRecord, PersonaSnapshotRow,
@@ -300,7 +300,7 @@ fn render_markdown_card(
     out.push('\n');
     out.push_str(&format!("- subject: {}\n", compile.subject_ref.to_hex()));
     if let Some(audience_ref) = &compile.audience_ref {
-        out.push_str(&format!("- for: {audience_ref}\n"));
+        out.push_str(&format!("- for: {}\n", markdown_safe_line(audience_ref)));
     }
     out.push_str(&format!(
         "- compiled_at_secs: {}\n",
@@ -330,7 +330,10 @@ fn render_markdown_card(
             {
                 String::new()
             } else {
-                format!(" `[{}]`", row.provenance_refs.join(", "))
+                format!(
+                    " {}",
+                    markdown_code_span(&format!("[{}]", row.provenance_refs.join(", ")))
+                )
             };
             let text = markdown_safe_line(&row.text);
             match &row.attribution {
