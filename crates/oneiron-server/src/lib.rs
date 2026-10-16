@@ -25,6 +25,7 @@ mod admission;
 pub mod ai_host;
 mod api;
 mod auth;
+mod big_rung;
 mod broadcast;
 mod byte_line;
 pub mod cli;
