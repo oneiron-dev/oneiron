@@ -515,9 +515,11 @@ impl Memory<'_> {
         let now = crate::unix_seconds_now();
         // Task and wait reads run inside the room, as the room's own fold
         // reads them.
+        let bindings = super::liveness::thread_task_bindings(&turns, &selected)?;
         let tasks = crate::task_verb::room_thread_tasks(
             self.for_room_projection(room)?.memory(),
             &selected,
+            &bindings,
             &members,
             now,
         )?;
