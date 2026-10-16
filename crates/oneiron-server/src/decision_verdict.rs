@@ -128,7 +128,7 @@ pub(crate) fn run_verdict(
             ));
         }
         dial.first = DecisionRung::Local;
-        Some(vision_rung(server, principal, class, &images)?)
+        Some(vision_rung(server, principal, class, &images, "ai.verdict")?)
     };
     let mut ladder = host.ladder().ladder();
     if let Some(rung) = &local {
@@ -272,12 +272,13 @@ fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionIma
 }
 
 /// The Local-vision seat at the Local rung, spending on a run of its own for
-/// `principal`, as ask_image's Box ask does.
-fn vision_rung(
+/// `principal`, as ask_image's Box ask does. `label` names the run's caller.
+pub(crate) fn vision_rung(
     server: &SyncServer,
     principal: EntityId,
     class: EdgeActorClass,
     images: &[DecisionImage],
+    label: &str,
 ) -> MemoryResult<ModelDecisionProvider> {
     let vault = Arc::clone(server.vault());
     let unbound = || {
@@ -290,7 +291,7 @@ fn vision_rung(
         .first()
         .map(|image| image.evidence.id.to_hex())
         .unwrap_or_default();
-    let run_id = format!("ai.verdict:{asset}:{}", vault.now_recorded_at());
+    let run_id = format!("{label}:{asset}:{}", vault.now_recorded_at());
     let settings = server.ai.chat_settings();
     let meter = vault
         .policy_budget_guard(

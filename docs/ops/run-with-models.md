@@ -1077,3 +1077,31 @@ The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The
 escalation read is metered on `models.raw_budget_units`. A model rung blocks
 on the server's runtime, so a caller runs a ladder call on a blocking thread.
+
+### Standing questions over graph units
+
+A standing question (a typed question saved over a set of graph units, with
+`refresh.every_seconds` or `refresh.on_arrival`) is answered on this ladder
+without a caller. Each minute the server checks for questions that are due.
+It answers each unit as the question's own principal, reading under that
+principal's grants, and climbs the question's own dial. A ceiling of `human`
+is held at Big, so the pump never queues an owner ask. Each unit has its own
+10-second clock.
+
+- **What the ladder reads.** The unit's body goes into the call's state as
+  the JSON a reader is served.
+- **Images.** When `[models.roles.local_vision]` is bound and the dial spans
+  the Local rung, an image asset is also read as an image at the Local-vision
+  rung. The pull is recorded as an `ask_image` served form. Without that seat,
+  the asset is read as its text alone.
+- **What lands.** Each answer lands as a proposed `judgment.answer` claim,
+  readable only by the principal. It keeps the ladder's full receipt: the
+  providers, band, paired and person readings, clock and any owner-ask reason,
+  plus the version of every source and image it read.
+- **Failures.** A question that fails is retried at its next due pass, and
+  the server logs the error's kind only.
+
+The engine's one-off graph ask and saved graph recipes take the same
+answerer and keep the same receipts. There, a unit's outgoing neighbours join
+its state, and an image asset among them is read as an image. No door serves
+a one-off ask yet.
