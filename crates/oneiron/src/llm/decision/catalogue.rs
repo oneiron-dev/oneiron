@@ -62,5 +62,18 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// What conversational signal does a received reaction carry? Host wording;
+/// the fixed labels are ack, agree, disagree, affect and none.
+pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
+    name: "conversation.reaction.meaning",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
-pub const FAMILIES: &[QuestionFamily] = &[TELEMETRY_ANOMALY, CRITIC_REVIEW, FANOUT_ASK];
+pub const FAMILIES: &[QuestionFamily] = &[
+    TELEMETRY_ANOMALY,
+    CRITIC_REVIEW,
+    FANOUT_ASK,
+    REACTION_MEANING,
+];
