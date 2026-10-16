@@ -92,6 +92,12 @@ impl OneironClient {
                     "vault.artifacts.proposals" => remote_agent_verb_output::<
                         Vec<oneiron::edit_settle::PendingProposalView>,
                     >(client, verb, &input),
+                    "vault.artifacts.waits" => remote_agent_verb_output::<
+                        Vec<oneiron::edit_settle::OrganWaitView>,
+                    >(client, verb, &input),
+                    "vault.artifacts.release_wait" => remote_agent_verb_output::<
+                        oneiron::blob_artifact::ReleasedWait,
+                    >(client, verb, &input),
                     "vault.artifacts.propose_deck" => remote_agent_verb_output::<
                         oneiron::blob_artifact::DeckProposeOutcome,
                     >(client, verb, &input),
@@ -466,6 +472,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.proposals", value)
+    }
+    /// The organ calls held beside one artifact until one of your nodes can run them, each with why it waits.
+    pub fn vault_artifacts_waits(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactRefRequest,
+    ) -> Result<Vec<oneiron::edit_settle::OrganWaitView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.waits", value)
+    }
+    /// Lets one held organ call go, by its run ref, under the consent a Discard needs.
+    pub fn vault_artifacts_release_wait(
+        &self,
+        input: &oneiron::blob_artifact::ProposalSettleRequest,
+    ) -> Result<oneiron::blob_artifact::ReleasedWait, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.release_wait", value)
     }
     /// Runs one native deck transaction over the head and holds the proposal for Keep.
     pub fn vault_artifacts_propose_deck(

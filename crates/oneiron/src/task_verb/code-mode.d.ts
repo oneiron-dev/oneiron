@@ -40,8 +40,10 @@ declare const vault: {
     proposals(input: { artifact_ref: string }): Promise<unknown>;
     propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;
     propose_output(input: { artifact_ref: string; content_base64: string; made_by?: unknown; media_type: string; name: string; report?: unknown; run_ref: string }): Promise<unknown>;
+    release_wait(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
+    waits(input: { artifact_ref: string }): Promise<unknown>;
   };
   claims: {
     put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;

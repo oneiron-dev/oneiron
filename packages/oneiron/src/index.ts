@@ -185,6 +185,10 @@ export class Oneiron {
       born_from: (request: BornFromRequest): BornFromView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBornFrom(keyedJson(request))) as BornFromView; return result }),
       /** The proposals waiting beside one artifact for Keep or Discard. */
       proposals: (request: ArtifactRefRequest): PendingProposalView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposals(keyedJson(request))) as PendingProposalView[]; return result.map(item => item) }),
+      /** The organ calls held beside one artifact until one of your nodes can run them, each with why it waits. */
+      waits: (request: ArtifactRefRequest): OrganWaitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsWaits(keyedJson(request))) as OrganWaitView[]; return result.map(item => item) }),
+      /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
+      release_wait: (request: ProposalSettleRequest): ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as ReleasedWait; return result }),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */

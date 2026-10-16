@@ -101,6 +101,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.waits",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.release_wait",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.propose_deck",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::DeckProposeRequest,
@@ -439,6 +451,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.waits" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.release_wait" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.propose_deck" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -676,6 +702,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.proposals" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
+        "vault.artifacts.waits" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.release_wait" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
         }
@@ -791,6 +823,10 @@ pub fn invoke(
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
+        "vault.artifacts.waits" => encode(vault_artifacts_waits(memory, decode(value)?)?),
+        "vault.artifacts.release_wait" => {
+            encode(vault_artifacts_release_wait(memory, decode(value)?)?)
+        }
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -1058,6 +1094,18 @@ pub fn vault_artifacts_proposals(
     input: crate::blob_artifact::ArtifactRefRequest,
 ) -> MemoryResult<Vec<crate::edit_settle::PendingProposalView>> {
     memory.artifacts_proposals(&input)
+}
+pub fn vault_artifacts_waits(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Vec<crate::edit_settle::OrganWaitView>> {
+    memory.artifacts_waits(&input)
+}
+pub fn vault_artifacts_release_wait(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::ReleasedWait> {
+    memory.artifacts_release_wait(&input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,

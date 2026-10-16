@@ -55,7 +55,7 @@ pub use self::provenance::BlobVersionProvenance;
 pub use self::verbs::{
     ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
     DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, KeptProposal, NativeOutputRequest,
-    ProposalSettleRequest, UndoneKeep,
+    ProposalSettleRequest, ReleasedWait, UndoneKeep,
 };
 pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
