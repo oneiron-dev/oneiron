@@ -15653,6 +15653,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AttendeeIdentityChoice",
+      "AttendeeIdentityResolution",
+      "UnknownAttendeeAsk"
+     ],
+     "path": "src/disclosure/attendee_ask.rs",
+     "purpose": "The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises \"who is this?\" to the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -15675,7 +15693,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
       "crate-vis": 5,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -15727,7 +15745,7 @@
      "path": "src/disclosure/tier_classification.rs",
      "purpose": "Mode/tier classification and disclosure-claim structural validation",
      "surface": {
-      "const": 6,
+      "const": 8,
       "crate-vis": 4,
       "enum": 2,
       "fn": 3
@@ -47333,7 +47351,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48357,7 +48375,7 @@
    },
    "over_bar": 90,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2915,
+   "source_files": 2916,
    "test_files": 903
   },
   "oneiron-android": {
