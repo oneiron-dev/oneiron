@@ -30,6 +30,7 @@ impl Vault {
     ) -> Result<bool> {
         if *id != crate::dreamer_runner::authority::dreamer_actor_id()?
             && !crate::registry::is_delete_protected_engine_record(entity_type)
+            && !crate::workspace_roster::is_project_revision_type(&self.store, entity_type)
         {
             return Err(Error::InvariantViolation(
                 "dt: poison neutralization requires a delete-protected engine record",
@@ -181,6 +182,7 @@ impl Vault {
             || self.port_retrieval_delete_scope_exists(txn, id)?
             || self.port_short_id_mapping_exists(txn, id)?
             || crate::tagging::erase_scope_exists_in_txn(&self.store, txn, id)?
+            || crate::identity_redirect::redirect_row_exists_in_txn(&self.store, txn, id)?
         {
             return Ok(true);
         }

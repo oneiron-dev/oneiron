@@ -199,24 +199,36 @@ impl Vault {
         repo: &GitWireRepo,
         publication: EntityId,
     ) -> Result<()> {
+        match self.origin_authority_refusal(repo, publication)? {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
+    }
+    /// Why the current authority refuses this publication, or `None` when it
+    /// permits it. A read failure is an error, never a refusal.
+    pub(in crate::origin) fn origin_authority_refusal(
+        &self,
+        repo: &GitWireRepo,
+        publication: EntityId,
+    ) -> Result<Option<Error>> {
         let Some(row) = self.origin_authority(repo)? else {
-            return Ok(());
+            return Ok(None);
         };
         if row.mirror {
-            return Err(Error::InvariantViolation(
+            return Ok(Some(Error::InvariantViolation(
                 "mirror is read-only; import through the authoritative origin",
-            ));
+            )));
         }
         let txn = self.store.env.read_txn()?;
         if AUTHORITY_PERMIT
             .get(&self.store, &txn, &publication)?
             .is_none_or(|epoch| epoch != row.epoch)
         {
-            return Err(Error::ConcurrentWrite(
+            return Ok(Some(Error::ConcurrentWrite(
                 "origin publication requires the current authority epoch",
-            ));
+            )));
         }
-        Ok(())
+        Ok(None)
     }
     /// Admission has no commit pin yet, including an empty first-push origin.
     /// Resolve the canonical object-store identity without inventing a commit.

@@ -8,6 +8,9 @@ use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::GateDecisionId;
 
 const IMPORTED_AT: u64 = 1_800_000_000;
+/// A plain witness happens in the past: the witness door refuses a time past
+/// the store clock's skew (F30), and `IMPORTED_AT` is ahead of today.
+const WITNESSED_AT: u64 = 1_700_000_000;
 const FOLDER: &str = "/home/dev/projects/garden";
 
 /// A Claude Code session that started at 2026-09-25T06:00:00Z.
@@ -245,7 +248,7 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
                 is_visible: true,
                 order: 0,
             }],
-            occurred_at: IMPORTED_AT,
+            occurred_at: WITNESSED_AT,
         })
         .expect("plain witness");
     let body = vault.get(&id).expect("read the plain conversation");
@@ -256,7 +259,7 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
         .expect("import");
     assert_eq!((report.new, report.refused), (0, 2));
     assert_eq!(vault.get(&id).expect("read it again"), body);
-    assert_eq!(vault.get_occurred(&id).expect("occurred"), at(IMPORTED_AT));
+    assert_eq!(vault.get_occurred(&id).expect("occurred"), at(WITNESSED_AT));
     assert_eq!(vault.get_learned_at(&id).expect("learned at"), learned);
 }
 

@@ -5,12 +5,15 @@
 //! `Vault::open` (unlike the legacy `test_util` opener) so the write gate is
 //! live — production reality for the bridge.
 
+mod asset_hydrate;
+mod asset_resolve;
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
 mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
+mod same_bytes_erase;
 mod seeded_upgrade;
 mod self_grant;
 mod session_recall;

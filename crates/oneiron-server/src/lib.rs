@@ -26,6 +26,7 @@ pub mod ai_host;
 mod api;
 mod auth;
 mod broadcast;
+mod byte_line;
 pub mod cli;
 pub mod commands;
 pub mod config;
@@ -40,6 +41,7 @@ mod idempotency;
 mod linear_host;
 mod livequery;
 pub mod logging;
+mod machine;
 pub mod managed;
 pub mod mcp;
 pub mod models;
@@ -84,6 +86,14 @@ pub fn build_app(server: Arc<SyncServer>) -> Router {
     Router::new()
         .merge(handler::ws_routes(server.clone()))
         .merge(api::api_routes(server))
+}
+
+/// Builds the artifact-only app: `/a/` and nothing else, for a listener of
+/// its own, so a code bundle's scripts run on an origin that holds no API.
+/// Serve it beside [`build_app`] over the same server, and record its port
+/// with [`SyncServer::with_artifact_listener`] before the server is shared.
+pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
+    api::artifact_app(server)
 }
 
 #[cfg(test)]

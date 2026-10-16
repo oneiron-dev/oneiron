@@ -1029,3 +1029,293 @@ fn gate_denial_prevents_invite_even_with_live_page_grant() {
             .is_empty()
     );
 }
+
+/// H279: a page grant covers the invite for the confirmed booking it was
+/// checked against, never an unrelated EVENT sent to the same booker, and
+/// never another principal's send.
+#[test]
+fn page_grant_never_covers_an_unrelated_event_or_another_sender() {
+    let fixture = fixture();
+    let grant_ref = fixture.grant();
+
+    // E2: an EVENT with its own indexed UID and no booking on the page. The
+    // booker's confirmed booking E1 on the page must not lend it consent.
+    let unrelated = event(&fixture.vault, 0x6A);
+    let unrelated_uid = format!("{}@{BOOKING_PASSPORT_SYSTEM}", unrelated.to_hex());
+    index_passport_uid(&fixture.vault, &unrelated_uid, &unrelated).expect("index uid");
+    let unrelated_blob = ics_blob(&fixture.vault, 0x6B, fixture.actor, &unrelated_uid, 0);
+    let mut unrelated_payload = payload_for(&fixture, &unrelated_blob, RECIPIENT);
+    unrelated_payload.uid.clone_from(&unrelated_uid);
+    assert!(
+        admit_calendar_invite(&fixture.vault, fixture.actor, &unrelated_payload, NOW).is_err(),
+        "the booking's consent admitted an unrelated EVENT"
+    );
+    let mut sink = SpySink::default();
+    assert!(
+        enqueue_confirm_invite(
+            &fixture.vault,
+            fixture.actor,
+            grant_ref,
+            &ConfirmedBookingInvite {
+                booking_ref: fixture.booking,
+                uid: &unrelated_uid,
+                sequence: 0,
+                ics_blob_ref: &unrelated_blob,
+            },
+            &mut sink,
+            NOW,
+        )
+        .is_err(),
+        "the booking's grant dispatched an invite for another EVENT"
+    );
+    assert_eq!(sink.calls, 0);
+
+    // Another sender, with its own primary-domain identity, borrows nothing
+    // from this actor's page grant.
+    let other_actor = person(&fixture.vault, 0x6C, b"another sender");
+    identity(
+        &fixture.vault,
+        0x6D,
+        other_actor,
+        "email",
+        "other@primary.test",
+    );
+    let theirs = ics_blob(&fixture.vault, 0x6E, other_actor, &fixture.uid, 0);
+    assert!(
+        admit_calendar_invite(
+            &fixture.vault,
+            other_actor,
+            &payload_for(&fixture, &theirs, RECIPIENT),
+            NOW,
+        )
+        .is_err(),
+        "another principal's page grant supplied this sender's consent"
+    );
+
+    // The booking's own invite, from the grant's own principal, is admitted.
+    let own = ics_blob(&fixture.vault, 0x7C, fixture.actor, &fixture.uid, 0);
+    admit_calendar_invite(
+        &fixture.vault,
+        fixture.actor,
+        &payload_for(&fixture, &own, RECIPIENT),
+        NOW,
+    )
+    .expect("the confirmed booking's own invite is admitted");
+}
+
+/// H279: the ICS document that goes out carries the payload's own UID and
+/// SEQUENCE. The confirmed booking's UID never ships another EVENT's invite
+/// document, and the passport never moves to a SEQUENCE the bytes do not say.
+#[test]
+fn invite_ics_must_carry_the_payloads_own_uid_and_sequence() {
+    let fixture = fixture();
+    let grant_ref = fixture.grant();
+
+    // The booking's UID frozen with another EVENT's invite document.
+    let other_uid = format!("{}@{BOOKING_PASSPORT_SYSTEM}", entity(0x5A).to_hex());
+    let foreign = ics_blob(&fixture.vault, 0x5B, fixture.actor, &other_uid, 0);
+    assert!(
+        admit_calendar_invite(
+            &fixture.vault,
+            fixture.actor,
+            &payload_for(&fixture, &foreign, RECIPIENT),
+            NOW,
+        )
+        .is_err(),
+        "another EVENT's invite document was admitted under the booking's UID"
+    );
+    let mut sink = SpySink::default();
+    assert!(
+        enqueue_confirm_invite(
+            &fixture.vault,
+            fixture.actor,
+            grant_ref,
+            &ConfirmedBookingInvite {
+                booking_ref: fixture.booking,
+                uid: &fixture.uid,
+                sequence: 0,
+                ics_blob_ref: &foreign,
+            },
+            &mut sink,
+            NOW,
+        )
+        .is_err(),
+        "the booking's grant dispatched another EVENT's invite document"
+    );
+    assert_eq!(sink.calls, 0);
+    assert!(invite_ledger_records(&fixture.vault).is_empty());
+
+    // The booking's own UID, at a SEQUENCE the payload does not claim.
+    let drifted = ics_blob(&fixture.vault, 0x5C, fixture.actor, &fixture.uid, 3);
+    assert!(
+        admit_calendar_invite(
+            &fixture.vault,
+            fixture.actor,
+            &payload_for(&fixture, &drifted, RECIPIENT),
+            NOW,
+        )
+        .is_err(),
+        "a SEQUENCE 3 document was admitted as SEQUENCE 0"
+    );
+
+    // The booking's own event, with another EVENT's invite riding beside it
+    // in a lower-case component, nested inside the admitted VEVENT, or in a
+    // second calendar.
+    let own_ics = emit_imip_ics(&ImipEmitRequest {
+        method: CalendarInviteMethod::Request,
+        uid: fixture.uid.clone(),
+        sequence: 0,
+        organizer: SENDER.to_owned(),
+        attendees: vec![RECIPIENT.to_owned()],
+        summary: EVENT_TYPE.to_owned(),
+        starts_at_utc: SLOT_START,
+        ends_at_utc: SLOT_END,
+        tz_label: "UTC".to_owned(),
+        dtstamp_utc: NOW,
+    })
+    .expect("emit invite document");
+    let own_text = String::from_utf8(own_ics).expect("utf-8 invite");
+    let smuggled = format!("BEGIN:vevent\r\nUID:{other_uid}\r\nSEQUENCE:0\r\nEND:vevent\r\n");
+    let nested = format!("BEGIN:VEVENT\r\nUID:{other_uid}\r\nSEQUENCE:0\r\nEND:VEVENT\r\n");
+    for (seed, document) in [
+        (
+            0x5E,
+            own_text.replace("END:VCALENDAR", &format!("{smuggled}END:VCALENDAR")),
+        ),
+        (
+            0x60,
+            own_text.replace("END:VEVENT", &format!("{nested}END:VEVENT")),
+        ),
+        (
+            0x5F,
+            format!(
+                "{own_text}{}",
+                String::from_utf8(
+                    emit_imip_ics(&ImipEmitRequest {
+                        method: CalendarInviteMethod::Request,
+                        uid: other_uid,
+                        sequence: 0,
+                        organizer: SENDER.to_owned(),
+                        attendees: vec![RECIPIENT.to_owned()],
+                        summary: EVENT_TYPE.to_owned(),
+                        starts_at_utc: SLOT_START,
+                        ends_at_utc: SLOT_END,
+                        tz_label: "UTC".to_owned(),
+                        dtstamp_utc: NOW,
+                    })
+                    .expect("emit second calendar"),
+                )
+                .expect("utf-8 invite"),
+            ),
+        ),
+    ] {
+        let blob_ref = persist_imip_blob(
+            &fixture.vault,
+            &entity(seed),
+            "one-1814 invite",
+            document.as_bytes(),
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(fixture.actor, EdgeActorClass::Human),
+            NOW,
+        )
+        .expect("persist invite blob");
+        assert!(
+            admit_calendar_invite(
+                &fixture.vault,
+                fixture.actor,
+                &payload_for(&fixture, &blob_ref, RECIPIENT),
+                NOW,
+            )
+            .is_err(),
+            "a second event rode the booking's invite document (blob seed {seed:#x})"
+        );
+    }
+
+    // The booking's own document dispatches.
+    let own = ics_blob(&fixture.vault, 0x5D, fixture.actor, &fixture.uid, 0);
+    enqueue_confirm_invite(
+        &fixture.vault,
+        fixture.actor,
+        grant_ref,
+        &ConfirmedBookingInvite {
+            booking_ref: fixture.booking,
+            uid: &fixture.uid,
+            sequence: 0,
+            ics_blob_ref: &own,
+        },
+        &mut sink,
+        NOW,
+    )
+    .expect("the booking's own invite document dispatches");
+    assert_eq!(sink.calls, 1);
+}
+
+/// H279: the public dispatch door runs calendar admission on an attached
+/// invite, and the gate matches a page grant only for the invite admission
+/// bound to it. Under a live page grant, an unrelated EVENT's invite and the
+/// booking's own invite aimed at another address both stay unsent; the
+/// booking's own invite to its booker goes.
+#[test]
+fn public_dispatch_admits_the_invite_and_binds_the_page_grant_to_it() {
+    let fixture = fixture();
+    let _grant = fixture.grant();
+    let dispatch = |payload: CalendarInvitePayload, target: &str, sink: &mut SpySink| {
+        let intent_ref = format!("h279-public-{}-{}", payload.uid, target);
+        let intent = crate::outbound::OutboundIntent::from_trigger(
+            crate::outbound::OutboundIntentDraft::new(
+                fixture.actor.to_hex(),
+                CALENDAR_INVITE_VERB,
+                CALENDAR_INVITE_CHANNEL,
+                target.to_owned(),
+            )
+            .idempotency_key(intent_ref.clone()),
+            crate::outbound::OutboundIntentTrigger::agent_immediate("h279".to_owned()),
+        );
+        let request = crate::outbound::OutboundDispatchRequest::new(
+            format!("outbound:{intent_ref}"),
+            intent_ref,
+            intent,
+            crate::outbound::OutboundDispatchActor::agent(fixture.actor),
+            crate::outbound::OutboundDispatchGate::allow_when_policy_grants(),
+            NOW,
+            crate::outbound::OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .counterparty_ref(target.to_owned())
+        .calendar_invite(payload);
+        // A refusal and a held send both leave the sink untouched.
+        let _ = fixture.vault.dispatch_outbound_intent(request, sink);
+    };
+    let mut sink = SpySink::default();
+
+    // An unrelated EVENT the booker never booked, sent past every invite door.
+    let unrelated = event(&fixture.vault, 0x5E);
+    let unrelated_uid = format!("{}@{BOOKING_PASSPORT_SYSTEM}", unrelated.to_hex());
+    index_passport_uid(&fixture.vault, &unrelated_uid, &unrelated).expect("index uid");
+    let unrelated_blob = ics_blob(&fixture.vault, 0x5F, fixture.actor, &unrelated_uid, 0);
+    let mut unrelated_payload = payload_for(&fixture, &unrelated_blob, RECIPIENT);
+    unrelated_payload.uid.clone_from(&unrelated_uid);
+    dispatch(unrelated_payload, RECIPIENT, &mut sink);
+    assert_eq!(
+        sink.calls, 0,
+        "the page grant sent an invite for an EVENT nobody booked"
+    );
+
+    // The booking's own invite, delivered to someone other than its booker.
+    let own = ics_blob(&fixture.vault, 0x60, fixture.actor, &fixture.uid, 0);
+    dispatch(
+        payload_for(&fixture, &own, RECIPIENT),
+        "intruder@elsewhere.test",
+        &mut sink,
+    );
+    assert_eq!(
+        sink.calls, 0,
+        "the page grant sent the booking's invite to another address"
+    );
+
+    // The booking's own invite to its booker passes admission and the gate.
+    dispatch(payload_for(&fixture, &own, RECIPIENT), RECIPIENT, &mut sink);
+    assert_eq!(
+        sink.calls, 1,
+        "the admitted invite under its page grant is sent"
+    );
+}

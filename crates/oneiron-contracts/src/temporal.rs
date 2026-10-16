@@ -141,10 +141,13 @@ impl TemporalExpression {
     }
 
     /// Resolves this expression to inclusive UTC Unix-second retrieval bounds
-    /// from a caller-supplied clock.
-    #[must_use]
-    pub fn resolve(self, now: u64) -> TimeRange {
-        match self {
+    /// from a caller-supplied clock. A clock past
+    /// [`TEMPORAL_MAX_REFERENCE_SECS`] is refused, never converted (F30).
+    pub fn resolve(self, now: u64) -> std::result::Result<TimeRange, TemporalExpressionParseError> {
+        if now > TEMPORAL_MAX_REFERENCE_SECS {
+            return Err(TemporalExpressionParseError::ReferenceOutOfRange);
+        }
+        Ok(match self {
             Self::Recent => TimeRange {
                 start: now.saturating_sub(TEMPORAL_RECENT_DAYS * TEMPORAL_SECONDS_PER_DAY),
                 end: now,
@@ -194,7 +197,7 @@ impl TemporalExpression {
                     }
                 }
             }
-        }
+        })
     }
 
     /// Whether this expression points after the reference time `now`, given
@@ -212,6 +215,8 @@ pub enum TemporalExpressionParseError {
     Empty,
     #[error("unsupported temporal expression: {expression}")]
     Unsupported { expression: String },
+    #[error("temporal reference time is past 9999-12-31T23:59:59Z")]
+    ReferenceOutOfRange,
 }
 
 /// Parses a standalone temporal expression and resolves it to inclusive UTC
@@ -220,7 +225,7 @@ pub fn parse_temporal_expression(
     expression: &str,
     now: u64,
 ) -> std::result::Result<TimeRange, TemporalExpressionParseError> {
-    Ok(TemporalExpression::parse(expression)?.resolve(now))
+    TemporalExpression::parse(expression)?.resolve(now)
 }
 
 /// What retrieval did with one temporal phrase of a query.
@@ -292,9 +297,8 @@ pub fn temporal_hints_from_query(query: &str, now: u64) -> QueryTemporalHints {
             index = quantity_at(&words, index).map_or(index + 1, |(_, after)| after.max(index + 1));
             continue;
         };
-        let resolved = expression
-            .filter(|_| now <= TEMPORAL_MAX_REFERENCE_SECS)
-            .map(|expression| (expression, expression.resolve(now)));
+        let resolved =
+            expression.and_then(|expression| Some((expression, expression.resolve(now).ok()?)));
         let status = match resolved {
             None => TemporalHintStatus::Unresolved,
             Some((expression, range)) if expression.looks_ahead(range, now) => {
@@ -1036,8 +1040,8 @@ impl TemporalGranularity {
 mod tests {
     use super::TemporalHintStatus::{Future, Unresolved, Used};
     use super::{
-        QueryTemporalHints, TemporalExpressionParseError, TemporalHintReport, TimeRange,
-        parse_temporal_expression, temporal_hints_from_query,
+        QueryTemporalHints, TEMPORAL_MAX_REFERENCE_SECS, TemporalExpressionParseError,
+        TemporalHintReport, TimeRange, parse_temporal_expression, temporal_hints_from_query,
     };
 
     const FROZEN_NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
@@ -1264,6 +1268,39 @@ mod tests {
         let hints = temporal_hints_from_query("notes from last month", u64::MAX);
         assert_eq!(hints.range, None);
         assert_eq!(hints.hints[0].status, Unresolved);
+    }
+
+    /// F30 (H56): the direct temporal door refuses a reference time past
+    /// year 9999 with a typed error for every expression kind; it never
+    /// panics in calendar conversion.
+    #[test]
+    fn direct_resolve_refuses_an_out_of_range_reference_time() {
+        for expression in [
+            "recent",
+            "yesterday",
+            "last week",
+            "last month",
+            "last year",
+            "this month",
+            "last friday",
+            "last 2 weeks",
+            "next 3 hours",
+        ] {
+            assert_eq!(
+                parse_temporal_expression(expression, u64::MAX),
+                Err(TemporalExpressionParseError::ReferenceOutOfRange),
+                "{expression}"
+            );
+            assert_eq!(
+                parse_temporal_expression(expression, TEMPORAL_MAX_REFERENCE_SECS + 1),
+                Err(TemporalExpressionParseError::ReferenceOutOfRange),
+                "{expression}"
+            );
+            assert!(
+                parse_temporal_expression(expression, TEMPORAL_MAX_REFERENCE_SECS).is_ok(),
+                "{expression} at the last supported second"
+            );
+        }
     }
 
     #[test]

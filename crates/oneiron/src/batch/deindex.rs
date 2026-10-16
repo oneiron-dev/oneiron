@@ -33,6 +33,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::task_authority::reject_fact_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
+    crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, id)? else {
         return Ok(());
     };
@@ -77,6 +78,8 @@ pub(crate) fn deindex_entity(
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
+    // The port's direct delete reaches here without the batch guard.
+    crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(
         store,
         wtxn,
@@ -209,6 +212,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::embed::record_embedding_device_in_txn(store, wtxn, id, None)?;
+    crate::deletion::tear_derived_rows_in_txn(store, wtxn, id, true)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
     crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     let related_neighbors = delete_related_edges(store, wtxn, id)?;

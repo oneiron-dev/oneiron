@@ -108,6 +108,11 @@ pub struct ServeArgs {
     #[arg(long)]
     pub port: Option<u16>,
 
+    /// Port, on the same host, of the listener that serves artifacts (`/a/`)
+    /// on an origin of their own. Defaults to any free port.
+    #[arg(long = "artifact-port")]
+    pub artifact_port: Option<u16>,
+
     /// Host issuer key material (never a bearer credential) and input for
     /// minted `v2` tokens. Rotating it invalidates all minted tokens.
     #[arg(long)]
@@ -307,6 +312,7 @@ impl fmt::Debug for ServeArgs {
             .field("keystore_dir", &self.keystore_dir)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field(
                 "insecure_allow_unauthenticated",
