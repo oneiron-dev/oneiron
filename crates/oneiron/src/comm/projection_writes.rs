@@ -175,6 +175,7 @@ pub(super) fn put_projected_comm_claim_in_txn(
     Ok((id, true))
 }
 
+#[cfg(test)]
 pub(super) fn put_comm_claim_with_id_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -185,8 +186,8 @@ pub(super) fn put_comm_claim_with_id_in_txn(
     put_comm_claim_with_id_in_txn_inner(vault, wtxn, id, value, occurred_at, false)
 }
 
-/// [`put_comm_claim_with_id_in_txn`] on the ENGINE-OWNED setting, for the
-/// projection a contact writer authors on the party's behalf (ONE-1752).
+/// The comm claim put on the ENGINE-OWNED setting, for the projection a
+/// contact writer authors on the party's behalf (ONE-1752).
 ///
 /// The contact door already validated and authorized that write; re-asking the
 /// public criticality ladder here would turn one recorded counterparty fact
