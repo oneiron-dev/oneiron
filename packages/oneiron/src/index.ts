@@ -207,6 +207,15 @@ export class Oneiron {
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
     },
+    authority: {
+      audit: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityAudit(input) as unknown),
+      handoff_alarms: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as unknown), {
+        acknowledge: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as unknown),
+      }),
+    },
+    inspection: {
+      resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultInspectionResolve(input) as unknown),
+    },
     shared: {
       propose_delete: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeDelete(input) as unknown),
       propose_transfer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeTransfer(input) as unknown),
@@ -221,11 +230,6 @@ export class Oneiron {
       change: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersChange(input) as unknown),
       remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
       leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
-    },
-    authority: {
-      handoff_alarms: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as unknown), {
-        acknowledge: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as unknown),
-      }),
     },
     lenses: {
       propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),

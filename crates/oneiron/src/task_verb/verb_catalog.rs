@@ -33,6 +33,8 @@ pub enum AgentVerb {
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultPacksPut,
+    VaultAuthorityAudit,
+    VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
     VaultSharedProposeRemoveOwner,
@@ -181,6 +183,8 @@ impl AgentVerb {
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultPacksPut,
+        Self::VaultAuthorityAudit,
+        Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
         Self::VaultSharedProposeRemoveOwner,
@@ -332,6 +336,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
             Self::VaultSharedProposeRemoveOwner => "vault.shared.propose_remove_owner",
@@ -481,6 +487,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -636,6 +644,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -826,6 +836,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -1062,6 +1074,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],
@@ -1211,6 +1225,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],

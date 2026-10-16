@@ -665,6 +665,25 @@
       "section": false
     },
     {
+      "name": "vault.authority.audit",
+      "input": "crate::receipt::AuthorityAuditQuery",
+      "output": "crate::receipt::AuthorityAuditPage",
+      "call": "crate::receipt::authority_audit_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.inspection.resolve",
+      "input": "crate::lens::InspectionResolveRequest",
+      "output": "crate::lens::InspectionResolved",
+      "call": "memory.inspection_resolve(&input)?",
+      "scope": "Read",
+      "admission": {"lane_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.shared.propose_delete",
       "input": "crate::task_verb::sdk::SharedVaultRequest",
       "output": "crate::federation::PendingAuthorityAct",

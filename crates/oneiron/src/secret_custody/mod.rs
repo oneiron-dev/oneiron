@@ -60,6 +60,7 @@
 mod codec;
 mod doors;
 mod floor;
+mod masked_files;
 mod owner_door;
 mod types;
 
@@ -84,6 +85,11 @@ pub(crate) use self::doors::{
     restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub use self::masked_files::SecretSight;
+pub(crate) use self::masked_files::{
+    KeySpan, MASKED_FILE_BAND, MaskedFile, filled, holds_masked_keys_in_txn, masked_file_in_txn,
+    put_masked_file_in_txn, sighted_bytes_in_txn,
+};
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
 };

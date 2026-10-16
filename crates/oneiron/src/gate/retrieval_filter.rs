@@ -9,6 +9,7 @@ use rmpv::Value;
 
 use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
+use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 use super::grants::{
     PolicyScopedGrant, scoped_read_actor_matches, scoped_read_grant_has_read_effector,
@@ -50,6 +51,30 @@ impl ResolvedRetrievalFilter {
     pub(crate) fn under_credential_of(mut self, actor: &ScopedReadActorKey) -> Self {
         self.credential = actor.authority_scope().cloned();
         self
+    }
+
+    /// The kinds and band this filter reads, as a canonical Scope. A
+    /// deny-all filter reads nothing whatever this says.
+    #[must_use]
+    pub(crate) fn read_scope(&self) -> Scope {
+        read_scope(self.entity_types.as_ref(), self.max_sensitivity_band)
+    }
+}
+
+/// Retrieval's kinds (`None` is every registered type) and sensitivity band
+/// as a canonical Scope: `bands` and `sensitivity`, every other axis top.
+/// Worlds, facets and audience are the scoped-read matcher's to judge, never
+/// this projection's.
+fn read_scope(types: Option<&BTreeSet<u8>>, band: u8) -> Scope {
+    Scope {
+        bands: types.cloned().map_or(ScopeAxis::All, ScopeAxis::Some),
+        sensitivity: SensitivityCeiling::AtMost(match band {
+            0 => Sensitivity::Public,
+            1 => Sensitivity::Private,
+            2 => Sensitivity::Sensitive,
+            _ => Sensitivity::Restricted,
+        }),
+        ..Scope::top()
     }
 }
 
@@ -160,69 +185,70 @@ impl RetrievalPolicyFloor {
                 .is_none_or(|types| !types.is_empty())
     }
 
-    /// One complete read grant's floor: its retrieval selectors met with its
-    /// canonical Scope's bands and sensitivity. `None` when an invalid or
-    /// empty selector, or a band or sensitivity at bottom, leaves it no row.
-    fn from_grant(grant: &PolicyScopedGrant) -> Option<Self> {
-        let mut row = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)?;
-        let authority = &grant.authority_scope;
-        match &authority.bands {
-            crate::federation::ScopeAxis::All => {}
-            crate::federation::ScopeAxis::Some(kinds) if !kinds.is_empty() => {
-                row.allowed_entity_types = Some(match row.allowed_entity_types {
-                    Some(existing) => existing.intersection(kinds).copied().collect(),
-                    None => kinds.clone(),
-                });
-            }
-            _ => return None,
-        }
-        let max = match authority.sensitivity {
-            crate::federation::SensitivityCeiling::Bottom => return None,
-            crate::federation::SensitivityCeiling::AtMost(max) => max as u8,
-        };
-        row.max_sensitivity_band = row.max_sensitivity_band.min(max);
-        Some(row)
+    /// The kinds and band this floor reads, as a canonical Scope.
+    fn authority(&self) -> Scope {
+        read_scope(
+            self.allowed_entity_types.as_ref(),
+            self.max_sensitivity_band,
+        )
     }
 
-    fn from_authority_scope(scope: &crate::federation::Scope) -> Self {
-        use crate::federation::{ScopeAxis, SensitivityCeiling};
+    /// This floor reading `scope`'s kinds and band. A band axis at bottom
+    /// leaves no type; a sensitivity at bottom admits no row, even public.
+    fn with_authority(mut self, scope: &Scope) -> Self {
+        self.allowed_entity_types = match &scope.bands {
+            ScopeAxis::All => None,
+            ScopeAxis::Some(types) => Some(types.clone()),
+            ScopeAxis::Bottom => Some(BTreeSet::new()),
+        };
+        match scope.sensitivity {
+            SensitivityCeiling::AtMost(max) => self.max_sensitivity_band = max as u8,
+            SensitivityCeiling::Bottom => {
+                self.max_sensitivity_band = 0;
+                self.deny_all = true;
+            }
+        }
+        self
+    }
+
+    /// One complete read grant's floor: its retrieval selectors met with its
+    /// canonical Scope. `None` when an invalid or empty selector, or a band
+    /// or sensitivity at bottom, leaves it no row.
+    fn from_grant(grant: &PolicyScopedGrant) -> Option<Self> {
+        let row = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)?;
+        let authority = &grant.authority_scope;
+        if authority.bands.is_bottom() || authority.sensitivity == SensitivityCeiling::Bottom {
+            return None;
+        }
+        let met = row.authority().meet(authority);
+        Some(row.with_authority(&met))
+    }
+
+    fn from_authority_scope(scope: &Scope) -> Self {
         if !scope.verbs.contains(&"read".to_owned())
             || scope.worlds.is_bottom()
             || scope.audience.is_bottom()
+            || scope.bands.is_bottom()
+            || scope.sensitivity == SensitivityCeiling::Bottom
         {
             return Self::deny_all();
         }
-        let types = match &scope.bands {
-            ScopeAxis::All => None,
-            ScopeAxis::Some(types) if !types.is_empty() => Some(types.clone()),
-            _ => return Self::deny_all(),
-        };
-        let max = match scope.sensitivity {
-            SensitivityCeiling::AtMost(max) => max as u8,
-            _ => return Self::deny_all(),
-        };
-        Self {
-            allowed_entity_types: types,
-            max_sensitivity_band: max,
-            ..Self::legacy()
-        }
+        Self::legacy().with_authority(&Self::legacy().authority().meet(scope))
     }
 
+    /// Both floors at once: their kinds and band meet on the Scope lattice;
+    /// the quality and status constraints take the stricter of each.
     fn intersect(self, other: &Self) -> Self {
-        let allowed_entity_types = match (self.allowed_entity_types, &other.allowed_entity_types) {
-            (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
-            (Some(left), None) => Some(left),
-            (None, Some(right)) => Some(right.clone()),
-            (None, None) => None,
-        };
+        let authority = self.authority().meet(&other.authority());
         Self {
-            allowed_entity_types,
-            max_sensitivity_band: self.max_sensitivity_band.min(other.max_sensitivity_band),
+            allowed_entity_types: None,
+            max_sensitivity_band: 3,
             include_stale: self.include_stale && other.include_stale,
             min_confidence: self.min_confidence.max(other.min_confidence),
             min_salience: self.min_salience.max(other.min_salience),
             deny_all: self.deny_all || other.deny_all,
         }
+        .with_authority(&authority)
     }
 
     /// A safe prefilter for alternative grants, not a complete authorization.
@@ -299,28 +325,15 @@ impl RetrievalPolicyFloor {
         Some(floor)
     }
 
-    /// Intersect the grant envelope with caller constraints; requests only narrow.
+    /// Intersect the grant envelope with caller constraints; requests only
+    /// narrow. A meet that leaves no type denies every row.
     fn restrict(self, other: Self) -> Self {
-        let allowed_entity_types = match (self.allowed_entity_types, other.allowed_entity_types) {
-            (Some(mut left), Some(right)) => {
-                left.retain(|entity_type| right.contains(entity_type));
-                Some(left)
-            }
-            (left, right) => left.or(right),
-        };
-        let deny_all = self.deny_all
-            || other.deny_all
-            || allowed_entity_types
-                .as_ref()
-                .is_some_and(BTreeSet::is_empty);
-        Self {
-            allowed_entity_types,
-            max_sensitivity_band: self.max_sensitivity_band.min(other.max_sensitivity_band),
-            include_stale: self.include_stale && other.include_stale,
-            min_confidence: self.min_confidence.max(other.min_confidence),
-            min_salience: self.min_salience.max(other.min_salience),
-            deny_all,
-        }
+        let mut narrowed = self.intersect(&other);
+        narrowed.deny_all |= narrowed
+            .allowed_entity_types
+            .as_ref()
+            .is_some_and(BTreeSet::is_empty);
+        narrowed
     }
 
     fn validate(&self) -> Result<()> {

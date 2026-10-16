@@ -48,6 +48,7 @@ mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
+mod inspection;
 mod key_value;
 mod locality;
 mod machine_write;

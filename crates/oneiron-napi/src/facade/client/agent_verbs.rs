@@ -314,6 +314,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_authority_audit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.audit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_inspection_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.inspection.resolve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_shared_propose_delete(
         &self,
         input: serde_json::Value,
