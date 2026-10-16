@@ -14,20 +14,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2709 | 903 | 65 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2803 | 903 | 75 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 24 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 14 | 5 | 0 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 5 | 0 | 0 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
-| [oneiron-container](codemap/oneiron-container.md) | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice | 1 | 0 | 0 |
+| [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 9 | 0 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 55 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 15 | 8 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 56 | 14 | 4 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 57 | 14 | 5 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 18 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
-| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
+| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 9 | 2 | 0 |
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 4 | 1 |
 | [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 0 | 0 |
 | [oneiron-image-openrouter](codemap/oneiron-image-openrouter.md) | OpenRouter Image API adapter | 3 | 0 | 0 |
@@ -45,14 +45,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 16 | 4 | 1 |
 | [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 7 | 2 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 2 | 0 | 0 |
-| [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 11 | 8 | 0 |
+| [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 11 | 8 | 1 |
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
-| [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 4 | 0 | 0 |
+| [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 44 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 395 | 182 | 16 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 404 | 182 | 19 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 0 | 0 |
-| [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 16 | 1 | 0 |
+| [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 17 | 1 | 0 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 14 | 1 | 2 |
 
 ## oneiron
@@ -62,18 +62,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `access_grant` | dir | 7 | L | yes | AccessGrant control-plane record substrate |
 | `actor_claims` | dir | 12 | m | yes | ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR… |
 | `affect` | dir | 8 | m | yes | — |
-| `agent_def` | dir | 19 | m | yes | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
-| `agent_dispatch` | dir | 25 | m | yes | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
+| `agent_def` | dir | 20 | m | yes | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
+| `agent_dispatch` | dir | 29 | m | yes | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `agent_inbox_lens` | file+dir | 4 | s | yes | Renderer-neutral inbox query |
 | `agent_run_status` | file | 1 | s | — | AgentRunStatus contract shared by Context Board and run-tree viewers |
 | `analyzer` | file | 1 | s | — | Multilingual analyzer subsystem |
-| `anchored_annotation` | dir | 11 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
+| `anchored_annotation` | dir | 13 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 6 | L | yes | Local artifact hosting over pinned code snapshots and blob exports |
-| `attempt_queue` | dir | 38 | m | — | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 125 | m | yes | AUTHORITY_LOG record substrate |
-| `autoreason_campaign` | file+dir | 12 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
-| `batch` | dir | 101 | L | yes | — |
-| `blob_artifact` | dir | 49 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
+| `attempt_queue` | dir | 39 | m | — | Generic LMDB-backed background attempt queue |
+| `authority` | dir | 124 | m | yes | AUTHORITY_LOG record substrate |
+| `autoreason_campaign` | file+dir | 15 | L | — | Engine-side AR-3 campaign reports and read-only experiment selection |
+| `batch` | dir | 102 | L | yes | — |
+| `blob_artifact` | dir | 50 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 9 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | s | — | — |
 | `booking` | dir | 78 | m | — | Engine-generic booking module |
@@ -88,14 +88,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `channel_identity_provider` | dir | 15 | m | — | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
 | `channel_identity_selection` | dir | 7 | m | yes | Relationship-context channel-identity selection law (ONE-1826) |
 | `checkout` | file+dir | 10 | m | — | — |
-| `claim` | dir | 64 | L | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
+| `claim` | dir | 65 | L | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
 | `cluster` | file+dir | 2 | m | — | Pure, deterministic claim clustering — a PROPOSE-ONLY tool |
 | `code_artifact` | file | 1 | m | yes | — |
 | `code_document` | dir | 7 | m | yes | Base-mode live code files: actor-stamped Loro operations and verified tested frontiers |
 | `code_memory` | file+dir | 7 | m | — | — |
 | `code_revision` | dir | 13 | m | yes | — |
-| `code_run` | dir | 45 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
-| `code_sandbox` | dir | 31 | m | — | Sandbox boundary contract for code-mode execution |
+| `code_run` | dir | 48 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
+| `code_sandbox` | dir | 40 | m | yes | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | dir | 11 | m | yes | — |
 | `code_view` | dir | 3 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
 | `codebase` | dir | 10 | m | yes | — |
@@ -105,7 +105,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `commitment_lifecycle` | file+dir | 2 | m | — | Commitment fulfillment and gap-decay lifecycle (CMT-4, ONE-1541) |
 | `commitment_schedule` | file+dir | 5 | m | yes | Commitment schedule evaluation and durable projection (CMT-2, ONE-1539) |
 | `commitment_wake` | dir | 6 | m | — | Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery |
-| `compaction` | file+dir | 12 | L | — | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
+| `compaction` | file+dir | 13 | L | — | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
 | `companion` | dir | 10 | m | yes | Companion task queue and PERSON/FACET persona compilation |
 | `config` | file+dir | 2 | m | — | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
 | `connector_key` | dir | 26 | L | yes | Connector-key registry records with effector budgets for OF-277 GOV-01 |
@@ -121,23 +121,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `corpus` | file | 1 | s | — | Project-axis selection for corpus queries |
 | `counterparty_contact` | dir | 10 | m | yes | Counterparty contact record substrate (OF-347 CID-7) |
 | `credential_door` | dir | 10 | m | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
-| `critic` | file+dir | 8 | m | — | Multi-critic review node primitives |
+| `critic` | file+dir | 10 | m | — | Multi-critic review node primitives |
 | `deletion` | dir | 28 | L | yes | ARCH-0038 deletion/redaction contract types |
 | `delivery_window` | dir | 8 | s | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 8 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
-| `dispatch_byoa` | dir | 9 | m | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
+| `dispatch_byoa` | dir | 10 | m | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
 | `distance` | file | 1 | s | — | Cosine distance kernels, defined in `oneiron-retrieval` |
-| `dreamer_consolidation` | dir | 50 | L | yes | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `dreamer_consolidation` | dir | 57 | L | yes | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `dreamer_plugin_suggest` | dir | 2 | m | — | Dreamer proactive-help × pack catalog (ONE-1707) |
 | `dreamer_prefilter` | dir | 8 | m | yes | ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth… |
 | `dreamer_promotion` | file+dir | 5 | m | — | Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7) |
-| `dreamer_runner` | dir | 31 | L | yes | Private Dreamer runner store plus atomic admission |
+| `dreamer_runner` | dir | 32 | L | yes | Private Dreamer runner store plus atomic admission |
 | `dreamer_tournament` | dir | 6 | m | — | OF-366 tournament claim-authoring runner primitives |
-| `dreamer_wake` | dir | 24 | L | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
+| `dreamer_wake` | dir | 28 | L | yes | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `edge` | file+dir | 3 | m | — | Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo` |
 | `edit_distance` | file+dir | 69 | L | yes | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
 | `edit_roundtrip` | dir | 32 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
-| `edit_settle` | dir | 10 | m | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
+| `edit_settle` | dir | 10 | L | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 13 | L | yes | — |
 | `engine_executor` | dir | 19 | L | — | Engine-native JS code-mode executor |
 | `entity_doc` | dir | 15 | m | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
@@ -162,7 +162,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `identity_redirect` | file+dir | 2 | m | yes | ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time… |
 | `identity_reputation` | file | 1 | m | — | ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4) |
 | `identity_topology` | dir | 20 | m | yes | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
-| `inbox` | dir | 5 | m | yes | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
+| `inbox` | dir | 7 | m | yes | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
 | `ingest` | dir | 55 | m | yes | Ingest source registry and source-local normalization |
 | `interlocutor` | file+dir | 2 | m | yes | Interlocutor resolution substrate (OF-365 ILD-1) |
 | `learning` | dir | 10 | m | — | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… |
@@ -174,15 +174,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `linkedin_connector` | dir | 8 | m | — | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
 | `linkedin_lead_preload` | file+dir | 5 | m | yes | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
 | `live_rows` | file+dir | 2 | m | yes | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
-| `llm` | dir | 80 | L | yes | Engine-facing LLM invocation seam |
+| `llm` | dir | 85 | L | yes | Engine-facing LLM invocation seam |
 | `m8_forward_oracle` | dir | 3 | s | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `maintain` | dir | 6 | m | — | — |
-| `memory` | dir | 119 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `memory` | dir | 121 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `merge_queue` | dir | 8 | m | — | Durable batched speculation over real detached worktrees |
 | `msgpack_shape` | file | 1 | s | — | A budget check of untrusted MessagePack before it is decoded |
 | `note` | file+dir | 37 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 18 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
-| `office_body` | dir | 3 | m | yes | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX as a typed… |
+| `office_body` | dir | 4 | L | yes | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX as a typed… |
 | `origin` | dir | 60 | L | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `outbound` | dir | 40 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
 | `outbound_chokepoint` | dir | 9 | m | — | Replay-first outbound effect execution |
@@ -193,7 +193,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `own_rate` | file | 1 | s | yes | Node-local OF-520 own-rate windows |
 | `panic_report` | file | 1 | s | — | The content-free panic report a host installs before it opens a vault |
 | `persona_snapshot` | dir | 7 | m | yes | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
-| `pipeline` | dir | 57 | L | — | — |
+| `pipeline` | dir | 59 | L | — | — |
 | `policy_model` | dir | 45 | m | yes | Policy classification over two planes |
 | `ports` | dir | 42 | m | yes | Transaction-composable storage ports |
 | `posterior` | file | 1 | s | — | Shared Beta posterior bandit seam |
@@ -204,9 +204,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `provider_confidence` | file+dir | 4 | m | — | Provider confidence priors and read-time confidence composition (ES-09) |
 | `psych_profile` | dir | 7 | m | — | PsychProfile snapshot record substrate |
 | `query_expansion` | file | 1 | s | — | Host-injected HyDE query-expansion seam |
-| `reaction` | dir | 15 | m | yes | Message reactions as `conversation.reaction` claims (OF-372) |
-| `receipt` | dir | 21 | m | yes | Unified receipt-family query surface over existing receipt emitters |
-| `recovery` | file+dir | 54 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
+| `reaction` | dir | 17 | m | yes | Message reactions as `conversation.reaction` claims (OF-372) |
+| `receipt` | dir | 22 | m | yes | Unified receipt-family query surface over existing receipt emitters |
+| `recovery` | file+dir | 55 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `registry` | dir | 8 | s | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `repo_mutation` | dir | 18 | m | yes | — |
 | `rerank` | file+dir | 4 | m | — | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
@@ -229,23 +229,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `settings` | file+dir | 5 | m | yes | Persisted customization settings and client-visible change events |
 | `share` | file+dir | 4 | m | yes | Revocable brief read grants |
 | `side_table` | dir | 10 | m | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
-| `skill` | dir | 14 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
-| `skill_attribution` | dir | 14 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `skill` | dir | 15 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
+| `skill_attribution` | dir | 16 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 7 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
-| `skill_hub` | dir | 70 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
-| `skill_optimize` | dir | 27 | L | yes | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
-| `skill_reliability` | dir | 14 | m | yes | ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load… |
+| `skill_hub` | dir | 72 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
+| `skill_optimize` | dir | 29 | L | yes | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
+| `skill_reliability` | dir | 15 | m | yes | Bayesian skill retrieval over the shared learning.reliability projection |
 | `skill_scan` | file+dir | 2 | m | — | Deterministic static skill scanning and the activation risk consult |
-| `slim` | file+dir | 2 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
+| `slim` | file+dir | 3 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `speculative` | file | 1 | m | — | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `store` | dir | 62 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `subject_model` | file+dir | 15 | m | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 6 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 5 | m | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
-| `sync` | dir | 135 | L | yes | CRDT sync layer for Oneiron |
+| `sync` | dir | 139 | L | yes | CRDT sync layer for Oneiron |
 | `tagging` | dir | 14 | L | yes | The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036… |
 | `task_authority` | dir | 3 | L | yes | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
-| `task_verb` | dir | 80 | L | yes | Typed, actor-bound verbs over the Context Board TASKS section |
+| `task_verb` | dir | 92 | XL | yes | Typed, actor-bound verbs over the Context Board TASKS section |
 | `team` | dir | 6 | m | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `temporal` | file | 1 | s | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
 | `test_support` | file | 1 | s | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
@@ -255,6 +255,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `thread_lens` | file+dir | 2 | m | — | Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5) |
 | `thread_passport` | file+dir | 8 | m | yes | Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02) |
 | `tokenizer` | file | 1 | s | — | — |
+| `training_pack` | dir | 6 | s | yes | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
+| `typed_body` | file | 1 | m | yes | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
 | `vault` | dir | 29 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | dir | 17 | m | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `voice_cascade` | file+dir | 30 | m | yes | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
@@ -262,7 +264,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `voice_segment` | file | 1 | s | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `wave_orchestration` | file+dir | 2 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `web_fetch` | file+dir | 4 | m | — | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
-| `workspace_roster` | dir | 66 | L | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
+| `workspace_roster` | dir | 71 | L | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `world_keys` | dir | 18 | L | yes | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 | `write_envelope` | file+dir | 2 | m | yes | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
 
@@ -320,7 +322,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `cdp` | file | 1 | s | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
+| `cdp` | file | 1 | m | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `driver` | file | 1 | m | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
 | `outline` | file | 1 | s | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
 | `session` | file | 1 | s | A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's… |
@@ -338,7 +340,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `lib` | file | 1 | m | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice |
+| `egress` | file | 1 | s | Host-owned transport |
+| `launcher` | file | 1 | m | Unprivileged in-container launcher and syscall-argument broker |
+| `linux` | file | 1 | m | Linux UAPI used on both sides of the seccomp listener |
+| `relay_protocol` | file | 1 | s | Bounded host/guest network transport over the no-NIC VM's private vsock |
+| `supervisor` | file | 1 | m | Host custody of the seccomp listener and all network transports |
+| `transport` | file | 1 | s | A selected backend's private duplex transport and lifetime custody |
+| `wire` | file | 1 | s | Private, bounded launcher/supervisor protocol |
 
 ## oneiron-contracts
 
@@ -398,6 +406,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `ooxml` | file | 1 | m | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `retained_opc` | dir | 7 | L | Bounded, retained OPC archives |
 | `xlfn` | file | 1 | s | Excel's storage qualifiers for post-2007 worksheet functions |
+| `xlsx_body` | file | 1 | L | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
 
 ## oneiron-driver
 
@@ -421,7 +430,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `boot` | file | 1 | m | Linux-only PID-1 setup, isolated execution, and final-delivery custody |
 | `conformance` | file | 1 | s | Typed Component Model fixture |
+| `egress` | file | 1 | s | The native microVM supervisor's network reaches only the engine's vsock |
 | `filesystem` | file | 1 | m | Descriptor-relative workspace access |
+| `native` | file | 1 | s | Native OCI session inside a no-NIC microVM |
 | `protocol` | file | 1 | s | Strict, bounded host/guest JSON framing and admission state machine |
 | `runtime` | file | 1 | m | Canonical typed Component Model execution with six non-write imports |
 | `tests` | file | 1 | — | — |
@@ -569,7 +580,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `agent_verbs` | file | 1 | m | — |
+| `agent_verbs` | file | 1 | L | — |
 | `caps` | file | 1 | s | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `embedded` | file | 1 | m | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `error` | file | 1 | s | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
@@ -590,6 +601,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `budget` | file | 1 | s | Host-authored prelude plus source under one guest program ceiling |
+| `network` | file | 1 | s | Address checks shared by SSRF-guarded fetches and the sandbox proxy |
 | `path` | file | 1 | s | Canonical guest-workspace addressing, including byte-counted components |
 | `workspace` | file | 1 | s | Checked file and directory shape; reservations compose before execution |
 
@@ -609,7 +621,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
 | `admission` | file+dir | 2 | m | Admission for work a remote caller can start |
 | `ai_host` | dir | 15 | m | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
-| `api` | dir | 216 | L | HTTP query routes for web dashboard access |
+| `api` | dir | 221 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 8 | m | HTTP authentication for log-backed version-two capability slips |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
 | `byte_line` | file | 1 | m | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
@@ -621,23 +633,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `embedder` | dir | 24 | L | The embedder provider slot |
 | `error` | dir | 2 | m | Structured HTTP API errors and their schema catalog |
 | `feedback_delivery` | file+dir | 2 | s | Deployment-selected feedback transport |
-| `handler` | dir | 19 | m | WebSocket upgrade handler and connection lifecycle |
+| `handler` | dir | 19 | L | WebSocket upgrade handler and connection lifecycle |
 | `http_listener` | file+dir | 2 | m | The TCP accept loop the server and the embedder endpoint serve through |
 | `idempotency` | file+dir | 2 | m | — |
 | `linear_host` | file+dir | 2 | m | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
 | `livequery` | file+dir | 23 | L | App-tier framing and coarse live-query state, separate from WindowSync |
 | `logging` | file+dir | 2 | s | What the binaries write to their log sinks, and the panic hook |
 | `machine` | file | 1 | s | What this machine has: cores, memory, descriptors, free disk |
-| `managed` | dir | 14 | L | Managed serve mode: the vault engine as a supervised child process |
+| `managed` | dir | 15 | L | Managed serve mode: the vault engine as a supervised child process |
 | `mcp` | dir | 22 | m | MCP connector actor registry |
-| `models` | dir | 29 | L | The one provider abstraction: `[models]` in, one backend per seat out |
+| `models` | dir | 30 | L | The one provider abstraction: `[models]` in, one backend per seat out |
 | `oauth_relay` | file | 1 | L | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `oneironer` | dir | 12 | m | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `owner` | dir | 20 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
 | `projection` | file+dir | 2 | m | — |
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
-| `runtime` | dir | 6 | m | — |
-| `server` | dir | 21 | m | Sync server state and maintenance jobs, split by concern |
+| `runtime` | dir | 7 | m | — |
+| `server` | dir | 22 | m | Sync server state and maintenance jobs, split by concern |
 | `skills_pack` | file | 1 | s | — |
 | `test_credentials` | file | 1 | m | Request fixtures mint real logged slips before crossing the production router |
 | `usage` | dir | 7 | s | Provider-list metering and host-pushed vault budget limits |
@@ -663,7 +675,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `lib` | dir | 17 | m | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `lib` | dir | 18 | m | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 
 ## oneiron-xlsx-formula
 

@@ -2,9 +2,9 @@
 
 use super::ladder::millis;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung,
-    DecisionTime, HumanAskReason, ProviderPin, Reasoning, ReasoningCause, Reversibility, StopCause,
-    TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
+    DecisionRung, DecisionTime, HumanAskReason, ProviderPin, Reasoning, ReasoningCause,
+    Reversibility, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{
@@ -28,6 +28,9 @@ pub struct SeatRequest {
     pub question: DecisionQuestion,
     /// Only a bounded, caller-scoped object; never an implicit vault dump.
     pub state: Value,
+    /// Images the question reads, each filling the state field of its name. The
+    /// receipt keeps their evidence refs, never the pixels.
+    pub images: Vec<DecisionImage>,
     /// Caller-authored labels for score levels in ascending order (2 to 10).
     pub score_levels: Vec<String>,
     pub posture: HostingPrivacyPosture,
@@ -51,6 +54,11 @@ impl SeatRequest {
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        DecisionImage::check_call(
+            &self.images,
+            &self.state,
+            matches!(self.question.contract, AnswerContract::Box),
+        )?;
         match &self.question.contract {
             AnswerContract::Score { .. } if !(2..=10).contains(&self.score_levels.len()) => {
                 return Err(FatalLlmError::InvalidRequest.into());
@@ -247,15 +255,22 @@ pub async fn decide_at_remote_seat(
     }
     let in_band = probability.is_some_and(|p| match request.question.contract {
         AnswerContract::Noul => dial.band.contains(p),
-        // Choice/score report the selected answer's confidence, not P(yes).
-        // Neither has a 'confident no' below the lower bound.
-        AnswerContract::Choice { .. } | AnswerContract::Score { .. } => p < dial.band.high,
+        // Choice/score/box report the selected answer's confidence, not P(yes).
+        // None has a 'confident no' below the lower bound.
+        AnswerContract::Choice { .. } | AnswerContract::Score { .. } | AnswerContract::Box => {
+            p < dial.band.high
+        }
     });
     if in_band {
         answer = DecisionAnswer::Abstain;
         human_ask = Some(HumanAskReason::Uncertain);
     }
     let answered = (answer != DecisionAnswer::Abstain).then_some(DecisionRung::SystemOne);
+    let evidence_versions = request
+        .images
+        .iter()
+        .map(|image| image.evidence.clone())
+        .collect();
     Ok(TypedDecision {
         answer,
         probability,
@@ -268,7 +283,7 @@ pub async fn decide_at_remote_seat(
             providers,
             band: dial.band,
             band_version: 0,
-            evidence_versions: Vec::new(),
+            evidence_versions,
             cost_per_thousand: None,
             paired: Vec::new(),
             person: Vec::new(),

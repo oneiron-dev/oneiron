@@ -87,6 +87,7 @@ pub struct ScopedRead<'a> {
 mod admission;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
+mod retrieval_loop;
 mod search;
 mod visibility;
 

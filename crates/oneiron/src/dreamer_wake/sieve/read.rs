@@ -364,6 +364,8 @@ impl Reader {
             start,
             end,
             kind,
+            entity: None,
+            novel: None,
             origin,
             source_digest: chunk.digest,
             policy_digest: self.policy_digest,
@@ -400,6 +402,7 @@ fn queue_in_txn(
 ) -> Result<()> {
     let key = ((u32::MAX - span.score).to_be_bytes(), span.id);
     QUEUE.put(store, txn, &key, span)?;
+    super::recipes::remember_in_txn(store, txn, span)?;
     let listed = (span.turn, key);
     if !SPANS.contains(store, txn, &listed)? {
         SPANS.put(store, txn, &listed, &())?;

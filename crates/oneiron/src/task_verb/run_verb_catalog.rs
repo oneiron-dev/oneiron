@@ -8,6 +8,11 @@ pub enum RunVerb {
     VaultClaimsPut,
     VaultClaimsSupersede,
     VaultEdgesPut,
+    SelfFold,
+    SelfCompact,
+    SelfUnfold,
+    SelfFolds,
+    TasksRefuse,
 }
 impl RunVerb {
     pub const ALL: &[Self] = &[
@@ -15,6 +20,11 @@ impl RunVerb {
         Self::VaultClaimsPut,
         Self::VaultClaimsSupersede,
         Self::VaultEdgesPut,
+        Self::SelfFold,
+        Self::SelfCompact,
+        Self::SelfUnfold,
+        Self::SelfFolds,
+        Self::TasksRefuse,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -25,12 +35,23 @@ impl RunVerb {
             Self::VaultClaimsPut => "vault.claims.put",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::VaultEdgesPut => "vault.edges.put",
+            Self::SelfFold => "self.fold",
+            Self::SelfCompact => "self.compact",
+            Self::SelfUnfold => "self.unfold",
+            Self::SelfFolds => "self.folds",
+            Self::TasksRefuse => "tasks.refuse",
         }
     }
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::VaultClaimsPut | Self::VaultClaimsSupersede | Self::VaultEdgesPut
+            Self::VaultClaimsPut
+                | Self::VaultClaimsSupersede
+                | Self::VaultEdgesPut
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::TasksRefuse
         )
     }
     pub const fn effect(self) -> crate::code_run::SelfEffect {
@@ -39,6 +60,11 @@ impl RunVerb {
             Self::VaultClaimsPut => crate::code_run::SelfEffect::MemoryPutClaim,
             Self::VaultClaimsSupersede => crate::code_run::SelfEffect::MemorySupersedeClaim,
             Self::VaultEdgesPut => crate::code_run::SelfEffect::MemoryPutEdge,
+            Self::SelfFold => crate::code_run::SelfEffect::Fold,
+            Self::SelfCompact => crate::code_run::SelfEffect::Fold,
+            Self::SelfUnfold => crate::code_run::SelfEffect::Fold,
+            Self::SelfFolds => crate::code_run::SelfEffect::Fold,
+            Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
         }
     }
 }
