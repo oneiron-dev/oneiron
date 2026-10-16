@@ -3,15 +3,19 @@
 //! or deletes FEDERATION_GRANT records in the caller's writer and, given the
 //! host's slip issuer, revokes the capability slips of whoever lost a role.
 //! Removal is access revocation, never a group rekey.
-use super::{Effect, SharedActExecutionReceipt, SharedVaultChange, invalid, live_owners, non_root};
+use super::{
+    Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
+    invalid, live_owners, non_root,
+};
 use crate::authority::HostSlipIssuer;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
+use crate::federation::record_scope::ScopedRecord;
 use crate::federation::{
-    FederationGrant, FederationGrantRole as Role, FederationGrantScope, OrgAdminPower,
-    SharedVaultWrite, decode_federation_grant_body, encode_federation_grant_body,
+    FederationGrant, FederationGrantRole as Role, FederationGrantScope, OrgAdminPower, Scope,
+    ScopeAxis, SharedVaultWrite, decode_federation_grant_body, encode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::write_envelope::WriteActor;
@@ -31,7 +35,7 @@ const fn rank(role: Role) -> u8 {
 
 impl Vault {
     /// Every live grant record over `vault_id`, delegates included.
-    fn vault_grants_in_txn(
+    pub(super) fn vault_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
@@ -218,9 +222,45 @@ impl Vault {
         Ok((grants, revoked))
     }
 
+    /// For an unexecuted export-first `remove_owner` act, the export of what
+    /// its target could read: every axis their Owner grant reads, at the
+    /// export verb. Taken before the act's writer opens, as the export door
+    /// reads its own snapshot.
+    pub(super) fn removal_export(
+        &self,
+        act_id: &str,
+    ) -> Result<Option<(EntityId, Vec<ScopedRecord>)>> {
+        let (target, mut reads) = {
+            let txn = self.store.env.read_txn()?;
+            let Some(act) = self.pending_authority_act_in_txn(&txn, act_id)? else {
+                return Ok(None);
+            };
+            if act.execution.is_some()
+                || SharedActKind::parse(&act.act) != Some(SharedActKind::RemoveOwner)
+            {
+                return Ok(None);
+            }
+            let plan: RemoveOwnerPlan = decode(&act.payload)?;
+            if !plan.export_first {
+                return Ok(None);
+            }
+            let target = EntityId::from_hex(&plan.target)?;
+            let reads = self
+                .vault_grants_in_txn(&txn, act.vault_id)?
+                .into_iter()
+                .find(|(_, grant)| grant.member_ref == target && grant.role == Role::Owner)
+                .map(|(_, grant)| grant.authority_scope)
+                .ok_or_else(invalid)?;
+            (target, reads)
+        };
+        reads.verbs = ScopeAxis::All;
+        let records = self.export_records_in_scope(&Scope::top(), &reads, &Scope::top())?;
+        Ok(Some((target, records)))
+    }
+
     /// One no-wait membership change: authorize `actor` (by `power`, or as
     /// themselves when `None`), apply it, then record its receipt and notices.
-    fn change_membership(
+    fn change_shared_membership(
         &self,
         actor: &AuthenticatedOwner,
         vault_id: u64,
@@ -244,7 +284,7 @@ impl Vault {
         let effect = apply(&mut txn, actor_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, now,
+            &mut txn, id, vault_id, None, actor_id, owners, effect, None, now,
         )?;
         txn.commit()?;
         Ok(receipt)
@@ -259,7 +299,7 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_membership(
+        self.change_shared_membership(
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
@@ -301,7 +341,7 @@ impl Vault {
         role: Role,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_membership(
+        self.change_shared_membership(
             admin,
             vault_id,
             Some(OrgAdminPower::AssignRole),
@@ -336,7 +376,7 @@ impl Vault {
         member: EntityId,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_membership(
+        self.change_shared_membership(
             admin,
             vault_id,
             Some(OrgAdminPower::RemoveMember),
@@ -369,7 +409,7 @@ impl Vault {
         vault_id: u64,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_membership(member, vault_id, None, |txn, actor, now| {
+        self.change_shared_membership(member, vault_id, None, |txn, actor, now| {
             let from = self
                 .member_role_in_txn(txn, vault_id, actor)?
                 .ok_or_else(invalid)?;

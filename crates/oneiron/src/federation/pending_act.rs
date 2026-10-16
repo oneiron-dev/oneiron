@@ -693,6 +693,36 @@ impl Vault {
         self.store.vault_meta.put(txn, &k, &encode(&record)?)?;
         Ok(())
     }
+    /// Binds the receipt a deletion recovery wrote to the act whose claim
+    /// named the same request, in that recovery's writer: the effect an
+    /// interrupted claim carried finished there, so its receipt is the act's.
+    /// An act no claim names, or one already bound, is left alone.
+    pub(crate) fn bind_recovered_act_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        request: &str,
+        receipt: String,
+    ) -> Result<bool> {
+        let mut claimed = None;
+        for row in self.store.vault_meta.prefix_iter(txn, ACT_PREFIX)? {
+            let (k, raw) = row?;
+            let record: PendingAuthorityAct = decode(raw)?;
+            if record.execution.as_ref().is_some_and(|execution| {
+                execution.request == request && execution.receipt.is_none()
+            }) {
+                claimed = Some((k.to_vec(), record));
+                break;
+            }
+        }
+        let Some((k, mut record)) = claimed else {
+            return Ok(false);
+        };
+        if let Some(execution) = &mut record.execution {
+            execution.receipt = Some(receipt);
+        }
+        self.store.vault_meta.put(txn, &k, &encode(&record)?)?;
+        Ok(true)
+    }
     pub fn pending_act_started_events(
         &self,
         holder: &AuthenticatedOwner,

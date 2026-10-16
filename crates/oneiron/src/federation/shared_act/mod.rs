@@ -8,6 +8,7 @@ mod membership;
 
 use super::FederationGrantRole as Role;
 use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, key};
+use super::record_scope::ScopedRecord;
 use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -81,6 +82,10 @@ pub struct RemoveOwnerPlan {
     pub target: String,
     pub successor: Option<String>,
     pub target_keeps: Option<Role>,
+    /// The removal flow's "export first?": on yes, the removal runs only
+    /// with an export of what the target could read, handed to the host
+    /// for them. Removal alone exports nothing.
+    pub export_first: bool,
 }
 
 /// What one executed act or membership change did.
@@ -133,7 +138,27 @@ pub struct SharedActExecutionReceipt {
     pub grants: Vec<String>,
     /// Capability slips revoked with the change, hex.
     pub revoked_slips: Vec<String>,
+    /// The export made for a removed Owner before the removal.
+    pub export: Option<SharedActExport>,
     pub completed_at: u64,
+}
+
+/// What an export-first removal exported for `member`: the record count and
+/// a digest over the exported records, never their content.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedActExport {
+    pub member: String,
+    pub records: u64,
+    pub digest: String,
+}
+
+/// An executed act's receipt, and for an export-first removal the records
+/// the host delivers to the removed Owner.
+#[derive(Debug, Clone)]
+pub struct SharedActExecution {
+    pub receipt: SharedActExecutionReceipt,
+    pub export: Vec<ScopedRecord>,
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -243,6 +268,7 @@ impl Vault {
         target: EntityId,
         successor: Option<EntityId>,
         target_keeps: Option<Role>,
+        export_first: bool,
     ) -> Result<PendingAuthorityAct> {
         {
             let txn = self.store.env.read_txn()?;
@@ -258,6 +284,7 @@ impl Vault {
             target: target.to_hex(),
             successor: successor.map(|id| id.to_hex()),
             target_keeps,
+            export_first,
         };
         self.start_authority_act(
             starter,
@@ -303,12 +330,15 @@ impl Vault {
     /// recipient's notice commit in one writer, so the act takes effect at
     /// most once; running it again returns the same receipt. With `slips`,
     /// the capability slips of anyone who lost a role are revoked with it.
+    /// An export-first removal exports what its target could read before
+    /// the writer opens, and records that export's digest in the receipt.
     pub fn execute_completed_shared_act(
         &self,
         executor: &AuthenticatedOwner,
         act_id: &str,
         slips: Option<&HostSlipIssuer>,
-    ) -> Result<SharedActExecutionReceipt> {
+    ) -> Result<SharedActExecution> {
+        let mut export = self.removal_export(act_id)?;
         let mut txn = self.store.env.write_txn()?;
         let actor = executor.revalidate_person_in_txn(self, &txn)?;
         let act = self
@@ -326,7 +356,12 @@ impl Vault {
                 .map(|id| self.shared_act_receipt_in_txn(&txn, id))
                 .transpose()?
                 .flatten();
-            return receipt.ok_or(Error::ConcurrentWrite("authority act already executed"));
+            return receipt
+                .map(|receipt| SharedActExecution {
+                    receipt,
+                    export: Vec::new(),
+                })
+                .ok_or(Error::ConcurrentWrite("authority act already executed"));
         }
         let creation = check_vault(self, &txn, act.vault_id)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
@@ -399,7 +434,9 @@ impl Vault {
                 let plan: RemoveOwnerPlan = decode(&act.payload)?;
                 let target = hex_id(&plan.target)?;
                 let successor = plan.successor.as_deref().map(hex_id).transpose()?;
-                if plan.v != PLAN_VERSION {
+                if plan.v != PLAN_VERSION
+                    || plan.export_first != export.as_ref().is_some_and(|(of, _)| *of == target)
+                {
                     return Err(invalid());
                 }
                 let (grants, revoked_slips) = self.hand_over_in_txn(
@@ -425,6 +462,21 @@ impl Vault {
             }
             SharedActKind::Erase => return Err(invalid()),
         };
+        let export = export.take().map(|(member, records)| {
+            let mut digest = blake3::Hasher::new();
+            for record in &records {
+                digest.update(record.id.as_bytes());
+                digest.update(&(record.bytes.len() as u64).to_be_bytes());
+                digest.update(&record.bytes);
+            }
+            let summary = SharedActExport {
+                member: member.to_hex(),
+                records: records.len() as u64,
+                digest: digest.finalize().to_hex().to_string(),
+            };
+            (summary, records)
+        });
+        let (summary, records) = export.unzip();
         let receipt = self.record_shared_change_in_txn(
             &mut txn,
             receipt_id,
@@ -433,10 +485,14 @@ impl Vault {
             actor,
             owners,
             effect,
+            summary,
             now,
         )?;
         txn.commit()?;
-        Ok(receipt)
+        Ok(SharedActExecution {
+            receipt,
+            export: records.unwrap_or_default(),
+        })
     }
 
     /// Persist the receipt and one notice to each live Owner, the actor and
@@ -451,6 +507,7 @@ impl Vault {
         actor: EntityId,
         owners: BTreeSet<EntityId>,
         effect: Effect,
+        export: Option<SharedActExport>,
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
         let (act_id, request_id) = act.unzip();
@@ -467,6 +524,7 @@ impl Vault {
                 .iter()
                 .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
                 .collect(),
+            export,
             completed_at: now,
         };
         self.store

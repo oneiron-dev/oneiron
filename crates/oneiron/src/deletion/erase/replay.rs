@@ -252,6 +252,13 @@ impl Vault {
             sweep_extras(captured.as_ref()),
         )?;
         if let Some(request) = decoded.request_id.as_ref() {
+            // A local shared act claimed this request before its purge was
+            // interrupted: this recovery's receipt is that act's receipt.
+            self.bind_recovered_act_receipt_in_txn(
+                wtxn,
+                &uuid::Uuid::from_bytes(*request).to_string(),
+                receipt_id.to_hex(),
+            )?;
             clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
         }
         Ok((
