@@ -500,6 +500,25 @@ pub(super) fn decode_code_symbol_revision(value: &Value) -> Result<CodeSymbolRev
     Ok(symbol)
 }
 
+/// The repository path a CODE_SYMBOL entity body names.
+pub(crate) fn code_symbol_entity_path(body: &[u8]) -> Result<String> {
+    let invalid = || {
+        Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+            "code symbol entity body lacks a path",
+        ))
+    };
+    let value = rmpv::decode::read_value(&mut &body[..]).map_err(|_| invalid())?;
+    value
+        .as_map()
+        .and_then(|map| {
+            map.iter()
+                .find(|(key, _)| key.as_str() == Some(KEY_PATH))
+                .and_then(|(_, path)| path.as_str())
+        })
+        .map(str::to_owned)
+        .ok_or_else(invalid)
+}
+
 pub(super) fn encode_code_symbol_entity_body(
     repo_ref: &RepoRef,
     symbol: &CodeSymbolRevision,

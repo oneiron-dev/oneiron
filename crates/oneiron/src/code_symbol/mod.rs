@@ -34,6 +34,7 @@ pub use self::types::{
     CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
 };
 
+pub(crate) use self::codec::code_symbol_entity_path;
 pub(crate) use self::storage::delete_code_symbol_manifest_in_txn;
 
 // The flat code_symbol.rs module used to provide these names to the sibling test
