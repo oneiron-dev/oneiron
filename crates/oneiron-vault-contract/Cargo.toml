@@ -18,11 +18,15 @@ doctest = false
 anyhow = "1"
 blake3 = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 subtle = "2"
 zeroize = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["sync", "time", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "net"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
