@@ -11,9 +11,29 @@ pub(super) const ONBOARDING: SideTable<String, OnboardingJournalRow, Raw> =
     SideTable::new(&side_table::WORKSPACE_ONBOARDING);
 
 /// Per-workspace roster preset (org, venture name, house actor/identity, house
-/// display name). Key: workspace_ref.
-pub(super) const PRESET: SideTable<String, WorkspaceRosterPreset, Raw> =
+/// display name) and the owner's `work_companion` policy beside it. Key:
+/// workspace_ref.
+pub(super) const PRESET: SideTable<String, PresetRow, Raw> =
     SideTable::new(&side_table::WORKSPACE_ROSTER_PRESET);
+
+/// One workspace's row under [`PRESET`]: the preset every onboarding into it
+/// agrees with, and the owner's `work_companion` policy. The policy is no part
+/// of the preset an intent carries: an owner sets it, a caller never states it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PresetRow {
+    pub(super) preset: WorkspaceRosterPreset,
+    pub(super) work_companion: WorkCompanionPolicy,
+}
+
+impl RawValue for PresetRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&preset_row_value(self))?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_preset_row(bytes)?)
+    }
+}
 
 /// One onboarded member's roster row (actor, optional companion
 /// person/actor/facet, identity). Key: [`RosterMemberKey`].
@@ -40,7 +60,9 @@ pub enum MemberOnboardingStep {
     ActorLinked,
     /// `(Member, Member)` federation grant written.
     MemberGranted,
-    /// Required companion person/actor/facet/record/grant written.
+    /// The member's companion bound: a work companion's person, actor,
+    /// facet, record and grant written, or a brought companion's bindings
+    /// and consent checked and her work facet associated.
     CompanionBorn,
     /// Delegated mailbox bound and its exact autonomy verified, when requested.
     MailboxBound,
@@ -114,10 +136,14 @@ pub struct MemberOnboardingOutcome {
     pub actor_ref: EntityId,
     /// The `(Member, Member)` federation grant.
     pub federation_grant_ref: EntityId,
-    /// The companion `PERSON`, when one was born.
+    /// The companion `PERSON`, born here or brought.
     pub companion_person_ref: Option<EntityId>,
-    /// The companion's `AGENT_DEF` actor, when one was born.
+    /// The companion's `AGENT_DEF` actor, born here or brought.
     pub companion_actor_ref: Option<EntityId>,
+    /// The workspace's policy is `suggest` and this member brought her own
+    /// companion: a work companion is recommended. Advisory, never a refusal;
+    /// read from the policy in force when the outcome is answered.
+    pub work_companion_suggested: bool,
     /// The delegated mailbox identity, when one was bound.
     pub delegated_identity_ref: Option<EntityId>,
     /// Time the journal first reached [`MemberOnboardingStep::Complete`].

@@ -41,6 +41,10 @@ pub(super) const FIELD_INTENT_REF: &str = "intent_ref";
 pub const FIELD_TASK_REF: &str = "task_ref";
 /// Durable proof that the connector execution sink was reached successfully.
 pub const FIELD_TRANSPORT_DISPATCHED: &str = "transport_dispatched";
+/// OF-543 ONE TASK TYPE: the placed type-tree node of a spawn/task receipt.
+pub const FIELD_TYPE_REF_NODE: &str = "type_ref.node_id";
+/// OF-543 ONE TASK TYPE: the tree version that placement was read from.
+pub const FIELD_TYPE_REF_TREE_VERSION: &str = "type_ref.tree_version";
 /// ARCH-0053 §2 pack manifest: the `skill_id@version` rows the attempt loaded,
 /// as a canonical JSON array string.
 pub const FIELD_MANIFEST_SKILLS: &str = "manifest.skills";
@@ -305,6 +309,10 @@ pub enum ReceiptKind {
     ///
     /// Not emit-adjacent: the read answers its own caller.
     ServedForm,
+    /// One fact-hook run (ARCH-0080 §6): the hook, its CODE id and body hash,
+    /// the duration, the outcome, `now` and the rows it read. Written by the
+    /// runner in the run's own transaction, to its own store.
+    Hook,
 }
 
 impl ReceiptKind {
@@ -322,6 +330,7 @@ impl ReceiptKind {
             Self::CommitmentLifecycle => "commitment_lifecycle",
             Self::Extraction => "extraction",
             Self::ServedForm => "served_form",
+            Self::Hook => "hook",
         }
     }
 
@@ -339,6 +348,7 @@ impl ReceiptKind {
             "commitment_lifecycle" => Some(Self::CommitmentLifecycle),
             "extraction" => Some(Self::Extraction),
             "served_form" => Some(Self::ServedForm),
+            "hook" => Some(Self::Hook),
             _ => None,
         }
     }
@@ -350,6 +360,15 @@ impl ReceiptKind {
     /// with a receipt, and future emit receipt kinds extend this match.
     #[must_use]
     pub const fn is_emit_adjacent(self) -> bool {
+        matches!(self, Self::Outbound)
+    }
+
+    /// OF-543: spawn and task receipts require a `typeRef`. Today those
+    /// receipts project through the attempt pack receipt on the `Outbound`
+    /// kind, so that kind is where the stamp is required and stamped;
+    /// future dedicated spawn/task kinds extend this match.
+    #[must_use]
+    pub const fn is_spawn_or_task_receipt(self) -> bool {
         matches!(self, Self::Outbound)
     }
 }

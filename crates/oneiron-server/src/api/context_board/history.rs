@@ -236,13 +236,15 @@ fn current_board_authority<'a>(
 /// Records the board `response` served for the caller's own TURN, under the
 /// caller's read capability, and puts the record in it. The engine writes
 /// selection claims only for families that changed, and pins each document
-/// at the revision served. `check` judges the response with its record in
-/// it, inside the recording transaction: a response it refuses records
-/// nothing, and its error returns.
+/// at the revision served. `worlds` is the world authority the board
+/// resolved, recorded as the selection's world tiers. `check` judges the
+/// response with its record in it, inside the recording transaction: a
+/// response it refuses records nothing, and its error returns.
 pub(super) fn record_board_turn(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
     (turn, owner): (EntityId, EntityId),
+    worlds: &oneiron::pipeline::ResolvedWorldAuthority,
     response: &mut ContextBoardResponse,
     check: impl FnOnce(&ContextBoardResponse) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
@@ -250,19 +252,26 @@ pub(super) fn record_board_turn(
     let mut refused = None;
     let recorded = server
         .vault
-        .record_board_turn_now(turn, owner, memories.as_ref(), read, |receipt| {
-            response.board_turn = Some(ContextBoardTurnRecord {
-                turn: receipt.turn.to_hex(),
-                source_revision_ref: hex(&receipt.source_revision_ref.0),
-                changed_claims: receipt
-                    .changed_claims
-                    .iter()
-                    .map(EntityId::to_hex)
-                    .collect(),
-            });
-            refused = check(response).err();
-            refused.is_none()
-        })
+        .record_board_turn_now(
+            turn,
+            owner,
+            memories.as_ref(),
+            Some(worlds),
+            read,
+            |receipt| {
+                response.board_turn = Some(ContextBoardTurnRecord {
+                    turn: receipt.turn.to_hex(),
+                    source_revision_ref: hex(&receipt.source_revision_ref.0),
+                    changed_claims: receipt
+                        .changed_claims
+                        .iter()
+                        .map(EntityId::to_hex)
+                        .collect(),
+                });
+                refused = check(response).err();
+                refused.is_none()
+            },
+        )
         .map_err(|error| board_history_error(&turn, error))?;
     match (recorded, refused) {
         (Some(_), _) => Ok(()),

@@ -122,8 +122,8 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
         ("/v1/companion/personas", "get"),
         ("/v1/companion/personas/access-requests", "get"),
-        ("/v1/companion/profiles/{persona_ref}", "get"),
-        ("/v1/companion/profiles/{persona_ref}", "post"),
+        ("/v1/companion/profiles/{person_ref}", "get"),
+        ("/v1/companion/profiles/{person_ref}", "post"),
     ] {
         if let Some(operation) = spec
             .get_mut("paths")

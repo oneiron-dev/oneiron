@@ -1,9 +1,12 @@
 //! The media embedder adapter and the backfill that fills a declared media space from stored
-//! image and audio ASSETs (OF-370; ARCH-0036 `#media-embedder`).
+//! image and audio ASSETs, and from text documents once the text slot binds the space (OF-370;
+//! ARCH-0036 `#media-embedder`).
 //!
 //! The host supplies the model behind [`MediaEmbedder`]; the engine finds the ASSETs whose
-//! media kind is bound to that embedder's space and lacks a vector there, hands their bytes
-//! over outside any transaction, and stores each vector under its space and kind.
+//! media kind is bound to that embedder's space and lacks a vector there, and on the one-space
+//! preset the records the text index would embed whose current text has no vector there. It
+//! hands their bytes over outside any transaction and stores each vector under its space and
+//! kind.
 
 use std::collections::BTreeSet;
 
@@ -12,19 +15,26 @@ use rmpv::Value;
 use super::EmbedderLocality;
 use super::space::{
     InputKind, embedding_space_in_txn, has_media_vector_in_txn, kind_slot_bindings_in_txn,
-    put_media_vector_in_txn,
+    media_text_hash_in_txn, put_media_vector_in_txn, text_hash,
 };
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_ASSET;
+use crate::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+};
 
 /// ASSET body field holding the bytes.
 const ASSET_BODY_BYTES: &str = "bytes";
 /// ASSET body field holding the bytes' media type.
 const ASSET_BODY_MEDIA_TYPE: &str = "mime_type";
+/// The media type a text document is handed over as.
+const TEXT_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
+/// The records the text index embeds ([`super::embeddable_payload_in_txn`]), and so the text
+/// documents a text-bound space holds.
+const TEXT_DOCUMENT_TYPES: [u8; 3] = [ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN];
 
 /// One stored media item handed to a media embedder.
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +45,8 @@ pub struct MediaEmbeddingInput<'a> {
     pub bytes: &'a [u8],
 }
 
-/// A host model that embeds image and audio documents into one declared space.
+/// A host model that embeds image and audio documents, and on the one-space preset text
+/// documents, into one declared space.
 pub trait MediaEmbedder: Send + Sync {
     /// The declared space this model's vectors belong to.
     fn space_id(&self) -> &str;
@@ -50,17 +61,18 @@ pub trait MediaEmbedder: Send + Sync {
 /// What one media backfill pass did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MediaEmbedReport {
-    /// ASSETs read.
+    /// ASSETs and text documents read.
     pub scanned: usize,
     /// Vectors stored this pass.
     pub embedded: usize,
-    /// ASSETs that already had a vector in the space.
+    /// Items that already had a vector in the space, a text document one of its current text.
     pub already_embedded: usize,
     /// ASSETs whose media kind is not bound to the embedder's space.
     pub unbound: usize,
-    /// ASSETs holding no inline image or audio bytes.
+    /// ASSETs holding no inline image or audio bytes, and text documents holding no text to
+    /// embed.
     pub no_media: usize,
-    /// ASSETs deleted before their vector landed.
+    /// Items deleted, or text documents whose text moved, before their vector landed.
     pub vanished: usize,
 }
 
@@ -69,11 +81,15 @@ struct PendingMedia {
     kind: InputKind,
     media_type: String,
     bytes: Vec<u8>,
+    /// A text document's text hash, checked again before its vector lands.
+    text_hash: Option<[u8; 32]>,
 }
 
 impl Vault {
     /// Fills `embedder`'s space with up to `max_items` vectors for stored image and audio
-    /// ASSETs whose kind slot binds to that space.
+    /// ASSETs whose kind slot binds to that space, and, when the text slot binds it (the
+    /// one-space preset), for the records the text index embeds, at their current text. A
+    /// text document whose text moved since its vector was stored is embedded again.
     ///
     /// # Errors
     ///
@@ -105,7 +121,7 @@ impl Vault {
                 });
             }
             let bindings = kind_slot_bindings_in_txn(&self.store, &rtxn)?;
-            let kinds: BTreeSet<InputKind> = [InputKind::Image, InputKind::Audio]
+            let kinds: BTreeSet<InputKind> = InputKind::ALL
                 .into_iter()
                 .filter(|kind| {
                     bindings.space_for(*kind) == Some(space_id) && space.accepts.contains(kind)
@@ -113,7 +129,7 @@ impl Vault {
                 .collect();
             if kinds.is_empty() {
                 return Err(Error::InvalidConfig(format!(
-                    "no media kind slot is bound to embedding space {space_id}"
+                    "no kind slot is bound to embedding space {space_id}"
                 )));
             }
             let mut pending = Vec::new();
@@ -156,7 +172,38 @@ impl Vault {
                     kind,
                     media_type,
                     bytes,
+                    text_hash: None,
                 });
+            }
+            if kinds.contains(&InputKind::Text) {
+                for entity_type in TEXT_DOCUMENT_TYPES {
+                    for id in self
+                        .store
+                        .port_entity_ids_by_type(&rtxn, entity_type, None)?
+                    {
+                        if pending.len() >= max_items {
+                            break;
+                        }
+                        let id = id?;
+                        report.scanned += 1;
+                        let Some(text) = text_document_in_txn(self, &rtxn, &id)? else {
+                            report.no_media += 1;
+                            continue;
+                        };
+                        let hash = text_hash(&text);
+                        if media_text_hash_in_txn(&self.store, &rtxn, &space, &id)? == Some(hash) {
+                            report.already_embedded += 1;
+                            continue;
+                        }
+                        pending.push(PendingMedia {
+                            id,
+                            kind: InputKind::Text,
+                            media_type: TEXT_MEDIA_TYPE.to_owned(),
+                            bytes: text.into_bytes(),
+                            text_hash: Some(hash),
+                        });
+                    }
+                }
             }
             (space, kinds, pending)
         };
@@ -199,6 +246,15 @@ impl Vault {
                 report.vanished += 1;
                 continue;
             }
+            // A text that moved, or was erased, while the model ran lands no vector of the
+            // old words; the next pass embeds what it holds now.
+            if let Some(hash) = item.text_hash
+                && text_document_in_txn(self, &wtxn, &item.id)?
+                    .is_none_or(|text| text_hash(&text) != hash)
+            {
+                report.vanished += 1;
+                continue;
+            }
             put_media_vector_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -206,6 +262,7 @@ impl Vault {
                 &bindings,
                 &item.id,
                 item.kind,
+                item.text_hash,
                 vector,
             )?;
             report.embedded += 1;
@@ -213,6 +270,28 @@ impl Vault {
         wtxn.commit()?;
         Ok(report)
     }
+}
+
+/// The text a text-bound space embeds for record `id`: what the text index would embed for it
+/// ([`super::embeddable_payload_in_txn`], [`super::payload_text`]). `None` for a record that is
+/// gone, withdrawn, or holds nothing to embed.
+pub(super) fn text_document_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<String>> {
+    if crate::ports::stale_in_txn(&vault.store, txn, id)? {
+        return Ok(None);
+    }
+    let Some(row) = vault.store.port_entity_record(txn, id)? else {
+        return Ok(None);
+    };
+    let Some(payload) =
+        super::embeddable_payload_in_txn(vault, txn, id, row.entity_type, &row.body)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(super::payload_text(&payload)?.into_owned()))
 }
 
 /// The inline media an ASSET body holds: its media type and non-empty bytes.

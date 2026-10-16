@@ -299,6 +299,11 @@ pub(crate) async fn handle_mcp_request(
             super::device_release::mcp_release_result(server, &actor, &[], false, result)
         }
         "notifications/initialized" => Ok(json!({})),
+        "oneiron/wakes" => {
+            let actor =
+                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            super::wakes::poll(server, &actor, request.params).await
+        }
         // Deliberately actor-free: a listing that echoed the caller back would
         // not be byte-identical across credentials, and the whole point of an
         // immutable registration is that it is the same bytes for everyone.

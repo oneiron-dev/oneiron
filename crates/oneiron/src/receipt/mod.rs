@@ -12,6 +12,7 @@ mod grant;
 mod identity_kind;
 mod kernel;
 mod ledgers;
+mod pack_attribution;
 mod projection;
 mod record;
 mod send_receipt_txn;
@@ -23,8 +24,8 @@ mod tests;
 
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
-    ContextReceiptFields, append_context_receipt_fields, append_pack_manifest_fields,
-    memories_state_ref,
+    ContextReceiptFields, append_context_receipt_fields, append_pack_attribution_fields,
+    append_pack_manifest_fields, append_task_type_fields, memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
@@ -33,10 +34,18 @@ pub use self::grant::{
 pub use self::identity_kind::{proposal_outcome_amended_body, proposal_outcome_delta};
 pub use self::kernel::{
     FIELD_MANIFEST_ACTOR_CLAIMS, FIELD_MANIFEST_SKILLS, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED,
-    ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation,
-    ReceiptScanPosition, ReceiptView,
+    FIELD_TYPE_REF_NODE, FIELD_TYPE_REF_TREE_VERSION, ReceiptKind, ReceiptQuery, ReceiptRecord,
+    ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView,
 };
 pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
+pub use self::pack_attribution::{
+    ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
+    SkillContribution, UsedProvenanceEdge,
+};
+pub(crate) use self::pack_attribution::{
+    has_attempt_pack_attribution_in_txn, put_attempt_pack_attribution_in_txn,
+    take_attempt_pack_attribution_in_txn,
+};
 pub use self::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,
     ReceiptProjectionIntent, ReceiptProjectionRun, project_receipts_by_brief,

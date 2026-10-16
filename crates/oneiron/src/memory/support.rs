@@ -398,6 +398,8 @@ pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
+    /// Sitting selected by the authenticated host, including its peer machine.
+    pub(super) session_key: Option<crate::session_lifecycle::SessionKey>,
     /// Private signer stays with the machine host; only the transcript crosses
     /// this callback, and each commit re-signs after its final approval choice.
     pub(super) machine_signer: Option<([u8; 32], &'v MachineSignFn<'v>)>,
@@ -460,6 +462,7 @@ impl Vault {
             vault: self,
             actor,
             actor_class,
+            session_key: None,
             machine_signer: None,
             read_proof: None,
             room_turn: None,
@@ -491,6 +494,7 @@ impl Vault {
             vault: self,
             actor: machine,
             actor_class: EdgeActorClass::System,
+            session_key: None,
             machine_signer: Some((public_key, sign)),
             read_proof: None,
             room_turn: None,
@@ -528,6 +532,7 @@ impl<'v> Memory<'v> {
                 vault: self.vault,
                 actor: self.actor,
                 actor_class: self.actor_class,
+                session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
                 room_turn: Some(ceiling),
@@ -544,6 +549,14 @@ impl<'v> Memory<'v> {
 }
 
 impl Memory<'_> {
+    /// Bind witnessed turns to the host's actor/machine sitting. This is
+    /// context, not authority: ordinary actor and write checks still apply.
+    #[must_use]
+    pub fn with_session(mut self, key: crate::session_lifecycle::SessionKey) -> Self {
+        self.session_key = Some(key);
+        self
+    }
+
     pub(crate) fn vault(&self) -> &Vault {
         self.vault
     }
@@ -599,6 +612,16 @@ impl Memory<'_> {
             ));
         }
         owner.owner_authored_write_in_txn(self.vault, txn).map(Some)
+    }
+
+    /// The owner proof a host bound ([`Self::with_owner_authorship`]), for a
+    /// door that revalidates it itself; `None` on a surface that writes for
+    /// someone else.
+    pub(crate) fn owner_authorship(&self) -> Option<&crate::consent::AuthenticatedOwner> {
+        if self.host_origin.is_some() || self.machine_signer.is_some() {
+            return None;
+        }
+        self.owner_authorship.as_ref()
     }
 
     /// Binds this surface's claim writes to a host-owned origin: every claim

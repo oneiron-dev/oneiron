@@ -94,6 +94,11 @@ side_tables! {
     DREAMER_NIGHTLY_MERGED: VaultMeta b"dreamer:nightly:merged:v1:" Named;
     /// Promoted/attached proposal ids returned by one nightly child. Key: id16.
     DREAMER_NIGHTLY_OUTPUT: VaultMeta b"dreamer:nightly:output:v1:" Named;
+    /// The NOTE review's page cursor: the last NOTE id a review finished. Key: ().
+    DREAMER_NOTE_REVIEW_CURSOR: VaultMeta b"dreamer:note-review:cursor:v1" Named;
+    /// BLAKE3 of the markdown a NOTE review last read for one NOTE, so an unchanged NOTE is not
+    /// read again. Key: id16.
+    DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
@@ -129,6 +134,9 @@ side_tables! {
     DREAMER_PROJECTION_RIDES: VaultMeta b"dreamer:projection:rides:v1:" Named;
     /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
     DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
+    /// The refusal dial an agent last woke under (OF-533), so its next wake notes a change in its
+    /// own diary. Key: id16(agent).
+    DREAMER_REFUSAL_DIAL_SEEN: VaultMeta b"dreamer:refusal-dial:seen:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
@@ -167,6 +175,9 @@ side_tables! {
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
     DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw;
+    /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
+    /// value: u64be.
+    DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;
     /// Per-round branch tournament evidence row (verdict, synthesis/critique/veto artifact ids) for
     /// one candidate. Key: u16be+string(run_id) + id16 + u16be + u8 + u16be+string(candidate_ref).
     DREAMER_TOURNAMENT_EVIDENCE: VaultMeta b"dreamer:tournament:v1:" Named;
@@ -338,6 +349,14 @@ side_tables! {
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
     /// it. Key: hex64.
     FEEDBACK_RECEIVED_DIGEST: VaultMeta b"feedback:received:v1:" Raw;
+    /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
+    FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
+    /// T2 report membership and vectors, keyed by the first ISSUE id.
+    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    /// Owner disclosure preference, keyed by the resolved publisher reference.
+    FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
+    /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
+    FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
     /// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent introduction.
     /// Key: id16.
     GATE_FOREIGN_AGENT_INTRODUCTION: VaultMeta b"gate.foreign-agent.v1:" Named;
@@ -474,6 +493,30 @@ side_tables! {
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
     INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
+    /// A hook block: the rows one AddBlock pins for a recipient's board deliveries, its lifetime
+    /// and its consumption. Key: id16 (block).
+    HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named;
+    /// An owner check a hook's causal chain raised (a cycle or a deep chain). Key: hash32 (run key).
+    HOOKS_CHECK: VaultMeta b"hooks:check:v1:" Named;
+    /// A fact hook's cursor in one source. Key: id16 (binding) + u8 (source).
+    HOOKS_CURSOR: VaultMeta b"hooks:cursor:v1:" Named;
+    /// The vault's `hooks.enabled` switch; absent is on. Key: ().
+    HOOKS_ENABLED: VaultMeta b"hooks:enabled:v1" Named;
+    /// The owner's grant on one hook binding. Key: id16 (binding).
+    HOOKS_GRANT: VaultMeta b"hooks:grant:v1:" Named;
+    /// Queued work a hook run saved before its cursor moved, and whether it landed. Key: hash32
+    /// (run key).
+    HOOKS_INTENT: VaultMeta b"hooks:intent:v1:" Named;
+    /// The hook chain behind a row a hook landed. Key: id16 (row).
+    HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
+    /// A hook run's saved result and pinned input. Key: hash32 (run key).
+    HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named;
+    /// A hook run's Hook receipt. Key: hash32 (run key).
+    HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named;
+    /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
+    HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
+    /// The last settlement sequence handed out. Key: ().
+    HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;
@@ -564,12 +607,16 @@ side_tables! {
     LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson;
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
+    /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
+    LLM_ENCODER_EXPORT: VaultMeta b"llm:encoder_export:v1" Named;
     /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
     LLM_EXTRACTION_TEACHER_PROBE: VaultMeta b"llm:extraction_teacher_probe:v1" LegacyJson;
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson;
+    /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
+    LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model

@@ -65,6 +65,10 @@ impl CoreAuth {
         }
         let mut auth = Self::from_verified(verified, slip.caveats.is_empty())?;
         auth.instrument = Some(*blake3::hash(token.as_bytes()).as_bytes());
+        auth.facets_owner_exempt = auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| vault.credential_facets_owner_exempt(proof));
         Ok(auth)
     }
     /// Admit a fresh transport binding once. Repeated authorization checks
@@ -154,6 +158,7 @@ impl CoreAuth {
             instrument: Some(claims.slip_id),
             verified_slip: Some(verified),
             locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
         })
     }
     /// An adapter without record-Scope enforcement cannot accept a narrowed
@@ -173,12 +178,16 @@ impl CoreAuth {
     }
     /// A door that reads or writes around the credential's lane cannot honour
     /// a facet narrowing (owner ruling FACET-READ), so it refuses one, as MCP
-    /// refuses a narrowed connector there. Any other bound keeps this door's
-    /// own checks.
+    /// refuses a narrowed connector there. The owner's own narrower
+    /// credential is no narrowing: facets never bind the owner, so this door
+    /// admits it as the lane would. Any other bound keeps this door's own
+    /// checks.
     pub(crate) fn require_unnarrowed_facets(&self) -> Result<(), ApiError> {
-        if self.verified_slip().is_some_and(|proof| {
-            !matches!(proof.scope().facets, oneiron::federation::ScopeAxis::All)
-        }) {
+        if !self.facets_owner_exempt
+            && self.verified_slip().is_some_and(|proof| {
+                !matches!(proof.scope().facets, oneiron::federation::ScopeAxis::All)
+            })
+        {
             return Err(ApiError::forbidden_scope("record-scope"));
         }
         Ok(())

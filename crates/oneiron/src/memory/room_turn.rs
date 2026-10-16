@@ -16,6 +16,7 @@ pub struct RoomTurnHandle<'v> {
 /// The SDK verbs a room turn serves: `vault.recall`, which reads through the
 /// lane, and the room verbs themselves. Every other verb is refused inside a turn.
 const ROOM_TURN_VERBS: &[&str] = &[
+    "report",
     "vault.recall",
     "vault.rooms.list",
     "vault.rooms.messages",
@@ -25,6 +26,8 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.trunk",
     "vault.rooms.claim",
     "vault.rooms.speak",
+    "vault.rooms.host",
+    "vault.rooms.sharing",
 ];
 
 impl<'v> RoomTurnHandle<'v> {

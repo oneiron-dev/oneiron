@@ -5,6 +5,7 @@ mod membership;
 mod preview;
 mod roles;
 mod session;
+mod turn_actions;
 mod visibility;
 
 pub use body::{ConversationBody, ConversationKind, RoomRole};
@@ -18,6 +19,10 @@ pub(crate) use deletion::{
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use session::{SessionMode, SessionPresence};
+pub use turn_actions::{
+    TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine,
+    TurnActionReceipt, TurnActionRequest,
+};
 pub(crate) use visibility::{AudienceCache, conversation_summary_covers, room_for_record_in};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
