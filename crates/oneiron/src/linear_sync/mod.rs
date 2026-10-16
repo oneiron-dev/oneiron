@@ -71,6 +71,7 @@ mod codec;
 mod effect;
 mod engine;
 mod model;
+mod served;
 mod storage_codec;
 
 pub(crate) use self::codec::LINEAR_LINKS;
@@ -87,6 +88,7 @@ pub use self::model::{
     LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWriteActor,
     MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot, WaveResult,
 };
+pub use self::served::ServedLinearEgress;
 
 #[cfg(test)]
 mod tests;

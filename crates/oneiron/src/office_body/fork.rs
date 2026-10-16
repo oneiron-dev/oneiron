@@ -30,6 +30,9 @@ pub enum ConflictKind {
     CompetingMove,
     /// Both sides edited the same text or cells; the text CRDT interleaves them.
     BothEdited,
+    /// Both sides set the same workbook cell or name differently; the later
+    /// write would silently replace the other.
+    BothSet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,9 +88,12 @@ pub(super) fn diff(
         };
         let (mine, other) = (mine.as_slice(), other.as_slice());
         let edits = |kinds: &[ChangeKind]| {
-            kinds
-                .iter()
-                .any(|kind| matches!(kind, ChangeKind::Text | ChangeKind::Cells | ChangeKind::Moved))
+            kinds.iter().any(|kind| {
+                matches!(
+                    kind,
+                    ChangeKind::Text | ChangeKind::Cells | ChangeKind::Moved
+                )
+            })
         };
         let has = |kinds: &[ChangeKind], kind| kinds.contains(&kind);
         let kind = if (has(mine, ChangeKind::Deleted) && edits(other))
@@ -136,7 +142,11 @@ fn side(base: &DocxBody, side: &DocxBody) -> Vec<BlockChange> {
     let common: Vec<(&BodyBlock, usize)> = side
         .blocks
         .iter()
-        .filter_map(|block| before.get(block.id.as_str()).map(|(index, _)| (block, *index)))
+        .filter_map(|block| {
+            before
+                .get(block.id.as_str())
+                .map(|(index, _)| (block, *index))
+        })
         .collect();
     let staying = increasing(&common.iter().map(|(_, index)| *index).collect::<Vec<_>>());
     for (position, (block, _)) in common.iter().enumerate() {

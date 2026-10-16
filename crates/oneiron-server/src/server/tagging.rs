@@ -30,6 +30,7 @@ impl SyncServer {
     pub(crate) fn spawn_slot_workers(self: &Arc<Self>) -> Vec<tokio::task::JoinHandle<()>> {
         [self.spawn_embedding_worker(), self.spawn_tagging_worker()]
             .into_iter()
+            .chain([self.spawn_media_embedding_worker()])
             .flatten()
             .collect()
     }
@@ -182,10 +183,37 @@ impl SyncServer {
         }
     }
 
-    /// Probes the tagger. `false` when it answers as another model, which
-    /// stops the worker: the markers wait for a tagger that is the
-    /// configured one. An unreachable tagger is still configured.
+    /// Probes the tagger. `false` when it answers as another model, or when
+    /// the vault's manifest binds another extraction encoder, which stops
+    /// the worker: the markers wait for a tagger that is the configured and
+    /// bound one. An unreachable tagger is still configured.
     async fn tagger_still_configured(self: &Arc<Self>) -> bool {
+        let server = Arc::clone(self);
+        let selected = tokio::task::spawn_blocking(move || {
+            server
+                .tagger
+                .as_ref()
+                .map(|slot| slot.selected_by(server.vault()))
+        })
+        .await;
+        match selected {
+            Ok(Some(Ok(()))) => {}
+            Ok(Some(Err(error)))
+                if error
+                    .downcast_ref::<crate::oneironer::EncoderNotSelected>()
+                    .is_some() =>
+            {
+                tracing::error!(%error, "the vault does not select this tagger; tagging stops and markers wait");
+                return false;
+            }
+            // A manifest that cannot be read this pass selects nothing new:
+            // the configured tagger keeps serving and the next pass reads
+            // it again.
+            Ok(Some(Err(error))) => {
+                tracing::warn!(%error, "the vault's extraction_encoder binding is unreadable; tagging continues");
+            }
+            Ok(None) | Err(_) => return false,
+        }
         let server = Arc::clone(self);
         let probed = tokio::task::spawn_blocking(move || {
             let slot = server.tagger.as_ref()?;

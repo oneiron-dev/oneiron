@@ -240,13 +240,13 @@ pub(super) fn foreign_agent_ceiling_after_widen_request(
     }
 }
 
-/// What an owner-plane row asks the engine to do when it fires. There is no
-/// rewrite arm: the engine never substitutes content, so a row can only pass
-/// content through with a notice (`Warn`), withhold it (`Block`), or hand the
-/// turn to a help card (`RouteToHelp`).
+/// What an owner-plane row asks the engine to do when it fires. `Reword`
+/// withholds the candidate and asks its author to try again; it never supplies
+/// substitute content. The other arms annotate, withhold, or route to help.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OwnerRowAction {
     Warn,
+    Reword,
     Block,
     RouteToHelp,
 }
@@ -255,6 +255,7 @@ impl OwnerRowAction {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Warn => "warn",
+            Self::Reword => "reword",
             Self::Block => "block",
             Self::RouteToHelp => "route_to_help",
         }

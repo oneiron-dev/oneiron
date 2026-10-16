@@ -306,6 +306,7 @@ impl SyncServer {
         let questions: Arc<crate::wire_telemetry::LimitQuestions> =
             Arc::clone(wire_telemetry.limit_questions());
         vault.set_limit_ask(questions);
+        crate::models::outbound_wait::install(&vault);
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
             Arc::clone(wire_telemetry.limit_questions()),
