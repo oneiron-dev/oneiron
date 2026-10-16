@@ -63,7 +63,10 @@ pub(super) fn engine_absent(method: VaultReadMethod, field: &str) -> VaultReadEr
     }
 }
 
-pub(super) fn engine_failure(method: VaultReadMethod, error: &crate::Error) -> VaultReadError {
+pub(super) fn engine_failure(
+    method: VaultReadMethod,
+    error: &dyn std::fmt::Display,
+) -> VaultReadError {
     VaultReadError::Engine {
         narrowing: None,
         method,

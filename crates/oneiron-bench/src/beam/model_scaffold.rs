@@ -58,7 +58,8 @@ pub(super) struct AccuracyCostPoint {
     pub effort: String,
     pub answerer: ModelId,
     pub answerer_params_sha256: String,
-    pub accuracy: f64,
+    /// The frontier and the agency lift rest on `beam-fixed`.
+    pub accuracy: paired::BeamColumns,
     pub latency_us: u64,
     pub cost_usd: f64,
 }
@@ -110,7 +111,7 @@ pub(super) struct MeasuredReport {
     pub frontier: Vec<AccuracyCostPoint>,
     pub points: Vec<AccuracyCostPoint>,
     pub chat_cost_accuracy_points: Vec<AccuracyCostPoint>,
-    pub agency_lift: BTreeMap<String, f64>,
+    pub agency_lift: BTreeMap<String, paired::BeamColumns>,
     pub paired: Vec<paired::PairedRow>,
     pub picks: Vec<paired::ReaderPick>,
     pub efforts: Vec<Effort>,
@@ -211,7 +212,10 @@ impl ModelRunPlan {
         Ok(())
     }
 }
-pub(super) fn agency_lift(det: &AccuracyCostPoint, agent: &AccuracyCostPoint) -> BeamResult<f64> {
+pub(super) fn agency_lift(
+    det: &AccuracyCostPoint,
+    agent: &AccuracyCostPoint,
+) -> BeamResult<paired::BeamColumns> {
     if det.arm != ArmKind::Deterministic
         || agent.arm != ArmKind::Agentic
         || det.answerer != agent.answerer
@@ -229,9 +233,9 @@ pub(super) fn pareto(points: &[AccuracyCostPoint]) -> Vec<AccuracyCostPoint> {
         .iter()
         .filter(|p| {
             !points.iter().any(|q| {
-                q.accuracy >= p.accuracy
+                q.accuracy.fixed >= p.accuracy.fixed
                     && q.cost_usd <= p.cost_usd
-                    && (q.accuracy > p.accuracy || q.cost_usd < p.cost_usd)
+                    && (q.accuracy.fixed > p.accuracy.fixed || q.cost_usd < p.cost_usd)
             })
         })
         .cloned()
@@ -608,18 +612,24 @@ pub(super) fn run_with_session(
                 effort: effort.name.clone(),
                 answerer: arm.model.model_id.clone(),
                 answerer_params_sha256: model_params_hash(&arm.model)?,
-                accuracy: selected
-                    .iter()
-                    .map(|r| {
-                        r.scoring
-                            .beam
-                            .as_ref()
-                            .expect("FixedBeamScorer produces BEAM columns")
-                            .aggregate
-                            .official_int_cast
-                    })
-                    .sum::<f64>()
-                    / n,
+                accuracy: {
+                    let columns: Vec<_> = selected
+                        .iter()
+                        .map(|r| {
+                            paired::BeamColumns::of(
+                                &r.scoring
+                                    .beam
+                                    .as_ref()
+                                    .expect("FixedBeamScorer produces BEAM columns")
+                                    .aggregate,
+                            )
+                        })
+                        .collect();
+                    paired::BeamColumns {
+                        int_cast: columns.iter().map(|c| c.int_cast).sum::<f64>() / n,
+                        fixed: columns.iter().map(|c| c.fixed).sum::<f64>() / n,
+                    }
+                },
                 latency_us: selected
                     .iter()
                     .map(|r| r.query_cost.elapsed_us)
