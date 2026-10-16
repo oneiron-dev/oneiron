@@ -17,6 +17,7 @@ use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
+pub(crate) mod account_key;
 mod binding_admission;
 mod client_address;
 mod locality;
@@ -296,6 +297,49 @@ impl CoreAuth {
         Err(ApiError::unauthorized())
     }
 
+    /// The caller a verified account API key establishes (OF-448 node
+    /// path): exactly the scopes the control plane's verdict granted the
+    /// key, never owner-grade, with the presented key's node-local
+    /// fingerprint as its instrument identity.
+    fn from_verified_account_key(verified: account_key::VerifiedAccountKey) -> Self {
+        Self {
+            principal: format!("account-key:{}", verified.key_id),
+            principal_ref: verified.principal_ref,
+            scopes: verified.scopes,
+            implicit_all_scopes: false,
+            jti: None,
+            actor_class: None,
+            org_ref: None,
+            verified_slip: None,
+            instrument: Some(verified.instrument),
+            locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
+        }
+    }
+
+    /// [`Self::for_server`] plus the account-key door, for callers that can
+    /// await. When a host installed a verifier, any Bearer [REDACTED] that is
+    /// not a v2 slip or token is presented to it, and its refusal is final
+    /// (the failure floor is paid inside `verify`). Managed-issuer servers
+    /// keep their supervisor-terminated posture and never reach that path.
+    pub(crate) async fn for_server_async(
+        headers: &HeaderMap,
+        server: &SyncServer,
+    ) -> Result<Self, ApiError> {
+        if server.managed_issuer.is_none()
+            && let Some(keys) = &server.account_keys
+            && let Ok(Some(token)) = bearer_token(headers)
+            && !token.starts_with(CORE_TOKEN_V2_PREFIX)
+        {
+            return keys
+                .verify(token.as_bytes(), oneiron_vault_contract::now_ts())
+                .await
+                .map(Self::from_verified_account_key)
+                .map_err(|_| ApiError::unauthorized());
+        }
+        Self::for_server(headers, server)
+    }
+
     pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
         if let Some(issuer) = server.managed_issuer.as_ref() {
             let proof = server
@@ -510,7 +554,8 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::for_server(&parts.headers, server)
+        Self::for_server_async(&parts.headers, server)
+            .await
             .map(|auth| auth.at(caller_locality(&parts.headers, &parts.extensions)))
             .map_err(Into::into)
     }
