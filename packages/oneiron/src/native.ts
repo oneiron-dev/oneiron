@@ -40,6 +40,7 @@ vaultRecall(query: string, effort: string | undefined, scope: RecallScope | unde
 vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
+vaultReceiptsGet(input: unknown): unknown
 vaultKvGet(requestJson: string): string
 vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
