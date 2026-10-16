@@ -12,9 +12,92 @@ use oneiron_vault_contract::{
 use std::time::SystemTime;
 use zeroize::Zeroizing;
 
-/// This adapter owns descriptor consumption. It preserves managed boot order:
-/// resolve the listener, consume credentials, pass vault gates, bind, ready.
-pub(super) struct ManagedHost {
+/// Managed mode on a node or in a vault VM. Each preserves the managed boot
+/// order: resolve the listener, consume credentials, pass vault gates, bind,
+/// ready.
+pub(super) enum ManagedHost {
+    Process(ProcessHost),
+    #[cfg(target_os = "linux")]
+    Vm(super::vm_guest::VmGuestHost),
+}
+impl ManagedHost {
+    pub(super) fn new(
+        args: &ManagedArgs,
+        limits: HostLimits,
+        shutdown: ManagedShutdown,
+    ) -> anyhow::Result<Self> {
+        if args.vsock_guest {
+            #[cfg(target_os = "linux")]
+            return Ok(Self::Vm(super::vm_guest::VmGuestHost::new(args, shutdown)));
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("--vsock-guest runs only inside a Linux vault VM");
+        }
+        Ok(Self::Process(ProcessHost::new(args, limits, shutdown)?))
+    }
+    pub(super) fn clear_secrets(&mut self) {
+        match self {
+            Self::Process(host) => host.clear_secrets(),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.clear_secrets(),
+        }
+    }
+    /// The boot channel a vault VM answers sleep and stop requests on.
+    #[cfg(target_os = "linux")]
+    pub(super) fn vm_link(&self) -> Option<oneiron_vault_contract::host_adapters::GuestLink> {
+        match self {
+            Self::Process(_) => None,
+            Self::Vm(host) => host.link(),
+        }
+    }
+}
+impl Host for ManagedHost {
+    type Listener = ServeListener;
+    fn listener(&mut self) -> anyhow::Result<ServeListener> {
+        match self {
+            Self::Process(host) => host.listener(),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.listener(),
+        }
+    }
+    fn ready(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Process(host) => host.ready(),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.ready(),
+        }
+    }
+    fn secret(&mut self, name: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+        match self {
+            Self::Process(host) => host.secret(name),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.secret(name),
+        }
+    }
+    fn on_stop(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Process(host) => host.on_stop(),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.on_stop(),
+        }
+    }
+    fn limits(&self) -> HostLimits {
+        match self {
+            Self::Process(host) => host.limits(),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.limits(),
+        }
+    }
+    fn idle(&mut self, next_wake: Option<SystemTime>) -> HostFuture<'_> {
+        match self {
+            Self::Process(host) => host.idle(next_wake),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.idle(next_wake),
+        }
+    }
+}
+
+/// The node's process child. It owns descriptor consumption.
+pub(super) struct ProcessHost {
     listener: Option<ServeListener>,
     credentials_fd: Option<std::os::fd::RawFd>,
     credentials: Option<Credentials>,
@@ -22,8 +105,8 @@ pub(super) struct ManagedHost {
     limits: HostLimits,
     shutdown: ManagedShutdown,
 }
-impl ManagedHost {
-    pub(super) fn new(
+impl ProcessHost {
+    fn new(
         args: &ManagedArgs,
         limits: HostLimits,
         shutdown: ManagedShutdown,
@@ -37,11 +120,11 @@ impl ManagedHost {
             shutdown,
         })
     }
-    pub(super) fn clear_secrets(&mut self) {
+    fn clear_secrets(&mut self) {
         self.credentials = None;
     }
 }
-impl Host for ManagedHost {
+impl Host for ProcessHost {
     type Listener = ServeListener;
     fn listener(&mut self) -> anyhow::Result<ServeListener> {
         self.listener
