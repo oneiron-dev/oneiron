@@ -81,7 +81,7 @@ impl BornFromSource {
 }
 
 /// One artifact version a source produced.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BornFromArtifact {
     pub artifact_id: EntityId,
     pub version: u64,
