@@ -28,6 +28,8 @@ impl Faceted {
     fn new() -> Self {
         let (_dir, server) = auth_test_server();
         let owner = server.vault.ensure_embedded_owner_actor().expect("owner");
+        // The vault is rooted: setting its default facet is an owner verb.
+        bind_room_owner(&server, owner);
         let agent = seeded_test_entity_id(0x2701_0001);
         server
             .vault
