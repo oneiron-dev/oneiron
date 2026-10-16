@@ -195,7 +195,8 @@ pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind, GoalAxisScore,
     GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase,
-    HeldOutReplayScorer, HeldOutVerdict, JevTradeoffVerdict, JudgeMeasurements, PreferredResponse,
+    HeldOutReplayScorer, HeldOutVerdict, HonestyReplayObservation, JevTradeoffVerdict,
+    JudgeMeasurements, PreferredResponse,
     ProjectGoalRevisionProposal, SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES,
     SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle, SkillEditDisposition, SkillEditGoal,
     SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion, TradeoffChoice,
