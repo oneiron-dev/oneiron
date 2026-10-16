@@ -137,13 +137,13 @@ impl WorldShare<'_> {
 /// non-base claim enters only while the world share holds; one held back
 /// enters as soon as later base claims make room, so the page goes short,
 /// never over the share, when base claims are scarce. Picked rows keep
-/// their score order.
+/// their score order. Also returns whether the share kept a claim out.
 fn select_rows(
     rows: &[(ScoredEntity, ContextPackBudgetKind, ShareRole)],
     caps: Option<ContextPackBudgetCounts>,
     limit: usize,
     fraction: f32,
-) -> Vec<ScoredEntity> {
+) -> (Vec<ScoredEntity>, bool) {
     let fits = |used: &ContextPackBudgetCounts, kind: ContextPackBudgetKind| {
         caps.is_none_or(|caps| used.get(kind) < caps.get(kind))
     };
@@ -185,12 +185,16 @@ fn select_rows(
             }
         }
     }
-    rows.iter()
+    let rows = rows
+        .iter()
         .zip(picked)
         .filter_map(|(&(scored, ..), picked)| picked.then_some(scored))
-        .collect()
+        .collect();
+    (rows, !held.is_empty())
 }
 
+/// Returns whether the world share kept a claim out; a kind's zero cap
+/// is not the share's.
 pub(super) fn apply_context_pack_retrieval_budget(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -198,9 +202,9 @@ pub(super) fn apply_context_pack_retrieval_budget(
     metadata_cache: &mut EntityMetadataCache,
     budget: ContextPackRetrievalBudget,
     world_share: Option<WorldShare<'_>>,
-) -> Result<()> {
+) -> Result<bool> {
     if scores.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut candidates = Vec::with_capacity(scores.len());
@@ -228,8 +232,9 @@ pub(super) fn apply_context_pack_retrieval_budget(
 
     let caps =
         redistribute_context_pack_budget(ContextPackBudgetCounts::from_budget(budget), available);
-    *scores = select_rows(&candidates, Some(caps), usize::MAX, fraction);
-    Ok(())
+    let (rows, share_held_back) = select_rows(&candidates, Some(caps), usize::MAX, fraction);
+    *scores = rows;
+    Ok(share_held_back)
 }
 
 /// Cuts an `All`-world pack's scored rows to `limit` under its world share
@@ -250,7 +255,7 @@ pub(super) fn truncate_under_world_share(
         };
         rows.push((scored, kind, share.role(kind, &scored.id)));
     }
-    *scores = select_rows(&rows, None, limit, share.fraction);
+    *scores = select_rows(&rows, None, limit, share.fraction).0;
     Ok(())
 }
 

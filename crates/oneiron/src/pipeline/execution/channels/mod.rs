@@ -705,7 +705,7 @@ impl PipelineBuilder<'_> {
                 claim_gate: &claim_gate,
             });
             if let Some(context_pack_budget) = self.context_pack_budget {
-                apply_context_pack_retrieval_budget(
+                let share_held_back = apply_context_pack_retrieval_budget(
                     &mut scores,
                     &self.read,
                     rtxn,
@@ -713,6 +713,7 @@ impl PipelineBuilder<'_> {
                     context_pack_budget,
                     world_share,
                 )?;
+                emptied_by_policy |= share_held_back && scores.is_empty();
             }
             // Only admitted final candidates participate. This selection cannot
             // surface hidden bridge nodes, undo filters, or multiply scores twice.
