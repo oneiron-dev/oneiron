@@ -25,9 +25,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
-    Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
-    PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled, recv_frame_until, send_frame_if,
-    send_frame_until, spin,
+    Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hash32, Hello, HelloAck,
+    Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled, recv_frame_until,
+    send_frame_if, send_frame_until, spin,
 };
 
 use crate::asks::{AskStep, CallAsks};
@@ -415,6 +415,7 @@ impl OrganProcess {
         if deadline.is_some_and(|deadline| deadline <= started) {
             return Err(HostError::DeadlineExceeded);
         }
+        check_program_pin(spec)?;
         let own = started + config.handshake_timeout;
         let handshake_by = deadline.map_or(own, |deadline| deadline.min(own));
         let (ours, theirs) = UnixStream::pair()?;
@@ -1087,4 +1088,20 @@ fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: 
     }
     inbox.close();
     lifeline.end();
+}
+
+/// Refuses a program file that is not the one the install pinned.
+fn check_program_pin(spec: &OrganSpec) -> Result<(), HostError> {
+    let Some(pinned) = spec.program_hash else {
+        return Ok(());
+    };
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(std::fs::File::open(&spec.program)?)?;
+    let found = Hash32(*hasher.finalize().as_bytes());
+    if found != pinned {
+        return Err(HostError::Handshake(format!(
+            "the program file is not the pinned binary {pinned:?}"
+        )));
+    }
+    Ok(())
 }

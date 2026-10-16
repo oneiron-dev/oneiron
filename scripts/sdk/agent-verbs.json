@@ -695,6 +695,52 @@
       }
     },
     {
+      "name": "vault.artifacts.waits",
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Vec<crate::edit_settle::OrganWaitView>",
+      "call": "memory.artifacts_waits(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The organ calls held beside one artifact until one of your nodes can run them, each with why it waits.\n",
+          "ts": "/** The organ calls held beside one artifact until one of your nodes can run them, each with why it waits. */",
+          "py": "The organ calls held beside one artifact until one of your nodes can run them, each with why it waits."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.release_wait",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::ReleasedWait",
+      "call": "memory.artifacts_release_wait(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Lets one held organ call go, by its run ref, under the consent a Discard needs.\n",
+          "ts": "/** Lets one held organ call go, by its run ref, under the consent a Discard needs. */",
+          "py": "Lets one held organ call go, by its run ref, under the consent a Discard needs."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.propose_deck",
       "input": "crate::blob_artifact::DeckProposeRequest",
       "output": "crate::blob_artifact::DeckProposeOutcome",

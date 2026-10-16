@@ -286,6 +286,9 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// An organ call held until one of the owner's nodes can run it (OF-575 MESH): the call's
+    /// bytes, why it waits, and its tries. Key: id16 + hash32 (blake3 of the run ref).
+    EDIT_SETTLE_ORGAN_WAIT: VaultMeta b"edit_settle:organ_wait:v1:" Named;
     /// A proposal retained beside its artifact until Keep or Discard: an edit proposal or a native
     /// organ output. Key: id16 + hash32 (blake3 of the proposal ref).
     EDIT_SETTLE_PENDING_PROPOSAL: VaultMeta b"edit_settle:pending:v1:" Named;

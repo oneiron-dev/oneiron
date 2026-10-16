@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 use x509_cert::spki::AlgorithmIdentifierOwned;
 
 use super::{SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealLimits};
-use crate::asks::AskRequest;
+use crate::handlers::AskRequest;
 use crate::receipt::SignedReceipt;
 
 const ID_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
