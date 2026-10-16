@@ -124,7 +124,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade.rs` | src | m | 8 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | s | 1 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | XL | 1 crate-vis | — | — |
-| `src/api/facade/host_doors.rs` | src | m | 14 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and… |
+| `src/api/facade/host_doors.rs` | src | m | 17 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and… |
+| `src/api/facade/shared_act_doors.rs` | src | m | 13 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
 | `src/api/feedback_inbox.rs` | src | m | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
@@ -196,7 +197,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/wire_health_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
 | `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
 | `src/api/packs/mod.rs` | src | s | 1 crate-vis | — | Served pack operations, including explicit default skill imports |
-| `src/api/pairing.rs` | src | m | 12 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
+| `src/api/pairing.rs` | src | m | 13 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
 | `src/api/report.rs` | src | s | 3 crate-vis | — | OF-537 report execution and owner triage |
