@@ -3,6 +3,7 @@ use super::ask_record::{self, AskGroup, AskMember};
 use super::ask_types::*;
 use super::create_validation::{consult_refusal, validate_task_create_in};
 use super::{ConsultPayload, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl};
+use crate::agent_dispatch::{AgentDispatcher, FanoutCaller, FanoutWork};
 use crate::code_run::peer_result_wait;
 use crate::entity_id::EntityId;
 use crate::gate::PolicyApprovalCeiling;
@@ -71,6 +72,7 @@ impl Memory<'_> {
             )?;
             let mut no_live_route = true;
             let mut validated = Vec::with_capacity(holders.len());
+            let mut work = Vec::with_capacity(holders.len());
             for actor in &holders {
                 let kind = self.vault().get_entity_type_in_txn(txn, actor)?;
                 if !matches!(
@@ -84,6 +86,12 @@ impl Memory<'_> {
                     return Err(MemoryError::bad_request("ask recipient is not an actor"));
                 }
                 let assignee = ask_assignee(&effective.who, *actor, kind);
+                work.push(match assignee {
+                    TaskAssignee::Peer { actor_ref } => FanoutWork::PeerConsult { peer: actor_ref },
+                    other => FanoutWork::Task {
+                        assignee: other.entity_ref(),
+                    },
+                });
                 // No contact route is required to QUEUE a question. Human followup
                 // is registered only where the native route actually resolves.
                 let reachable = match assignee {
@@ -137,6 +145,26 @@ impl Memory<'_> {
                     reachable,
                 ));
             }
+            // Stated after the census and before any grant or member TASK.
+            // An ask holds no spend context, so it states no cap; width is a
+            // check on it, never a hold.
+            let mut statement = AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
+                txn,
+                &FanoutCaller::default(),
+                &work,
+                now,
+            )?;
+            super::fanout_check::raise_unheld_width_check(
+                self.vault(),
+                txn,
+                &mut statement,
+                &format!(
+                    "ask:{}:{}",
+                    self.actor().to_hex(),
+                    effective.what.reference.short_ref()
+                ),
+                format!("fanout_check_row:ask:{}", group_ref.to_hex()),
+            )?;
             let question_digest =
                 super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
                     .ok_or(crate::Error::EntityNotFound)?;
@@ -188,6 +216,7 @@ impl Memory<'_> {
                 created_at: now,
                 guest_grants,
                 policy_surface,
+                statement,
             };
             ask_record::put_group(self.vault(), txn, group_ref, &group)?;
             for (member, (entry, _)) in group.members.iter().zip(&validated) {
@@ -577,6 +606,7 @@ fn replay_receipt(
             .no_live_route
             .then_some(TaskAskHoldReason::NoLiveRoute),
         idempotent_replay: true,
+        statement: Some(group.statement),
     })
 }
 

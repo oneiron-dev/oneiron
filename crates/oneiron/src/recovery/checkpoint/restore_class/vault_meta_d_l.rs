@@ -7,6 +7,7 @@ use super::{
 use crate::side_table::{self as t, SideTableDecl};
 
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
+    (&t::DECISION_ASK, CONTENT),
     (&t::DECK_CREATION, CONTENT),
     (&t::DECK_DESIGN_SPEC, CONTENT),
     (&t::DECK_OUTLINE_KEEP, CONTENT),
@@ -170,6 +171,17 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SELF_HEAL_HEALER_RELEASE, CONTENT),
     (&t::SELF_HEAL_HEALER_RUN, CONTENT),
     (&t::INGEST_HISTORY_LEDGER, CONTENT),
+    (&t::HOOKS_BLOCK, CONTENT),
+    (&t::HOOKS_CHECK, CONTENT),
+    (&t::HOOKS_CURSOR, CONTENT),
+    (&t::HOOKS_ENABLED, LIVE),
+    (&t::HOOKS_GRANT, LIVE),
+    (&t::HOOKS_INTENT, LIVE),
+    (&t::HOOKS_LINEAGE, CONTENT),
+    (&t::HOOKS_MEMO, CONTENT),
+    (&t::HOOKS_RECEIPT, CONTENT),
+    (&t::HOOKS_SETTLED, CONTENT),
+    (&t::HOOKS_SETTLED_NEXT, CONTENT),
     (&t::HOUSEKEEPING_SCHEDULE, LIVE),
     (&t::HOUSEKEEPING_WAKE, LIVE),
     (&t::HUMAN_TASK_FOLLOWUP_SWEEP, CONTENT),
