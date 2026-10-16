@@ -44,6 +44,7 @@ mod presence_scan;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+mod refusal;
 mod room_thread;
 mod route_receipts;
 mod scheduling;
@@ -72,6 +73,7 @@ pub use consult_result::{
     ConsultResultInput, ConsultResultKind, TaskResultReceipt,
 };
 pub use create_spec::{TaskCreateRateLimit, TaskCreateSpec};
+pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub use create_validation::check_task_label;
 pub use dormant_magistrate::{
     apply_magistrate_verdict, decide_magistrate, decode_human_verdict, enqueue_magistrate,
