@@ -63,6 +63,14 @@ pub(crate) fn birth_message_stream_in_txn(
         generation: 0,
         pending: 0,
     };
+    storage::stamp_document_birth(
+        &vault.store,
+        txn,
+        entity,
+        actor,
+        at,
+        "entity_doc.message_stream",
+    )?;
     storage::persist(vault, txn, entity, &mut head, &doc, None)?;
     Ok(())
 }
