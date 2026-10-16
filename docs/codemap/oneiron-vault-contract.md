@@ -22,8 +22,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
 | `src/lib/managed_holder.rs` | src | s | 1 struct · 2 fn | ManagedWidenAction | Host-attested account action for one managed widen request |
-| `src/lib/mod.rs` | src | s | 4 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 5 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
+| `src/lib/tenancy.rs` | src | s | 2 struct · 1 enum · 16 fn | VaultBinding, VaultHost, VaultTenancy | Single-vault identity and lifecycle for account and organization hosts |
 | `src/lib/tests.rs` | test | m | — | — | Wire-compat and validation test suite |
 | `src/lib/version.rs` | src | s | 1 fn · 2 const | — | Wire version constants and SLIM gating |
 | `src/lib/vm.rs` | src | s | 2 enum · 4 fn · 7 const | VmGuestFrame, VmHostFrame | The vault-VM wire: vsock ports and boot-channel frames |

@@ -60369,7 +60369,24 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
       "crate-vis": 3,
+      "mod": 1,
       "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OrgRoutingError",
+      "OrgVaultRoute",
+      "OrgVaultRouter"
+     ],
+     "path": "src/managed/org_routing.rs",
+     "purpose": "Read-only organization-to-vault routing over a host's registry projection",
+     "surface": {
+      "enum": 1,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -62500,7 +62517,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62607,7 +62624,7 @@
    },
    "over_bar": 19,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 403,
+   "source_files": 404,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -62980,7 +62997,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 4,
+      "mod": 5,
       "re-export": 7
      }
     },
@@ -62995,6 +63012,22 @@
      "purpose": "Spawn-token hex type, credential framing, and hex codec",
      "surface": {
       "fn": 8,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VaultBinding",
+      "VaultHost",
+      "VaultTenancy"
+     ],
+     "path": "src/lib/tenancy.rs",
+     "purpose": "Single-vault identity and lifecycle for account and organization hosts",
+     "surface": {
+      "enum": 1,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -63052,7 +63085,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63061,7 +63094,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 16,
+   "source_files": 17,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
