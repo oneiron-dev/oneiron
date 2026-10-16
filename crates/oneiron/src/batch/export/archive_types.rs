@@ -117,7 +117,10 @@ impl std::fmt::Debug for ArchiveSecretCustody {
             .field("metadata", &self.metadata)
             .field(
                 "body",
-                &format_args!("<redacted {} chars>", self.body.as_ref().map_or(0, String::len)),
+                &format_args!(
+                    "<redacted {} chars>",
+                    self.body.as_ref().map_or(0, String::len)
+                ),
             )
             .finish()
     }

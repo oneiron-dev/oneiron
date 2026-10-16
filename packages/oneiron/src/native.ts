@@ -29,6 +29,8 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
+selfMemoryDiaryReads(input: unknown): unknown
+selfMemoryDiaryReview(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
@@ -39,6 +41,7 @@ vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined): MemoryPack
 vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined): FacadeReceipt[]
+vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
 vaultKvGet(requestJson: string): string
 vaultKvPut(requestJson: string): string
@@ -50,6 +53,8 @@ vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
+vaultArtifactsWaits(requestJson: string): string
+vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string
