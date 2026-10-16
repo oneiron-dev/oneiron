@@ -100,6 +100,7 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
             HANDLES.delete(store, txn, key)?;
         }
     }
+    super::hosting::delete_room_host_pin(store, txn, room)?;
     super::participation::delete_room_facts(store, txn, room)
 }
 impl Memory<'_> {

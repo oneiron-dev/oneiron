@@ -17,7 +17,9 @@ use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
 pub(in crate::workspace_roster) use history::thread_turns_in;
-pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
+pub use hosting::{
+    HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
+};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,

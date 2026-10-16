@@ -50,6 +50,8 @@ pub enum AgentVerb {
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
     VaultRoomsHost,
+    VaultRoomsHostPin,
+    VaultRoomsHostHand,
     VaultRoomsSharing,
     VaultCompanionsSharingGet,
     VaultWorkspaceWorkCompanionGet,
@@ -129,6 +131,8 @@ impl AgentVerb {
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
         Self::VaultRoomsHost,
+        Self::VaultRoomsHostPin,
+        Self::VaultRoomsHostHand,
         Self::VaultRoomsSharing,
         Self::VaultCompanionsSharingGet,
         Self::VaultWorkspaceWorkCompanionGet,
@@ -211,6 +215,8 @@ impl AgentVerb {
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
             Self::VaultRoomsHost => "vault.rooms.host",
+            Self::VaultRoomsHostPin => "vault.rooms.host.pin",
+            Self::VaultRoomsHostHand => "vault.rooms.host.hand",
             Self::VaultRoomsSharing => "vault.rooms.sharing",
             Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
             Self::VaultWorkspaceWorkCompanionGet => "vault.workspace.work_companion.get",
@@ -289,6 +295,8 @@ impl AgentVerb {
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultWorkspaceWorkCompanionGet
@@ -375,6 +383,8 @@ impl AgentVerb {
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultWorkspaceWorkCompanionGet
@@ -484,6 +494,8 @@ impl AgentVerb {
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultWorkspaceWorkCompanionGet
@@ -543,6 +555,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
@@ -616,6 +630,8 @@ impl AgentVerb {
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsHostPin => &["spec"],
+            Self::VaultRoomsHostHand => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],
@@ -696,6 +712,8 @@ impl AgentVerb {
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsHostPin => &["spec"],
+            Self::VaultRoomsHostHand => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],

@@ -73,6 +73,8 @@ vaultRoomsConsent(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
+vaultRoomsHostPin(input: unknown): unknown
+vaultRoomsHostHand(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
 vaultWorkspaceWorkCompanionGet(input: unknown): unknown
