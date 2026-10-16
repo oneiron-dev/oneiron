@@ -59874,6 +59874,7 @@
      "kind": "src",
      "notable": [
       "HookArgs",
+      "HookBindArgs",
       "HookCommonArgs",
       "HookEffort",
       "HookEvent",
@@ -59886,7 +59887,7 @@
      "surface": {
       "enum": 3,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
