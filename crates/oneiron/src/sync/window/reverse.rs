@@ -47,17 +47,30 @@ pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool
 }
 
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
-    reverse_rematerialize_with(vault, doc, window_key, true)
+    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Unknown)
 }
 
-/// [`reverse_rematerialize`], packing rows a device-only world keeps here
-/// unless `withhold_device_only`. Only promotion authority packs them: it
-/// asks what a grant covers and exports nothing.
+/// [`reverse_rematerialize`] into a sealed window's own mirror document
+/// (OF-570): it packs the rows a device-only world keeps here too. Only the
+/// sealed-content door calls it, and what it packs leaves this machine only
+/// sealed under the world's key.
+pub(crate) fn reverse_rematerialize_for_sealing(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+) -> Result<u32> {
+    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Nothing)
+}
+
+/// [`reverse_rematerialize`], packing every row except those of a world
+/// `withhold` names. Promotion authority packs them all: it asks what a grant
+/// covers and exports nothing. A residence read for a proved machine packs
+/// the private rows that machine may read.
 pub(in crate::sync) fn reverse_rematerialize_with(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
-    withhold_device_only: bool,
+    withhold: super::Withhold<'_>,
 ) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -133,16 +146,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         kept.extend(closure);
         entities_in_range = kept;
     }
-    let device_only = if withhold_device_only {
-        let rtxn = vault.store.env.read_txn()?;
-        crate::settings::device_local_worlds_at(
-            vault,
-            &rtxn,
-            crate::claim::CallerLocality::OffDevice,
-        )?
-    } else {
-        std::collections::BTreeSet::new()
-    };
+    let device_only = withhold.worlds(vault)?;
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
@@ -372,6 +376,14 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             if dominates && delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
                 wrote_any = true;
             }
+            // Rule A: the row's birth rides beside its carrier, in the same
+            // bridge commit, whether the carrier was just written or was
+            // already present.
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::row_birth::mirror_local_birth(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
         }
 
         backfill_sources.push(*id);
@@ -594,6 +606,12 @@ pub(super) fn remove_entity_crdt_carriers(
         removed = true;
     }
     if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
+        removed = true;
+    }
+    // The row's birth leaves with its carrier.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
+        && crate::sync::row_birth::remove_birth_carrier(&doc, id)?
+    {
         removed = true;
     }
     Ok(removed)

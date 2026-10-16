@@ -1,3 +1,8 @@
+mod affect;
+pub use affect::{
+    AFFECT_AROUSAL_STRETCH_MAX, AFFECT_EMOTION_WEIGHT_MAX, AFFECT_FLOOR_AROUSAL_DEFAULT,
+    AffectRetrievalPolicy,
+};
 mod authority;
 mod blend;
 mod budget;
@@ -11,9 +16,11 @@ mod criticality;
 mod execution;
 mod execution_binding;
 mod filters;
+pub mod retrieval_loop;
 mod scoped_channels;
 pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
+mod media_channel;
 mod support;
 mod temporal_bound;
 mod trace;

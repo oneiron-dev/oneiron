@@ -288,7 +288,7 @@ fn continues_admitted_refinement(
         return Ok(false);
     }
     let carrier = proof.predecessor().unwrap_or(*id);
-    let Some(raw) = store.entities.get(txn, carrier.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &carrier)? else {
         return Ok(false);
     };
     let prior =

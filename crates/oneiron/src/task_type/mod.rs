@@ -35,6 +35,19 @@ pub use placement::{
     require_type_ref,
 };
 
+/// The one wire/value type for a type stamp (L08 contract, OF-540/OF-184/
+/// OF-397): re-exported from `learning`, never redefined here.
+/// [`TaskTypeRef`] is the spawn/task/receipt stamp spelling of the same
+/// `{node_id, tree_version}` pair; the `From` impls below convert between
+/// them (the receipt stamp keeps a `u64` version, the learning cell a
+/// `u32`).
+pub use crate::learning::{ROOT_TYPE_NODE, TypeRef};
+
+/// The seven seed node ids, all children of the root, in canon order.
+pub const SEED_TYPES: [&str; 7] = [
+    "generate", "refine", "solve", "research", "judge", "build", "negotiate",
+];
+
 /// The root node id: every unsure placement lands here.
 pub const ROOT_NODE_ID: &str = "root";
 
@@ -775,6 +788,200 @@ impl TaskTypeTree {
         upstream.version = upstream.version.saturating_add(1);
         Ok(PromotionOutcome::Promoted(upstream.type_ref(node_id)))
     }
+}
+
+impl From<&TaskTypeRef> for TypeRef {
+    fn from(stamp: &TaskTypeRef) -> Self {
+        Self {
+            node_id: stamp.node_id.clone(),
+            tree_version: u32::try_from(stamp.tree_version).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl From<&TypeRef> for TaskTypeRef {
+    fn from(type_ref: &TypeRef) -> Self {
+        Self::new(type_ref.node_id.clone(), u64::from(type_ref.tree_version))
+    }
+}
+
+/// The decision a split keys on, in the vocabulary OF-540's payoff
+/// projector reports per-type winner disagreement in. Splits and merges
+/// key on this, never on topic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SplitDecision {
+    Pattern,
+    Model,
+    Critic,
+}
+
+impl SplitDecision {
+    pub const ALL: [Self; 3] = [Self::Pattern, Self::Model, Self::Critic];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pattern => "pattern",
+            Self::Model => "model",
+            Self::Critic => "critic",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.as_str() == token)
+    }
+
+    /// The tree-internal decision axis this names.
+    #[must_use]
+    pub const fn axis(self) -> DecisionAxis {
+        match self {
+            Self::Pattern => DecisionAxis::WinningPattern,
+            Self::Model => DecisionAxis::WinningModel,
+            Self::Critic => DecisionAxis::TrustedCritic,
+        }
+    }
+}
+
+impl From<DecisionAxis> for SplitDecision {
+    fn from(axis: DecisionAxis) -> Self {
+        match axis {
+            DecisionAxis::WinningPattern => Self::Pattern,
+            DecisionAxis::WinningModel => Self::Model,
+            DecisionAxis::TrustedCritic => Self::Critic,
+        }
+    }
+}
+
+/// The type tree in force, in the `learning` [`TypeRef`] spelling OF-540,
+/// OF-184 and OF-397 read. Wraps the learned [`TaskTypeTree`] value; its
+/// owner is the wrapped tree's [`TreeScope`] (the vault, or one project's
+/// fork keyed by that project's `EntityId` hex).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeTree {
+    inner: TaskTypeTree,
+}
+
+impl TypeTree {
+    /// The seeded vault tree (version 1): root plus [`SEED_TYPES`].
+    #[must_use]
+    pub fn seeded() -> Self {
+        Self {
+            inner: TaskTypeTree::seeded(),
+        }
+    }
+
+    #[must_use]
+    pub fn version(&self) -> u32 {
+        u32::try_from(self.inner.version).unwrap_or(u32::MAX)
+    }
+
+    /// The unsure placement in this tree: its root.
+    #[must_use]
+    pub fn root(&self) -> TypeRef {
+        TypeRef::root(self.version())
+    }
+
+    /// Whether `r` names a node of this tree at this tree's version.
+    #[must_use]
+    pub fn contains(&self, r: &TypeRef) -> bool {
+        r.tree_version == self.version() && self.inner.nodes.contains_key(&r.node_id)
+    }
+
+    /// Parents of `r`, parent first, up to and including the root, all at
+    /// this tree's version. `r` itself is excluded, so the result feeds
+    /// `learning::read_learning(.., type_parents)` directly. An unknown
+    /// node has no ancestors here.
+    #[must_use]
+    pub fn ancestors(&self, r: &TypeRef) -> Vec<TypeRef> {
+        let mut chain = Vec::new();
+        let mut cursor = self
+            .inner
+            .nodes
+            .get(&r.node_id)
+            .and_then(|node| node.parent.clone());
+        while let Some(node_id) = cursor {
+            let Some(node) = self.inner.nodes.get(&node_id) else {
+                break;
+            };
+            chain.push(TypeRef {
+                node_id: node_id.clone(),
+                tree_version: self.version(),
+            });
+            cursor = node.parent.clone();
+        }
+        chain
+    }
+
+    /// Live children of `r`'s node, in node-id order.
+    #[must_use]
+    pub fn children(&self, r: &TypeRef) -> Vec<TypeRef> {
+        self.inner
+            .children(&r.node_id)
+            .into_iter()
+            .map(|node| TypeRef {
+                node_id: node.node_id.clone(),
+                tree_version: self.version(),
+            })
+            .collect()
+    }
+
+    /// The wrapped learned tree (split/merge/fork/promote live there).
+    #[must_use]
+    pub const fn task_type_tree(&self) -> &TaskTypeTree {
+        &self.inner
+    }
+}
+
+impl From<TaskTypeTree> for TypeTree {
+    fn from(inner: TaskTypeTree) -> Self {
+        Self { inner }
+    }
+}
+
+impl From<TypeTree> for TaskTypeTree {
+    fn from(tree: TypeTree) -> Self {
+        tree.inner
+    }
+}
+
+/// The tree in force for a project: its fork if it has one, else the vault
+/// tree. `None` is the vault tree. No stored-tree table exists yet, so a
+/// vault with no stored tree reads the seed tree (version 1) and no
+/// project fork is found; the fork value operations are on
+/// [`TaskTypeTree`].
+pub fn type_tree(
+    _vault: &crate::Vault,
+    _project: Option<crate::entity_id::EntityId>,
+) -> Result<TypeTree> {
+    Ok(TypeTree::seeded())
+}
+
+/// Missing is invalid, never untyped; an unknown node or a wrong tree
+/// version is invalid. (The argument is a required [`TypeRef`], so a
+/// caller with no stamp cannot call this at all.)
+pub fn validate_type_ref(
+    vault: &crate::Vault,
+    project: Option<crate::entity_id::EntityId>,
+    r: &TypeRef,
+) -> Result<()> {
+    r.validate()?;
+    let tree = type_tree(vault, project)?;
+    tree.inner.validate_current_ref(&TaskTypeRef::from(r))
+}
+
+/// One routed typed judgment at spawn: places `request` against the tree
+/// in force and returns the stamp in the learning spelling. Unsure
+/// resolves to the tree root, never to `None`.
+pub fn place_type_ref(
+    vault: &crate::Vault,
+    project: Option<crate::entity_id::EntityId>,
+    request: &PlacementRequest,
+) -> Result<TypeRef> {
+    let tree = type_tree(vault, project)?;
+    let outcome = place_task(&tree.inner, request);
+    Ok(TypeRef::from(&outcome.type_ref))
 }
 
 /// Node-id-safe spelling of a decision winner.

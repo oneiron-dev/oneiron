@@ -1,4 +1,4 @@
-//! Code mode's `self.memory.<verb>`: the SDK verb table through the tool door.
+//! Code mode's verb calls at their SDK paths: the SDK verb table through the tool door.
 //!
 //! A code-mode verb call is the `tools/call` of that verb by the same
 //! connector credential. Its input projects onto the tool's arguments for the
@@ -8,7 +8,7 @@
 //! since the guest receives the verb's whole output. Its writes carry the
 //! run's host-owned origin, not a source the guest's input names.
 //!
-//! A browser row (`self.memory.browser.*`) is no tool. The run's own browser
+//! A browser row (`self.browser.*`) is no tool. The run's own browser
 //! answers it: one guest per run, started on the run's first admitted
 //! browser call and removed when the run's door drops.
 
@@ -153,7 +153,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
     /// credential `execute_code` was admitted on, still live. A search reads
-    /// under that credential's grants, as `recall` does, from where its
+    /// under that credential's grants, as `vault.recall` does, from where its
     /// caller sits (DEC-0005).
     fn admit_run_call(
         &self,

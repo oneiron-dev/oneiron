@@ -219,6 +219,9 @@ pub struct CoreContextPackProjection {
     pub results: Vec<CoreContextPackEntityRecord>,
     /// Edge-walk neighbors.
     pub neighbors: Vec<CoreContextPackEntityRecord>,
+    /// Index-only instruction files on the returned code units' ancestor paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instruction_files: Vec<crate::codebase::CodeInstructionHandle>,
     /// Pack statistics.
     pub stats: CoreContextPackStats,
     /// Empty-context record when the pack surfaced nothing.

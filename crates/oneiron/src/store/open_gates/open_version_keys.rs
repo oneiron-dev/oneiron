@@ -10,6 +10,13 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v23 (OF-190 B++ 2C): the `context:output:v1:` blob family is gone; a
+/// context output is a body of the `code_run:raw_output:v1:` family, keyed by
+/// its content. A step records its provider reply as evidence, and a verb
+/// answer too large for one reply is a stored body whose handle the bridge
+/// row carries. ABI 22 vaults fail closed at the ABI gate; there is no
+/// migration.
+///
 /// v22 (OF-597, OF-190 B++): a code-mode result body past
 /// `[limits] code_result_inline_bytes` is a file in `bodies/` beside
 /// `data.mdb`, named by its BLAKE3; the `code_run:raw_output:v1:` row holds
@@ -115,7 +122,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 22;
+pub const STORAGE_ABI_VERSION: u16 = 23;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 

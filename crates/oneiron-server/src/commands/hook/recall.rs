@@ -116,7 +116,7 @@ impl Recall<'_> {
         )
     }
 
-    /// `recall` at the effort asked when the server lists it, else the
+    /// `vault.recall` at the effort asked when the server lists it, else the
     /// lexical `memory.query`. Light runs no model and embeds nothing;
     /// medium embeds the query on the server's embedder, so it finds a
     /// paraphrase; high and above also rerank, under the server's budget.
@@ -128,8 +128,8 @@ impl Recall<'_> {
                 .flatten()
                 .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
         };
-        let (name, tool) = match tool("recall") {
-            Some(tool) => ("recall", tool),
+        let (name, tool) = match tool("vault.recall") {
+            Some(tool) => ("vault.recall", tool),
             None => (
                 "memory.query",
                 tool("memory.query").ok_or_else(|| anyhow::anyhow!("no recall tool"))?,
@@ -139,7 +139,7 @@ impl Recall<'_> {
             .pointer("/inputSchema/properties/schema_version/const")
             .cloned()
             .unwrap_or_else(|| json!("mcp_tool_args.v1"));
-        let arguments = if name == "recall" {
+        let arguments = if name == "vault.recall" {
             json!({"spec": {"query": self.query, "effort": self.effort.as_str(), "limit": self.limit}})
         } else {
             json!({"request": {"query": self.query, "limit": self.limit, "view": "summary", "countMode": "none"}})

@@ -19,6 +19,7 @@ use super::type_bytes::{
     ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SKILL_HUB, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW, ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_WORLD_KEY_PAD,
 };
 use super::zones::{EntityClassification, TypeByteZone};
 
@@ -393,6 +394,16 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
     EntityTypeRegistryEntry {
         kind: "AUTHORITY_LOG",
         type_byte: ENTITY_TYPE_AUTHORITY_LOG,
+        short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
+        classification: EntityClassification::Maintenance,
+        family: Some(TypeByteFamily::AuthorityPolicyCustody),
+        artifact_kind: None,
+        zone: TypeByteZone::System,
+    },
+    EntityTypeRegistryEntry {
+        kind: "WORLD_KEY_PAD",
+        type_byte: ENTITY_TYPE_WORLD_KEY_PAD,
         short_id_prefix: None,
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,

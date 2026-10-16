@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
+use super::refusal::TaskRefusalRecord;
 use super::terminal_state::{ConsultResultSummary, TaskExecutionState, TaskTerminalRecord};
 use super::verb_kind::TaskAssignee;
 use crate::error::RecordError;
@@ -279,12 +280,26 @@ fn task_execution_state_value(state: &TaskExecutionState) -> Value {
     }
 }
 
+/// The one self-refusal a TASK carries (OF-533).
+fn task_refusal_record_value(record: &TaskRefusalRecord) -> Value {
+    Value::Map(vec![
+        (Value::from("by"), entity_ref_value(record.by)),
+        (Value::from("domain"), Value::from(record.domain.as_str())),
+        (Value::from("level"), Value::from(record.level.as_str())),
+        (
+            Value::from("reason_ref"),
+            consult_payload_ref_value(record.reason_ref),
+        ),
+        (Value::from("at"), Value::from(record.at)),
+    ])
+}
+
 pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
     let mirror_fields = body.mirror_fields.as_ref().map_or(Value::Nil, |fields| {
         let encoded = rmp_serde::to_vec_named(fields).expect("serializing task mirror fields");
         rmpv::decode::read_value(&mut encoded.as_slice()).expect("typed mirror MessagePack")
     });
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (Value::from("mirror_fields"), mirror_fields),
         (Value::from("role"), Value::from(body.role)),
         (
@@ -335,8 +350,12 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
             body.type_ref
                 .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
         ),
-    ]);
-    canonical_bytes(&value)
+    ];
+    // Elided when absent, so a task nobody refused keeps its bytes.
+    if let Some(refusal) = &body.refusal {
+        entries.push((Value::from("refusal"), task_refusal_record_value(refusal)));
+    }
+    canonical_bytes(&Value::Map(entries))
 }
 
 pub(super) fn encode_task_realization_input(spec: &Value) -> Result<Vec<u8>> {

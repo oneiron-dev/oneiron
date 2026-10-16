@@ -63,6 +63,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     if body.parents.len() > 256
         || body.parents.contains(&id.to_hex())
         || body.parents.iter().collect::<BTreeSet<_>>().len() != body.parents.len()
+        || !super::validity::witnesses_fit(&body.authority())
     {
         return Err(invalid());
     }

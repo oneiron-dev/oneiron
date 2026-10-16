@@ -133,7 +133,9 @@ pub fn record_judge_conversion(
         ));
     }
     if from_judge.len() > 256 || to_judge.len() > 256 {
-        return Err(Error::InvalidClaimBody("a judge revision is at most 256 bytes"));
+        return Err(Error::InvalidClaimBody(
+            "a judge revision is at most 256 bytes",
+        ));
     }
     let conversion = JudgeConversion {
         from_judge: from_judge.to_owned(),
@@ -144,7 +146,7 @@ pub fn record_judge_conversion(
     };
     vault.with_write_txn_grouped(|wtxn| {
         CONVERSION.put(&vault.store, wtxn, &conversion.from_judge, &conversion)?;
-        reproject_judged_in_txn(vault, wtxn, from_judge, now)
+        reproject_judged_in_txn(vault, wtxn, now)
     })?;
     Ok(conversion)
 }
@@ -160,7 +162,7 @@ pub fn withdraw_judge_conversion(vault: &Vault, from_judge: &str, now: u64) -> R
         if !CONVERSION.delete(&vault.store, wtxn, &from_judge.to_owned())? {
             return Ok(false);
         }
-        reproject_judged_in_txn(vault, wtxn, from_judge, now)?;
+        reproject_judged_in_txn(vault, wtxn, now)?;
         Ok(true)
     })
 }
@@ -173,16 +175,12 @@ pub(crate) fn conversions_in_txn(
     Ok(CONVERSION.scan(&vault.store, txn)?.into_iter().collect())
 }
 
-fn reproject_judged_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    judge: &str,
-    now: u64,
-) -> Result<()> {
+fn reproject_judged_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now: u64) -> Result<()> {
     let digests: BTreeSet<[u8; 32]> = EVIDENCE
         .scan(&vault.store, wtxn)?
         .into_iter()
-        .filter(|(_, row)| row.judge.as_deref() == Some(judge))
+        // Earlier judges can reach this map through another conversion.
+        .filter(|(_, row)| row.judge.is_some())
         .map(|((digest, _), _)| digest)
         .collect();
     for digest in &digests {
@@ -227,13 +225,19 @@ pub fn judge_takeover_verdict(
     };
     let mut families: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
     for case in cases {
-        let entry = families.entry(case.source_family.as_str()).or_insert((0, 0));
+        let entry = families
+            .entry(case.source_family.as_str())
+            .or_insert((0, 0));
         entry.0 += 1;
         if case.diverged {
             entry.1 += 1;
         }
     }
-    if families.is_empty() || families.values().any(|(n, _)| *n < min_cases_per_family.max(1)) {
+    if families.is_empty()
+        || families
+            .values()
+            .any(|(n, _)| *n < min_cases_per_family.max(1))
+    {
         return TakeoverVerdict::Unknown;
     }
     let floor = noise.mean();

@@ -227,8 +227,6 @@ impl Vault {
                     device: issuer.root_device(self.privacy_posture()),
                     genesis_nonce: random_slip_id(),
                     recovery: GenesisRecoveryStep::acknowledge(&recovery, true)?,
-                    tier_floor: AuthorityTier::Software,
-                    pending_widen_delay_secs: 86_400,
                 },
                 now,
             )?;
@@ -513,15 +511,30 @@ impl Vault {
         keep: [u8; 32],
     ) -> Result<Vec<[u8; 32]>> {
         let mut txn = self.store.env.write_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let held =
+            self.revoke_held_capability_slips_in_txn(&mut txn, issuer, holder_ref, Some(keep))?;
+        txn.commit()?;
+        Ok(held)
+    }
+    /// [`Self::revoke_held_capability_slips`] inside a caller's writer, so a
+    /// membership change and the revocations it implies commit together.
+    /// `None` keeps no slip.
+    pub(crate) fn revoke_held_capability_slips_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        holder_ref: &str,
+        keep: Option<[u8; 32]>,
+    ) -> Result<Vec<[u8; 32]>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
-        let now = self.instant_in_txn(&txn)?.secs();
+        let now = self.instant_in_txn(txn)?.secs();
         let held: Vec<[u8; 32]> = fold
             .slips
             .mints
             .iter()
             .filter(|(id, mint)| {
-                **id != keep
+                Some(**id) != keep
                     && mint.action.claims.holder_ref == holder_ref
                     && now < mint.action.claims.expires_at
                     && fold.slip_is_live(id)
@@ -529,13 +542,8 @@ impl Vault {
             .map(|(id, _)| *id)
             .collect();
         for slip_id in &held {
-            self.append_slip_op_in_txn(
-                &mut txn,
-                issuer,
-                AuthorityOp::SlipRevoke { slip_id: *slip_id },
-            )?;
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipRevoke { slip_id: *slip_id })?;
         }
-        txn.commit()?;
         Ok(held)
     }
     /// Appends a signed revocation once per slip id. `true` means this call

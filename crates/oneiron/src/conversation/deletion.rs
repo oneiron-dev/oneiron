@@ -95,9 +95,7 @@ pub(crate) fn room_message_owner_in(
 ) -> Result<Option<EntityId>> {
     let persisted = MESSAGE_OWNERS.get(store, txn, &message)?;
     if persisted.is_none()
-        && store
-            .entities
-            .get(txn, message.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &message)?
             .is_none_or(|raw| raw.first() != Some(&ENTITY_TYPE_MESSAGE))
     {
         return Ok(None);
@@ -108,9 +106,7 @@ pub(crate) fn room_message_owner_in(
         return Err(Error::CorruptedIndex("multiple MESSAGE rooms"));
     }
     if let Some(owner) = owners.first()
-        && store
-            .entities
-            .get(txn, owner.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, owner)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
         if persisted.is_some_and(|stored| stored != *owner) {
@@ -131,17 +127,13 @@ pub(crate) fn pin_room_message_edge(
     kind: EdgeKind,
     target: EntityId,
 ) -> Result<()> {
-    if store
-        .entities
-        .get(txn, message.as_bytes())?
+    if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &message)?
         .is_none_or(|raw| raw.first() != Some(&ENTITY_TYPE_MESSAGE))
     {
         return Ok(());
     }
     if kind == EdgeKind::BelongsTo
-        && store
-            .entities
-            .get(txn, target.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &target)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
         // The new row is already staged: a second binding is a refused write,
@@ -170,9 +162,7 @@ pub(crate) fn pin_room_message_edge(
             return Err(Error::CorruptedIndex("multiple MESSAGE authors"));
         }
         if let Some(person) = authors.first()
-            && store
-                .entities
-                .get(txn, person.as_bytes())?
+            && crate::ports::EntityStoreRead::port_entity_raw(store, txn, person)?
                 .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_PERSON))
             && !room_person_write_allowed(store, txn, room, *person)?
         {
@@ -202,7 +192,8 @@ fn message_room_author(
     txn: &heed::RoTxn<'_>,
     message: EntityId,
 ) -> Result<Option<(EntityId, Option<EntityId>)>> {
-    let Some(raw) = vault.store.entities.get(txn, message.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &message)?
+    else {
         return Ok(None);
     };
     if raw.first() != Some(&ENTITY_TYPE_MESSAGE) {
@@ -225,10 +216,7 @@ fn message_room_author(
     let pin = room_message_owner_in(&vault.store, txn, message)?;
     let author = one(EdgeKind::AuthoredBy)?;
     if let Some(author) = author {
-        let raw = vault
-            .store
-            .entities
-            .get(txn, author.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &author)?
             .ok_or(denied())?;
         // Witness admits PERSON, AGENT_DEF and MACHINE actors. A non-PERSON
         // author is known, not a match for a PERSON's GDPR sweep. A forged
@@ -300,7 +288,8 @@ pub(crate) fn replay_room_message_tombstone(
     turn: EntityId,
     raw_value: &[u8],
 ) -> Result<()> {
-    let Some(raw) = vault.store.entities.get(txn, turn.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &turn)?
+    else {
         return Ok(());
     };
     if raw.first() != Some(&ENTITY_TYPE_TURN) {
@@ -335,10 +324,7 @@ pub(crate) fn replay_room_message_tombstone(
             // Admission keeps an unknown author id (its PERSON row may never
             // arrive); only a known non-PERSON author is a bad binding.
             Some(person)
-                if vault
-                    .store
-                    .entities
-                    .get(txn, person.as_bytes())?
+                if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &person)?
                     .is_none_or(|row| row.first() == Some(&ENTITY_TYPE_PERSON)) =>
             {
                 Some(person)
@@ -600,16 +586,14 @@ impl Vault {
             ),
         };
         let author = author.ok_or_else(denied)?;
-        let class = match self
-            .store
-            .entities
-            .get(&txn, author.as_bytes())?
-            .and_then(|raw| raw.first().copied())
-        {
-            Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => crate::edge::EdgeActorClass::Agent,
-            Some(crate::registry::ENTITY_TYPE_MACHINE) => crate::edge::EdgeActorClass::System,
-            _ => crate::edge::EdgeActorClass::Human,
-        };
+        let class =
+            match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &author)?
+                .and_then(|raw| raw.first().copied())
+            {
+                Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => crate::edge::EdgeActorClass::Agent,
+                Some(crate::registry::ENTITY_TYPE_MACHINE) => crate::edge::EdgeActorClass::System,
+                _ => crate::edge::EdgeActorClass::Human,
+            };
         drop(txn);
         self.delete_room_record(room, record, WriteActor::new(author, class), reason)
     }

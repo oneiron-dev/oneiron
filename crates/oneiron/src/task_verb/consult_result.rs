@@ -159,6 +159,9 @@ pub(super) struct TaskVerbBody {
     /// OF-543 ONE TASK TYPE stamp placed at creation. `None` only on rows
     /// written before OF-543, where it reads as the seeded root.
     pub(super) type_ref: Option<crate::task_type::TaskTypeRef>,
+    /// The assignee's one self-refusal (OF-533), written once by
+    /// `Memory::land_task_refusal`. Absent on every task she did not refuse.
+    pub(super) refusal: Option<super::refusal::TaskRefusalRecord>,
 }
 
 impl TaskVerbBody {

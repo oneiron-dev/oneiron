@@ -15,10 +15,10 @@ use crate::write_envelope::WriteActor;
 
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
-    AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_CONTEXT_FROM,
-    KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_PRESET, KEY_PROJECT_REF,
-    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, TARGET_CUSTOM,
-    TARGET_SYSTEM,
+    AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
+    KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
+    KEY_ORIGIN_CONVERSATION, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
+    KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
 
@@ -107,6 +107,17 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         Value::from(KEY_TASK_TYPE_REF),
         Value::from(input.type_ref.wire_form().as_str()),
     ));
+    if let Some(budget) = input.budget {
+        entries.push((Value::from(KEY_BUDGET), Value::from(budget)));
+    }
+    if let Some(launch) = &input.launch {
+        let json = serde_json::to_string(launch).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "launch statement must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_LAUNCH), Value::from(json)));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -134,6 +145,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut scope = None;
     let mut healer_case = None;
     let mut type_ref = None;
+    let mut budget = None;
+    let mut launch = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -310,6 +323,23 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     ))
                 })?);
             }
+            KEY_BUDGET => {
+                budget = Some(value.as_u64().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput("budget must be an integer"),
+                ))?);
+            }
+            KEY_LAUNCH => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "launch must be a serialized launch statement",
+                    ),
+                ))?;
+                launch = Some(serde_json::from_str(json).map_err(|_| {
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "launch must decode as a launch statement",
+                    ))
+                })?);
+            }
             KEY_DEPTH_REMAINING => {
                 let depth = value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
@@ -319,6 +349,18 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                         "depth_remaining must fit in a u8",
                     ))
                 })?);
+            }
+            // Read by `dispatch_origin_conversation`; checked here so a
+            // malformed stamp fails the codec like any other key.
+            KEY_ORIGIN_CONVERSATION => {
+                if value
+                    .as_str()
+                    .is_none_or(|hex| EntityId::from_hex(hex).is_err())
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "origin_conversation must be an entity id",
+                    )));
+                }
             }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
@@ -383,6 +425,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         // Rows written before OF-543 carry no stamp; they read as the
         // seeded root, the unsure placement, rather than failing decode.
         type_ref: type_ref.unwrap_or_default(),
+        budget,
+        launch,
     })
 }
 
