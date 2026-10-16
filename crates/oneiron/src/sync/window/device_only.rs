@@ -124,6 +124,39 @@ pub fn raw_update_verdict(
     })
 }
 
+/// Recheck a selector's standalone synthetic update at release. Its closed
+/// subgraph is the exported document, not every row in the canonical window.
+/// Inspect both its state and its history under the destination's current read.
+pub fn selector_update_verdict_for_peer(
+    vault: &Vault,
+    window_key: &str,
+    update: &[u8],
+    peer: crate::authority::PeerMachine,
+) -> UpdateVerdict {
+    (|| -> Result<UpdateVerdict> {
+        let _accepting = vault.device_only_acceptance();
+        let flagged = {
+            let txn = vault.store.env.read_txn()?;
+            crate::authority::WorldPrivacyView::load_in(vault, &txn)?.withheld_for_peer(peer)?
+        };
+        let Some(key) = WindowKey::try_new(window_key) else {
+            return Ok(UpdateVerdict::Uninspectable);
+        };
+        if key.world().is_some_and(|world| flagged.contains(&world)) {
+            return Ok(UpdateVerdict::Withheld);
+        }
+        let alone = LoroDoc::new();
+        if !alone
+            .import(update)
+            .is_ok_and(|status| status.pending.is_none())
+        {
+            return Ok(UpdateVerdict::Uninspectable);
+        }
+        bytes_verdict(vault, &flagged, &key, &alone, update)
+    })()
+    .unwrap_or(UpdateVerdict::Uninspectable)
+}
+
 fn inspect_raw_update(
     manager: &Arc<WindowManager>,
     flagged: &BTreeSet<EntityId>,
@@ -331,6 +364,18 @@ pub(in crate::sync) fn device_only_ids(
         rtxn,
         crate::claim::CallerLocality::OffDevice,
     )?;
+    ids_withheld_by_worlds(vault, rtxn, entities, edges, &flagged)
+}
+
+/// Selector exports use the same carrier rules, with the worlds withheld
+/// from their authenticated destination rather than an unknown machine.
+pub(in crate::sync) fn ids_withheld_by_worlds(
+    vault: &Vault,
+    rtxn: &RoTxn<'_>,
+    entities: &LoroMap,
+    edges: &LoroMap,
+    flagged: &BTreeSet<EntityId>,
+) -> Result<HashSet<EntityId>> {
     let mut withheld = HashSet::new();
     if flagged.is_empty() {
         return Ok(withheld);

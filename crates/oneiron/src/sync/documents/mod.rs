@@ -4,7 +4,12 @@
 //! stale VV, then wire notice). There is no Observer B: text never overwrites
 //! entity bodies in LMDB. Reads and socket imports use short-lived sessions.
 
+mod destination;
 mod note_requests;
+pub(crate) use destination::text_withheld;
+pub use destination::{
+    admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for_peer,
+};
 pub(crate) mod storage;
 #[cfg(test)]
 mod tests;
@@ -119,13 +124,20 @@ impl DocumentRegistry {
         scope: crate::FederationGrantScope,
         selector: &super::selector::SyncSelector,
         remote_vv: &[u8],
+        peer: crate::authority::PeerMachine,
     ) -> Result<Vec<u8>> {
         // The document's turn comes first: a wait past the row must not
         // outlast the grant and selection that admit the export, so both are
         // read after it.
         let document = self.open_for(id, selector.member_ref.as_bytes())?;
-        let selected =
-            super::selector::filtered_window_doc(&self.vault, ledger, window, scope, selector)?;
+        let selected = super::selector::filtered_window_doc_for_peer(
+            &self.vault,
+            ledger,
+            window,
+            scope,
+            selector,
+            peer,
+        )?;
         if !super::loro_support::map_contains_binary(&selected.get_map("entities"), &id.to_hex()) {
             return Err(Error::sync_protocol(
                 SyncProtocolValidation::DocumentAdmissionDenied,
@@ -135,6 +147,7 @@ impl DocumentRegistry {
             &super::selector::encode_sync_selector(selector)?,
             remote_vv,
             scope,
+            peer,
         )
     }
 
@@ -363,6 +376,7 @@ impl EntityDocument {
         bytes: &[u8],
         scope: crate::FederationGrantScope,
         selector: &super::selector::SyncSelector,
+        peer: crate::authority::PeerMachine,
     ) -> Result<()> {
         if kind != document_sub_tags::UPDATE {
             return Err(Error::sync_protocol(
@@ -370,6 +384,7 @@ impl EntityDocument {
             ));
         }
         self.import_admitted(kind, bytes, |txn| {
+            admit_document_destination_in_txn(&self.vault, txn, self.id, peer)?;
             super::selector::admit_document_write_in_txn(&self.vault, txn, self.id, scope, selector)
         })
     }
@@ -432,10 +447,24 @@ impl EntityDocument {
         admission_key: &[u8],
         remote_vv: &[u8],
         scope: crate::FederationGrantScope,
+        peer: crate::authority::PeerMachine,
     ) -> Result<Vec<u8>> {
         self.export_admitted(admission_key, remote_vv, |txn| {
+            admit_document_destination_in_txn(&self.vault, txn, self.id, peer)?;
             let selector = super::selector::decode_sync_selector(admission_key)?;
-            crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)
+            super::selector::admit_document_read_in_txn(
+                &self.vault,
+                txn,
+                self.id,
+                scope,
+                &selector,
+            )?;
+            if self.vault.get_entity_type_in_txn(txn, &self.id)?
+                == Some(crate::registry::ENTITY_TYPE_NOTE)
+            {
+                crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
+            }
+            Ok(())
         })
     }
 
@@ -456,18 +485,18 @@ impl EntityDocument {
         &self,
         admission_key: &[u8],
         remote_vv: &[u8],
-        admit_note: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<Vec<u8>> {
         let peer = storage::decode_vv(remote_vv)?;
         let resident = self.lock()?;
         self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, self.id)?;
+            admit(txn)?;
             let note_doc;
             let mut note_head = None;
             let doc = if self.vault.get_entity_type_in_txn(txn, &self.id)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
             {
-                admit_note(txn)?;
                 note_head = Some(crate::note::documents::head_in(
                     &self.vault.store,
                     txn,
@@ -614,48 +643,6 @@ pub(crate) fn owner_note_admission(
         ));
     }
     Ok(())
-}
-
-/// Whether an outgoing document frame carries text a device-only world now
-/// keeps here, judged as it is released: the flags are read and the frame
-/// accepted under the vault's device-only acceptance lock. Every frame that
-/// can carry text is judged, a NOTE's state, update, command and receipt
-/// included: NOTE authority is a further check, never an exemption. Requests
-/// and acks carry version vectors only. A frame that cannot be judged stays.
-pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
-    if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
-        return false;
-    }
-    let Ok(document) = crate::sync::transport::decode_document(&frame[1..]) else {
-        return false;
-    };
-    if matches!(
-        document.kind,
-        document_sub_tags::REQUEST | document_sub_tags::ACK
-    ) {
-        return false;
-    }
-    (|| -> Result<bool> {
-        let _accepting = vault.device_only_acceptance();
-        let rtxn = vault.store.env.read_txn()?;
-        text_withheld(vault, &rtxn, document.entity)
-    })()
-    .unwrap_or(true)
-}
-
-/// Whether a device-only world keeps `id`'s text on this device. Its local
-/// edits stay journaled, unsent, until the flag clears.
-pub(crate) fn text_withheld(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
-    crate::settings::device_only_withholds(
-        &vault.store,
-        txn,
-        &crate::settings::device_local_worlds_at(
-            vault,
-            txn,
-            crate::claim::CallerLocality::OffDevice,
-        )?,
-        &id,
-    )
 }
 
 fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {

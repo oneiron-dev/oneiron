@@ -291,18 +291,42 @@ pub fn filtered_window_doc(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
+    filtered_window_doc_for_peer(
+        vault,
+        source,
+        key,
+        grant_scope,
+        selector,
+        crate::authority::PeerMachine::Unknown,
+    )
+}
+
+/// Destination-aware selector export. The transport supplies a proven machine,
+/// never the selector's actor id; the proof is rechecked in the export snapshot.
+pub fn filtered_window_doc_for_peer(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    peer: crate::authority::PeerMachine,
+) -> Result<LoroDoc> {
     let position = authorize_selector_export(
         vault,
         grant_scope,
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(vault, source, key, selector, &position, true)
+    // Packing for an unknown machine can omit rows this proven machine may
+    // read. Rebuild only a detached mirror, then select under its destination.
+    let snapshot = crate::sync::loro_support::export_snapshot(source)?;
+    let detached = crate::sync::loro_support::doc_from_snapshot(&snapshot)?;
+    crate::sync::window::reverse_rematerialize_with(vault, &detached, key, false)?;
+    filter_window_doc(vault, &detached, key, selector, &position, Some(peer))
 }
 
-/// What the selector's grant alone covers, before this device's device-only
-/// flags withhold anything. Promotion authority reads it; the export doors
-/// withhold.
+/// What the selector's grant alone covers, before destination policy
+/// withholds anything. Promotion authority reads it; this is not an export.
 pub(in crate::sync) fn granted_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -316,7 +340,7 @@ pub(in crate::sync) fn granted_window_doc(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(vault, source, key, selector, &position, false)
+    filter_window_doc(vault, source, key, selector, &position, None)
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -353,7 +377,14 @@ pub fn guest_share_envelope_body(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    let filtered = filter_window_doc(vault, source, key, selector, &position, true)?;
+    let filtered = filter_window_doc(
+        vault,
+        source,
+        key,
+        selector,
+        &position,
+        Some(crate::authority::PeerMachine::Unknown),
+    )?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())

@@ -46,8 +46,15 @@ impl WindowManager {
     ) -> Result<Vec<u8>> {
         selector::authorize_sync_selector(&self.vault, scope, selector)?;
         let source = self.open_window(window)?;
-        self.documents
-            .export_selected(id, &source.doc, window, scope, selector, remote_vv)
+        self.documents.export_selected(
+            id,
+            &source.doc,
+            window,
+            scope,
+            selector,
+            remote_vv,
+            crate::authority::PeerMachine::Unknown,
+        )
     }
 
     /// Grant-backed text-plane export. The entity's canonical ledger supplies
@@ -58,6 +65,25 @@ impl WindowManager {
         scope: crate::FederationGrantScope,
         selector: &selector::SyncSelector,
         remote_vv: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.export_document_for_peer(
+            id,
+            scope,
+            selector,
+            remote_vv,
+            crate::authority::PeerMachine::Unknown,
+        )
+    }
+
+    /// Text-plane export for the physical machine proven by the transport.
+    /// Actor grants still apply, independently of the world's machine policy.
+    pub fn export_document_for_peer(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        remote_vv: &[u8],
+        peer: crate::authority::PeerMachine,
     ) -> Result<Vec<u8>> {
         selector::authorize_sync_selector(&self.vault, scope, selector)?;
         let raw = self.vault.get_raw(&id)?.ok_or_else(|| {
@@ -72,6 +98,6 @@ impl WindowManager {
         };
         let window = self.open_window(&key)?;
         self.documents
-            .export_selected(id, &window.doc, &key, scope, selector, remote_vv)
+            .export_selected(id, &window.doc, &key, scope, selector, remote_vv, peer)
     }
 }

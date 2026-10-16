@@ -40,9 +40,11 @@ pub(in crate::sync) use self::admission::validate_window_update_with_staged_worl
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
-pub use self::device_only::{UpdateVerdict, export_withheld, raw_update_verdict};
+pub use self::device_only::{
+    UpdateVerdict, export_withheld, raw_update_verdict, selector_update_verdict_for_peer,
+};
 pub(in crate::sync) use self::device_only::{
-    device_only_ids, window_is_device_only, window_withheld,
+    device_only_ids, ids_withheld_by_worlds, window_is_device_only, window_withheld,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
