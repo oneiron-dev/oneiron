@@ -603,9 +603,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 13,
-      "crate-vis": 49,
+      "crate-vis": 55,
       "enum": 5,
-      "fn": 21,
+      "fn": 24,
       "struct": 4
      }
     },
@@ -12173,7 +12173,7 @@
      "path": "src/compaction/driver/integration.rs",
      "purpose": "Transactional epoch integration, typed executor coverage, and swap plans",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -12211,7 +12211,7 @@
       "const": 2,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 23,
+      "fn": 24,
       "struct": 8,
       "trait": 1
      }
@@ -12226,7 +12226,7 @@
      "purpose": "Epoch-summary codec and transactional lineage mint",
      "surface": {
       "const": 5,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 2,
       "struct": 1
      }
@@ -19700,7 +19700,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 31,
       "enum": 1,
       "fn": 4,
       "struct": 2,
@@ -29136,7 +29136,7 @@
      "path": "src/off_record/lifecycle/executor.rs",
      "purpose": "Second OffRecordSession block: executor witness doors, routed shells and executor traps",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
