@@ -14,7 +14,7 @@ use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scope_summary::WordSources;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub use crate::context_board::room_scope as disclosable_set;
 
@@ -39,6 +39,20 @@ impl DisclosableSet {
     /// assembly, the owner or one of the vault's own agents, as one more
     /// party with no term. Only storage I/O errors surface.
     pub fn resolve(vault: &Vault, roster: &InterlocutorSet, reader: bool) -> Result<Self> {
+        Self::resolve_with_once(vault, roster, reader, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve`] under the owner's `once` answers this assembly
+    /// spent (OF-365): a contact in `once` contributes that answer's Scope in
+    /// place of its clearance, as a standing answer would replace it. It
+    /// still meets every other party's term, so a once answer for one
+    /// contact never reaches anyone else present.
+    pub fn resolve_with_once(
+        vault: &Vault,
+        roster: &InterlocutorSet,
+        reader: bool,
+        once: &BTreeMap<EntityId, Scope>,
+    ) -> Result<Self> {
         let txn = vault.store.env.read_txn()?;
         let mut terms = roster
             .entries()
@@ -46,7 +60,11 @@ impl DisclosableSet {
             .map(|party| match (party.class(), party.contact_ref()) {
                 (InterlocutorClass::Owner, _) => Ok(None),
                 (_, Some(hex)) => {
-                    contact_clearance_in(vault, &txn, EntityId::from_hex(hex)?).map(Some)
+                    let contact = EntityId::from_hex(hex)?;
+                    match once.get(&contact) {
+                        Some(scope) => Ok(Some(scope.clone())),
+                        None => contact_clearance_in(vault, &txn, contact).map(Some),
+                    }
                 }
                 (_, None) => Ok(Some(Scope::default())),
             })

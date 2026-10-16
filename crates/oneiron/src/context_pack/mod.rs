@@ -10,6 +10,7 @@ mod empty_pack;
 mod hydration;
 mod l2_base;
 mod mcp_ref;
+mod once_disclosure;
 mod psych_mirror;
 mod quarantine;
 pub(crate) mod retained_copies;
