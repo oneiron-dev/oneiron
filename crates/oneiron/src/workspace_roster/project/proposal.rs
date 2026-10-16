@@ -420,11 +420,12 @@ impl Vault {
     ) -> Result<AgentDispatchOutcome> {
         let project = EntityId::from_hex(&receipt.project_id).map_err(|_| invalid())?;
         let leader = canonical(&card.leader_agent_def_ref)?;
+        let home_room = super::home_room_id(project)?;
         let brief = serde_json::json!({
             "goal_intake": {
                 "skill": "goal-intake",
                 "project": project.to_hex(),
-                "home_room": super::home_room_id(project)?.to_hex(),
+                "home_room": home_room.to_hex(),
                 "card": card.card_id,
             }
         });
@@ -440,7 +441,8 @@ impl Vault {
                 project_ref: Some(project),
                 ..AgentSpawnContext::default()
             }
-            .with_context_spec(ContextSpec::default().with_briefing(brief.to_string())),
+            .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
+            .with_origin_conversation(home_room),
         )
     }
 }
