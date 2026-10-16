@@ -482,9 +482,28 @@ side_tables! {
     TAGGING_TRACE_AGE: VaultMeta b"job:tagging_trace_age:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
+    /// A `learning.*` cell's key, estimate form and what counted. Key: cell digest (32 bytes).
+    LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named;
+    /// Subject index over `learning.*` cells (value: the member). Key: subject id16 + cell digest.
+    LEARNING_CELL_SUBJECT: VaultMeta b"learning:cell_subject:v1:" Named;
+    /// A team's derived coordination cost (wait by reason, reuse delay, duplicate work): a
+    /// diagnostic, never a score. Key: string (team reference).
+    LEARNING_COORDINATION: VaultMeta b"learning:coordination:v1:" Named;
+    /// An audit's label that two pieces of one team's work duplicated each other. Key: string
+    /// (team reference "\0" first "\0" second).
+    LEARNING_DUPLICATE_LABEL: VaultMeta b"learning:duplicate_label:v1:" Named;
+    /// One admitted anchored outcome for a `learning.*` cell. Key: cell digest + receipt string.
+    LEARNING_EVIDENCE: VaultMeta b"learning:evidence:v1:" Named;
+    /// A judge swap's fitted score map, applied as a projection. Key: string (old judge revision).
+    LEARNING_JUDGE_CONVERSION: VaultMeta b"learning:judge_conversion:v1:" Named;
+    /// A `learning.*` cell's engine-written prior (origin, value, weight in runs). Key: cell digest.
+    LEARNING_PRIOR: VaultMeta b"learning:prior:v1:" Named;
     /// Owner seed or pin over one learned-setting catalog row (value, weight in runs, setter, why).
     /// Key: string (setting key "\0" mode).
     LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw;
+    /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
+    /// (setting key).
+    LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
     /// Tracker issue id to task id. Key: string.
