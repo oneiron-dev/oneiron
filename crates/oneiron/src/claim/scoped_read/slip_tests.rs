@@ -380,3 +380,50 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
     );
     Ok(())
 }
+
+/// H74/H296: a scoped search for one row ranks a bounded list, not every row
+/// its index holds. Main asked the pipeline for the whole text population
+/// (here one more row than a fusion list holds) and cut to one row after.
+#[test]
+fn a_scoped_text_search_for_one_row_ranks_a_bounded_list() -> Result<()> {
+    let mut config = crate::VaultConfig::default();
+    config.retrieval_telemetry_capture = true;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let rows = crate::fusion::FUSION_LIST_LENGTH + 1;
+    let mut batch = vault.batch();
+    for n in 1..=rows {
+        let mut bytes = [0x7a; 16];
+        bytes[8..].copy_from_slice(&(n as u64).to_be_bytes());
+        let id = EntityId::from_bytes(bytes)?;
+        batch = batch
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .text(&id, &[("body", "harbor ledger")]);
+    }
+    batch.commit().expect("seed the matching rows");
+    let issuer = HostSlipIssuer::from_secret(b"bounded search host root")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let proof = vault.verified_host_root_slip(&issuer)?;
+    let read =
+        vault.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).expect("read proof"));
+
+    let hits = read.search_text("ledger", 1, None)?;
+
+    assert_eq!(hits.value.len(), 1, "the reader reads every matching row");
+    let runs = vault.retrieval_runs(10)?;
+    let run = runs
+        .iter()
+        .find(|run| run.signals == vec![crate::store::RetrievalSignal::Text])
+        .expect("the search's text run");
+    assert!(
+        run.result_ids.len() < rows,
+        "a one-row search ranked {} of {rows} rows",
+        run.result_ids.len()
+    );
+    Ok(())
+}
