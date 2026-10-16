@@ -500,3 +500,32 @@ fn recency_boost_orders_non_text_scores_before_ppr_expansion_fusion() -> Result<
     assert_eq!(boosted[0].id, fresh);
     Ok(())
 }
+
+/// Sol R1 F1 on F21(b): a scoped search admits its plan's authority before
+/// the cut, and there a CLAIM whose body does not decode is no candidate, as
+/// the D19 gate holds. It does not fail the search for the row that reads.
+#[test]
+fn an_undecodable_claim_does_not_fail_a_scoped_search() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let readable = entity_id(0x61);
+    let broken = entity_id(0x62);
+    put_text(&vault, readable, "harbor lanternneedle")?;
+    put_claim_text(&vault, broken, "lanternneedle lanternneedle", None)?;
+    let mut junk = Vec::new();
+    rmpv::encode::write_value(&mut junk, &rmpv::Value::from(1)).expect("msgpack encode");
+    overwrite_entity_record(&vault, &broken, ENTITY_TYPE_CLAIM, &junk)?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"undecodable claim host root")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let proof = vault.verified_host_root_slip(&issuer)?;
+    let read = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("read proof"),
+    );
+
+    let hits = read.search_text("lanternneedle", 1, None)?;
+
+    assert_eq!(
+        hits.value.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![readable]
+    );
+    Ok(())
+}
