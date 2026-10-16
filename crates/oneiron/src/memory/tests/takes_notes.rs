@@ -16,7 +16,7 @@ fn point(
 #[test]
 fn two_actor_divergent_takes() {
     let (_dir, vault) = open_vault();
-    let ada = put_person(&vault, 0x71);
+    let ada = put_owner(&vault);
     let bo = put_person(&vault, 0x72);
     let subject = put_person(&vault, 0x73);
     let claim = opinion_claim(&vault, ada, subject);
@@ -92,7 +92,7 @@ fn two_actor_divergent_takes() {
 #[test]
 fn take_never_mutates_claim() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x74);
+    let actor = put_owner(&vault);
     let subject = put_person(&vault, 0x75);
     let facade = facade_for(&vault, actor);
     let claim = opinion_claim(&vault, actor, subject);
@@ -543,7 +543,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = crate::Vault::open(dir.path(), crate::test_util::embedding_test_config())
         .expect("vault with vectors and default policy");
-    let owner = put_person(&vault, 0x61);
+    let owner = put_owner(&vault);
     let other = put_person(&vault, 0x62);
     let owner_memory = facade_for(&vault, owner);
     let other_memory = facade_for(&vault, other);
@@ -1003,7 +1003,7 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
     use crate::note::{NoteScope, NoteWriteEnvelope};
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = put_owner(&vault);
     let other = put_person(&vault, 0x72);
     let actor = crate::WriteActor::new(owner, crate::EdgeActorClass::Human);
     let room = EntityId::now();

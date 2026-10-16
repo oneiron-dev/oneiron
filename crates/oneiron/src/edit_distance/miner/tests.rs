@@ -110,6 +110,40 @@ impl Amendment {
     }
 
     fn land_bound(&self, vault: &Vault, principal: Option<WriteActor>) -> Result<()> {
+        self.land_with(vault, |vault, receipt| match principal {
+            Some(principal) => bind_amendment_preference_principal(
+                vault,
+                principal,
+                receipt,
+                &CompilationTarget::Fallback,
+            ),
+            None => Ok(()),
+        })
+    }
+
+    /// Lands the amendment bound to `principal` as a receipt bound while that
+    /// principal held the vault's owner binding, read after the binding moved
+    /// on: only the vault's owner binds through the public door (H149), so a
+    /// second principal's evidence exists only from an earlier owner.
+    fn land_bound_by_earlier_owner(&self, vault: &Vault, principal: EntityId) -> Result<()> {
+        self.land_with(vault, |vault, receipt| {
+            vault.with_write_txn(|txn| {
+                super::feedback::bind_amendment_preference_principal_in_txn(
+                    vault,
+                    txn,
+                    principal,
+                    receipt,
+                    &CompilationTarget::Fallback,
+                )
+            })
+        })
+    }
+
+    fn land_with(
+        &self,
+        vault: &Vault,
+        bind: impl FnOnce(&Vault, &str) -> Result<()>,
+    ) -> Result<()> {
         let artifact_ref = ProposalArtifactRef::mint();
         let record = FinalizedProposalText {
             artifact_ref,
@@ -148,14 +182,7 @@ impl Amendment {
             evidence = evidence.with_skill(skill);
         }
         record_amendment_evidence(vault, &evidence)?;
-        if let Some(principal) = principal {
-            bind_amendment_preference_principal(
-                vault,
-                principal,
-                &self.receipt_id,
-                &CompilationTarget::Fallback,
-            )?;
-        }
+        bind(vault, self.receipt_id.as_str())?;
         assert!(
             judge_amendment(vault, &self.receipt_id)?.is_some(),
             "the fixture's routing facts must settle a class"
@@ -164,11 +191,9 @@ impl Amendment {
     }
 }
 
+/// The vault's own owner: a preference principal is the owner (H149).
 fn fixture_owner(vault: &Vault) -> WriteActor {
-    let id = EntityId::from_bytes([0xD1; 16]).expect("fixture owner id");
-    vault
-        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"preference owner")
-        .expect("owner");
+    let id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     WriteActor::new(id, EdgeActorClass::Human)
 }
 

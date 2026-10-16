@@ -209,18 +209,19 @@ impl ChannelIdentitySelectionWriter {
     }
 
     /// The writer still holds in the write's own transaction: the owner proof
-    /// belongs to this vault and is live, and an agent writer names a live
-    /// actor of this vault whose type can act as an agent and, in a rooted
-    /// vault, whose authority binding is live. Returns the actor stamped into
-    /// every row the write touches: the owner's from the proof's revalidation,
-    /// never from the proof's fields.
+    /// belongs to this vault, is live and names this vault's owner (a native
+    /// proof of any other person is no owner's writer), and an agent writer
+    /// names a live actor of this vault whose type can act as an agent and, in
+    /// a rooted vault, whose authority binding is live. Returns the actor
+    /// stamped into every row the write touches: the owner's from the proof's
+    /// revalidation, never from the proof's fields.
     pub(super) fn revalidate_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
     ) -> ChannelIdentitySelectionResult<EntityId> {
         if let Some(owner) = &self.owner {
-            return Ok(owner.revalidate_in_txn(vault, txn)?);
+            return Ok(owner.revalidate_as_vault_owner_in_txn(vault, txn)?);
         }
         let Some(agent) = &self.agent else {
             return Err(ChannelIdentitySelectionError::WriterNotInVault);

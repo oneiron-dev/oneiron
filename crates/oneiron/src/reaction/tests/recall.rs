@@ -42,6 +42,8 @@ fn recalled_and_context_packed_message_carries_its_grouped_reactions() {
         owner_read(&room).reaction_lines(&room.message).unwrap(),
         expected
     );
+    // Recall reads every room turn for the vault's bound owner (H149).
+    crate::test_util::bind_test_owner(&room.vault, room.alice);
     for effort in [Effort::Light, Effort::Medium] {
         let pack = room
             .vault
@@ -107,6 +109,8 @@ fn a_recall_lists_the_reaction_claims_its_lines_count() {
         react(&room, room.bob, "👍").id,
         react(&room, room.erin, "🎉").id,
     ];
+    // Recall reads every room turn for the vault's bound owner (H149).
+    crate::test_util::bind_test_owner(&room.vault, room.alice);
     for effort in [Effort::Light, Effort::Medium] {
         let producers = crate::memory::ProducerRows::default();
         let pack = room

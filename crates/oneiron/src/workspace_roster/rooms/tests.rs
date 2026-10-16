@@ -511,17 +511,17 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let owner = EntityId::now();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let agent = EntityId::from_bytes([0xE1; 16])?;
-    for actor in [owner, agent] {
-        vault.put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"room member",
-        )?;
-    }
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room member",
+    )?;
     let project = EntityId::now();
     let mut record = ProjectRecord::new(
         project,

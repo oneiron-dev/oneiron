@@ -266,7 +266,9 @@ pub(super) fn booking_publications() -> Result<Case> {
     let (dir, vault) = open_seeded()?;
     let page = entity(0x81);
     vault.put_entity(&page, ENTITY_TYPE_ASSET, AT, 1, b"page")?;
-    let owner = person(&vault, 0x82)?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     put_event_type(&vault, entity(0x85), page, event_type(0))?;
     let key = EventTypeKey("intro".to_owned());
     let publication = BookingPagePublication {

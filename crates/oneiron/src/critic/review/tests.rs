@@ -38,15 +38,20 @@ fn catalog() -> Result<LensCatalog> {
 fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let time = TimeRange { start: 10, end: 10 };
-    let actor_id = EntityId::now();
+    let actor_id = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    let actor = WriteActor::new(actor_id, crate::EdgeActorClass::Human);
+    // A PERSON that names itself human is not the owner (H149).
+    let delegate_id = EntityId::now();
     vault.put_entity(
-        &actor_id,
+        &delegate_id,
         crate::registry::ENTITY_TYPE_PERSON,
         time,
         10,
-        b"owner",
+        b"delegate",
     )?;
-    let actor = WriteActor::new(actor_id, crate::EdgeActorClass::Human);
+    let delegate = WriteActor::new(delegate_id, crate::EdgeActorClass::Human);
     let session = EntityId::now();
     vault.put_entity(&session, ENTITY_TYPE_SESSION, time, 10, b"session")?;
     let document = EntityId::now();
@@ -92,6 +97,19 @@ fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
                 CritiqueArtifactStore::new(&vault)
                     .get(request.branch_attempt, &artifact.artifact_id)?,
                 Some(artifact.clone())
+            );
+            assert!(
+                record_review_outcome(
+                    &vault,
+                    &result,
+                    delegate,
+                    &artifact.artifact_id,
+                    ReliabilityOutcomeSource::OwnerVerdict,
+                    false,
+                    11 + round as u64,
+                )
+                .is_err(),
+                "only the owner records an owner verdict"
             );
             let outcome = record_review_outcome(
                 &vault,

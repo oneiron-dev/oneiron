@@ -92,7 +92,7 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
 #[test]
 fn world_scoped_last_week_recall_keeps_eligible_hit_at_limit_one() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xE1);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let now = crate::unix_seconds_now();
     let eligible_world = EntityId::from_bytes([0xE2; 16]).unwrap();

@@ -157,8 +157,10 @@ impl Vault {
         Ok(fold)
     }
 
-    /// The existing owner-verb rule: a live human actor and, once rooted,
-    /// an active owner-capable binding. Agent/System labels confer no ownership.
+    /// The owner-verb rule: a live human writer that is the vault's owner,
+    /// as every owner verb asks it (H149): the embedded owner on an unrooted
+    /// vault, the actor an active human binding names once rooted.
+    /// Agent/System labels confer no ownership.
     pub(crate) fn verify_owner_write_actor_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -170,7 +172,13 @@ impl Vault {
                 reason: "an owner write requires a human actor",
             }));
         }
-        Ok(())
+        crate::memory::verify_owner_actor_binding_in_txn(self, txn, writer.entity_ref()).map_err(
+            |_| {
+                Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                    reason: "an owner write requires the vault's owner",
+                })
+            },
+        )
     }
 }
 

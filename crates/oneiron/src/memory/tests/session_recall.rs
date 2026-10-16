@@ -12,7 +12,7 @@ const ROOM_WORDS: &str = "lanternquartzroom";
 #[test]
 fn an_in_room_recall_returns_the_turn_only_the_room_holds() {
     let (_dir, vault) = open_vault();
-    let (session, actor) = session_witness_fixture(&vault, "sess-union-recall", 0x61);
+    let (session, actor) = session_owner_fixture(&vault, "sess-union-recall");
     let facade = facade_for(&vault, actor);
     let receipt = facade
         .witness_into_session(
@@ -104,7 +104,7 @@ fn on_record_a_recall_over_the_rooms_turn_keeps_no_run_in_base() {
     };
     let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     let proof = crate::test_util::embedded_owner_proof(&vault);
-    let (session, actor) = session_witness_fixture(&vault, "sess-union-recall-runs", 0x65);
+    let (session, actor) = session_owner_fixture(&vault, "sess-union-recall-runs");
     let facade = facade_for(&vault, actor);
     facade
         .witness_into_session(

@@ -78,7 +78,8 @@ impl Vault {
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable
     /// (checked before the first write),
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) when the proof no
-    /// longer holds here, plus storage failures.
+    /// longer holds here or names a person who is not this vault's owner,
+    /// plus storage failures.
     pub fn record_proposal_outcome_for_ramp(
         &self,
         owner: &AuthenticatedOwner,
@@ -88,7 +89,7 @@ impl Vault {
         scope.validate()?;
         let at = self.store.clock.now_recorded_at();
         let counters = self.with_write_txn_grouped(|wtxn| {
-            owner.revalidate_in_txn(self, &*wtxn)?;
+            owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
             record_outcome_for_scope_in_txn(self, wtxn, scope, outcome, at, OutcomeWitness::Door)
         })?;
         let rtxn = self.store.env.read_txn()?;
@@ -212,7 +213,8 @@ impl Vault {
     ///
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable,
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) when the proof no
-    /// longer holds here, plus storage failures.
+    /// longer holds here or names a person who is not this vault's owner,
+    /// plus storage failures.
     pub fn demote_scope_to_propose(
         &self,
         owner: &AuthenticatedOwner,
@@ -222,7 +224,7 @@ impl Vault {
         scope.validate()?;
         let at = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
-            owner.revalidate_in_txn(self, &*wtxn)?;
+            owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
             append_demotion_in_txn(self, wtxn, scope, reason, at)
         })
     }

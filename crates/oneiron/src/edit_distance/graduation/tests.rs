@@ -19,6 +19,7 @@ fn scope() -> RampScope {
     RampScope::new("send_email", "client_followup", "agent-a").expect("scope")
 }
 
+/// The vault's own owner: a ruling is the owner's word (H149).
 fn owner(vault: &Vault) -> AuthenticatedOwner {
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     vault

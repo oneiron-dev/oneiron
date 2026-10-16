@@ -123,7 +123,10 @@ fn rows(outcome: &EntityEraseOutcome) -> BTreeMap<EntityId, SameBytesOutcome> {
 fn without_the_flag_an_erase_leaves_shared_bytes_to_the_other_record() {
     for erase_door in [true, false] {
         let (_dir, vault) = blob_vault();
-        let memory = facade_for(&vault, put_person(&vault, 0xE1));
+        let person = put_person(&vault, 0xE1);
+        // Deleting is an owner verb, which holds only for a bound owner (H149).
+        crate::test_util::bind_test_owner(&vault, person);
+        let memory = facade_for(&vault, person);
         let a = artifact(&memory, &[SHARED]);
         let b = artifact(&memory, &[SHARED]);
         let preview = memory.preview_entity_delete(&a).expect("preview");
@@ -199,8 +202,12 @@ fn only_a_live_vault_owner_confirms_a_same_bytes_erase() {
     let a = artifact(&mine, &[SHARED]);
     let b = artifact(&mine, &[SHARED]);
     let m = artifact(&theirs, &[SHARED]);
+    let owner_preview = mine.preview_entity_delete(&a).expect("owner preview");
+    // The member deletes its own record only as a bound human (H149); the
+    // flag still asks for a live owner of the vault, which a member is not.
+    crate::test_util::bind_test_owner(&vault, member);
     let previews = [
-        mine.preview_entity_delete(&a).expect("owner preview"),
+        owner_preview,
         theirs.preview_entity_delete(&m).expect("member preview"),
     ];
     let agent = vault.memory(owner, EdgeActorClass::Agent);

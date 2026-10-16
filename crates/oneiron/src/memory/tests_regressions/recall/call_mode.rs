@@ -98,7 +98,7 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
         return;
     }
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x81);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     witness_said(
         &facade,
@@ -164,7 +164,7 @@ fn a_deadline_that_never_fires_ranks_exactly_as_no_deadline() {
     use crate::memory::caps::MAX_RECALL_DEADLINE_MS;
 
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x84);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     for (conversation, said, age_days) in [
         (0x85, "a window seat on the night train", 30),
@@ -232,7 +232,7 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
     // A deleted message and a world-two claim, read by an actor with no
     // world grant.
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x89);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     witness_said(&facade, 0x8a, "lantern festival by the river", 3);
     let erased = facade
@@ -341,7 +341,7 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
     use std::sync::Mutex;
 
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x8d);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     witness_said(&facade, 0x8e, "the lighthouse keeper rang twice", 2);
     let published: Mutex<Vec<MemoryPack>> = Mutex::default();
@@ -401,7 +401,7 @@ fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
     use std::sync::Mutex;
 
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x8d);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     witness_said(&facade, 0x8e, "the lighthouse keeper rang twice", 2);
     let published: Mutex<Vec<MemoryPack>> = Mutex::default();

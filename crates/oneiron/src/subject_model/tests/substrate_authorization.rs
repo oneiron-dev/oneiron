@@ -119,7 +119,21 @@ fn unrooted_substrate_uses_canonical_human_owner_semantics() -> Result<()> {
         .kind(),
         ErrorKind::ActorLacksClaimAuthority
     );
-    set_person_substrate(&vault, person, PersonSubstrate::Model, writer(), 101)?;
+    // With no authority root the owner is the vault's embedded owner alone
+    // (H149): another Human PERSON is no owner capability either.
+    assert_eq!(
+        set_person_substrate(&vault, person, PersonSubstrate::Model, writer(), 101)
+            .expect_err("a PERSON who is not the vault's owner")
+            .kind(),
+        ErrorKind::ActorLacksClaimAuthority
+    );
+    let owner = WriteActor::new(
+        vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?,
+        EdgeActorClass::Human,
+    );
+    set_person_substrate(&vault, person, PersonSubstrate::Model, owner, 101)?;
     assert_eq!(
         person_substrate(&vault, &person, 103)?,
         Some(PersonSubstrate::Model)

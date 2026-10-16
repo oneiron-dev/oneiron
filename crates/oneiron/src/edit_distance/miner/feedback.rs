@@ -196,43 +196,54 @@ pub fn bind_amendment_preference_principal(
     target.validate()?;
     vault.with_write_txn_grouped(|txn| {
         vault.verify_owner_write_actor_in_txn(txn, &owner)?;
-        let evidence =
-            crate::edit_distance::attribution::amendment_evidence_in_txn(vault, txn, receipt)?
-                .ok_or(Error::InvalidClaimBody(
-                    "preference binding requires measured amendment evidence",
-                ))?;
-        let row = PrincipalDecision {
-            v: 1,
-            receipt: receipt.to_owned(),
-            claim: None,
-            principal: owner.entity_ref(),
-            actor: evidence.actor,
-            skill: evidence.skill,
-            target: target.clone(),
-            outcome: "approved_amended".to_owned(),
-            predicate: String::new(),
-            reviewed_value: None,
-            fingerprint: String::new(),
-            scope: evidence.scope,
-            substitution: None,
-            at: evidence.at,
-        };
-        if let Some(existing) = principal_decision(vault, txn, receipt)? {
-            if existing.principal == row.principal
-                && existing.target == row.target
-                && existing.actor == row.actor
-                && existing.skill == row.skill
-                && existing.scope == row.scope
-                && existing.at == row.at
-                && existing.outcome == row.outcome
-            {
-                return Ok(());
-            }
-            return Err(Error::InvalidClaimBody(
-                "preference decision binding is immutable",
-            ));
-        }
-        DECISION.put(&vault.store, txn, &receipt.to_owned(), &row)?;
-        Ok(())
+        bind_amendment_preference_principal_in_txn(vault, txn, owner.entity_ref(), receipt, target)
     })
+}
+
+/// The binding row itself, for a `principal` the caller has already checked
+/// is the vault's owner.
+pub(super) fn bind_amendment_preference_principal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    principal: EntityId,
+    receipt: &str,
+    target: &CompilationTarget,
+) -> Result<()> {
+    let evidence =
+        crate::edit_distance::attribution::amendment_evidence_in_txn(vault, txn, receipt)?.ok_or(
+            Error::InvalidClaimBody("preference binding requires measured amendment evidence"),
+        )?;
+    let row = PrincipalDecision {
+        v: 1,
+        receipt: receipt.to_owned(),
+        claim: None,
+        principal,
+        actor: evidence.actor,
+        skill: evidence.skill,
+        target: target.clone(),
+        outcome: "approved_amended".to_owned(),
+        predicate: String::new(),
+        reviewed_value: None,
+        fingerprint: String::new(),
+        scope: evidence.scope,
+        substitution: None,
+        at: evidence.at,
+    };
+    if let Some(existing) = principal_decision(vault, txn, receipt)? {
+        if existing.principal == row.principal
+            && existing.target == row.target
+            && existing.actor == row.actor
+            && existing.skill == row.skill
+            && existing.scope == row.scope
+            && existing.at == row.at
+            && existing.outcome == row.outcome
+        {
+            return Ok(());
+        }
+        return Err(Error::InvalidClaimBody(
+            "preference decision binding is immutable",
+        ));
+    }
+    DECISION.put(&vault.store, txn, &receipt.to_owned(), &row)?;
+    Ok(())
 }

@@ -41,6 +41,7 @@ fn request() -> EmergencyRescheduleRequest {
 }
 
 fn logged(vault: &Vault) -> EmergencyRescheduleRequest {
+    crate::test_util::bind_test_owner(vault, id(OWNER));
     let mut req = request();
     req.authority = append_owner_instruction(
         vault,
@@ -345,6 +346,7 @@ fn executable_with_invite_config(
     }
     let mut req = request();
     req.action_policy = action_policy;
+    crate::test_util::bind_test_owner(&vault, id(OWNER));
     let memory = vault.memory(id(OWNER), crate::edge::EdgeActorClass::Human);
     req.authority = memory
         .record_emergency_instruction(&crate::memory::EmergencyInstructionInput {

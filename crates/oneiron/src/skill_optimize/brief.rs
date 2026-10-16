@@ -166,7 +166,7 @@ pub fn optimize_brief_for_principal_at(
     optimize_brief_bound_at(vault, candidate, Some(owner.entity_ref()), now)
 }
 
-pub(super) fn optimize_brief_bound_at(
+pub(crate) fn optimize_brief_bound_at(
     vault: &Vault,
     candidate: &SkillOptimizeCandidate,
     principal: Option<EntityId>,

@@ -142,6 +142,8 @@ mod selection;
 mod tier;
 
 pub use self::ask_band::{AskBandLabel, AskBandPolicy};
+#[cfg(test)]
+pub(crate) use self::brief::optimize_brief_bound_at;
 pub use self::brief::{
     RejectedSkillEdit, RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME,
     SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft,

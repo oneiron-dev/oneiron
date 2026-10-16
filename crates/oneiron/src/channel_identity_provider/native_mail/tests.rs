@@ -525,16 +525,16 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = std::rc::Rc::new(Vault::open(dir.path(), crate::VaultConfig::default())?);
     let actor = EntityId::now();
-    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
-    for id in [actor, owner_id] {
-        vault.put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"mail principal",
-        )?;
-    }
+    let owner_id = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"mail principal",
+    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",

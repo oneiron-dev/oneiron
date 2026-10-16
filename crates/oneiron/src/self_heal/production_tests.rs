@@ -82,6 +82,7 @@ fn a_prose_scope_label_reaches_no_stored_row() -> Result<()> {
 fn a_diagnostic_stored_before_the_ruling_reads_without_its_text() -> Result<()> {
     const TEXT: &str = "sentinel-world-text-0c5e: my sister's diagnosis";
     let (_dir, vault, owner, query) = consent_vault()?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let ids = vault.run_consent_denied_detector("scope.consent", query)?;
     let canonical = body(&vault, &ids[0])?;
     let stored = decode_diagnostic_event_body(&canonical)?;

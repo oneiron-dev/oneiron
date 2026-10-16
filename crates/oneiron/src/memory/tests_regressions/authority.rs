@@ -10,7 +10,7 @@ use super::*;
 #[test]
 fn put_structural_gates_actor_capable_kinds() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x46);
+    let owner = put_owner(&vault);
     let agent_person = put_person(&vault, 0x4E);
     let owner_facade = facade_for(&vault, owner);
     let agent_facade = vault.memory(agent_person, EdgeActorClass::Agent);
@@ -162,7 +162,7 @@ fn failed_commit_leaves_no_phantom_gate_decision() {
 #[test]
 fn retract_and_delete_enforce_actor_authority() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x47);
+    let owner = put_owner(&vault);
     let agent_person = put_person(&vault, 0x48);
     let subject = put_person(&vault, 0x49);
     let owner_facade = facade_for(&vault, owner);
@@ -246,7 +246,7 @@ fn retract_and_delete_enforce_actor_authority() {
 #[test]
 fn generated_supersession_is_proposed_and_cannot_close_user_truth() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x4B);
+    let actor = put_owner(&vault);
     let subject = put_person(&vault, 0x4C);
     let facade = facade_for(&vault, actor);
 
@@ -311,7 +311,7 @@ fn generated_supersession_is_proposed_and_cannot_close_user_truth() {
 #[test]
 fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x62);
+    let owner = put_owner(&vault);
     let facade = facade_for(&vault, owner);
 
     let put_kind = |kind: &str, id_hex: &str, at: u64| {

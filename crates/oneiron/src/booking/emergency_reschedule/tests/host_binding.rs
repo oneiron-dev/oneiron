@@ -186,6 +186,7 @@ fn confirm_with_real_solver_in_zone(
 }
 
 fn request_as(vault: &Vault, owner: u8) -> EmergencyRescheduleRequest {
+    crate::test_util::bind_test_owner(vault, id(owner));
     let mut req = request();
     req.owner_ref = id(owner);
     req.authority = append_owner_instruction(

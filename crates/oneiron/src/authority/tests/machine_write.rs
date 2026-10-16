@@ -386,7 +386,7 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
     let mut revoke = issuer
         .sign_entry(
             Some(root.claims.vault_id),
-            4,
+            fold.append_sequences[&issuer.public_key()] + 1,
             fold.append_heads.iter().copied().collect(),
             AuthorityOp::RevokeActor {
                 authority_key: key.clone(),
@@ -596,7 +596,6 @@ fn owner_approval_and_machine_supersession_follow_signed_history() {
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let at = TimeRange { start: 10, end: 10 };
     let machine = EntityId::now();
-    let owner = EntityId::now();
     vault
         .put_entity(
             &machine,
@@ -606,39 +605,10 @@ fn owner_approval_and_machine_supersession_follow_signed_history() {
             b"machine",
         )
         .unwrap();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            at,
-            10,
-            b"owner",
-        )
-        .unwrap();
     let issuer = HostSlipIssuer::from_secret(b"history-approval-root").unwrap();
-    let root = vault.ensure_host_root_slip(&issuer).unwrap();
-    let parent = *vault
-        .authority_fold()
-        .unwrap()
-        .valid_entries
-        .iter()
-        .next_back()
-        .unwrap();
-    let owner_bind = issuer
-        .sign_entry(
-            Some(root.claims.vault_id),
-            2,
-            vec![parent],
-            AuthorityOp::BindActor {
-                authority_key: issuer.public_key(),
-                actor_ref: owner,
-                actor_class: "human".into(),
-                epoch: 1,
-            },
-            11,
-        )
-        .unwrap();
-    vault.put_authority_log_entry(&owner_bind, at, 10).unwrap();
+    // The self-hosted root binds the vault's owner (H149).
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let owner = crate::vault::embedded_owner_actor_id().unwrap();
     let signing = ed_key(228);
     vault
         .enroll_machine_identity(
@@ -848,7 +818,7 @@ fn successor_root_carries_exact_machine_history_and_refuses_retired_backdating()
     let mut re_root = issuer
         .sign_entry(
             Some(root.claims.vault_id),
-            4,
+            fold.append_sequences[&issuer.public_key()] + 1,
             fold.append_heads.iter().copied().collect(),
             AuthorityOp::ReRoot {
                 new_device: DeviceAuthority {

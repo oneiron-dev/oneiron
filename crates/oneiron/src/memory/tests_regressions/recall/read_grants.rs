@@ -123,7 +123,7 @@ fn scoped_recall_hides_world_ids_without_claim_read_authority() {
 #[test]
 fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
     let (_dir, vault) = open_vault();
-    let writer = put_person(&vault, 0x72);
+    let writer = put_owner(&vault);
     let scoped = put_person(&vault, 0x73);
     let facade = facade_for(&vault, writer);
     let anchor = facade
