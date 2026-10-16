@@ -4,7 +4,6 @@
 //! variants live on FACET. Compilation is a projection, never a second store.
 
 use super::codec::invalid_companion;
-use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, PointRead, ReadRow, ScopedRead,
@@ -13,6 +12,7 @@ use crate::claim::{
 use crate::error::{Error, Result};
 use crate::federation::{ScopeId, Sensitivity};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
+use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};

@@ -14,9 +14,9 @@ use super::support::{json_to_rmpv, verify_actor_binding_in_txn};
 use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::serialize::msgpack_value_to_json;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::serialize::msgpack_value_to_json;
 use crate::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
 };

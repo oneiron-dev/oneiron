@@ -1,7 +1,7 @@
 //! Transactional per-principal/grant observations, independent of connections.
 
-use super::{FederationPeer, corrupt};
-use crate::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+use super::{FederationPeer, corrupt, peer_health::PeerHealth};
+use crate::llm::normalized_burst_inputs;
 use crate::{Result, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +12,8 @@ struct Observation {
     completed: u64,
     recent: u64,
     streak: u32,
+    completed_streaks: u64,
+    streak_total: u64,
 }
 
 fn key(peer: &FederationPeer) -> Vec<u8> {
@@ -39,7 +41,7 @@ pub(super) fn observe_in_txn(
     peer: &FederationPeer,
     writes: u64,
     now: u64,
-) -> Result<NormalizedBurstInputs> {
+) -> Result<PeerHealth> {
     let key = key(peer);
     let mut row = load(vault, txn, &key)?;
     if row.recent == 0 && row.completed == 0 {
@@ -59,8 +61,30 @@ pub(super) fn observe_in_txn(
     let baseline = row.completed as f64 / now.saturating_sub(row.first).max(1) as f64;
     let size = crate::ports::EntityStoreRead::port_entity_count(&vault.store, &*txn)?;
     let inputs = normalized_burst_inputs(row.recent, 1, baseline, size, row.streak);
+    let streak_baseline = row.streak_total as f64 / row.completed_streaks.max(1) as f64;
+    let streak_ratio =
+        normalized_burst_inputs(u64::from(row.streak), 1, streak_baseline, size, 0).rate_ratio;
     save(vault, txn, &key, &row)?;
-    Ok(inputs)
+    Ok(PeerHealth {
+        inputs,
+        streak_ratio,
+    })
+}
+
+/// Isolation drains automatically after the peer's current rate returns to
+/// its baseline. Inspecting readiness neither debits nor trains the peer.
+pub(super) fn replay_ready_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: &FederationPeer,
+    now: u64,
+) -> Result<bool> {
+    let row = load(vault, txn, &key(peer))?;
+    let now = now.max(row.tick);
+    let recent = if now == row.tick { row.recent } else { 0 };
+    let baseline = row.completed as f64 / now.saturating_sub(row.first).max(1) as f64;
+    let size = crate::ports::EntityStoreRead::port_entity_count(&vault.store, txn)?;
+    Ok(normalized_burst_inputs(recent, 1, baseline, size, row.streak).rate_ratio <= 1.0)
 }
 
 pub(super) fn outcome_in_txn(
@@ -74,6 +98,10 @@ pub(super) fn outcome_in_txn(
     row.streak = if structural_failure {
         row.streak.saturating_add(1)
     } else {
+        if row.streak > 0 {
+            row.completed_streaks = row.completed_streaks.saturating_add(1);
+            row.streak_total = row.streak_total.saturating_add(u64::from(row.streak));
+        }
         0
     };
     save(vault, txn, &key, &row)
