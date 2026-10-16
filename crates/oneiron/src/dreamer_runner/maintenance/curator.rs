@@ -1,12 +1,27 @@
-//! Curator grading data and minimum-force proposals; never applies or deletes.
-use super::super::{DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
-use super::{CURATOR_FACET, invalid, load_row, proposals};
+//! Curator grading data and minimum-force proposals. The curator applies only
+//! what the owner approved in the run tray, one rung at a time, and never
+//! deletes: its last rung is a retraction, which keeps history.
+use super::super::{
+    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
+    EnqueueDreamerAttemptOutcome,
+};
+use super::{CURATOR_FACET, MAINTENANCE_QUEUE_KIND, invalid, load_row, proposals};
+use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimDemotionRung, claim_demotion_rung};
+use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, claim_demotion_rung};
+use crate::edge::EdgeKind;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
+use crate::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId, Error,
+    Result, Vault,
+};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
+/// The curator's finding predicate.
+const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";
 
 /// Owner-set rubric dial for the memory-curator maintenance pass.
 const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =
@@ -16,6 +31,14 @@ const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =
 pub enum CuratorTrigger {
     Nightly,
     Idle,
+}
+impl CuratorTrigger {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Nightly => "nightly",
+            Self::Idle => "idle",
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,17 +91,46 @@ impl Vault {
             Ok(())
         })
     }
+    /// One curator pass per rubric cadence, whichever trigger asks first.
     pub fn schedule_curator(
         &self,
-        _trigger: CuratorTrigger,
+        trigger: CuratorTrigger,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let rubric: CuratorRubric = load_row(self, RUBRIC, include_str!("curator_defaults.json"))?;
+        let store = DreamerRunnerStore::new(self);
+        self.with_write_txn_grouped(|txn| {
+            store.enqueue_curator_in_txn(txn, trigger, None, None, now)
+        })
+    }
+}
+impl DreamerRunnerStore<'_> {
+    /// [`Vault::schedule_curator`] in a caller-owned write: the nightly wake
+    /// registers the pass in the commit that takes its input.
+    pub(super) fn enqueue_curator_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        trigger: CuratorTrigger,
+        parent_attempt: Option<AttemptId>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let vault = self.vault();
+        let rubric = match RUBRIC.get(&vault.store, &*txn, &())? {
+            Some(rubric) => rubric,
+            None => serde_json::from_str::<CuratorRubric>(include_str!("curator_defaults.json"))
+                .map_err(|_| invalid())?,
+        };
         rubric.validate()?;
-        DreamerRunnerStore::new(self).enqueue_maintenance(
-            CURATOR_FACET,
-            Value::Nil,
-            format!("curator:{}", now / rubric.cadence_secs),
+        self.enqueue_kind_in_txn(
+            txn,
+            MAINTENANCE_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: CURATOR_FACET.into(),
+                input: Value::from(trigger.as_str()),
+                parent_attempt,
+            },
+            Some(format!("curator:{}", now / rubric.cadence_secs)),
+            run_id,
             now,
         )
     }
@@ -124,7 +176,8 @@ pub(super) fn run(
     let actor = vault.dreamer_authority()?.entity_ref();
     let txn = vault.store.env.read_txn()?;
     let mut candidates = Vec::new();
-    for row in crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, &txn)? {
+    let mut approved = Vec::new();
+    for row in EntityStoreRead::port_entity_raw_records(&vault.store, &txn)? {
         let (id, bytes) = row?;
         let Some(header) = EntityMetadataHeader::parse(&bytes) else {
             return Err(invalid());
@@ -135,6 +188,18 @@ pub(super) fn run(
             continue;
         }
         let body = crate::claim::decode_claim_body(&bytes[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if body.predicate == PROPOSAL_PREDICATE {
+            if body.source == Some(ClaimSource::Generated)
+                && body.lifecycle == ClaimLifecycleStatus::Active
+                && body.approval == ClaimApprovalStatus::Approved
+                && crate::claim::session_claim_producer(&body) == Some(actor)
+                && let Some(value) = body.value.as_str()
+                && let Ok(value) = serde_json::from_str::<serde_json::Value>(value)
+            {
+                approved.push((id, value));
+            }
+            continue;
+        }
         if body.source != Some(ClaimSource::Generated)
             || body.lifecycle != ClaimLifecycleStatus::Active
             || !matches!(
@@ -170,18 +235,110 @@ pub(super) fn run(
         }})));
     }
     drop(txn);
+    // Settle before proposing: a target moved by an approval this pass waits
+    // for the next pass to be graded on its new rung.
+    let mut moved = BTreeSet::new();
+    for (proposal, value) in approved {
+        match apply_approved(vault, &value, now) {
+            Ok(Some(target)) => {
+                moved.insert(target);
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                proposal = %proposal.to_hex(),
+                %error,
+                "curator: an approved proposal did not apply"
+            ),
+        }
+    }
     candidates
         .into_iter()
+        .filter(|(id, _)| !moved.contains(id))
         .map(|(id, value)| {
             proposals::emit(
                 vault,
                 attempt.status.attempt.id,
                 CURATOR_FACET,
                 id,
-                "dreamer.curator.proposal",
+                PROPOSAL_PREDICATE,
                 &value,
                 now,
             )
         })
         .collect()
+}
+
+/// Applies one owner-approved finding through the demotion ladder's own door.
+/// The finding names its target's body hash at grading. A target whose body
+/// moved since (this finding already applied, or any other write) is left
+/// alone, so a replayed pass applies nothing twice. Returns the moved target.
+fn apply_approved(vault: &Vault, value: &serde_json::Value, now: u64) -> Result<Option<EntityId>> {
+    let target = EntityId::from_hex(value["target"].as_str().ok_or_else(invalid)?)?;
+    let source_hash = value["source_hash"].as_str().ok_or_else(invalid)?;
+    let action = &value["action"];
+    let factor = |key: &str| -> Result<f32> {
+        let x = action[key].as_f64().ok_or_else(invalid)?;
+        #[allow(clippy::cast_possible_truncation, reason = "the rubric wrote an f32")]
+        Ok(x as f32)
+    };
+    let current_weight = {
+        let txn = vault.store.env.read_txn()?;
+        let Some(raw) = EntityStoreRead::port_entity_raw(&vault.store, &txn, &target)? else {
+            return Ok(None);
+        };
+        let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+            || raw.len() == ENTITY_METADATA_HEADER_LEN
+            || blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).to_hex().as_str() != source_hash
+        {
+            return Ok(None);
+        }
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if body.lifecycle != ClaimLifecycleStatus::Active {
+            return Ok(None);
+        }
+        match body.subject {
+            ClaimSubject::Entity(subject) if action["kind"] == "claim_of_weight" => {
+                let mut weight = None;
+                for edge in vault.port_edges(
+                    &txn,
+                    &target,
+                    EdgeDirection::Out,
+                    Some(EdgeKind::ClaimOf),
+                    None,
+                )? {
+                    let edge = edge?;
+                    if edge.target == subject {
+                        weight = Some(edge.weight);
+                    }
+                }
+                weight
+            }
+            _ => None,
+        }
+    };
+    let demotion = match action["kind"].as_str().ok_or_else(invalid)? {
+        "claim_of_weight" => ClaimDemotionAction::Decay {
+            new_claim_of_weight: current_weight.ok_or_else(invalid)? * factor("factor")?,
+        },
+        "confidence" => ClaimDemotionAction::Weaken {
+            new_confidence: factor("new_confidence")?,
+        },
+        "stale" => ClaimDemotionAction::MarkStale,
+        "retract" => {
+            vault.retract_claim(&target, now)?;
+            return Ok(Some(target));
+        }
+        _ => return Err(invalid()),
+    };
+    match vault.apply_claim_demotion(&target, demotion, now) {
+        Ok(_) => Ok(Some(target)),
+        // A critical predicate parks the demotion behind the owner's Gate
+        // consent; the parked action is the applied state until it resolves.
+        Err(Error::Gate(crate::error::GateError::GateWriteRejected {
+            outcome: "pending",
+            ..
+        })) => Ok(Some(target)),
+        Err(error) => Err(error),
+    }
 }

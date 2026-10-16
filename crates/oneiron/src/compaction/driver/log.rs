@@ -37,10 +37,12 @@ impl CompactionDriver {
     /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut,
     /// `prior` is the host's last epoch and the last turn it covers, and
     /// `calls` is how many of the host's calls `sources` were read from.
+    /// The host mints `request_id` from the store it reads: base, or its
+    /// room's view.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn request_for_log(
         &mut self,
-        vault: &Vault,
+        request_id: EntityId,
         session_ref: &EntityId,
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
@@ -87,12 +89,13 @@ impl CompactionDriver {
         }
         let mut seen = std::collections::BTreeSet::new();
         let sources = sources.into_iter().filter(|id| seen.insert(*id)).collect();
-        self.seal_request(
-            vault,
+        self.seal_request_as(
+            request_id,
             session_ref,
             window,
             pins,
             sources,
+            prior,
             WindowLog::Host { prior, calls },
         )
     }
