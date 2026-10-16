@@ -93,11 +93,14 @@ impl Decision for SharedCoreference {
 
     fn answers(vault: &Vault, subjects: &BTreeSet<Self::Subject>) -> Result<Vec<Option<bool>>> {
         let txn = vault.store.env.read_txn()?;
+        let now = vault.now_recorded_at();
         Ok(subjects
             .iter()
             .map(|(a, b, pact)| {
-                crate::federation::coreference_shared_for_pact_in_txn(vault, &txn, *a, *b, pact)
-                    .ok()
+                crate::federation::coreference_shared_for_pact_in_txn(
+                    vault, &txn, *a, *b, pact, now,
+                )
+                .ok()
             })
             .collect())
     }
