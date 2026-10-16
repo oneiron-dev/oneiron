@@ -531,6 +531,8 @@ fn mcp_agent_verb_input(
             Ok(Value::Object(map))
         }
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
+        "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
+        "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
         "cancel" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -801,6 +803,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "self.memory.diary" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.memory.diary.reads" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.memory.diary.review" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "cancel" => {
@@ -1272,6 +1280,22 @@ async fn execute_agent_verb_listing(
             let input: oneiron::task_verb::sdk::DiaryEntryRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_memory_diary(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.memory.diary.reads" => {
+            let input: oneiron::memory::DiaryReadsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_memory_diary_reads(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.memory.diary.review" => {
+            let input: oneiron::memory::DiaryReviewAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_memory_diary_review(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

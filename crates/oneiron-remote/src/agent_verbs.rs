@@ -41,6 +41,12 @@ impl OneironClient {
                 "self.memory.diary" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryEntryReceipt,
                 >(client, verb, &input),
+                "self.memory.diary.reads" => remote_agent_verb_output::<
+                    oneiron::memory::DiaryReadsView,
+                >(client, verb, &input),
+                "self.memory.diary.review" => remote_agent_verb_output::<
+                    oneiron::memory::DiaryReadRequest,
+                >(client, verb, &input),
                 "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
                     client, verb, &input,
                 ),
@@ -372,6 +378,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.memory.diary", value)
+    }
+    pub fn self_memory_diary_reads(
+        &self,
+        input: &oneiron::memory::DiaryReadsRequest,
+    ) -> Result<oneiron::memory::DiaryReadsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.diary.reads", value)
+    }
+    pub fn self_memory_diary_review(
+        &self,
+        input: &oneiron::memory::DiaryReviewAnswer,
+    ) -> Result<oneiron::memory::DiaryReadRequest, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.diary.review", value)
     }
     /// Cancels one task under the ladder's `auto` default. The receipt says
     /// what stopped and what became a proposal instead.
