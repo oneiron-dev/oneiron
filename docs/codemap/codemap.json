@@ -9563,7 +9563,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 4,
       "re-export": 7
      }
@@ -9586,6 +9586,7 @@
       "CodeRunBridgeCall",
       "CodeRunDeterminism",
       "CodeRunHistoryTurn",
+      "CodeRunOutputKind",
       "CodeRunOutputPreview",
       "CodeRunRawOutput",
       "CodeRunReplayCursor",
@@ -9597,8 +9598,9 @@
      "purpose": "—",
      "surface": {
       "const": 7,
-      "crate-vis": 3,
-      "fn": 17,
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 18,
       "struct": 10
      }
     },
@@ -9644,7 +9646,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
@@ -9657,7 +9659,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "fn": 9,
       "struct": 1
      }
@@ -9669,7 +9671,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 28
      }
     },
     {
@@ -9689,7 +9691,7 @@
      "path": "src/code_run/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 28
      }
     },
     {
@@ -17838,7 +17840,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -22913,7 +22915,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 180,
+      "mod": 181,
       "re-export": 72
      }
     },
@@ -23324,6 +23326,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "QuestionFamily"
+     ],
+     "path": "src/llm/decision/catalogue.rs",
+     "purpose": "The engine's registered typed-question families, in one place",
+     "surface": {
+      "const": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/codec.rs",
      "purpose": "Canonical entity references for typed-decision wire records",
@@ -23332,25 +23348,29 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "DecisionCall",
       "DecisionLadder",
       "DecisionModel",
+      "DecisionPack",
       "DecisionProvider",
       "HumanDecisionQueue",
       "HumanDecisionRequest",
       "ModelDecisionProvider",
       "PairedAnswer",
+      "ProviderCapability",
       "ProviderDecision",
       "RuleDecisionProvider"
      ],
      "path": "src/llm/decision/ladder.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
+      "const": 1,
       "crate-vis": 4,
-      "fn": 5,
-      "struct": 6,
+      "fn": 8,
+      "struct": 9,
       "trait": 3
      }
     },
@@ -23380,7 +23400,7 @@
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
-      "mod": 1,
+      "mod": 2,
       "re-export": 7
      }
     },
@@ -23398,8 +23418,9 @@
      "path": "src/llm/decision/policy.rs",
      "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
      "surface": {
+      "const": 1,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -23555,14 +23576,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DecisionReadCall",
       "DecisionReadProvider"
      ],
      "path": "src/llm/decision/read.rs",
-     "purpose": "The escalation rung's decision read: the house model scores the question's labels, the paired \"does this…",
+     "purpose": "The escalation rung's decision read: the house model scores the question's labels and the paired \"does this…",
      "surface": {
-      "fn": 2,
-      "struct": 2
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -26451,7 +26471,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 27,
       "fn": 10,
       "struct": 2
      }
@@ -31141,7 +31161,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RestoreEpoch",
@@ -31804,6 +31824,20 @@
      "path": "src/rerank/crossencoder/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResultMemoryPool"
+     ],
+     "path": "src/result_memory.rs",
+     "purpose": "The memory code-mode result bodies may hold (OF-190 B++)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 4,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -35349,6 +35383,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_store.rs",
+     "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -35581,7 +35625,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 13
      }
@@ -35937,7 +35981,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
      }
@@ -43131,9 +43175,9 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
     },
@@ -43375,6 +43419,13 @@
      "layout": "file+dir",
      "purpose": "RET-010 host-injected top-N rerank seam (1186-D1/D2)"
     },
+    "result_memory": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The memory code-mode result bodies may hold (OF-190 B++)"
+    },
     "retrieval_depth": {
      "files": 7,
      "impl_vault": false,
@@ -43565,7 +43616,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43747,9 +43798,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 52,
+   "over_bar": 54,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2623,
+   "source_files": 2626,
    "test_files": 903
   },
   "oneiron-android": {
@@ -46593,7 +46644,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 11,
       "struct": 2,
       "trait": 1
      }
