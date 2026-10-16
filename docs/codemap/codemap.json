@@ -15917,7 +15917,7 @@
      "purpose": "The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises \"who is this?\" to the…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -25806,7 +25806,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "QuestionFamily"
@@ -25814,7 +25814,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 28,
+      "const": 29,
       "fn": 1,
       "struct": 1
      }
@@ -25929,7 +25929,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -26143,6 +26143,23 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoutineDecision",
+      "RoutineOutcome",
+      "RoutineTrail"
+     ],
+     "path": "src/llm/decision/routine.rs",
+     "purpose": "Routine driver steps (the CUA-S1 pattern, OF-523): a small decider takes a driver's routine choice behind…",
+     "surface": {
+      "const": 6,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -48392,7 +48409,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49073,7 +49090,7 @@
    },
    "over_bar": 100,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2959,
+   "source_files": 2960,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59053,7 +59070,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/local_vision.rs",
@@ -62579,7 +62596,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/decision_verdict.rs",
@@ -65843,7 +65860,7 @@
     "decision_verdict": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder"
     },
