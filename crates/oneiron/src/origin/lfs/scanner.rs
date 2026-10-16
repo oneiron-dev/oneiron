@@ -346,8 +346,8 @@ impl CredentialStream {
     /// Reads a key that starts at each of the first `starts` offsets of
     /// [`Self::inner`], as the write door reads one after leading token bytes.
     fn check_inner(&self, starts: usize) -> Result<()> {
-        for start in 0..starts {
-            if !matches!(self.inner[start], b'A' | b'g' | b's' | b'x' | b'r') {
+        for (start, &byte) in self.inner.iter().enumerate().take(starts) {
+            if !matches!(byte, b'A' | b'g' | b's' | b'x' | b'r') {
                 continue;
             }
             let candidate = &self.inner[start..self.inner.len().min(start + KEY_MAX)];
