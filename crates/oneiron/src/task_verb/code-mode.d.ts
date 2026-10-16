@@ -4,6 +4,7 @@ declare const ai: {
   options(input: { inputs?: string[]; operation?: string | null }): Promise<unknown>;
   speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
   transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  verdict(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; deadline_ms?: number | null; evidence?: string[]; options?: string[]; question: string; reversibility?: "reversible_read" | "outbound_effect"; state?: unknown }): Promise<unknown>;
   video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }) => Promise<unknown>) & {
     cancel(input: { job: string }): Promise<unknown>;
     poll(input: { job: string }): Promise<unknown>;
@@ -112,6 +113,9 @@ declare const vault: {
   habits: {
     checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
   };
+  hooks: {
+    replay(input: { binding: string; limit?: number | null; since?: string | null }): Promise<unknown>;
+  };
   hydrate(input: { refs: string[] }): Promise<unknown>;
   images: {
     view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
@@ -133,7 +137,7 @@ declare const vault: {
     put(input: { files: object[] }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
-  receipts: ((input: { limit?: number | null }) => Promise<unknown>) & {
+  receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
