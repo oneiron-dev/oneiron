@@ -77,6 +77,9 @@ impl MicroVmSandboxAdapter {
     }
 
     #[must_use]
+    pub fn session_manifest(&self) -> Option<oneiron_container::SessionManifest> { self.backend.session_manifest(&self.vm) }
+
+    #[must_use]
     pub fn backend_name(&self) -> &'static str {
         self.backend.name()
     }
