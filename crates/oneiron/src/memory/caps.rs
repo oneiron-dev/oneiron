@@ -22,6 +22,14 @@ pub const MAX_QUERY_BYTES: usize = 8 * 1024;
 /// Maximum rows any list/search verb may be asked for: 1,000.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
+/// How many candidates a read that narrows its rows after ranking fetches
+/// for `requested`: the whole [`MAX_SEARCH_LIMIT`] window, never the index's
+/// population, so its cost does not grow with the vault. Zero stays zero.
+/// The page is short when the window holds fewer rows the narrowing keeps.
+pub(crate) fn narrowed_candidate_window(requested: usize) -> usize {
+    if requested == 0 { 0 } else { MAX_SEARCH_LIMIT }
+}
+
 /// Maximum serialized body of one entity, claim, or message: 64 KiB.
 pub const MAX_ENTITY_PAYLOAD_BYTES: usize = 64 * 1024;
 

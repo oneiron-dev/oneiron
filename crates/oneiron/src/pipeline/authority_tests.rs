@@ -734,6 +734,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 relationship_filter: None,
                 world_scope: &WorldScope::All,
                 world_active_set: None,
+                stale_worlds: None,
                 corpus_scope: &crate::corpus::CorpusScope::All,
                 device_local: None,
                 deadline: None,

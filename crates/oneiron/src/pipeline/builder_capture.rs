@@ -23,6 +23,23 @@ impl PipelineBuilder<'_> {
         self
     }
 
+    /// Selects an `All`-world pack's rows so non-base claims stay at most
+    /// `floor(fraction × emitted claims)`, before the per-kind and result cuts.
+    pub(crate) fn context_pack_world_share(mut self, fraction: f32) -> Self {
+        self.context_pack_world_share = Some(fraction);
+        self
+    }
+
+    /// Drops the rows a pack's disclosure clamp withholds before selection,
+    /// listing them in `PipelineOutput::disclosure_clamped`.
+    pub(crate) fn disclosure_preselect(
+        mut self,
+        clamp: crate::disclosure::DisclosureContext,
+    ) -> Self {
+        self.disclosure_preselect = Some(clamp);
+        self
+    }
+
     /// Retrieves a context pack's memory lane alone, without the skill and
     /// agent discovery that runs beside it.
     pub(crate) fn memory_lane_only(mut self) -> Self {

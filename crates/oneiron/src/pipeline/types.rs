@@ -218,6 +218,12 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// per run under the run's read transaction and borrowed by every
     /// per-candidate check. `None` for every other scope.
     pub(super) world_active_set: Option<&'a WorldAuthoritySet>,
+    /// The stale federated worlds, read once per run under
+    /// [`WorldScope::All`] when any is stamped: a scope that never named such
+    /// a world keeps its claims out of every bounded channel, as the
+    /// post-fusion world filter does. `None` otherwise.
+    pub(super) stale_worlds:
+        Option<&'a std::collections::BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
     /// The query's project-axis selection; [`CorpusScope::All`] is the
     /// default and a no-op, exactly like [`WorldScope::All`].
     ///
@@ -288,6 +294,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) claims_suppressed: usize,
     pub(crate) read_suppressed: usize,
     pub(crate) cosine_ghosts_dampened: usize,
+    /// Scored rows the pack's disclosure clamp withheld before selection
+    /// (`PipelineBuilder::disclosure_preselect`).
+    pub(crate) disclosure_clamped: Vec<EntityId>,
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,
     pub(crate) telemetry_run_id: Option<RetrievalRunId>,

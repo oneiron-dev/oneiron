@@ -31,20 +31,17 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
-            &self.store_read(),
-            limit,
-            false,
-            true,
-        )?;
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let results = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .search_vector(query, fetch_limit)
-            .limit(fetch_limit)
+            .filter_candidates(&admitted)
+            .search_vector(query, limit)
+            .limit(limit)
             .run_for_pack()?;
         let filtered = self.filter_search_results(
             results.scores,
@@ -52,7 +49,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -89,20 +86,17 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
-            &self.store_read(),
-            limit,
-            true,
-            false,
-        )?;
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let mut pipeline = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .search_text(query, fetch_limit)
-            .limit(fetch_limit);
+            .filter_candidates(&admitted)
+            .search_text(query, limit)
+            .limit(limit);
         if let Some(as_of) = as_of {
             pipeline = pipeline.with_temporal_now(as_of);
         }
@@ -113,7 +107,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )?;
         let mut revisions = results.revisions;

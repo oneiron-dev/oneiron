@@ -24,7 +24,7 @@ pub(super) const SYMMETRIC_LINKS_ENABLED: u8 = 1;
 /// rows, rebuild counters and unrelated `hnsw_meta` keys).
 ///
 /// A present marker means "graph shape absent", never "empty vector corpus":
-/// [`hnsw_entity_count`] reports the source-vector count while it is set, and
+/// `hnsw_entity_count` reports the source-vector count while it is set, and
 /// both lazy first-use routes below rebuild deterministically from the
 /// surviving vectors under the vault's persisted [`LinkDiscipline`]. A
 /// present-but-malformed marker is the existing fail-closed

@@ -16,7 +16,6 @@ use super::keys::{
     ERR_VECTOR_VERSION_BYTES,
 };
 use super::search::score_prefix;
-use super::slim_drop::hnsw_is_dropped;
 use super::types::HeapEntry;
 
 pub(crate) fn read_vector_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
@@ -102,10 +101,10 @@ pub(super) fn read_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u6
 /// While the SLIM dropped marker is set (ONE-1933 / OF-447) the graph shape is
 /// absent but the source corpus is intact, so this reports the SOURCE-VECTOR
 /// count rather than the absent graph-node count. Dropped means "graph shape
-/// absent", not "empty corpus" — which is what keeps `PipelineBuilder`'s
-/// fence-widening loop correct without editing `pipeline.rs`.
+/// absent", not "empty corpus".
+#[cfg(test)]
 pub(crate) fn hnsw_entity_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<usize> {
-    if hnsw_is_dropped(store, txn)? {
+    if super::slim_drop::hnsw_is_dropped(store, txn)? {
         return usize::try_from(store.vectors().len(txn)?)
             .map_err(|_| Error::IndexOverflow("hnsw entity count"));
     }

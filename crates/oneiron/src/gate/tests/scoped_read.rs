@@ -773,7 +773,7 @@ fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
 }
 
 #[test]
-fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() -> Result<()> {
+fn scoped_receipts_count_no_row_the_grant_refuses_and_refresh_point_authority() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let weak_id = test_id(0x51);
     let strong_id = test_id(0x52);
@@ -798,9 +798,11 @@ fn scoped_receipts_include_prefilter_exclusions_and_refresh_point_authority() ->
         result.value.iter().map(|row| row.id).collect::<Vec<_>>(),
         vec![strong_id]
     );
-    assert_eq!(result.receipt.suppressed_count, 1);
+    // B7 (F21b): the grant's own floor refuses the weak claim, so no count
+    // or hint says it exists.
+    assert_eq!(result.receipt.suppressed_count, 0);
     assert!(
-        result
+        !result
             .receipt
             .replan_hint
             .iter()

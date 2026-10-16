@@ -23,6 +23,11 @@ impl Vault {
     /// walk always runs on base's own graph, and the vectors a room stages are
     /// scored exactly beside it: a room holds few. A hit whose vector the room
     /// replaced or removed takes the room's.
+    ///
+    /// One walk of `limit` answers: a row this read keeps out, by visibility
+    /// or by the caller's `admission`, takes no place among its matches, so
+    /// no wider walk is needed for the rows it admits. The page is short when
+    /// the walk finds fewer.
     pub(crate) fn scoped_vector_search_quality_in_txn(
         &self,
         store: &crate::store::StoreRead<'_>,
@@ -30,65 +35,57 @@ impl Vault {
         query: &[f32],
         limit: usize,
         skip_rescore: bool,
-        private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
+        (private_note_ids, admission): (
+            Option<&crate::claim::ScopedDiaryCandidates>,
+            Option<&crate::hnsw::Admission<'_>>,
+        ),
     ) -> Result<Vec<ScoredEntity>> {
+        let admits = |txn: &RoTxn<'_>, id: &EntityId| -> Result<bool> {
+            Ok(visible_in(store, txn, id, private_note_ids)?
+                && admission.map_or(Ok(true), |admits| admits(txn, id))?)
+        };
         let staged = store
             .vectors
             .staged_rows()
-            .map(|staged| self.staged_vectors(store, txn, query, skip_rescore, staged))
+            .map(|staged| self.staged_vectors(store, txn, query, skip_rescore, (staged, &admits)))
             .transpose()?;
-        let base = store.base();
-        let population = crate::hnsw::hnsw_entity_count(base, txn)?;
-        // A nonzero request still validates an apparently empty index.
-        let mut requested = limit.min(population.max(1));
-        loop {
-            let mut rows = match &staged {
-                Some(staged) if staged.clear_base => Vec::new(),
-                _ => crate::hnsw::hnsw_search(
-                    base,
-                    &self.config,
-                    txn,
-                    query,
-                    requested,
-                    skip_rescore,
-                )?,
-            };
-            if let Some(staged) = &staged {
-                // A base hit takes the room's vector, or none, and counts only
-                // for a row the room still reads.
-                let mut merged = Vec::with_capacity(rows.len() + staged.scored.len());
-                for row in rows {
-                    if !staged.ids.contains(&row.id) && live_in(store, txn, &row.id)? {
-                        merged.push(row);
-                    }
-                }
-                merged.extend_from_slice(&staged.scored);
-                merged.sort_unstable_by(|left, right| {
-                    right
-                        .score
-                        .total_cmp(&left.score)
-                        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
-                });
-                rows = merged;
-            }
-            let mut visible = filter_results(store, txn, rows, private_note_ids)?;
-            // Every staged vector is scored each time, and base's later hits
-            // rank below all it returned: the result holds once `limit` of
-            // base's own survive, or base has no more.
-            let base_hits = staged.as_ref().map_or(visible.len(), |staged| {
-                visible
-                    .iter()
-                    .filter(|row| !staged.ids.contains(&row.id))
-                    .count()
+        let mut rows = match &staged {
+            Some(staged) if staged.clear_base => Vec::new(),
+            // A base hit takes the room's vector, or none, and counts only
+            // for a row the room still reads.
+            Some(staged) => crate::hnsw::hnsw_search(
+                store.base(),
+                &self.config,
+                txn,
+                query,
+                limit,
+                skip_rescore,
+                Some(&|txn: &RoTxn<'_>, id: &EntityId| {
+                    Ok(!staged.ids.contains(id) && live_in(store, txn, id)? && admits(txn, id)?)
+                }),
+            )?,
+            None => crate::hnsw::hnsw_search(
+                store.base(),
+                &self.config,
+                txn,
+                query,
+                limit,
+                skip_rescore,
+                Some(&admits),
+            )?,
+        };
+        if let Some(staged) = staged {
+            rows.extend(staged.scored);
+            rows.sort_unstable_by(|left, right| {
+                right
+                    .score
+                    .total_cmp(&left.score)
+                    .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
             });
-            let exhausted =
-                requested >= population || staged.as_ref().is_some_and(|staged| staged.clear_base);
-            visible.truncate(limit);
-            if base_hits >= limit || exhausted {
-                return Ok(visible);
-            }
-            requested = requested.saturating_mul(2).max(1).min(population);
         }
+        let mut visible = filter_results(store, txn, rows, private_note_ids)?;
+        visible.truncate(limit);
+        Ok(visible)
     }
 }
 
@@ -100,7 +97,7 @@ fn live_in(store: &crate::store::StoreRead<'_>, txn: &RoTxn<'_>, id: &EntityId) 
 }
 
 /// The vectors a room stages: every id whose base vector it replaced or
-/// removed, and its live rows scored against the query.
+/// removed, and its live rows the read admits scored against the query.
 struct StagedVectors {
     clear_base: bool,
     ids: std::collections::HashSet<EntityId>,
@@ -114,7 +111,10 @@ impl Vault {
         txn: &RoTxn<'_>,
         query: &[f32],
         skip_rescore: bool,
-        staged: crate::session_overlay::StagedRows,
+        (staged, admits): (
+            crate::session_overlay::StagedRows,
+            &crate::hnsw::Admission<'_>,
+        ),
     ) -> Result<StagedVectors> {
         let mut ids = std::collections::HashSet::with_capacity(staged.rows.len());
         let mut scored = Vec::new();
@@ -126,7 +126,7 @@ impl Vault {
             ids.insert(id);
             let Some(raw) = value else { continue };
             let vector = crate::le_bytes_to_f32_vec(&raw, self.config.dimensions)?;
-            if live_in(store, txn, &id)? {
+            if live_in(store, txn, &id)? && admits(txn, &id)? {
                 scored.push(ScoredEntity {
                     id,
                     score: crate::hnsw::exact_score(&self.config, query, &vector, skip_rescore)?,
@@ -177,7 +177,7 @@ impl RetrievalIndex for Vault {
             query,
             limit,
             skip_rescore,
-            None,
+            (None, None),
         )
     }
 
@@ -246,15 +246,25 @@ fn filter_results(
 ) -> Result<Vec<ScoredEntity>> {
     let mut result = Vec::new();
     for row in rows {
-        if !store.port_deletion_state(txn, &row.id)?.deleted
-            && !stale_in_txn(store, txn, &row.id)?
-            && (private_note_ids.is_some_and(|ids| ids.contains(&row.id))
-                || crate::note::ordinary_entity_visible(store, txn, &row.id)?)
-        {
+        if visible_in(store, txn, &row.id, private_note_ids)? {
             result.push(row);
         }
     }
     Ok(result)
+}
+
+/// Whether a hit names a row this read returns: not deleted, not stale, and
+/// an ordinary entity or one of the reader's own private notes.
+fn visible_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    private_note_ids: Option<&crate::claim::ScopedDiaryCandidates>,
+) -> Result<bool> {
+    Ok(!store.port_deletion_state(txn, id)?.deleted
+        && !stale_in_txn(store, txn, id)?
+        && (private_note_ids.is_some_and(|ids| ids.contains(id))
+            || crate::note::ordinary_entity_visible(store, txn, id)?))
 }
 impl ShortIdStore for Vault {
     fn port_short_id_get_or_create(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<String> {

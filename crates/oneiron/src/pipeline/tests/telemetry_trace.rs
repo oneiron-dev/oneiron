@@ -1230,8 +1230,11 @@ fn retrieval_telemetry_omits_ppr_for_noop_expansion() -> Result<()> {
     assert_eq!(runs[0].run_id, run_id);
     assert_eq!(runs[0].signals, vec![RetrievalSignal::Text]);
     assert!(!runs[0].signals.contains(&RetrievalSignal::Ppr));
-    assert_eq!(runs[0].claims_suppressed, 1);
-    assert_eq!(runs[0].empty_reason.as_deref(), Some("AllActivated"));
+    // F21b: the gate-widened text scan drops the dead claim before the run,
+    // as main's widened read did once the index held more text rows than
+    // its fetch, so the run gates no claim and finds no row in scope.
+    assert_eq!(runs[0].claims_suppressed, 0);
+    assert_eq!(runs[0].empty_reason.as_deref(), Some("NoData"));
     Ok(())
 }
 

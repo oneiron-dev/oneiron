@@ -39,6 +39,31 @@ pub(super) struct TextChannelInputs<'a> {
     pub(super) claim_gate_widening_probe: ClaimStatusGateCache,
 }
 
+impl TextChannelInputs<'_> {
+    /// Whether a scan scores only the postings the run's scope admits: a
+    /// caller's candidate filter, or any scope that once widened the fetch to
+    /// the whole index. An excluded posting then takes no place in the bound.
+    fn filters_every_posting(&self, run: &PipelineBuilder<'_>) -> bool {
+        run.candidate_filter.is_some() || self.text_scope_widening_active
+    }
+
+    /// The metadata cache a scan's scope check fills. A scan that checks
+    /// every posting reads in a cache of its own, so the run's cache holds
+    /// no corpus-sized memo and counts no posting the scan passed.
+    fn scan_metadata<'c>(
+        &self,
+        run: &PipelineBuilder<'_>,
+        metadata_cache: &'c mut EntityMetadataCache,
+        scan_metadata: &'c mut EntityMetadataCache,
+    ) -> &'c mut EntityMetadataCache {
+        if self.filters_every_posting(run) && run.candidate_filter.is_none() {
+            scan_metadata
+        } else {
+            metadata_cache
+        }
+    }
+}
+
 impl PipelineBuilder<'_> {
     /// Whether D19 claim-gate rejections widen the text channel: the final
     /// query token has an exact posting the gate rejects, or a prefix
@@ -180,31 +205,32 @@ impl PipelineBuilder<'_> {
                 if self.deadline_reached() {
                     break;
                 }
-                let retry_scoped_text_limit = scoped_text_channel_limit(
-                    &self.read,
-                    rtxn,
-                    retry_channel_limit(*limit),
-                    inputs.text_scope_widening_active,
-                )?;
+                let retry_scoped_text_limit =
+                    scoped_text_channel_limit(retry_channel_limit(*limit));
                 let retry_text_channel_limit = if inputs.recency.is_some() {
-                    retry_scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+                    scoped_text_channel_limit(
+                        retry_scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR)),
+                    )
                 } else {
                     retry_scoped_text_limit
                 };
+                let filter_all = inputs.filters_every_posting(self);
                 let mut retry_prefix_probe_claim_gate =
                     claim_gate.fresh(inputs.authority_filter.include_stale);
+                let mut scan_metadata = EntityMetadataCache::default();
+                let retry_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.read,
                         rtxn,
                         id,
                         inputs.filter_config,
-                        metadata_cache,
+                        retry_metadata,
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
                 let candidate_limit = if self.candidate_filter.is_some() {
-                    retry_channel_limit(*limit)
+                    retry_scoped_text_limit
                 } else {
                     retry_text_channel_limit
                 };
@@ -212,8 +238,7 @@ impl PipelineBuilder<'_> {
                     self.search_text_candidates(
                         rtxn,
                         inputs.bm25_config,
-                        query,
-                        candidate_limit,
+                        (query, candidate_limit, filter_all),
                         crate::bm25::Bm25SearchOptions {
                             recency: None,
                             exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
@@ -228,7 +253,7 @@ impl PipelineBuilder<'_> {
                             query,
                             limit: candidate_limit,
                             rank: inputs.bm25_config,
-                            filter_all: self.candidate_filter.is_some(),
+                            filter_all,
                             matches_scope: &mut retry_exact_posting_matches_scope,
                             private_note_ids: inputs.private_note_ids,
                         },
@@ -280,32 +305,33 @@ impl PipelineBuilder<'_> {
         mut prefix_probe_claim_gate: ClaimStatusGateCache,
         (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<Vec<ScoredEntity>> {
-        let scoped_text_limit = scoped_text_channel_limit(
-            &self.read,
-            rtxn,
-            if inputs.overrides.widen_channel_limits {
+        let scoped_text_limit =
+            scoped_text_channel_limit(if inputs.overrides.widen_channel_limits {
                 retry_channel_limit(limit)
             } else {
                 limit
-            },
-            inputs.text_scope_widening_active,
-        )?;
+            });
         let text_channel_limit = if inputs.recency.is_some() {
-            scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+            scoped_text_channel_limit(
+                scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR)),
+            )
         } else {
             scoped_text_limit
         };
+        let filter_all = inputs.filters_every_posting(self);
         // The bound below admits turns as the fold does, in caches of its
         // own: the scan closure holds the run's.
         let mut fold_claim_gate =
             prefix_probe_claim_gate.fresh(inputs.filter_config.authority_filter.include_stale);
+        let mut scan_metadata = EntityMetadataCache::default();
+        let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
                 &self.read,
                 rtxn,
                 id,
                 inputs.filter_config,
-                metadata_cache,
+                stage_metadata,
                 &mut prefix_probe_claim_gate,
             )
         };
@@ -314,7 +340,7 @@ impl PipelineBuilder<'_> {
             .as_ref()
             .map_or(query, |expansion| expansion.grounded_query.as_str());
         let candidate_limit = if self.candidate_filter.is_some() {
-            limit
+            scoped_text_channel_limit(limit)
         } else {
             text_channel_limit
         };
@@ -323,7 +349,8 @@ impl PipelineBuilder<'_> {
         // fill it and keep later conversations out. Such a run reads on,
         // up to `PER_SCAN_CAP_FACTOR` times the bound, until its rows hold
         // that many turns or the matches run out.
-        let fold_cap = candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR);
+        let fold_cap =
+            scoped_text_channel_limit(candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR));
         let mut fold_metadata = EntityMetadataCache::default();
         let mut fetch_limit = candidate_limit;
         let mut text_results = loop {
@@ -331,8 +358,7 @@ impl PipelineBuilder<'_> {
                 self.search_text_candidates(
                     rtxn,
                     inputs.bm25_config,
-                    text_query,
-                    fetch_limit,
+                    (text_query, fetch_limit, filter_all),
                     crate::bm25::Bm25SearchOptions {
                         recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
@@ -347,7 +373,7 @@ impl PipelineBuilder<'_> {
                         query: text_query,
                         limit: fetch_limit,
                         rank: inputs.bm25_config,
-                        filter_all: self.candidate_filter.is_some(),
+                        filter_all,
                         matches_scope: &mut exact_posting_matches_scope,
                         private_note_ids: inputs.private_note_ids,
                     },
@@ -447,12 +473,13 @@ impl PipelineBuilder<'_> {
         Ok(())
     }
 
+    /// The memory lane's text read: every posting through the lane's kinds
+    /// and, when `filter_all`, through the run's whole scope as well.
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
         config: &Bm25Config,
-        query: &str,
-        limit: usize,
+        (query, limit, filter_all): (&str, usize, bool),
         options: crate::bm25::Bm25SearchOptions<'_, F>,
     ) -> Result<Vec<crate::pipeline::ScoredEntity>>
     where
@@ -472,7 +499,7 @@ impl PipelineBuilder<'_> {
             exact_posting_matches_scope: &mut matches_scope,
             private_note_ids: options.private_note_ids,
         };
-        if self.candidate_filter.is_some() {
+        if filter_all {
             crate::bm25::search_text_filtered_with_recency(
                 &self.read,
                 rtxn,

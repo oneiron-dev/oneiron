@@ -41,9 +41,9 @@ pub(super) fn resolve_edge_short_ids(
 /// `world` key plus every other base-reality record) first, then one section
 /// per non-base world, which also holds a TASK born there (sections ordered
 /// by their highest-scoring row; score order preserved within a section). A
-/// per-non-base-world cap drops the lowest-scoring fiction claims so non-base
-/// worlds occupy at most `non_base_fraction` of the claim budget (every CLAIM
-/// in the pack), keeping all base claims.
+/// cap drops the lowest-scoring fiction claims so non-base claims stay at
+/// most `floor(non_base_fraction × claims the pack emits)`, keeping all base
+/// claims (`pipeline::non_base_claim_cap`).
 ///
 /// When no non-base row survives, `results` are left flat in score order.
 pub(super) fn partition_results_by_world(
@@ -69,17 +69,16 @@ pub(super) fn partition_results_by_world(
         return Ok(());
     }
 
-    // Claim budget = every CLAIM in the pack (base claims + non-base claims);
-    // other records do not count. Non-base worlds share at most
-    // `non_base_fraction` of it.
+    // Only CLAIMs share; other records do not count. Non-base claims stay at
+    // most `floor(non_base_fraction × emitted claims)`.
     let is_claim = |entity: &ContextEntity| entity.entity_type == ENTITY_TYPE_CLAIM;
     let base_claim_count = base.iter().filter(|entity| is_claim(entity)).count();
     let non_base_claims = non_base
         .iter()
         .filter(|(_, entity)| is_claim(entity))
         .count();
-    let claim_budget = base_claim_count + non_base_claims;
-    let non_base_cap = ((claim_budget as f32) * non_base_fraction).floor().max(0.0) as usize;
+    let non_base_cap =
+        crate::pipeline::non_base_claim_cap(base_claim_count, non_base_claims, non_base_fraction);
 
     // `non_base` is in score order (results arrive score-sorted). Keep the top
     // `non_base_cap` claims by score and drop the rest so fiction cannot crowd

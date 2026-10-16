@@ -328,7 +328,7 @@ pub(super) fn scan_codebase_snapshot_metadata(snapshot: &CodebaseSnapshot) -> Re
     Ok(())
 }
 
-pub(super) fn validate_project_id(project_id: &str) -> Result<()> {
+pub(crate) fn validate_project_id(project_id: &str) -> Result<()> {
     validate_bounded_text(
         project_id,
         CODEBASE_PROJECT_ID_MAX_BYTES,

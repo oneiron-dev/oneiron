@@ -25,6 +25,11 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(mut self) -> Result<PipelineOutput> {
+        // A project filter is the ingest door's project id, held to its
+        // bounds before any index, expansion or telemetry work (H38).
+        if let Some(project_id) = self.project_id_filter.as_deref() {
+            crate::codebase::validate_project_id(project_id)?;
+        }
         // Scoped search already denies before counting candidates. Also stop
         // resolved-deny builders before index trust checks, host expansion,
         // or telemetry work; the gate has already validated their request.
@@ -47,6 +52,7 @@ impl PipelineBuilder<'_> {
                 claims_suppressed: 0,
                 read_suppressed: 0,
                 cosine_ghosts_dampened: 0,
+                disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
                 empty_reason: Some(EmptyReason::FilterMatchedNone),
                 telemetry_run_id: None,
@@ -230,6 +236,7 @@ impl PipelineBuilder<'_> {
                 claims_suppressed: 0,
                 read_suppressed: 0,
                 cosine_ghosts_dampened: 0,
+                disclosure_clamped: Vec::new(),
                 total_in_scope: 0,
                 empty_reason: None,
                 telemetry_run_id: None,
@@ -249,6 +256,7 @@ impl PipelineBuilder<'_> {
         let mut read_suppressed = attempt.read_suppressed;
         let deferred_ppr_cache_writes = attempt.deferred_ppr_cache_writes;
         let mut cosine_ghosts_dampened = attempt.cosine_ghosts_dampened;
+        let mut disclosure_clamped = attempt.disclosure_clamped;
         let mut total_in_scope = attempt.total_in_scope;
         let mut empty_reason = attempt.empty_reason;
         let mut signal_components = attempt.signal_components;
@@ -324,6 +332,7 @@ impl PipelineBuilder<'_> {
                 claim_gate = retry.claim_gate;
                 read_suppressed = retry.read_suppressed;
                 cosine_ghosts_dampened = retry.cosine_ghosts_dampened;
+                disclosure_clamped = retry.disclosure_clamped;
                 total_in_scope = retry.total_in_scope;
                 empty_reason = retry.empty_reason;
                 signal_components = retry.signal_components;
@@ -494,6 +503,7 @@ impl PipelineBuilder<'_> {
             claims_suppressed,
             read_suppressed,
             cosine_ghosts_dampened,
+            disclosure_clamped,
             total_in_scope,
             empty_reason,
             telemetry_run_id,

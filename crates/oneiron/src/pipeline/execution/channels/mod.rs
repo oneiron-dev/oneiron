@@ -20,7 +20,10 @@ use super::super::blend::{
     AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
     blended_retrieval_scores, retrieval_blend_weights_for_scoring, score_id_set,
 };
-use super::super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
+use super::super::budget::{
+    WorldShare, apply_context_pack_retrieval_budget, context_pack_evidence_abstains,
+    truncate_under_world_share, withhold_undisclosed,
+};
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
 use super::super::channels::{execute_phonetic, fusion_fetch_limit};
@@ -193,20 +196,32 @@ impl PipelineBuilder<'_> {
                 .as_ref()
                 .map(|resolved| &resolved.active_set);
             filter_config.device_local = device_local.as_ref();
-            // Ordinary text uses D19 widening; candidate-filtered text instead
-            // applies D19 during bounded scoring and needs no corpus-sized probe.
-            let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
-                rtxn,
-                bm25_config,
-                hyde_expansion,
-                filter_config,
-                &mut metadata_cache,
-                &mut claim_gate_widening_probe,
-            )?;
-            let text_scope_widening_active = codebase_scope_active
+            let stale_worlds = if matches!(self.world_scope, super::super::types::WorldScope::All) {
+                Some(crate::federation::stale_stamped_worlds(
+                    &self.vault.store,
+                    rtxn,
+                )?)
+                .filter(|stale| !stale.is_empty())
+            } else {
+                None
+            };
+            filter_config.stale_worlds = stale_worlds.as_ref();
+            // A scoped scan scores every posting through its scope, D19's gate
+            // included. Unscoped text probes for a posting the gate rejects
+            // and scans that way too when it finds one; candidate-filtered
+            // text always does, and needs no probe.
+            let text_scope_active = codebase_scope_active
                 || self.has_strict_text_scope_filter()
-                || occurred_range.is_some()
-                || claim_gate_text_widening_active;
+                || occurred_range.is_some();
+            let text_scope_widening_active = text_scope_active
+                || self.claim_gate_text_widening_probe(
+                    rtxn,
+                    bm25_config,
+                    hyde_expansion,
+                    filter_config,
+                    &mut metadata_cache,
+                    &mut claim_gate_widening_probe,
+                )?;
             let mut stages = StagePlan::new([
                 self.vector_search.is_some(),
                 hyde_expansion.is_some(),
@@ -432,6 +447,7 @@ impl PipelineBuilder<'_> {
                     )?,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
+                    disclosure_clamped: Vec::new(),
                     total_in_scope: 0,
                     empty_reason: None,
                     signal_components: HashMap::new(),
@@ -666,14 +682,38 @@ impl PipelineBuilder<'_> {
                 overrides.skip_ret01_abstain,
             )?;
 
+            // A pack emptied by its disclosure clamp or its world share lost
+            // nothing to a threshold.
+            let mut emptied_by_policy = false;
+            let disclosure_clamped = match self.disclosure_preselect.as_ref() {
+                Some(clamp) => {
+                    let withheld = withhold_undisclosed(
+                        &mut scores,
+                        clamp,
+                        &self.read,
+                        rtxn,
+                        &mut metadata_cache,
+                        &claim_gate,
+                    )?;
+                    emptied_by_policy |= !withheld.is_empty() && scores.is_empty();
+                    withheld
+                }
+                None => Vec::new(),
+            };
+            let world_share = self.context_pack_world_share.map(|fraction| WorldShare {
+                fraction,
+                claim_gate: &claim_gate,
+            });
             if let Some(context_pack_budget) = self.context_pack_budget {
-                apply_context_pack_retrieval_budget(
+                let share_held_back = apply_context_pack_retrieval_budget(
                     &mut scores,
                     &self.read,
                     rtxn,
                     &mut metadata_cache,
                     context_pack_budget,
+                    world_share,
                 )?;
+                emptied_by_policy |= share_held_back && scores.is_empty();
             }
             // Only admitted final candidates participate. This selection cannot
             // surface hidden bridge nodes, undo filters, or multiply scores twice.
@@ -684,8 +724,22 @@ impl PipelineBuilder<'_> {
                     &self.vault.config.ppr_community,
                 )?;
             }
-            scores.truncate(self.result_limit);
-            if before_limit > 0 && scores.is_empty() {
+            match world_share {
+                Some(share) => {
+                    let had_rows = !scores.is_empty();
+                    truncate_under_world_share(
+                        &mut scores,
+                        self.result_limit,
+                        share,
+                        &self.read,
+                        rtxn,
+                        &mut metadata_cache,
+                    )?;
+                    emptied_by_policy |= had_rows && scores.is_empty();
+                }
+                None => scores.truncate(self.result_limit),
+            }
+            if before_limit > 0 && scores.is_empty() && !emptied_by_policy {
                 empty_reason = Some(EmptyReason::BelowThreshold);
             }
             if no_data_fallback_eligible
@@ -781,6 +835,7 @@ impl PipelineBuilder<'_> {
                 )?,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
+                disclosure_clamped,
                 total_in_scope,
                 empty_reason,
                 signal_components: acc.signal_components,

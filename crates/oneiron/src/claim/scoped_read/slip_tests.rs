@@ -140,13 +140,12 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     Ok(())
 }
 
-/// Sol R7 on #1401: a credential that narrows neither worlds nor facets
-/// excludes no TASK on them, so a TASK it is denied counts, stamped or not.
-/// The root slip's NOTE-only search counts a replicated TASK, which arrives
-/// unstamped, as it did before TASKs were born in worlds; a slip narrowed to
-/// base reality cannot place that TASK, so it counts it nowhere.
+/// Sol R7 on #1401, under B7 (F21b): a search counts only rows its key's
+/// own ceiling admits. The root slip is denied a replicated TASK, which
+/// arrives unstamped, so its NOTE-only search counts it nowhere, as a slip
+/// narrowed to base reality, which cannot place that TASK, does not.
 #[test]
-fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
+fn no_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
     let writer = EntityId::now();
@@ -216,7 +215,7 @@ fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
             .receipt
             .suppressed_count)
     };
-    assert_eq!(counted(&root)?, 1, "the root slip counts the replica");
+    assert_eq!(counted(&root)?, 0, "the root slip cannot read the replica");
     assert_eq!(counted(&narrowed)?, 0, "a base-only slip counts it nowhere");
     Ok(())
 }
@@ -377,6 +376,58 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
         read(&base_only, world_born)?.receipt,
         read(&base_only, EntityId::now())?.receipt,
         "a W-born summary rewritten off its epoch body is still not base"
+    );
+    Ok(())
+}
+
+/// H74/H296: a scoped search for one row ranks a bounded list, not every row
+/// its index holds. Main asked the pipeline for the whole text population
+/// (here one more row than a fusion list holds) and cut to one row after.
+#[test]
+fn a_scoped_text_search_for_one_row_ranks_a_bounded_list() -> Result<()> {
+    let config = crate::VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..Default::default()
+    };
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let rows = crate::fusion::FUSION_LIST_LENGTH + 1;
+    let mut batch = vault.batch();
+    for n in 1..=rows {
+        let mut bytes = [0x7a; 16];
+        bytes[8..].copy_from_slice(&(n as u64).to_be_bytes());
+        let id = EntityId::from_bytes(bytes)?;
+        batch = batch
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::TimeRange { start: 1, end: 1 },
+                1,
+                b"person",
+            )
+            .text(&id, &[("body", "harbor ledger")]);
+    }
+    batch.commit().expect("seed the matching rows");
+    // The legacy fixture clears the policy manifest, and a vault with none
+    // reads nothing to a scoped key; the root slip brings the authority.
+    crate::test_util::authorize_readers(&vault, &[]);
+    let issuer = HostSlipIssuer::from_secret(b"bounded search host root")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let proof = vault.verified_host_root_slip(&issuer)?;
+    let read =
+        vault.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).expect("read proof"));
+
+    let hits = read.search_text("ledger", 1, None)?;
+
+    assert_eq!(hits.value.len(), 1, "the reader reads every matching row");
+    let runs = vault.retrieval_runs(10)?;
+    let run = runs
+        .iter()
+        .find(|run| run.signals == vec![crate::store::RetrievalSignal::Text])
+        .expect("the search's text run");
+    assert!(
+        run.result_ids.len() < rows,
+        "a one-row search ranked {} of {rows} rows",
+        run.result_ids.len()
     );
     Ok(())
 }

@@ -27,10 +27,10 @@ use super::schema::create_window_doc;
 use super::selector::{SyncSelector, filtered_window_doc, granted_window_doc};
 use super::types::WindowKey;
 
-/// Collect the actor-readable lexical candidate set before applying a
-/// residence grant. The underlying scoped search already scores the full
-/// indexed corpus; requesting the same candidate count prevents a narrowed
-/// residence grant from exhausting a smaller top-k before intersection.
+/// Collect the actor-readable lexical candidates before applying a
+/// residence grant: the bounded candidate window, so a narrowed residence
+/// grant does not exhaust a smaller top-k before intersection. The page is
+/// short when the window holds fewer resident rows.
 pub fn home_search_candidates(
     vault: &Vault,
     proof: &crate::authority::VerifiedSlip,
@@ -42,8 +42,7 @@ pub fn home_search_candidates(
         .ok_or(Error::sync_protocol(
             SyncProtocolValidation::DocumentAdmissionDenied,
         ))?;
-    let candidates =
-        vault.scoped_read_search_candidate_limit(&vault.store.read(), limit, true, false)?;
+    let candidates = crate::memory::caps::narrowed_candidate_window(limit);
     let mut results = Vec::new();
     for hit in vault
         .scoped_read(actor)

@@ -741,6 +741,70 @@ fn pack_validation_skips_world_partition_dropped_results() -> Result<()> {
     Ok(())
 }
 
+/// H12: the world share holds while the pack's rows are selected, not after
+/// its cut. Two fiction claims outrank two base claims. A two-row pack keeps
+/// a base claim beside one fiction claim, and a one-row pack keeps the base
+/// claim; main cut to the fiction prefix first, then lost it to the share.
+#[test]
+fn world_share_selects_base_claims_ranked_below_fiction() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
+    let fiction_1 = EntityId::from_bytes([0x75; 16])?;
+    let fiction_2 = EntityId::from_bytes([0x76; 16])?;
+    let base_1 = EntityId::from_bytes([0x63; 16])?;
+    let base_2 = EntityId::from_bytes([0x64; 16])?;
+    put_world_claim(&vault, fiction_1, [1.0, 0.0, 0.0, 0.0], Some(world_w))?;
+    put_world_claim(&vault, fiction_2, [0.99, 0.14, 0.0, 0.0], Some(world_w))?;
+    put_world_claim(&vault, base_1, [0.9, 0.43, 0.0, 0.0], None)?;
+    put_world_claim(&vault, base_2, [0.8, 0.6, 0.0, 0.0], None)?;
+
+    let unshared = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .non_base_world_claim_fraction(1.0)
+        .limit(2)
+        .run()?;
+    let unshared: Vec<EntityId> = unshared.results.iter().map(|entity| entity.id).collect();
+    assert_eq!(unshared, [fiction_1, fiction_2], "fiction ranks first");
+
+    for (limit, want) in [
+        (2, HashSet::from([fiction_1, base_1])),
+        (1, HashSet::from([base_1])),
+    ] {
+        let pack = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .limit(limit)
+            .run()?;
+        let ids: HashSet<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
+        assert_eq!(ids, want, "a {limit}-row pack");
+    }
+    Ok(())
+}
+
+/// A pack whose only match is a fiction claim the world share keeps out
+/// lost it to policy, not to a threshold, so it carries no hint to lower one.
+#[test]
+fn a_pack_the_world_share_empties_reports_no_threshold_miss() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
+    let fiction = EntityId::from_bytes([0x75; 16])?;
+    put_world_claim(&vault, fiction, [1.0, 0.0, 0.0, 0.0], Some(world_w))?;
+
+    let pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .limit(1)
+        .run()?;
+    assert!(
+        pack.results.is_empty(),
+        "the share keeps a lone fiction claim out"
+    );
+    let empty = pack.empty.as_ref().expect("empty context");
+    assert_eq!(empty.reason, EmptyReason::FilterMatchedNone);
+    Ok(())
+}
+
 // ── RET-005 pre-assembly pack validation ───────────────────────
 
 #[test]
@@ -1747,6 +1811,51 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     let disclosure = board.disclosure.expect("board disclosure block");
     assert_eq!(disclosure.mode, "absence_clamp");
     assert_eq!(disclosure.clamped_out, clamped_out);
+    Ok(())
+}
+
+/// B4 (F21b): the disclosure clamp holds while the pack's rows are
+/// selected, so a withheld row takes no slot. The withheld turn ranks first;
+/// a one-row clamped pack still carries the admitted turn. Main cut to the
+/// withheld turn first, then clamped the pack empty.
+#[test]
+fn a_withheld_row_takes_no_slot_in_a_clamped_pack() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC1);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+    let party = disclosure_id(0xD1);
+    let marked = disclosure_id(0xD5);
+    put_disclosure_turn(&vault, &marked, "needle");
+    vault.set_disclosure_tier_a(&marked, 100)?;
+    put_disclosure_turn(&vault, &party, "hanami party planning needle");
+    let scope = crate::disclosure::DisclosureScope::new(
+        disclosure_world_clearance([crate::claim::base_world_id()]),
+        "party planning",
+        100,
+    )?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let ctx = absence_ctx_for_contact(&vault, contact_id);
+
+    let owner = vault
+        .context_pack()
+        .search_text("needle", 10)
+        .limit(1)
+        .run()?;
+    assert_eq!(pack_ids(&owner), [marked], "the withheld turn ranks first");
+
+    let run = vault
+        .context_pack()
+        .search_text("needle", 10)
+        .limit(1)
+        .disclosure_context(ctx)
+        .run_unfinalized_with_telemetry()?;
+    let clamped_out = run.clamped_out();
+    assert_eq!(
+        pack_ids(&run.value),
+        [party],
+        "the admitted turn takes the slot"
+    );
+    assert!(clamped_out > 0, "the preselection counts its removals");
     Ok(())
 }
 

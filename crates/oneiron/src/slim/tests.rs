@@ -116,7 +116,7 @@ fn probes(vault: &Vault) -> Result<Vec<Vec<(EntityId, u32)>>> {
     .iter()
     .map(|query| {
         Ok(
-            hnsw::hnsw_search(&vault.store, &vault.config, &txn, query, 4, false)?
+            hnsw::hnsw_search(&vault.store, &vault.config, &txn, query, 4, false, None)?
                 .into_iter()
                 .map(|score| (score.id, score.score.to_bits()))
                 .collect(),
