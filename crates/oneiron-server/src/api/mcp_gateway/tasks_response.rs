@@ -812,6 +812,8 @@ fn mcp_agent_verb_input(
         "vault.conversations.turn.continue" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turn.retry" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.host.pin" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.host.hand" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.sharing" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -1254,6 +1256,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.host" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.host.pin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.host.hand" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.sharing" => {
@@ -2667,6 +2675,22 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::RoomHostRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_host(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.host.pin" => {
+            let input: oneiron::workspace_roster::RoomHostPin =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_host_pin(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.host.hand" => {
+            let input: oneiron::workspace_roster::RoomHostHand =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_host_hand(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

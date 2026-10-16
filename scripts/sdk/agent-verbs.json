@@ -1735,6 +1735,32 @@
       "section": false
     },
     {
+      "name": "vault.rooms.host.pin",
+      "input": "crate::workspace_roster::RoomHostPin",
+      "output": "crate::workspace_roster::RoomStanding",
+      "call": "memory.rooms_host_pin(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.host.hand",
+      "input": "crate::workspace_roster::RoomHostHand",
+      "output": "crate::workspace_roster::RoomStanding",
+      "call": "memory.rooms_host_hand(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.sharing",
       "input": "RoomRefRequest",
       "output": "crate::workspace_roster::RoomSharingView",

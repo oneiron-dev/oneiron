@@ -176,6 +176,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ROOMS_CLAIM, CONTENT),
     (&t::ROOMS_HEADS, CONTENT),
     (&t::ROOMS_HISTORY, CONTENT),
+    (&t::ROOMS_HOST_PIN, LIVE),
     (&t::ROOMS_JOIN, LIVE),
     (&t::ROOMS_JOIN_READY, LIVE),
     (&t::ROOMS_PARTICIPATION, CONTENT),
