@@ -1204,7 +1204,7 @@ fn valid_tool_output_dreamer_write_pends_without_joining_a_run_group() -> Result
     // so the two meets differ on exactly one axis here too.
     let (candidate, envelope) =
         dreamer_write_parts_with_source(&vault, &body, ClaimSource::ToolOutput)?;
-    vault.put_claim_candidate_without_lexical_query_reconcile(
+    vault.put_claim_candidate_with_landing(
         &claim_id,
         candidate,
         &envelope,
