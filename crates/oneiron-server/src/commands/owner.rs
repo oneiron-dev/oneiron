@@ -673,6 +673,9 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
         }
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
         ImportCommand::Archive(args) => return import_archive(*args),
+        ImportCommand::Folder(command) => {
+            return super::history_import::notes::folder::import_folder(command);
+        }
         ImportCommand::Preview(args) => (args.batch, None, args.serve),
         ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
         ImportCommand::Decline(args) => (args.batch, Some((false, args.digest)), args.serve),

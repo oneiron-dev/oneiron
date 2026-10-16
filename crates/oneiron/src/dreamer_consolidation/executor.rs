@@ -538,6 +538,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 reason: "resident dreaming needs its host's model".to_owned(),
             });
         }
+        // A TASK realizes on the model and wording its host lends; this
+        // executor holds neither.
+        if attempt.status.payload.attempt_type
+            == crate::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
+        {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: crate::dreamer_consolidation::TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
+            });
+        }
         if self.actor
             != ctx
                 .vault

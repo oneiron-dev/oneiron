@@ -39,6 +39,7 @@ use crate::cli::ImportNotesArgs;
 use crate::config::resolve_serve_config;
 use crate::owner::note_imports::{self, NoteBatch};
 
+pub(in crate::commands) mod folder;
 mod markdown;
 use markdown::{Front, Link};
 
@@ -263,23 +264,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             markdown,
         });
     }
-    // The title a changed note had when it landed: links resolved by it then.
-    let earlier_titles = notes
-        .iter()
-        .zip(&standings)
-        .map(|(note, standing)| {
-            if *standing != ImportedNoteStanding::Changed {
-                return Ok(None);
-            }
-            let id = oneiron::Vault::imported_note_id(&folder, &note.path)?;
-            Ok(vault.read_note(&id)?.and_then(|landed| {
-                markdown::split_frontmatter(&landed.markdown)
-                    .0
-                    .and_then(markdown::frontmatter)
-                    .and_then(|front| front.title)
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let earlier_titles = earlier_titles(&vault, &folder, &notes, &standings)?;
     let (links, link_counts) = resolve_links(&notes, &standings, &earlier_titles);
 
     let batch = if files.is_empty() {
@@ -348,6 +333,31 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
     serde_json::to_writer_pretty(&mut stdout, &outcome)?;
     writeln!(stdout)?;
     Ok(())
+}
+
+/// The title each changed note had when it landed: links resolved by it then.
+fn earlier_titles(
+    vault: &oneiron::Vault,
+    folder: &str,
+    notes: &[Note],
+    standings: &[ImportedNoteStanding],
+) -> anyhow::Result<Vec<Option<String>>> {
+    notes
+        .iter()
+        .zip(standings)
+        .map(|(note, standing)| {
+            if *standing != ImportedNoteStanding::Changed {
+                return Ok(None);
+            }
+            let id = oneiron::Vault::imported_note_id(folder, &note.path)?;
+            Ok(vault.read_note(&id)?.and_then(|landed| {
+                markdown::split_frontmatter(&landed.markdown)
+                    .0
+                    .and_then(markdown::frontmatter)
+                    .and_then(|front| front.title)
+            }))
+        })
+        .collect()
 }
 
 /// Every note under `folder`, in path order. Refused whole past `budget`
