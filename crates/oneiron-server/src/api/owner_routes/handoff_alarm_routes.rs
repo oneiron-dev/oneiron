@@ -102,9 +102,9 @@ async fn acknowledge(
             .acknowledge_authority_handoff_alarm(&owner, &request.signer)
         {
             Ok(alarm) => Ok(alarm.into()),
-            Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => Err(
-                OwnerError::NotFound("handoff alarm for", request.signer),
-            ),
+            Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
+                Err(OwnerError::NotFound("handoff_alarm", request.signer))
+            }
             Err(error) => Err(error.into()),
         }
     })
