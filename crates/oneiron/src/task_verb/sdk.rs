@@ -155,6 +155,26 @@ pub struct WorkCompanionSetRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
+/// `vault.projects.proposals`: the conversation whose project cards to read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectConversationRequest {
+    pub conversation_ref: String,
+}
+/// `vault.projects.dismiss_card`: one host-held project card.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCardRequest {
+    pub card_id: String,
+}
+/// `vault.projects.dismiss_card`'s result: `false` when the card was
+/// dismissed already.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCardDismissal {
+    pub card_id: String,
+    pub dismissed: bool,
+}
 /// `describe`'s one input: the task to describe, a board card's key, or
 /// none for the whole TASKS section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -239,8 +259,10 @@ pub struct RecallRequest {
 
 pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
 pub use super::sdk_connector::*;
+pub use super::sdk_diary::*;
 pub use super::sdk_host::*;
 pub use super::sdk_self::*;
+pub use super::sdk_shared::*;
 
 /// `vault.writes.pending`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
