@@ -637,6 +637,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     });
+    // Surface events drain under the same admission (OF-218).
+    let connector_events = sync_server.spawn_connector_event_worker({
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -651,6 +661,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let telemetry_drained = state.freeze();
     // No new durable background work from here on.
     background.stop().await;
+    connector_events.abort();
+    let _ = connector_events.await;
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 
