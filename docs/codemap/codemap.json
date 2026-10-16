@@ -3764,7 +3764,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SecretScanMode"
@@ -3772,7 +3772,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1
      }
     },
@@ -4506,7 +4506,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -14416,7 +14416,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 40,
       "enum": 1,
       "type": 1
      }
@@ -14436,7 +14436,7 @@
      "purpose": "Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 8,
       "struct": 4,
@@ -22480,7 +22480,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 18,
-      "mod": 177,
+      "mod": 178,
       "re-export": 72
      }
     },
@@ -26244,7 +26244,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 10,
+      "mod": 9,
       "re-export": 1
      }
     },
@@ -26364,23 +26364,6 @@
       "enum": 1,
       "fn": 4,
       "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "OriginScan",
-      "OriginScanCheck"
-     ],
-     "path": "src/origin/scan_check.rs",
-     "purpose": "Origin scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
-     "surface": {
-      "const": 3,
-      "crate-vis": 4,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
      }
     },
     {
@@ -31677,6 +31660,23 @@
      "path": "src/saved_query/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineScan",
+      "ScanCheck"
+     ],
+     "path": "src/scan_check.rs",
+     "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
+     "surface": {
+      "const": 4,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -42518,7 +42518,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 59,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42733,6 +42733,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
+    },
+    "scan_check": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
      "files": 6,
@@ -43071,7 +43078,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 43,
+   "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2592,
    "test_files": 879

@@ -145,10 +145,11 @@ side_tables! {
     /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
     /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
     ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
-    /// The OF-520 check one origin scan raised for one scope, once. Key: u8 (scan) + id16 (the
-    /// repository), or the u8 alone for the vault-wide publication journal.
+    /// The OF-520 check one engine scan raised for one scope, once (`crate::scan_check`; the
+    /// origin's scans came first). Key: u8 (scan) + the scope's bytes (a repository's id16, ...),
+    /// or the u8 alone for a vault-wide scan.
     ORIGIN_SCAN_CHECK: VaultMeta b"origin:scan_check:v1:" Named;
-    /// Device-local threshold row (u64) of one origin scan. Key: u8 (scan).
+    /// Device-local threshold row (u64) of one engine scan. Key: u8 (scan).
     ORIGIN_SCAN_POLICY: VaultMeta b"origin:scan_policy:v1:" Raw;
     /// The publication currently advertised for one repository's ref name (value = id16). Key: id16
     /// "\x00" string.
