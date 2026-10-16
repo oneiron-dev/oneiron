@@ -334,6 +334,10 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// The serve health check past a threshold (OF-520): one check per crossing subject, and
+    /// how far the check has read each kind of kept crossing. Key: "check:" string (the
+    /// subject) | "cursor:" string (the crossing kind, and a limits row's key).
+    WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named;
     /// A crossed `[limits]` row's question (OF-520) for one minute: the row's bound, the most it
     /// saw, and how many times it was crossed. Key: string (the row's key) ":" u64 (decimal,
     /// zero-padded to 20 digits; window start).
@@ -344,8 +348,4 @@ side_tables! {
     /// Persisted per-window wire call-volume counters (by verb and by actor) for one observation
     /// window. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
     RC42_WIRE_RECEIPT: SyncState b"wire:window:v2:" Named;
-    /// The serve health check past a threshold (OF-520): one check per crossing subject, and
-    /// how far the check has read each kind of kept crossing. Key: "check:" string (the
-    /// subject) | "cursor:" string (the crossing kind, and a limits row's key).
-    WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named;
 }
