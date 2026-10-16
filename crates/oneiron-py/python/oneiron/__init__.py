@@ -292,7 +292,7 @@ class Oneiron:
             """
             return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms)))
         def export(self, format: str | None = None) -> dict[str, Any]:
-            """Exports the live vault through the five-format serializer."""
+            """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs":

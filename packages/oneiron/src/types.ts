@@ -195,7 +195,8 @@ export type RetrievalMeta = {
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
-export type MemoryExport = { format: string; rendered: string }
+/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
+export type MemoryExport = { format: string; archive: string; digest: string }
 
 /** The engine `MemoryPack`, unchanged apart from field spelling. */
 export type MemoryPack = {

@@ -340,6 +340,7 @@
       "binding": {
         "native": "agent_verb",
         "assemble": true,
+        "defaults": true,
         "args": [
           {
             "name": "format",
@@ -347,9 +348,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Exports the full vault through the shared five-format serializer.\n",
-          "ts": "/** Exports the live vault as toon (default), md, json, yaml, or txt. */",
-          "py": "Exports the live vault through the five-format serializer."
+          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n",
+          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */",
+          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
         }
       }
     },
