@@ -36,6 +36,7 @@ mod channel_identity_email_adapter_smoke;
 mod channel_identity_slack_adapter_smoke;
 mod code_consent;
 mod counterparty_opt_out_shipping_paths_oracle;
+mod decide_path_fitness;
 mod effect_spine_oracle;
 #[cfg(target_os = "linux")]
 mod existing_only_open;
