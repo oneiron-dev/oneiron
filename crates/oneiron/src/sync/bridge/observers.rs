@@ -424,7 +424,7 @@ pub fn register_observer_b(
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
     window_key: &str,
-) -> (Subscription, Subscription, Subscription) {
+) -> (Subscription, Subscription, Subscription, Subscription) {
     register_observer_b_with_tee(doc, vault, materializer, window_key, None)
 }
 
@@ -436,10 +436,11 @@ pub fn register_observer_b_with_tee(
     materializer: &Arc<Materializer>,
     window_key: &str,
     tee: Option<Arc<dyn LiveQueryTee>>,
-) -> (Subscription, Subscription, Subscription) {
+) -> (Subscription, Subscription, Subscription, Subscription) {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let tombstones_map = doc.get_map("tombstones");
+    let births_map = doc.get_map(crate::sync::row_birth::ROW_BIRTHS_MAP);
 
     let entity_sub = subscribe_map_observer(
         doc,
@@ -468,8 +469,19 @@ pub fn register_observer_b_with_tee(
         materialize_tombstones_from_delta,
         ("tombstones", tee.clone()),
     );
+    // Rule A: a birth that lands after its row is stamped here; one that
+    // lands with its row is stamped by the entity pass.
+    let birth_sub = subscribe_map_observer(
+        doc,
+        &births_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::row_birth::materialize_births_from_delta,
+        ("row_births", tee.clone()),
+    );
 
-    (entity_sub, edge_sub, tombstone_sub)
+    (entity_sub, edge_sub, tombstone_sub, birth_sub)
 }
 
 /// Subscribes to a map's changes, filtering out bridge-origin events and
