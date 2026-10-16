@@ -172,7 +172,7 @@ def native_boundary(row, language):
     else:
         name = names[args[0]['name']]
         if language == 'napi':
-            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None }}))?;'
+            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None }}))?;'
         else:
             setup = f'let input: serde_json::Value = decode({name}, "{row["name"]}")?;'
         call = f'self.inner.agent_verb("{row["name"]}", input)'
@@ -452,7 +452,7 @@ fn mcp_agent_verb_output(
 
 def run_catalog():
     'RunVerb: the rows code mode serves that the run answers itself.'
-    variants = {r['name']: ''.join(part.title() for part in r['name'].split('_')) for r in RUN_ROWS}
+    variants = {r['name']: ''.join(part.title() for part in r['name'].replace('.', '_').split('_')) for r in RUN_ROWS}
     out = HEADER + '/// The verb-table rows a code run answers itself, as the typed `self.*` call\n'
     out += '/// each names: code mode serves them beside the host\'s rows, and no host door,\n'
     out += '/// tool, route or binding carries them.\n'
@@ -505,12 +505,12 @@ def outputs():
         checks = r.get('admission', {}).get('validate', '')
         binding = 'input' if checks else '_input'
         core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
-    core += '_ => return Err(MemoryError::bad_request("unknown SDK agent verb")), } Ok(()) }\n'
+    core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
     core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> { match verb {\n"
     for r in facade_rows:
         method = r['name'].replace('.', '_')
         core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
-    core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n}}\n'
+    core += '_ => Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))),\n}}\n'
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
     core += "pub fn invoke_browser(driver: &mut dyn oneiron_browser::BrowserDriver, verb: &str, value: serde_json::Value) -> Result<serde_json::Value, oneiron_browser::BrowserError> {\n"
@@ -637,7 +637,7 @@ def outputs():
     remote += 'impl OneironClient {\n'
     remote += '''pub fn agent_verb(&self, verb: &str, input: serde_json::Value) -> Result<serde_json::Value, MemoryError> {
         self.ensure_dispatch_pid()?;
-        if !oneiron::task_verb::sdk::AgentVerb::from_name(verb).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade) { return Err(crate::error::bad_request("unknown SDK agent verb", &["Use a verb from the SDK catalog."])); }
+        if !oneiron::task_verb::sdk::AgentVerb::from_name(verb).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade) { return Err(oneiron::task_verb::sdk::wrong_root(verb).unwrap_or_else(|| crate::error::bad_request("unknown SDK agent verb", &["Use a verb from the SDK catalog."]))); }
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
@@ -844,7 +844,7 @@ export function agentVerbs(invoke: AgentInvoke) {
         if 'uniffi' not in row: continue
         signature = row['uniffi']
         args = ', '.join(name + ': ' + typ for name, typ in signature['args'].items())
-        uniffi += f'"{js_method(row["name"])}" => fn {row["name"]}(&self, {args}) -> {signature["output"]};\n'
+        uniffi += f'"{js_method(row["name"])}" => fn {row["name"].replace('.', '_')}(&self, {args}) -> {signature["output"]};\n'
     uniffi += '}\n'
     files = {
         'crates/oneiron/src/task_verb/run_verb_catalog.rs': run_catalog(),

@@ -74,7 +74,28 @@ const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .merge(agent_verbs::routes())
+        .fallback(facade_unknown_verb)
         .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+}
+
+/// A facade path that names no verb. One naming a canonical verb under the
+/// wrong root is refused with that verb as its correction, before the actor,
+/// the body or any effect is touched; there is no redirect and no alias.
+async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
+    let verb = uri.path().trim_start_matches('/');
+    let served = oneiron::task_verb::sdk::AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_facade())
+        .map(|verb| verb.as_str());
+    match oneiron::task_verb::sdk::wrong_root_in(verb, served) {
+        Some(refusal) => refusal.into(),
+        None => FacadeApiError::new(
+            StatusCode::NOT_FOUND,
+            MEMORY_CODE_NOT_FOUND,
+            format!("`{verb}` is not an SDK verb"),
+            ["Use a verb from the SDK catalog."],
+        ),
+    }
 }
 
 /// Resolves the write identity every facade verb runs as, from the CREDENTIAL
@@ -460,6 +481,9 @@ struct FacadeErrorBody {
     message: String,
     request_id: String,
     suggestions: Vec<String>,
+    /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
+    #[serde(flatten)]
+    wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
 }
 
 impl FacadeApiError {
@@ -477,6 +501,7 @@ impl FacadeApiError {
                     message: message.into(),
                     request_id: facade_request_id(),
                     suggestions: suggestions.into_iter().map(Into::into).collect(),
+                    wrong_root: None,
                 },
                 narrowing: None,
             },
@@ -505,7 +530,11 @@ impl FacadeApiError {
 impl From<MemoryError> for FacadeApiError {
     fn from(error: MemoryError) -> Self {
         let status = match error.code.as_str() {
-            MEMORY_CODE_BAD_REQUEST => StatusCode::BAD_REQUEST,
+            // A wrong root is the caller's spelling, refused before any
+            // effect with the name to call instead.
+            MEMORY_CODE_BAD_REQUEST | oneiron::memory::MEMORY_CODE_WRONG_ROOT => {
+                StatusCode::BAD_REQUEST
+            }
             MEMORY_CODE_NOT_FOUND => StatusCode::NOT_FOUND,
             // `LEASE_REQUIRED` is a refusal to serve without a credential the
             // caller does not hold, which is what 403 means. The engine code
@@ -545,6 +574,7 @@ impl From<MemoryError> for FacadeApiError {
                     message: error.message,
                     request_id: facade_request_id(),
                     suggestions: error.suggestions,
+                    wrong_root: error.wrong_root,
                 },
                 narrowing: error.read_receipt,
             },

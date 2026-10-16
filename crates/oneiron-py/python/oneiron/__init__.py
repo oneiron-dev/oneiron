@@ -40,11 +40,19 @@ class OneironError(RuntimeError):
     ``suggestions`` is never empty.
     """
 
-    def __init__(self, code: str, message: str, suggestions: list[str]) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        suggestions: list[str],
+        wrong_root: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.suggestions = tuple(suggestions)
+        # A ``WRONG_ROOT`` refusal's ``{attempted, replacement, schemaRef}``.
+        self.wrong_root = wrong_root
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -66,7 +74,9 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         suggestions = payload["suggestions"] or [
             "Retry the call, and check the Oneiron logs for this operation."
         ]
-        return OneironError(payload["code"], payload["message"], suggestions)
+        correction = {key: payload.get(key) for key in ("attempted", "replacement", "schemaRef")}
+        wrong_root = correction if all(isinstance(value, str) for value in correction.values()) else None
+        return OneironError(payload["code"], payload["message"], suggestions, wrong_root)
     return OneironError(
         "INTERNAL_SERVER_ERROR",
         fallback,

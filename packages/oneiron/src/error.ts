@@ -13,6 +13,16 @@ type NativeErrorPayload = {
   code: string
   message: string
   suggestions: string[]
+  attempted?: string
+  replacement?: string
+  schemaRef?: string
+}
+
+/** A `WRONG_ROOT` refusal's correction: call `replacement`, never `attempted`. */
+export type WrongRoot = {
+  readonly attempted: string
+  readonly replacement: string
+  readonly schemaRef: string
 }
 
 /** Every constructor and verb failure reaches user code as this. */
@@ -23,11 +33,15 @@ export class OneironError extends Error {
   /** Remediation hints; never empty. */
   readonly suggestions: readonly string[]
 
-  constructor(code: string, message: string, suggestions: readonly string[]) {
+  /** Present on a `WRONG_ROOT` refusal: the name written and the verb meant. */
+  readonly wrongRoot?: WrongRoot
+
+  constructor(code: string, message: string, suggestions: readonly string[], wrongRoot?: WrongRoot) {
     super(message)
     this.name = "OneironError"
     this.code = code
     this.suggestions = Object.freeze([...suggestions])
+    if (wrongRoot) this.wrongRoot = Object.freeze({...wrongRoot})
   }
 }
 
@@ -73,7 +87,12 @@ export function translateNativeError(error: unknown): OneironError {
       parsed.suggestions.length > 0
         ? parsed.suggestions
         : ["Retry the call, and check the Oneiron logs for this operation."]
-    return new OneironError(parsed.code, parsed.message, suggestions)
+    const {attempted, replacement, schemaRef} = parsed
+    const wrongRoot =
+      typeof attempted === "string" && typeof replacement === "string" && typeof schemaRef === "string"
+        ? {attempted, replacement, schemaRef}
+        : undefined
+    return new OneironError(parsed.code, parsed.message, suggestions, wrongRoot)
   }
 
   return new OneironError("INTERNAL_SERVER_ERROR", raw, [

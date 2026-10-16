@@ -68,6 +68,9 @@ pub(crate) struct McpGatewayError {
     /// as `error.data.max_bytes` and `error.data.received_bytes`. Boxed for
     /// size, as `effective_scope` is.
     pub(super) byte_bound: Option<Box<(usize, usize)>>,
+    /// A `WRONG_ROOT` refusal's correction, surfaced as `error.data.attempted`,
+    /// `error.data.replacement` and `error.data.schemaRef`.
+    pub(super) wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
 }
 
 impl McpGatewayError {
@@ -81,6 +84,7 @@ impl McpGatewayError {
             successor_short_id: None,
             effective_scope: None,
             byte_bound: None,
+            wrong_root: None,
         }
     }
 

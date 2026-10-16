@@ -70,6 +70,9 @@ fn definition_only<T>(entrypoint: &str) -> Result<T, OneironError> {
             "Wire the generated interface through the core memory facade in the first-consumer lane."
                 .to_owned(),
         ],
+        attempted: None,
+        replacement: None,
+        schema_ref: None,
     })
 }
 

@@ -190,9 +190,88 @@ include!("sdk_generated.rs");
 /// The verb table as code mode serves it, one `self.memory.<name>` per row:
 /// the rows a host door answers, then the rows the run answers itself. The
 /// guest's method table, the executor prompt and dispatch all read this list.
-pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> {
+pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> + Clone {
     let host = AgentVerb::ALL.iter().map(|verb| verb.as_str());
     host.chain(RunVerb::ALL.iter().map(|verb| verb.as_str()))
+}
+
+/// Roots a model reaches for that the SDK does not have, each with the root
+/// it means. A call under one is refused with that correction and never run
+/// under it: there are no aliases (EIRI-ARCH-0002 §The contract).
+const WRONG_ROOTS: &[(&str, &str)] = &[
+    ("tools.", "connector."),
+    ("connectors.", "connector."),
+    ("self.connectors.", "connector."),
+    ("self.mcp.", "connector."),
+    ("mcp.", "connector."),
+];
+
+/// The roots a canonical verb sits under, longest first. Stripping one gives
+/// the verb's leaf, which a wrong-root spelling of it shares.
+const VERB_ROOTS: &[&str] = &["self.memory.", "self.focus.", "self.", "vault.", "connector.", "ai."];
+
+/// Prefixes with no meaning in the SDK that a model still writes in front of
+/// a verb (`memory.search`, `sdk.describe`).
+const STRAY_ROOTS: &[&str] = &["memory.", "shared.", "home.", "sdk.", "oneiron.", "board.", "tasks."];
+
+/// Where a verb's schema lives: its row in the verb table, which every
+/// binding and the code-mode declarations are generated from.
+#[must_use]
+pub fn verb_schema_ref(verb: &str) -> String {
+    format!("oneiron:sdk/agent-verbs#{verb}")
+}
+
+/// The `WRONG_ROOT` refusal for a call to `attempted`, or `None` when
+/// `attempted` is a verb of `served` or has no one canonical verb it could
+/// mean (then the caller's own unknown-verb refusal stands). Pure: it runs
+/// before any lookup that has an effect, and nothing is ever run under the
+/// wrong name.
+#[must_use]
+pub fn wrong_root_in(
+    attempted: &str,
+    served: impl Iterator<Item = &'static str> + Clone,
+) -> Option<MemoryError> {
+    if served.clone().any(|verb| verb == attempted) {
+        return None;
+    }
+    for (wrong, root) in WRONG_ROOTS {
+        if let Some(rest) = attempted.strip_prefix(wrong).filter(|rest| !rest.is_empty()) {
+            let replacement = format!("{root}{rest}");
+            let schema_ref = verb_schema_ref(&replacement);
+            return Some(MemoryError::wrong_root(attempted, replacement, schema_ref));
+        }
+    }
+    let attempted_leaves = verb_leaves(attempted, true);
+    let mut meant = served.filter(|verb| {
+        verb_leaves(verb, false)
+            .iter()
+            .any(|leaf| attempted_leaves.contains(leaf))
+    });
+    let replacement = meant.next()?;
+    if meant.next().is_some() {
+        return None;
+    }
+    Some(MemoryError::wrong_root(attempted, replacement, verb_schema_ref(replacement)))
+}
+
+/// [`wrong_root_in`] over every verb code mode serves.
+#[must_use]
+pub fn wrong_root(attempted: &str) -> Option<MemoryError> {
+    wrong_root_in(attempted, code_mode_verb_names())
+}
+
+/// A name and every leaf left after stripping one root from it; a spelling a
+/// model wrote also sheds the stray and wrong roots.
+fn verb_leaves(name: &str, written: bool) -> Vec<&str> {
+    let mut leaves = vec![name];
+    let wrong = WRONG_ROOTS.iter().map(|(wrong, _)| *wrong);
+    let stray = STRAY_ROOTS.iter().copied().chain(wrong).filter(|_| written);
+    for root in VERB_ROOTS.iter().copied().chain(stray) {
+        if let Some(leaf) = name.strip_prefix(root).filter(|leaf| !leaf.is_empty()) {
+            leaves.push(leaf);
+        }
+    }
+    leaves
 }
 
 /// The verb table as code mode's `self.memory` declarations: one signature
@@ -205,35 +284,29 @@ pub fn code_mode_declarations() -> &'static str {
     // GLOBAL STATE: rendered once from compiled verb schemas, which are
     // immutable and vault-independent.
     static DECLARATIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let mut tree = std::collections::BTreeMap::new();
+        let mut tree = DeclarationNode::default();
         for verb in code_mode_verb_names() {
             let mut node = &mut tree;
-            let mut parts = verb.split('.').peekable();
-            while let Some(part) = parts.next() {
-                let entry = node
-                    .entry(part)
-                    .or_insert_with(|| DeclarationNode::Namespace(Default::default()));
-                if parts.peek().is_none() {
-                    *entry = DeclarationNode::Verb(verb);
-                    break;
-                }
-                let DeclarationNode::Namespace(next) = entry else {
-                    break;
-                };
-                node = next;
+            for part in verb.split('.') {
+                node = node.children.entry(part).or_default();
             }
+            node.verb = Some(verb);
         }
         let mut out = String::from("declare namespace self {\n  const memory: {\n");
-        render_declarations(&tree, 2, &mut out);
+        render_declarations(&tree.children, 2, &mut out);
         out.push_str("  };\n}\n");
         out
     });
     &DECLARATIONS
 }
 
-enum DeclarationNode {
-    Namespace(std::collections::BTreeMap<&'static str, DeclarationNode>),
-    Verb(&'static str),
+/// One path segment of the verb tree. A segment can be a verb and hold verbs
+/// at once (`self.memory.diary` and `self.memory.diary.query`), so a verb is
+/// a callable that may carry children rather than a leaf that replaces them.
+#[derive(Default)]
+struct DeclarationNode {
+    verb: Option<&'static str>,
+    children: std::collections::BTreeMap<&'static str, DeclarationNode>,
 }
 
 fn render_declarations(
@@ -243,17 +316,26 @@ fn render_declarations(
 ) {
     let indent = "  ".repeat(depth);
     for (name, node) in tree {
-        match node {
-            DeclarationNode::Namespace(children) => {
-                out.push_str(&format!("{indent}{name}: {{\n"));
-                render_declarations(children, depth + 1, out);
-                out.push_str(&format!("{indent}}};\n"));
-            }
-            DeclarationNode::Verb(verb) => {
-                let input = input_schema(verb).map_or_else(|| "object".to_owned(), schema_type);
+        let input = node
+            .verb
+            .map(|verb| input_schema(verb).map_or_else(|| "object".to_owned(), schema_type));
+        match input {
+            Some(input) if node.children.is_empty() => {
                 out.push_str(&format!(
                     "{indent}{name}(input: {input}): Promise<unknown>;\n"
                 ));
+            }
+            Some(input) => {
+                out.push_str(&format!(
+                    "{indent}{name}: ((input: {input}) => Promise<unknown>) & {{\n"
+                ));
+                render_declarations(&node.children, depth + 1, out);
+                out.push_str(&format!("{indent}}};\n"));
+            }
+            None => {
+                out.push_str(&format!("{indent}{name}: {{\n"));
+                render_declarations(&node.children, depth + 1, out);
+                out.push_str(&format!("{indent}}};\n"));
             }
         }
     }
