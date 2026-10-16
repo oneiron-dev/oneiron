@@ -171,7 +171,7 @@ impl Vault {
                 return Err(invalid("a trained checkpoint cannot move its role to another slot"));
             }
             manifest.roles.insert(role, run.plan.output_binding.clone());
-            self.write_model_manifest_in_txn(txn, &manifest, teacher_approval)?;
+            self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
             let receipt = RoleSwapReceipt {
                 id: self.store.clock.entity_id()?, run: *id, owner: actor,
                 at: self.store.clock.now_recorded_at(), role, previous,
