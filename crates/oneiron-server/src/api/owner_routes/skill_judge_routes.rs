@@ -278,7 +278,8 @@ async fn tradeoff_asks(
 ) -> OwnerReply<Vec<SkillTradeoffAsk>> {
     let owner = owner(&auth, &server)?;
     let asks = blocking(move || -> OwnerResult<Vec<SkillTradeoffAsk>> {
-        Ok(skill_tradeoff_asks_for(server.vault(), &owner.actor())?)
+        let person = owner.actor_for_read(server.vault())?;
+        Ok(skill_tradeoff_asks_for(server.vault(), &person)?)
     })
     .await?;
     Ok(Json(asks))
