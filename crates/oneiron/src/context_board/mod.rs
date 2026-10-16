@@ -1,6 +1,7 @@
 //! Typed Context Board render projections.
 //!
-//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, INBOX, session read-set riders and stream projections.
+//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, INBOX, SCRATCHPAD, session read-set riders and stream
+//! projections.
 
 mod agents;
 mod agents_fanout;
@@ -49,7 +50,12 @@ mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod plugin;
+mod scratchpad;
 mod stream;
+
+pub use scratchpad::{
+    SCRATCHPAD_LINE_MAX_BYTES, ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark,
+};
 
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
