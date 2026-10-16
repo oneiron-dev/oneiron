@@ -194,6 +194,7 @@ pub async fn decide_at_remote_seat(
             band_version: 0,
             evidence_versions: Vec::new(),
             cost_per_thousand: None,
+            paired: Vec::new(),
         },
         human_ask,
     })

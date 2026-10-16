@@ -144,6 +144,7 @@ fn serve_push_within(
                 idle: Duration::from_secs(30),
                 repository_wait,
                 scan: ScanBounds::default(),
+                spill_floor: None,
             },
             &mut io::Cursor::new(bytes),
             &mut CapturingSink::default(),

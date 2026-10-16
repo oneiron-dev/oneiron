@@ -10,7 +10,7 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use super::support::encode_rmpv;
+use super::support::{decode_body_json, encode_rmpv};
 use super::*;
 
 use super::read_lane::ReadTargetSlot;
@@ -177,47 +177,37 @@ impl Memory<'_> {
     ) -> MemoryResult<ScopedReadResult<ResolvedAsset>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let asset = self.resolve_ref_in_lane(&lane, asset_ref)?;
-        let ScopedReadResult { value, receipt } = asset_forms_in_lane(&lane, asset, consumer)?;
+        let ScopedReadResult { value, receipt } =
+            asset_forms_in_lane(&lane, asset, consumer, false, &mut |_| true)?;
         match value.and_then(|forms| forms.serve(consumer, budget)) {
             Some(value) => Ok(ScopedReadResult { value, receipt }),
             None => Err(no_form(asset_ref).with_read_receipt(receipt)),
         }
     }
 
-    /// Hydrate's half of OF-329: each live image ASSET among `views` is
-    /// served as its ASSET_TEXT, the form for a reader that declared no image
-    /// input; the bytes go only through [`Self::resolve_asset`]. An image
-    /// with no text is `NOT_FOUND`. A document or other ASSET keeps its body.
+    /// Hydrate's half of OF-329: each live image ASSET among `views` with a
+    /// text this reader admits is served as [`hydrated_asset`] serves it.
+    /// Every other view keeps its body.
     pub(super) fn serve_hydrated_assets(
         &self,
         lane: &ScopedRead<'_>,
-        refs: &[String],
         targets: &[ReadTargetSlot],
         views: &mut [EntityView],
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<()> {
-        let consumer = AssetConsumer::text_only(CallPurpose::AnswerGen);
         let asset_kind = kind_string_for_type(ENTITY_TYPE_ASSET);
-        for ((reference, target), view) in refs.iter().zip(targets).zip(views) {
+        for (target, view) in targets.iter().zip(views) {
             let Some((asset, ReadMode::Live)) = target else {
                 continue;
             };
             if view.kind != asset_kind {
                 continue;
             }
-            let forms = asset_forms_in_lane(lane, *asset, &consumer)?;
-            receipt.restrict_with(&forms.receipt);
-            let Some(forms) = forms.value.filter(|forms| forms.image.is_some()) else {
-                continue;
-            };
-            let Some(served) = forms.serve(&consumer, None) else {
-                return Err(no_form(reference).with_read_receipt(receipt.clone()));
-            };
-            view.body = Some(serde_json::json!({
-                "form": served.form,
-                "asset_text_ref": served.asset_text_ref,
-                "text": served.text,
-            }));
+            let served = hydrated_asset(lane, *asset, &mut |_| true)?;
+            receipt.restrict_with(&served.receipt);
+            if let HydratedAsset::Text { body, .. } = served.value {
+                view.body = decode_body_json(&body);
+            }
         }
         Ok(())
     }
@@ -229,6 +219,68 @@ fn no_form(asset_ref: &str) -> MemoryError {
     ))
 }
 
+/// What a hydrate serves, for one ASSET its lane admitted live, to a reader
+/// that declared no image input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HydratedAsset {
+    /// The door's stored body: an ASSET that holds no image, an image with no
+    /// text this reader admits (its body still names the image, bytes
+    /// nulled), or an asset gone since the door read it.
+    Stored,
+    /// A generated image, served as its text form.
+    Text {
+        /// `{form, asset_text_ref, text}` as MessagePack: the body the door
+        /// projects in place of the stored one.
+        body: Vec<u8>,
+        /// The ASSET_TEXT served, a row the reader did not name.
+        asset_text: EntityId,
+    },
+    /// The text's stored body is past what the door may still decode: the
+    /// door omits the ASSET's body, and its ref reads it whole.
+    Omitted,
+}
+
+/// The text form's body.
+#[derive(Serialize)]
+struct TextFormBody<'a> {
+    form: ServedAssetForm,
+    asset_text_ref: String,
+    text: &'a str,
+}
+
+/// Hydrate's half of OF-329, for every door that reads through its own
+/// lane: what `asset`, an ASSET `lane` admitted live, serves a reader that
+/// declared no image input, its ASSET_TEXT read through the same lane. Each
+/// text's stored body is charged to `admits` before it decodes, so a door
+/// that bounds the bodies it decodes bounds these too. The bytes go only
+/// through [`Memory::resolve_asset`].
+pub fn hydrated_asset(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+    admits: &mut dyn FnMut(usize) -> bool,
+) -> MemoryResult<ScopedReadResult<HydratedAsset>> {
+    let consumer = AssetConsumer::text_only(CallPurpose::AnswerGen);
+    let ScopedReadResult { value, receipt } =
+        asset_forms_in_lane(lane, asset, &consumer, true, admits)?;
+    let value = match value {
+        Some(forms) if forms.omitted => HydratedAsset::Omitted,
+        Some(forms) if forms.image.is_some() => match (forms.form(&consumer, None), forms.text) {
+            (Some(ServedAssetForm::AssetText), Some((asset_text, text))) => {
+                let body = rmp_serde::to_vec_named(&TextFormBody {
+                    form: ServedAssetForm::AssetText,
+                    asset_text_ref: asset_text.to_hex(),
+                    text: &text,
+                })
+                .map_err(|_| MemoryError::bad_request("body is not MessagePack-encodable"))?;
+                HydratedAsset::Text { body, asset_text }
+            }
+            _ => HydratedAsset::Stored,
+        },
+        _ => HydratedAsset::Stored,
+    };
+    Ok(ScopedReadResult { value, receipt })
+}
+
 /// The forms one admitted ASSET holds, and where budget pressure starts for
 /// the consumer's purpose.
 pub(crate) struct AssetForms {
@@ -236,22 +288,33 @@ pub(crate) struct AssetForms {
     image: Option<ImageBytes>,
     /// The newest admitted ASSET_TEXT derived from the asset.
     text: Option<(EntityId, String)>,
+    /// Whether a text's stored body was refused before it decoded.
+    omitted: bool,
     rung: BudgetThreshold,
 }
 
 impl AssetForms {
     /// The form `consumer` is served under `budget`; `None` fails closed.
+    fn form(
+        &self,
+        consumer: &AssetConsumer,
+        budget: Option<&BudgetRead>,
+    ) -> Option<ServedAssetForm> {
+        choose_form(
+            consumer.reads_images(),
+            under_pressure(budget, self.rung),
+            self.image.is_some(),
+            self.text.is_some(),
+        )
+    }
+
+    /// The asset as `consumer` is served it under `budget`; `None` fails closed.
     pub(crate) fn serve(
         self,
         consumer: &AssetConsumer,
         budget: Option<&BudgetRead>,
     ) -> Option<ResolvedAsset> {
-        let form = choose_form(
-            consumer.reads_images(),
-            under_pressure(budget, self.rung),
-            self.image.is_some(),
-            self.text.is_some(),
-        )?;
+        let form = self.form(consumer, budget)?;
         Some(ResolvedAsset {
             asset_ref: self.asset.to_hex(),
             form,
@@ -263,12 +326,18 @@ impl AssetForms {
 }
 
 /// Reads the forms of `asset` through `lane`. The lane admits the ASSET and
-/// each ASSET_TEXT derived from it; only admitted rows become forms. `None`
-/// is an asset that is absent, withheld, or not an ASSET.
+/// each ASSET_TEXT derived from it; only admitted rows become forms. With
+/// `images_only`, an ASSET that holds no image reads no text. Texts decode
+/// newest first until one holds text, each stored body charged to `admits`
+/// first; one it refuses leaves the forms `omitted`. The texts' receipt joins
+/// the read's only when a text is served. `None` is an asset that is absent,
+/// withheld, or not an ASSET.
 pub(crate) fn asset_forms_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
     consumer: &AssetConsumer,
+    images_only: bool,
+    admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
     let vault = lane.vault();
     let ScopedReadResult {
@@ -304,28 +373,40 @@ pub(crate) fn asset_forms_in_lane(
             receipt,
         });
     };
-    let image = image_of(&body)?;
-    let mut text = None;
-    if !derived.is_empty() {
+    let mut forms = AssetForms {
+        asset,
+        image: image_of(&body)?,
+        text: None,
+        omitted: false,
+        rung,
+    };
+    if !(derived.is_empty() || (images_only && forms.image.is_none())) {
         let reads: Vec<_> = derived.iter().map(|id| PointRead::id(*id)).collect();
         let texts = lane.read(&reads, None)?;
-        receipt.restrict_with(&texts.receipt);
-        text = texts
+        let mut rows: Vec<_> = texts
             .value
             .into_iter()
             .flatten()
             .filter(|row| row.entity_type == ENTITY_TYPE_ASSET_TEXT)
-            .filter_map(|row| Some(((row.learned_at, row.id), text_of(row.body.as_deref()?)?)))
-            .max_by(|left, right| left.0.cmp(&right.0))
-            .map(|((_, id), text)| (id, text));
+            .collect();
+        rows.sort_by_key(|row| std::cmp::Reverse((row.learned_at, row.id)));
+        for row in rows {
+            let Some(stored) = row.body.as_deref() else {
+                continue;
+            };
+            if !admits(stored.len()) {
+                forms.omitted = true;
+                break;
+            }
+            if let Some(text) = text_of(stored) {
+                forms.text = Some((row.id, text));
+                receipt.restrict_with(&texts.receipt);
+                break;
+            }
+        }
     }
     Ok(ScopedReadResult {
-        value: Some(AssetForms {
-            asset,
-            image,
-            text,
-            rung,
-        }),
+        value: Some(forms),
         receipt,
     })
 }

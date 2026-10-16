@@ -15,6 +15,7 @@ mod decode;
 mod doors;
 mod id_pin;
 mod manifest;
+mod optional_memory;
 mod types;
 mod widening;
 pub mod workflow;
@@ -22,6 +23,10 @@ pub mod workflow;
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
 pub(crate) use self::doors::AgentAuthorLease;
 pub use self::doors::AgentDefinitionPutDisposition;
+pub use self::optional_memory::{
+    OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
+    OptionalMemoryProfile,
+};
 pub use self::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
     AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,

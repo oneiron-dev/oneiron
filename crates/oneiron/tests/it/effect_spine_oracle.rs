@@ -49,16 +49,24 @@ fn open_comm_vault() -> (tempfile::TempDir, Vault) {
 /// default policy manifest — even with `test-support` compiled in — so an
 /// unseeded vault is reachable ONLY through the explicit open_unseeded_for_test
 /// seam, never through `open()` or a config field. Here a normally-opened vault
-/// gates the comm projector's opt_out claim write under the default policy,
-/// unlike `open_comm_vault` above.
+/// gates the comm projector's thread-membership claim write under the default
+/// policy, unlike `open_comm_vault` above. (A STOP's opt-out is a restriction
+/// and rides the engine-owned setting since F06 H160, so it is no proof.)
 #[test]
 fn es03_production_open_seeds_the_default_policy_gate() {
     let dir = tempfile::tempdir().unwrap();
     let vault = oneiron::Vault::open(dir.path(), test_config()).unwrap();
-    oneiron::comm::record_comm_inbound_stop(&vault, "party-seed-proof", "email", 10).unwrap();
-    // Seeded: the projector's Auto comm.opt_out CLAIM write is floored by the
-    // default policy gate (criticality floor), so the pass returns that specific
-    // gate rejection rather than any error.
+    oneiron::comm::record_comm_thread_event(
+        &vault,
+        "thread-seed-proof",
+        "party-seed-proof",
+        true,
+        10,
+    )
+    .unwrap();
+    // Seeded: the projector's Auto comm.thread_member CLAIM write is floored by
+    // the default policy gate (criticality floor), so the pass returns that
+    // specific gate rejection rather than any error.
     assert!(
         matches!(
             oneiron::comm::run_comm_projector(&vault),

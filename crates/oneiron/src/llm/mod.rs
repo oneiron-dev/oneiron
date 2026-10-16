@@ -72,6 +72,9 @@ pub use oneiron_model::llm::{
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
+pub use oneiron_model::llm::{
+    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
+};
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub(crate) use self::autocheck::truncate_on_char_boundary;
@@ -83,6 +86,7 @@ pub use self::autocheck::{
 pub use self::role_defaults::RoleModelDefaults;
 pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
+pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,

@@ -3,7 +3,7 @@
 //! a workbook holding formulas, since a dependent formula's cached value
 //! would go stale.
 use super::{CellWrite, NativeRefusal, REL, WorkbookReport};
-use crate::design_plan::{Cell, Column, Dataset};
+use crate::design_plan::{Cell, Column, ColumnKind, Dataset, calendar_date};
 use crate::ooxml::{SPREADSHEET_MAIN as SML, XmlTree, escape_text};
 use crate::retained_opc::{Limits, Package};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,6 +12,11 @@ const BOOK_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
 const SHEET_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+const STYLES_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
+/// The `cellXfs` index of the date style in a created workbook.
+const DATE_STYLE: &str = "1";
+/// The number format of date cells and date caches.
+pub(super) const DATE_FORMAT: &str = "yyyy-mm-dd";
 const MAX_COLUMN: u32 = 16_384;
 const MAX_ROW: u32 = 1_048_576;
 
@@ -134,6 +139,31 @@ pub(crate) fn number(value: f64) -> String {
     format!("{value}")
 }
 
+/// A `YYYY-MM-DD` date as a serial day. The 1900 system counts 1900-01-01 as
+/// 1 and, from 1900-03-01, Lotus's phantom 1900-02-29; the 1904 system counts
+/// 1904-01-01 as 0. A day before the system's first has no serial.
+pub(crate) fn serial(date: &str, date1904: bool) -> Result<f64, NativeRefusal> {
+    let (year, month, day) =
+        calendar_date(date).ok_or(NativeRefusal::Invalid("a date that is not YYYY-MM-DD"))?;
+    // Days from 1970-01-01 in the proleptic Gregorian calendar (Hinnant).
+    let (month, day) = (i64::from(month), i64::from(day));
+    let year = i64::from(year) - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let of_era = year - era * 400;
+    let of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let days = era * 146_097 + of_era * 365 + of_era / 4 - of_era / 100 + of_year - 719_468;
+    let (day, first) = if date1904 {
+        (days + 24_107, 0)
+    } else {
+        let day = days + 25_569;
+        (if day < 61 { day - 1 } else { day }, 1)
+    };
+    if day < first {
+        return Err(NativeRefusal::Invalid("a date before its date system"));
+    }
+    Ok(day as f64)
+}
+
 /// A column header: its name, and its unit in parentheses.
 pub(crate) fn header(column: &Column) -> String {
     match &column.unit {
@@ -148,6 +178,8 @@ pub(super) struct Workbook {
     /// Sheet name → worksheet part.
     sheets: BTreeMap<String, String>,
     shared: Vec<String>,
+    /// Serial days count from 1904-01-01 rather than 1900-01-01.
+    pub(super) date1904: bool,
 }
 
 #[derive(Debug)]
@@ -172,6 +204,10 @@ impl Workbook {
         let tree = parse(&package, &book)?;
         tree.root(SML, "workbook")
             .map_err(|_| NativeRefusal::AmbiguousChartData("embedded package holds no workbook"))?;
+        let date1904 = tree
+            .child(0, SML, "workbookPr")?
+            .and_then(|(_, node)| node.attr("date1904"))
+            .is_some_and(|value| matches!(value.trim(), "1" | "true"));
         let links = package
             .relationships(&book)
             .map_err(NativeRefusal::Workbook)?;
@@ -203,6 +239,7 @@ impl Workbook {
             package,
             sheets,
             shared,
+            date1904,
         })
     }
 
@@ -489,7 +526,12 @@ fn cell_xml(
             )
         }
         Cell::Number(_) => return Err(NativeRefusal::Invalid("a number must be finite")),
-        Cell::Text(text) | Cell::Date(text) => format!(
+        // Only a created workbook takes a date: its system is 1900.
+        Cell::Date(date) => format!(
+            "<{name} r=\"{r}\"{style}><{prefix}v>{}</{prefix}v></{name}>",
+            number(serial(date, false)?)
+        ),
+        Cell::Text(text) => format!(
             "<{name} r=\"{r}\"{style} t=\"inlineStr\"><{prefix}is><{prefix}t xml:space=\"preserve\">{}</{prefix}t></{prefix}is></{name}>",
             escape_text(text)
         ),
@@ -497,7 +539,8 @@ fn cell_xml(
 }
 
 /// A new workbook for a chart: row 1 holds the headers, then one row per
-/// dataset row; a missing value leaves its cell absent.
+/// dataset row. A missing value leaves its cell absent, except in a date
+/// column, whose cells all carry the date style.
 pub(super) fn create(
     dataset: &Dataset,
     sheet: &str,
@@ -523,7 +566,12 @@ pub(super) fn create(
         let number = u32::try_from(at + 1).map_err(|_| NativeRefusal::Invalid("too many rows"))?;
         data.push_str(&format!("<row r=\"{number}\">"));
         for (col, value) in row.iter().enumerate() {
-            if *value == Cell::Missing {
+            let dated = at > 0
+                && dataset
+                    .columns
+                    .get(col)
+                    .is_some_and(|column| column.kind == ColumnKind::Date);
+            if *value == Cell::Missing && !dated {
                 continue;
             }
             let key = CellKey {
@@ -532,7 +580,7 @@ pub(super) fn create(
                     .map_err(|_| NativeRefusal::Invalid("too many columns"))?,
                 row: number,
             };
-            data.push_str(&cell_xml("c", &key, None, value)?);
+            data.push_str(&cell_xml("c", &key, dated.then_some(DATE_STYLE), value)?);
         }
         data.push_str("</row>");
     }
@@ -543,8 +591,9 @@ pub(super) fn create(
         &format!("{REL}/worksheet"),
         "xl/worksheets/sheet1.xml",
     )?;
+    package.relate("xl/workbook.xml", &format!("{REL}/styles"), "xl/styles.xml")?;
     let book = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<workbook xmlns=\"{SML}\" xmlns:r=\"{REL}\"><sheets><sheet name=\"{}\" sheetId=\"1\" r:id=\"{sheet_link}\"/></sheets></workbook>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<workbook xmlns=\"{SML}\" xmlns:r=\"{REL}\"><workbookPr date1904=\"0\"/><sheets><sheet name=\"{}\" sheetId=\"1\" r:id=\"{sheet_link}\"/></sheets></workbook>",
         escape_text(sheet)
     );
     package.add_part("xl/workbook.xml", BOOK_TYPE, book.into_bytes())?;
@@ -556,5 +605,10 @@ pub(super) fn create(
         SHEET_TYPE,
         worksheet.into_bytes(),
     )?;
+    // Style 0 is General; style 1 shows a serial as a date.
+    let styles = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<styleSheet xmlns=\"{SML}\"><numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"{DATE_FORMAT}\"/></numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>"
+    );
+    package.add_part("xl/styles.xml", STYLES_TYPE, styles.into_bytes())?;
     Ok(package.export()?)
 }
