@@ -307,6 +307,9 @@ pub struct BoardFrame<'a> {
     pub header: &'a BoardBlockHeader,
     pub legend: &'a BoardLegend,
     pub sections: &'a [BoardSection],
+    /// The agent's own `you:` forks line, rendered under the legend and
+    /// before the changed line, never shed.
+    pub you: Option<&'a str>,
     /// Session read-set corrections, rendered at the top and never shed.
     pub changes: Option<&'a super::ChangedLine>,
 }
@@ -523,6 +526,9 @@ fn render_candidate(
         budget.cap_tok
     ));
     lines.push(format!("legend: {}", xml_text_token(frame.legend.as_str())));
+    if let Some(you) = frame.you {
+        lines.push(xml_text_token(you));
+    }
     if let Some(changes) = frame.changes {
         lines.extend(changes.render().iter().map(|line| xml_text_token(line)));
     }

@@ -82,6 +82,7 @@ impl MemoriesSection {
                 header,
                 legend: &super::frame::BoardLegend::canonical(),
                 sections: &sections,
+                you: None,
                 changes: None,
             },
             budget,
