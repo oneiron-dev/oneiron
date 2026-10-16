@@ -1,5 +1,7 @@
 //! Credential-shape detection shared by write, serve, and export.
 
+use std::ops::Range;
+
 use sha2::{Digest, Sha256};
 
 use super::wordlist::WORDS;
@@ -19,6 +21,22 @@ pub(super) enum Door {
 
 pub(super) fn blocklisted(text: &str) -> bool {
     blocklist().any(|entry| text.contains(entry))
+}
+
+/// Where [`blocklisted`] finds each entry in `text`.
+pub(super) fn blocklist_spans(text: &str) -> Vec<Range<usize>> {
+    blocklist()
+        .flat_map(|entry| {
+            text.match_indices(entry)
+                .map(move |(at, _)| at..at + entry.len())
+        })
+        .collect()
+}
+
+/// The byte range `part`, a slice of `text`, takes in it.
+pub(super) fn span_of(text: &str, part: &str) -> Range<usize> {
+    let start = part.as_ptr() as usize - text.as_ptr() as usize;
+    start..start + part.len()
 }
 
 /// The longest blocklist entry, in bytes.
@@ -332,6 +350,36 @@ pub(super) fn private_key_block(text: &str) -> bool {
     false
 }
 
+/// Where [`private_key_block`] finds each block in `text`: from its BEGIN line
+/// through its END line.
+pub(super) fn private_key_block_spans(text: &str) -> Vec<Range<usize>> {
+    const BEGIN: &str = "-----BEGIN ";
+    const DASHES: &str = "-----";
+    let mut spans = Vec::new();
+    let mut from = 0;
+    while let Some(at) = text[from..].find(BEGIN) {
+        let start = from + at;
+        let label_at = start + BEGIN.len();
+        from = label_at;
+        let Some(label_len) = text[label_at..].find(DASHES) else {
+            break;
+        };
+        let label = &text[label_at..label_at + label_len];
+        if label.contains(['\n', '\r']) || !label.contains("PRIVATE KEY") {
+            continue;
+        }
+        let body_at = label_at + label_len + DASHES.len();
+        let end = format!("-----END {label}-----");
+        if let Some(body_len) = text[body_at..].find(&end)
+            && armored_body(&text[body_at..body_at + body_len])
+        {
+            from = body_at + body_len + end.len();
+            spans.push(start..from);
+        }
+    }
+    spans
+}
+
 fn armored_body(body: &str) -> bool {
     let body = join_quoted_literals(body);
     let mut base64 = 0_usize;
@@ -427,12 +475,33 @@ pub(super) fn sensitive_key(key: &str) -> bool {
     .any(|suffix| normalized.ends_with(suffix))
 }
 
-/// Values serve and export have always treated as no secret at all.
+/// Values serve and export have always treated as no secret at all, and the
+/// handle a mask on write leaves.
 fn placeholder(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "" | "[redacted]" | "[secret redacted]" | "<redacted>" | "null"
-    )
+    ) || custody_handle(value)
+}
+
+/// How a masked span opens: `[secret sc12]` stands where the secret was.
+pub(super) const HANDLE_OPEN: &str = "[secret ";
+
+/// The handle a mask on write leaves where it lifted a secret into custody
+/// (ARCH-0069 #handles-in-fields): `sc12` as a whole value, or a value that
+/// starts with `[secret sc12]`. It names a custody record and holds no value.
+fn custody_handle(value: &str) -> bool {
+    let bare = |text: &str| {
+        text.strip_prefix("sc").is_some_and(|digits| {
+            !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    };
+    let value = trim_value(value);
+    bare(value)
+        || value
+            .strip_prefix(HANDLE_OPEN)
+            .and_then(|rest| rest.split_once(']'))
+            .is_some_and(|(handle, _)| bare(handle))
 }
 
 /// Placeholder words a person writes in place of a secret.
@@ -561,15 +630,16 @@ const AUTH_SCHEMES: [&str; 4] = ["bearer", "basic", "token", "digest"];
 /// be at least eight characters, and not read as a call, an index, a template,
 /// a variable, a path, or a dotted name.
 fn secret_material(value: &str) -> bool {
+    secret_candidate(value).is_some()
+}
+
+/// [`secret_material`]'s candidate word, a slice of `value`, when it reads as
+/// a real secret.
+fn secret_candidate(value: &str) -> Option<&str> {
     let mut words = value.split_whitespace().map(trim_value);
-    let Some(mut candidate) = words.next() else {
-        return false;
-    };
+    let mut candidate = words.next()?;
     if AUTH_SCHEMES.contains(&candidate.to_ascii_lowercase().as_str()) {
-        let Some(credential) = words.next() else {
-            return false;
-        };
-        candidate = credential;
+        candidate = words.next()?;
     }
     if candidate.len() < MIN_SECRET_LEN
         || write_placeholder(candidate)
@@ -579,10 +649,11 @@ fn secret_material(value: &str) -> bool {
         || candidate.starts_with("../")
         || dotted_name(candidate)
     {
-        return false;
+        return None;
     }
-    candidate.bytes().any(|byte| byte.is_ascii_alphabetic())
-        && candidate.bytes().any(|byte| byte.is_ascii_digit())
+    (candidate.bytes().any(|byte| byte.is_ascii_alphabetic())
+        && candidate.bytes().any(|byte| byte.is_ascii_digit()))
+    .then_some(candidate)
 }
 
 /// `this.apiKey`, `process.env.API_KEY`, `config.v2.token`: names joined by
@@ -614,6 +685,20 @@ pub(super) fn sensitive_assignment(text: &str, door: Door) -> bool {
                 Door::Release => !placeholder(value),
             }
     })
+}
+
+/// Where the write door's [`sensitive_assignment`] reads each secret in
+/// `text`: the assigned value's candidate word.
+pub(super) fn assignment_spans(text: &str) -> Vec<Range<usize>> {
+    text.split(['\n', '\r', ',', ';', '{', '}'])
+        .filter_map(|line| {
+            let (key, value) = line.split_once(['=', ':'])?;
+            if !sensitive_key(assigned_key(key)) {
+                return None;
+            }
+            secret_candidate(assigned_value(value)).map(|candidate| span_of(text, candidate))
+        })
+        .collect()
 }
 
 /// The name an assignment's key text reads as.

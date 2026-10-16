@@ -1,3 +1,4 @@
+mod mask;
 mod shapes;
 mod whole_read;
 mod wordlist;
@@ -10,6 +11,7 @@ pub(crate) use self::whole_read::{
     release_reads_json_text, release_reads_whole, release_reads_whole_json,
     sanitize_messagepack_credentials_in, write_door_refuses_raw,
 };
+pub(super) use self::mask::mask_batch_ops;
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
@@ -37,7 +39,9 @@ const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_ov
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretScanMode {
-    /// A credential-shaped hit refuses the whole write.
+    /// The write door scans. A secret it can place in text or a field goes
+    /// to custody and leaves its handle there; any other hit refuses the
+    /// whole write.
     #[default]
     On,
     /// The write door does not scan; serve and export still redact.
@@ -71,6 +75,7 @@ pub(crate) fn put_secret_scan_mode_in_txn(
 
 /// The batch write door: every entity put, claim candidate, text field and
 /// phonetic code a batch stages, unless the owner switched the scan off.
+/// [`mask_batch_ops`] runs it first, and again over what it masked.
 pub(super) fn scan_batch_ops(
     store: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -667,6 +672,14 @@ fn messagepack_has_secret(value: &rmpv::Value, door: Door) -> bool {
 
 fn detect_bytes(bytes: &[u8], door: Door) -> bool {
     detect(&String::from_utf8_lossy(bytes), door).is_some()
+}
+
+/// Where [`detect`]'s provider rules read a key in `text`: each whole token
+/// one names, with its reason.
+fn provider_token_spans(text: &str) -> Vec<(std::ops::Range<usize>, &'static str)> {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
+        .filter_map(|token| classify_token(token).map(|reason| (shapes::span_of(text, token), reason)))
+        .collect()
 }
 
 fn classify_token(token: &str) -> Option<&'static str> {

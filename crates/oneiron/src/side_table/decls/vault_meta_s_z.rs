@@ -49,6 +49,9 @@ side_tables! {
     /// T2 local-file registration for a materialized secret, read wholesale for snapshot exclusion.
     /// Key: hex32(lease id).
     SECRET_LOCAL_REGISTRATION: VaultMeta b"secret_local:v1:" Raw;
+    /// Where a mask on write found the secret one custody record holds: the record, the field and
+    /// the key's kind (OF-560). Key: id16 (custody record id).
+    SECRET_MASK_ORIGIN: VaultMeta b"secret_mask:origin:v1:" Named;
     /// Durable attestation of one secret rotate-or-revoke op; carries no value bytes. Key:
     /// hex32(receipt id).
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
