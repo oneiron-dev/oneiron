@@ -255,6 +255,32 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.legal_holds.place",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldPlaceRequest,
+                >(),
+            ),
+            (
+                "vault.legal_holds.widen",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldWidenRequest,
+                >(),
+            ),
+            (
+                "vault.legal_holds.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.legal_holds.log",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.legal_holds.lift_and_erase",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+                >(),
+            ),
+            (
                 "vault.lenses.propose",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
             ),
@@ -1158,6 +1184,29 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.legal_holds.place" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.legal_holds.widen" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.legal_holds.list" => &[],
+        "vault.legal_holds.log" => &[],
+        "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.lenses.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2008,6 +2057,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.handoff_alarms.acknowledge" => {
             let _input: crate::task_verb::sdk::HandoffAlarmRequest = decode(value.clone())?;
         }
+        "vault.legal_holds.place" => {
+            let _input: crate::task_verb::sdk::LegalHoldPlaceRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.widen" => {
+            let _input: crate::task_verb::sdk::LegalHoldWidenRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.log" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.legal_holds.lift_and_erase" => {
+            let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
+                decode(value.clone())?;
+        }
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
         }
@@ -2425,6 +2490,13 @@ pub fn invoke(
         "vault.authority.handoff_alarms.acknowledge" => encode(
             vault_authority_handoff_alarms_acknowledge(memory, decode(value)?)?,
         ),
+        "vault.legal_holds.place" => encode(vault_legal_holds_place(memory, decode(value)?)?),
+        "vault.legal_holds.widen" => encode(vault_legal_holds_widen(memory, decode(value)?)?),
+        "vault.legal_holds.list" => encode(vault_legal_holds_list(memory, decode(value)?)?),
+        "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
+        "vault.legal_holds.lift_and_erase" => {
+            encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
@@ -3072,6 +3144,54 @@ pub fn vault_authority_handoff_alarms_acknowledge(
     crate::task_verb::sdk::acknowledge_handoff_alarm(
         memory.vault(),
         &memory.embedded_owner("vault.authority.handoff_alarms.acknowledge")?,
+        input,
+    )
+}
+pub fn vault_legal_holds_place(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldPlaceRequest,
+) -> MemoryResult<crate::deletion::LegalHold> {
+    crate::task_verb::sdk::place_legal_hold_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.place")?,
+        input,
+    )
+}
+pub fn vault_legal_holds_widen(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldWidenRequest,
+) -> MemoryResult<crate::deletion::LegalHold> {
+    crate::task_verb::sdk::widen_legal_hold_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.widen")?,
+        input,
+    )
+}
+pub fn vault_legal_holds_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::deletion::LegalHold>> {
+    crate::task_verb::sdk::read_legal_holds(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.list")?,
+    )
+}
+pub fn vault_legal_holds_log(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::deletion::LegalHoldEvent>> {
+    crate::task_verb::sdk::read_legal_hold_log(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.log")?,
+    )
+}
+pub fn vault_legal_holds_lift_and_erase(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::LegalHoldLiftAndErased> {
+    crate::task_verb::sdk::lift_legal_hold_and_erase_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
         input,
     )
 }

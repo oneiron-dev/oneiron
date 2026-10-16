@@ -154,6 +154,13 @@ declare const vault: {
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
   };
+  legal_holds: {
+    lift_and_erase(input: { records: string[] }): Promise<unknown>;
+    list(input: object): Promise<unknown>;
+    log(input: object): Promise<unknown>;
+    place(input: { matter_ref?: string | null; targets: unknown[] }): Promise<unknown>;
+    widen(input: { hold_id: string; targets: unknown[] }): Promise<unknown>;
+  };
   lenses: {
     activate(input: { compiled_hash: string; expected_active_ref?: string | null; lens_ref: string }): Promise<unknown>;
     deactivate(input: { expected_active_ref: string; slot: object }): Promise<unknown>;
