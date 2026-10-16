@@ -190,6 +190,26 @@ impl Vault {
             bytes,
         }))
     }
+
+    /// Keeps the travel receipt `vault.artifacts.export` keeps (OF-491) for
+    /// a copy a download door served: the copy, its digest and who took it.
+    /// No born-with text leaves a download, so it is never gated on this.
+    ///
+    /// # Errors
+    /// Never for a lost receipt: one with nothing travelling only warns.
+    pub fn record_blob_artifact_download(
+        &self,
+        file: &ArtifactExport,
+        by: &EntityId,
+    ) -> Result<()> {
+        self.record_export_travel(
+            file.artifact_id.to_hex(),
+            file.version,
+            hash_hex(&file.content_hash),
+            by,
+            &crate::share_travel::BornWith::new(),
+        )
+    }
 }
 
 pub(crate) fn hash_hex(hash: &[u8; 32]) -> String {
