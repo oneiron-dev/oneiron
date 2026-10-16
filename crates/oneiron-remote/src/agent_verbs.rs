@@ -47,6 +47,22 @@ impl OneironClient {
                 "self.memory.diary.review" => remote_agent_verb_output::<
                     oneiron::memory::DiaryReadRequest,
                 >(client, verb, &input),
+                "vault.people.list" => {
+                    remote_agent_verb_output::<oneiron::memory::PeoplePage>(client, verb, &input)
+                }
+                "vault.people.get" => {
+                    remote_agent_verb_output::<oneiron::context_board::PersonRow>(
+                        client, verb, &input,
+                    )
+                }
+                "self.message" => {
+                    remote_agent_verb_output::<oneiron::memory::MessagePersonReceipt>(
+                        client, verb, &input,
+                    )
+                }
+                "self.grants.ask" => remote_agent_verb_output::<oneiron::memory::GrantAskReceipt>(
+                    client, verb, &input,
+                ),
                 "self.memory.diary.query" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryQueryOutcome,
                 >(client, verb, &input),
@@ -508,6 +524,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.memory.diary.review", value)
+    }
+    pub fn vault_people_list(
+        &self,
+        input: &oneiron::memory::PeopleListRequest,
+    ) -> Result<oneiron::memory::PeoplePage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.people.list", value)
+    }
+    pub fn vault_people_get(
+        &self,
+        input: &oneiron::memory::PersonRequest,
+    ) -> Result<oneiron::context_board::PersonRow, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.people.get", value)
+    }
+    pub fn self_message(
+        &self,
+        input: &oneiron::memory::MessagePersonRequest,
+    ) -> Result<oneiron::memory::MessagePersonReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.message", value)
+    }
+    pub fn self_grants_ask(
+        &self,
+        input: &oneiron::memory::GrantAskRequest,
+    ) -> Result<oneiron::memory::GrantAskReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.grants.ask", value)
     }
     pub fn self_memory_diary_query(
         &self,
