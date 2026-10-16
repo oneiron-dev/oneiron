@@ -34924,13 +34924,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "WindowRebootstrapReport",
       "WindowRecoveryReport"
      ],
      "path": "src/recovery/maintenance.rs",
      "purpose": "The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch and recovery ladder): capture a…",
      "surface": {
-      "fn": 1,
-      "struct": 1
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -42481,7 +42482,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 6,
       "mod": 1,
       "re-export": 8,
@@ -42496,6 +42497,16 @@
      "purpose": "Project history beside the PROJECT carriers a window document holds (PR 3 decision 9)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/rebootstrap.rs",
+     "purpose": "Re-bootstrap of a window from its canonical rebuild (OF-005, ARCH-0038 `#recover-window-built`): the rebuilt…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -49501,7 +49512,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 149,
+     "files": 150,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49685,7 +49696,7 @@
    },
    "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2999,
+   "source_files": 3000,
    "test_files": 903
   },
   "oneiron-android": {
