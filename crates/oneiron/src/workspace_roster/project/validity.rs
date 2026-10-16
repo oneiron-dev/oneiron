@@ -5,8 +5,8 @@ use super::fold::{ProjectEffective, ProjectRank, authority_fits, rank_at, reason
 use super::read::{Holder, ProjectReader, ProjectVerdict};
 use super::resolution::{ProjectResolution, ProjectSeal};
 use super::revision::{
-    HeldRevisions, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, RevisionOrigin,
-    anchor_of, authenticate, signed_depth,
+    HeldRevisions, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, REVISIONS,
+    RevisionOrigin, anchor_of, authenticate, signed_depth,
 };
 use super::*;
 use crate::federation::ScopeId;
@@ -391,20 +391,22 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
     }
 
     /// A re-parent's witnesses (ARCH-0079 stacking): every parent head a
-    /// state witnesses must be held here and led by the leader its witness
-    /// seats on the board. A head not yet held waits, so the re-parent
-    /// resumes when it lands. A witness is a fact of the parent's history,
-    /// not its view: the parent's current view still bounds the state.
+    /// state witnesses must be authenticated history held here, led by the
+    /// leader its witness seats on the board. A head not yet held, or held
+    /// before its lineage or mint, waits, so the same signed re-parent
+    /// resumes when it lands (ruling (d)). A witness is a fact of the
+    /// parent's history, not its view: the parent's current view still
+    /// bounds the state.
     fn witnessed(&self, authority: &ProjectAuthority) -> Result<Option<ProjectVerdict>> {
         for witness in &authority.parent_heads {
             match witnessed_leader(self.reader, witness.project, witness.head)? {
-                None => return Ok(Some(ProjectVerdict::Pending(reason::PARENT_HEAD_PENDING))),
-                Some(leader) if leader != witness.leader.to_hex() => {
+                Err(verdict) => return Ok(Some(verdict)),
+                Ok(leader) if leader != witness.leader.to_hex() => {
                     return Ok(Some(ProjectVerdict::Quarantined(
                         reason::PARENT_HEAD_LEADER,
                     )));
                 }
-                Some(_) => {}
+                Ok(_) => {}
             }
         }
         Ok(None)
@@ -861,31 +863,49 @@ pub(super) fn refusal(
     }
 }
 
-/// The leader of `parent`'s state `head`, when this replica holds that
-/// state: a held revision, or the boundary of an unsigned parent's stored
-/// row, which no companion holds.
+/// The leader of `parent`'s state `head` as authenticated history gives it
+/// (ruling (d)): a held revision whose origin authenticates, or the boundary
+/// of an unsigned parent's stored row, which no companion holds. Bytes that
+/// merely arrived wait for their lineage and mint; a forged head never
+/// witnesses. `Err` is the verdict the witnessing state takes meanwhile.
 fn witnessed_leader(
     reader: &ProjectReader<'_, '_>,
     parent: EntityId,
     head: ProjectRevisionHash,
-) -> Result<Option<String>> {
-    if let Some(row) = reader.held_of(parent)?.get(&head) {
-        return Ok(row
-            .revision
-            .authority()
-            .map(|authority| authority.leader.clone()));
+) -> Result<std::result::Result<String, ProjectVerdict>> {
+    let waits = ProjectVerdict::Pending(reason::PARENT_HEAD_PENDING);
+    let held = reader.held_of(parent)?;
+    if let Some(row) = held.get(&head) {
+        let origin = match row.origin {
+            RevisionOrigin::Authenticated => RevisionOrigin::Authenticated,
+            _ => authenticate(&held, &*reader.authority()?, head),
+        };
+        return Ok(match (origin, row.revision.authority()) {
+            (RevisionOrigin::Authenticated, Some(authority)) => Ok(authority.leader.clone()),
+            (RevisionOrigin::Authenticated, None) => {
+                Err(ProjectVerdict::Quarantined(reason::NOT_A_STATE))
+            }
+            (RevisionOrigin::Forged, _) => Err(ProjectVerdict::Quarantined(reason::FORGED)),
+            (RevisionOrigin::AwaitingParent | RevisionOrigin::AwaitingMint, _) => Err(waits),
+        });
+    }
+    // A held set leaves out a row already found forged.
+    let indexed = REVISIONS.get(reader.store(), reader.txn(), &(parent, head))?;
+    if indexed.is_some_and(|(_, origin)| origin == RevisionOrigin::Forged) {
+        return Ok(Err(ProjectVerdict::Quarantined(reason::FORGED)));
     }
     let Some(stored) = reader.stored_row(parent)? else {
-        return Ok(None);
+        return Ok(Err(waits));
     };
     if stored.write_proof.is_some() {
-        return Ok(None);
+        return Ok(Err(waits));
     }
     let boundary = revision::revisions_of(parent, &stored.anchor())?;
     Ok(boundary
         .last()
         .filter(|(hash, _)| *hash == head)
-        .map(|_| stored.leader.clone()))
+        .map(|_| stored.leader.clone())
+        .ok_or(waits))
 }
 
 /// A parent project's effective view, or the verdict its absence gives a child.
