@@ -287,7 +287,28 @@ pub(crate) async fn ai_verdict(
     tokio::task::spawn_blocking(move || {
         let reader = crate::api::credential_memory(&server.vault, Some(&auth), principal, class)
             .at(auth.locality());
-        crate::decision_verdict::run_verdict(&server, principal, &reader, &input)
+        // An image is pulled through the caller's own lane before any model
+        // reads it.
+        let lane = match input.image {
+            Some(_) => Some(
+                crate::api::scoped_read_for_core_auth(&server.vault, &auth).map_err(|_| {
+                    MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "ai.verdict reads an image under the caller's scoped read",
+                        &["Present a credential that can read the image."],
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        crate::decision_verdict::run_verdict(
+            &server,
+            principal,
+            class,
+            &reader,
+            lane.as_ref(),
+            &input,
+        )
     })
     .await
     .map_err(|_| internal("ai.verdict"))?

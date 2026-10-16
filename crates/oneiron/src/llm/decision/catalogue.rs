@@ -79,7 +79,8 @@ pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
-/// Replay scores, independent judge audits, blind preferences and skill tradeoffs.
+/// Replay scores, independent judge audits, blind preferences, hidden-flaw findings per
+/// objective (`honesty`) and skill tradeoffs.
 pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
     name: "skill_optimize.judgment",
     version: 1,
@@ -132,6 +133,16 @@ pub const AI_VERDICT: QuestionFamily = QuestionFamily {
     name: "ai.verdict",
     version: 1,
     class: DecisionClass::Judgment,
+};
+
+/// A routine driver step through `ai.verdict` (OF-523, the CUA-S1 pattern): which of the
+/// step's candidates the driver acts on (NONE, reobserve or ask up reserved), or where its
+/// target is in a screenshot. Keyed by the answer contract, as [`AI_VERDICT`] is, so a
+/// step's bands learn apart from plain verdicts.
+pub const AI_VERDICT_ROUTINE: QuestionFamily = QuestionFamily {
+    name: "ai.verdict.routine",
+    version: 1,
+    class: DecisionClass::Triage,
 };
 
 /// The paired yes/no question every decision read asks beside the labels: does this need
@@ -248,6 +259,14 @@ pub const PROJECT_PROPOSAL: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// How well one arm of a session-branch claim edit fits the owner's held-out labels, from 0
+/// to 1. Unkeyed: the wording is the key.
+pub const CLAIM_REPLAY: QuestionFamily = QuestionFamily {
+    name: "skill_hub.claim_replay",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -262,6 +281,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     DESCRIPTION_FIT,
     AUTO_CHECK,
     AI_VERDICT,
+    AI_VERDICT_ROUTINE,
     THINK_MORE,
     ASK_UP,
     POLICY_OWNER_ROW,
@@ -276,4 +296,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     POLICY_HOSTED_VIOLATION,
     BOOKING_OFF_TOPIC,
     PROJECT_PROPOSAL,
+    CLAIM_REPLAY,
 ];
