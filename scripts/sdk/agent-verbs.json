@@ -588,12 +588,88 @@
       }
     },
     {
+      "name": "vault.weave.report",
+      "input": "crate::claim::WeaveReportRequest",
+      "output": "crate::claim::WeaveReportView",
+      "call": "memory.weave_report(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.digest",
+      "input": "crate::claim::WeaveDigestRequest",
+      "output": "Option<crate::claim::WeaveDigestView>",
+      "call": "memory.weave_digest(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.propose",
+      "input": "crate::lens::LensProposeRequest",
+      "output": "crate::receipt::LensProposalReceipt",
+      "call": "memory.lenses_propose(input)?",
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.activate",
+      "input": "crate::lens::LensActivateRequest",
+      "output": "crate::receipt::LensActivationReceipt",
+      "call": "crate::lens::activate_lens_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.deactivate",
+      "input": "crate::lens::LensDeactivateRequest",
+      "output": "crate::receipt::LensActivationReceipt",
+      "call": "crate::lens::deactivate_lens_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.list",
+      "input": "crate::lens::LensListRequest",
+      "output": "crate::lens::LensListPage",
+      "call": "memory.lenses_list(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.default",
+      "input": "crate::lens::LensDefaultRequest",
+      "output": "crate::claim::ScopedReadResult<crate::lens::GeneratedLens>",
+      "call": "memory.lenses_default(input)?",
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -1122,6 +1198,63 @@
         "spec": "$",
         "room_ref": "=conversation_ref"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.join",
+      "input": "crate::workspace_roster::JoinRequest",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_join(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.consent",
+      "input": "crate::workspace_roster::ConsentAnswer",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_consent(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.revisions",
+      "input": "ProjectRefRequest",
+      "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
+      "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.dismiss",
+      "input": "ProjectGoalDismissRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
+      "call": "ProjectGoalDismissReceipt { dismissed: memory.projects_goal_dismiss(crate::EntityId::from_hex(&input.project_ref)?, crate::EntityId::from_hex(&input.expected_goal_ref)?, &input.question_digest)? }",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.route_tradeoff",
+      "input": "ProjectTradeoffRouteRequest",
+      "output": "crate::task_verb::TaskAskReceipt",
+      "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
       "section": false
     },

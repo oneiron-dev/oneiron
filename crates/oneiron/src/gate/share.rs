@@ -17,9 +17,10 @@ pub(crate) fn check_share_create_policy(
     share_id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
+    travel: &crate::share_travel::TravelChoice,
 ) -> Result<(GateDecisionId, GateDecision)> {
     let policy = resolve_policy_manifest(store, txn)?;
-    let effect = share_create_effect(share_id, issuer, share)?;
+    let effect = share_create_effect(share_id, issuer, share, travel)?;
     // Execution, not a preview: charge any governing connector budget and record
     // the real decision in the grant's transaction. Pending is never authority.
     let (id, decision, _) = check_external_effect_policy(store, txn, &effect, &policy, true)?;
@@ -30,6 +31,7 @@ pub(crate) fn share_create_effect(
     share_id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
+    travel: &crate::share_travel::TravelChoice,
 ) -> Result<ExternalEffectGateInput> {
     Ok(ExternalEffectGateInput {
         actor: GateActor {
@@ -47,9 +49,10 @@ pub(crate) fn share_create_effect(
         counterparty: Some(share.recipient_ref.to_hex()),
         // The consent composer target-pins brief_ref, but not counterparty or
         // provenance. Bind ALL immutable grant axes into that target, including
-        // recipient, issuer, share id and canonical WORLD/FACET maximum. An
-        // approval for one target cannot be redeemed for another share/scope.
-        brief_ref: Some(share_effect_target(share_id, issuer, share)?),
+        // recipient, issuer, share id, canonical WORLD/FACET maximum and the
+        // born-with text chosen to travel. An approval for one target cannot
+        // be redeemed for another share, scope or travel choice.
+        brief_ref: Some(share_effect_target(share_id, issuer, share, travel)?),
         send_ref: None,
         standing_grant_ref: None,
         scoped_mcp_call: None,

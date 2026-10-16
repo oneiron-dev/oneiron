@@ -288,6 +288,17 @@ pub(crate) fn approve_canonical_mail_send_once(
     identity_ref: EntityId,
     actor: EntityId,
 ) -> Result<ConsentReceipt> {
+    let digest = canonical_mail_send_digest(request, identity_ref, actor)?;
+    vault.approve_once(owner, digest)
+}
+
+/// The canonical mail operation's approve-once digest for one checked send
+/// envelope: the key both owner doors mint and the Gate's mail lane reads.
+pub(crate) fn canonical_mail_send_digest(
+    request: &OutboundDispatchRequest,
+    identity_ref: EntityId,
+    actor: EntityId,
+) -> Result<crate::consent::EffectDigest> {
     let invalid = || Error::InvalidConfig("invalid mail send envelope".into());
     let canonical = CanonicalMailSend::from_request(request)?;
     let effect = ExternalEffectGateInput {
@@ -316,8 +327,7 @@ pub(crate) fn approve_canonical_mail_send_once(
         has_permission: request.gate.has_permission,
         policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
     };
-    let digest = crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)?;
-    vault.approve_once(owner, digest)
+    crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)
 }
 
 /// One stable logical mail send, independent of approval availability and

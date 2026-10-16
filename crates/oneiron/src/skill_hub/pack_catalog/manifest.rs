@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::migrations::PackMigration;
+use super::setup::PackSetup;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
 use crate::saved_query::PackMigrationMap;
@@ -51,6 +52,10 @@ pub struct PackManifest {
     /// Predicate migration maps this source ships for moves from earlier
     /// sources of the pack (ARCH-0059 §4, rung 1).
     pub migrations: Vec<PackMigration>,
+    /// The accounts, connections, permissions and credential names the
+    /// pack's guided setup walks the owner through (OF-378). Declaration
+    /// only; it grants nothing.
+    pub setup: Option<PackSetup>,
 }
 
 impl PackManifest {
@@ -178,6 +183,7 @@ impl PackManifest {
                     "hooks",
                     "organs",
                     "migrations",
+                    "setup",
                 ]
                 .iter()
                 .any(|key| fields.contains_key(key))
@@ -227,6 +233,11 @@ impl PackManifest {
             .map(|line| super::migrations::parse(line, &name, &version, &predicates))
             .transpose()?
             .unwrap_or_default();
+        let requested_grants = list("grants")?;
+        let setup = fields
+            .get("setup")
+            .map(|value| PackSetup::parse(value, kind, &requested_grants))
+            .transpose()?;
         Ok(Self {
             name,
             description,
@@ -241,11 +252,12 @@ impl PackManifest {
             agent_facets,
             predicates,
             kinds,
-            requested_grants: list("grants")?,
+            requested_grants,
             wake_subscriptions: list("wakes")?,
             hooks,
             organs,
             migrations,
+            setup,
         })
     }
 }
@@ -281,6 +293,7 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "organs"
                 | "facets"
                 | "migrations"
+                | "setup"
         ) {
             return Err(invalid("unknown PACK.md field"));
         }

@@ -58,6 +58,7 @@ mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
+mod voice;
 mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};

@@ -631,6 +631,23 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// The sparse line index of one of this run's file bodies (the newline
+    /// count before each 64 KiB block), from the first body directory the
+    /// run reads that holds one. `None` for an inline body, or for an index
+    /// lost and not rebuilt.
+    pub(crate) fn code_run_line_index(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<Vec<u64>>> {
+        let dirs = match self {
+            Self::Canonical(vault) => vec![vault.store.body_dir()?],
+            Self::Session(binding) => binding.answered(|| binding.session.body_dirs())?,
+        };
+        Ok(dirs
+            .iter()
+            .find_map(|dir| dir.read_line_index(&output.raw_blake3, output.raw_len)))
+    }
+
     /// A writer for one result body, where this run's bodies go.
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
         match self {
