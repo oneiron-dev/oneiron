@@ -141,9 +141,16 @@ side_tables! {
     /// created. Key: ().
     /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
     SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw;
+    /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
+    /// id) ":" hex32 (receipt id).
+    SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
+    /// The execution receipt of one shared act or membership change. Key: hex32 (receipt id).
+    SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
+    /// The executed delete-the-vault act and its backup retention deadline. Key: ().
+    SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().
@@ -512,4 +519,13 @@ side_tables! {
     /// Permanent fact that a world's keys were destroyed with the world, with its ids-only
     /// receipt. Refuses a late pad, a remint and an open for that world. Key: id16 hex (world).
     WORLD_KEY_DESTROYED: VaultMeta b"world_keys:destroyed:v1:" Named;
+    /// A reader's own Loro document of one sealed private-world window: the history its sealed
+    /// packets continue. Purged with the world. Key: hex32 (world) ":" string (window label).
+    WORLD_KEY_SEALED_MIRROR: VaultMeta b"world_keys:mirror:v1:" Raw;
+    /// When a shelved sealed packet was retired (u64be vault seconds); it is purged 30 days on.
+    /// Key: hex64 (tag) ":" hex64 (packet digest).
+    WORLD_KEY_SEALED_RETIRED: VaultMeta b"world_keys:sealed-retired:v1:" Raw;
+    /// One sealed packet of a private world's window, kept for a reader by a node that may not
+    /// read the world (OF-570). Key: hex64 (tag) ":" hex64 (packet digest).
+    WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw;
 }
