@@ -22,6 +22,7 @@ mod owner_secrets;
 mod owner_surfaces;
 mod slips;
 use crate::test_credentials as slip_credentials;
+mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;

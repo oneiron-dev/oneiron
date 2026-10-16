@@ -223,7 +223,7 @@ impl Memory<'_> {
             };
             views.push(view);
         }
-        self.serve_hydrated_assets(lane, refs, targets, &mut views, &mut receipt)?;
+        self.serve_hydrated_assets(lane, targets, &mut views, &mut receipt)?;
         Ok(ScopedReadResult {
             value: views,
             receipt,
