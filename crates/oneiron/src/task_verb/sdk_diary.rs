@@ -7,9 +7,9 @@
 //! remote client decodes.
 use serde::{Deserialize, Serialize};
 
-use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{DiaryReadOutcome, Memory, MemoryError, MemoryResult};
+use crate::{EdgeActorClass, EntityId};
 
 /// The longest reason a diary read states, in bytes; the gate holds the same
 /// bound.
@@ -102,14 +102,22 @@ impl From<DiaryReadOutcome> for DiaryQueryOutcome {
 
 /// `self.memory.diary.query` on a handle: reads as the handle's actor, under
 /// the owner proof its host bound when the owner made this request in person
-/// ([`Memory::with_owner_authorship`]), and none otherwise. A person's
-/// surface without that proof is refused; an agent or system reads as
-/// itself.
+/// ([`Memory::with_owner_authorship`]), else the embedded owner's own proof
+/// when the handle is that owner ([`Memory::embedded_owner`]), and none
+/// otherwise. Any other person's surface is refused; an agent or system
+/// reads as itself.
 pub fn self_memory_diary_query_embedded(
     memory: &Memory<'_>,
     input: DiaryQueryRequest,
 ) -> MemoryResult<DiaryQueryOutcome> {
-    diary_query_as(memory, memory.owner_authorship(), input)
+    let embedded = match memory.owner_authorship() {
+        None if memory.actor_class() == EdgeActorClass::Human => {
+            memory.embedded_owner("self.memory.diary.query").ok()
+        }
+        _ => None,
+    };
+    let proof = memory.owner_authorship().or(embedded.as_ref());
+    diary_query_as(memory, proof, input)
 }
 
 /// `self.memory.diary.query` under `proof`: the server's host door passes the
