@@ -2948,9 +2948,54 @@
      "surface": {
       "const": 4,
       "enum": 1,
-      "mod": 3,
+      "mod": 5,
       "re-export": 4,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArchiveCell",
+      "ArchiveCellJudge",
+      "ArchiveCellJudgment",
+      "ArchiveEntry",
+      "ArchiveOutputRef",
+      "ArchiveOutputScore",
+      "ArchiveQualityMetric",
+      "CampaignArchivePin",
+      "OutputArchive"
+     ],
+     "path": "src/autoreason_campaign/archive.rs",
+     "purpose": "OF-545: a rebuildable output archive, joined from placement and scoring receipts",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 20,
+      "re-export": 1,
+      "struct": 7,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArchiveAxesProposal",
+      "ArchiveAxesRequest",
+      "ArchiveAxis",
+      "ArchiveDescriptor",
+      "CoachArchiveAxesRecipe"
+     ],
+     "path": "src/autoreason_campaign/archive/axes.rs",
+     "purpose": "Coach-owned, per-task archive descriptors",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -2993,6 +3038,21 @@
       "enum": 4,
       "fn": 6,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoverageFloorComparison",
+      "CoverageFloorScorer",
+      "CoverageReplay"
+     ],
+     "path": "src/autoreason_campaign/coverage.rs",
+     "purpose": "Coverage is a goal-record floor, not a skill quality-diversity archive",
+     "surface": {
+      "fn": 9,
+      "struct": 3
      }
     },
     {
@@ -43678,7 +43738,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 9,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -45038,7 +45098,7 @@
    },
    "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2701,
+   "source_files": 2704,
    "test_files": 903
   },
   "oneiron-android": {
