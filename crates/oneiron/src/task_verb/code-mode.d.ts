@@ -110,6 +110,7 @@ declare const vault: {
       answer(input: { action: "join" | "not_now"; intent_key: string; offer_id: string }): Promise<unknown>;
     };
     offers(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
+    participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
     sharing(input: { room_ref: string }): Promise<unknown>;
     speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
