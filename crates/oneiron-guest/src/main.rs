@@ -8,6 +8,10 @@ fn main() -> Result<()> {
     if args.is_empty() {
         return production();
     }
+    #[cfg(target_os = "linux")]
+    if args.as_slice() == [std::ffi::OsString::from("--container")] {
+        return oneiron_guest::serve_fenced_container();
+    }
     // Test adapters must never become a PID-1 production fallback.
     // SAFETY: getpid has no preconditions.
     if unsafe { libc::getpid() } == 1 {

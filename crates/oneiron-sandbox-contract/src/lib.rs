@@ -1,6 +1,7 @@
 //! Portable, pure shape rules shared by the host and the isolated guest.
 //! Descriptor-relative I/O, secret custody and execution stay in their owners.
 mod budget;
+pub mod network;
 mod path;
 mod workspace;
 

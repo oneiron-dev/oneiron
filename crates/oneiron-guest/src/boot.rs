@@ -28,6 +28,9 @@ pub fn run() -> Result<()> {
         return Err(Error::Runtime("production agent requires root Linux PID 1"));
     }
     mount_system()?;
+    if fs::read_to_string("/proc/cmdline").unwrap_or_default().split_whitespace().any(|a| a == "oneiron.native_session=1") {
+        return crate::native::run();
+    }
     let mut session = Session::new(connect_vsock()?);
     let preparation: Result<_> = (|| {
         let input = session.receive()?;
@@ -71,7 +74,7 @@ pub fn run() -> Result<()> {
     await_host_shutdown(&signals);
 }
 
-fn mount_system() -> Result<()> {
+pub(crate) fn mount_system() -> Result<()> {
     mount(None, c"/", None, libc::MS_REC | libc::MS_PRIVATE, None)?;
     mount(
         Some(c"proc"),
@@ -189,7 +192,7 @@ fn prepare_workspace(files: &crate::protocol::Snapshot) -> Result<()> {
     )
 }
 
-fn prepare_pids(pids: u32) -> Result<()> {
+pub(crate) fn prepare_pids(pids: u32) -> Result<()> {
     if !(1..=4096).contains(&pids) {
         return Err(Error::Runtime("guest pids limit"));
     }
@@ -203,14 +206,22 @@ fn prepare_pids(pids: u32) -> Result<()> {
     Ok(())
 }
 
-fn restrict_child(pids: u32) -> Result<()> {
+pub(crate) fn restrict_child(pids: u32) -> Result<()> {
+    restrict_process(pids, 64, crate::protocol::MAX_FILE as u64)
+}
+
+pub(crate) fn restrict_native_child(pids: u32, scratch_mib: u32) -> Result<()> {
+    restrict_process(pids, 4096, u64::from(scratch_mib) * 1024 * 1024)
+}
+
+fn restrict_process(pids: u32, descriptors: u64, file_bytes: u64) -> Result<()> {
     // Joining precedes dropping privilege. Every later runtime thread inherits
     // this cgroup. PID 1 remains outside it so it can always reap the child.
     fs::write(format!("{CGROUP}/cgroup.procs"), "0")?;
     limit(libc::RLIMIT_NPROC, u64::from(pids))?;
-    limit(libc::RLIMIT_NOFILE, 64)?;
+    limit(libc::RLIMIT_NOFILE, descriptors)?;
     limit(libc::RLIMIT_CORE, 0)?;
-    limit(libc::RLIMIT_FSIZE, crate::protocol::MAX_FILE as u64)?;
+    limit(libc::RLIMIT_FSIZE, file_bytes)?;
     // SAFETY: these process-local operations run only in the single fork child;
     // setgroups receives an empty list, IDs are fixed non-root IDs, and prctl
     // arguments match the documented integer-only options.
@@ -273,7 +284,9 @@ fn mount(
     Ok(())
 }
 
-fn connect_vsock() -> Result<File> {
+pub(crate) fn connect_vsock() -> Result<File> { connect_vsock_port(52) }
+
+pub(crate) fn connect_vsock_port(port: u32) -> Result<File> {
     // SAFETY: socket has no pointer arguments and returns a new owned fd.
     let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
     if fd < 0 {
@@ -281,11 +294,20 @@ fn connect_vsock() -> Result<File> {
     }
     // SAFETY: successful socket returned an owned descriptor, now managed by File.
     let socket = unsafe { File::from_raw_fd(fd) };
+    if port == 53 {
+        let timeout = libc::timeval { tv_sec: 1, tv_usec: 0 };
+        for option in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
+            // SAFETY: timeout is a live timeval with its exact socket length.
+            if unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, option, (&timeout as *const libc::timeval).cast(), std::mem::size_of_val(&timeout) as libc::socklen_t) } != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
+    }
     // SAFETY: zero is valid padding/reserved initialization for sockaddr_vm.
     let mut address: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
     address.svm_family = libc::AF_VSOCK as libc::sa_family_t;
     address.svm_cid = 2;
-    address.svm_port = 52;
+    address.svm_port = port;
     // SAFETY: address is initialized and length exactly matches sockaddr_vm.
     if unsafe {
         libc::connect(

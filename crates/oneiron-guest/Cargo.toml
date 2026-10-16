@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
+oneiron-container = { path = "../oneiron-container" }
 blake3 = "1"
 libc = "0.2"
 serde.workspace = true

@@ -66,6 +66,7 @@ enum GuestFrame<'a> {
         from: &'a str,
         to: &'a str,
     },
+    StepResult { result_json: &'a str },
     Finish {
         status: i32,
     },
@@ -192,6 +193,11 @@ impl<T: Read + Write> Session<T> {
         Ok(())
     }
 
+    pub(crate) fn result(&mut self, result_json: &str) -> Result<()> {
+        if self.finished || result_json.len() > MAX_FILE { return Err(Error::Protocol("step result bounds")); }
+        self.send(&GuestFrame::StepResult { result_json })
+    }
+
     pub(crate) fn finish(&mut self, status: i32) -> Result<()> {
         if self.finished {
             return Err(Error::Protocol("finish is consume-once"));
@@ -201,8 +207,8 @@ impl<T: Read + Write> Session<T> {
     }
 
     fn request(&mut self, frame: &GuestFrame<'_>) -> Result<bool> {
-        // Reserve one of the host's request slots for finish.
-        if self.finished || self.requests >= MAX_REQUESTS - 1 {
+        // Reserve the terminal step-result and finish frames.
+        if self.finished || self.requests >= MAX_REQUESTS - 2 {
             return Err(Error::Protocol("outbound request count exhausted"));
         }
         self.requests += 1;

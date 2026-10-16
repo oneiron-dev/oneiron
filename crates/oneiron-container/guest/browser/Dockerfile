@@ -9,6 +9,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --user-group --no-create-home --home-dir /tmp guest
 
+COPY --chmod=0555 oneiron-fence /usr/local/bin/oneiron-fence
+COPY --chmod=0555 oneiron-guest /sbin/oneiron-guest
 COPY entrypoint.sh /usr/local/bin/oneiron-browser-guest
 RUN chmod 0555 /usr/local/bin/oneiron-browser-guest
 
