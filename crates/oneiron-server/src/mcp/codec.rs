@@ -23,7 +23,7 @@ use std::ops::Range;
 /// It is deliberately SCHEMA-DIRECTED rather than a blanket sweep: a free-form
 /// caller payload (`value`, `evidence`, `data`, or an untyped `spec`) is
 /// typed `{}` (or has no property schema) and stays untouched; typed `spec`
-/// positions such as `tasks.ask.spec.until` are normalized.
+/// positions such as `ask.spec.until` are normalized.
 fn advertises_integer(schema: &Value) -> bool {
     match schema.get("type") {
         Some(Value::String(kind)) => kind == "integer",

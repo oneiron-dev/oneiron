@@ -1,4 +1,5 @@
 //! Owner-confirmed project birth: one card, one atomic Grant and project branch.
+use super::owner_signer::{OwnerProjectSigner, owner_signed_at};
 use super::{ProjectRecord, ROOT, encode, invalid, project_type, record};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
@@ -121,11 +122,13 @@ impl Vault {
     /// Consumes a host-held card and its authenticated owner tap. The project,
     /// room, first witnessed trunk header, forks, bounded Grant, Gate receipt
     /// and tap mapping are one write transaction. A failed witness commits none.
+    /// The owner-project signer signs the new project's state for the owner.
     pub fn mint_project_from_card(
         &self,
         card: &ProjectProposalCard,
         tap: &ConsentActionRequest,
         owner: &AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
     ) -> Result<ProjectMintReceipt> {
         let intent = card.evaluate_action(self, tap, owner)?;
         let tap_key = *blake3::hash(card.card_id.as_bytes()).as_bytes();
@@ -184,6 +187,7 @@ impl Vault {
                         txn,
                         &intent,
                         owner,
+                        signer,
                         id,
                         source_turn,
                         &tap_key,
@@ -220,6 +224,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         intent: &ProjectMintIntent,
         owner: &AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         id: EntityId,
         source_turn: EntityId,
         tap_key: &[u8; 32],
@@ -294,8 +299,12 @@ impl Vault {
         // The authenticated tap is the owner's creation act. An owner-rooted
         // vault records the creation-default birth it resolves now.
         crate::gate::project_depth::put_local_birth_in_txn(self, txn, id, at)?;
+        // The host signs the new state for the owner over its own boundary;
+        // it lands as history, and the tap commits only if it installs.
+        let signed_at = owner_signed_at(self, txn)?;
+        self.sign_owner_project_in_txn(txn, owner, signer, id, &mut project, None, signed_at)?;
         self.batch_in()
-            .put(
+            .put_engine_history(
                 &id,
                 project_type(&self.store).ok_or_else(invalid)?,
                 period,
@@ -303,6 +312,7 @@ impl Vault {
                 &encode(&project)?,
             )
             .apply(txn)?;
+        self.require_owner_head_in_txn(txn, id, &project)?;
         let bound = GrantBound::action(
             ActorBound::new(leader.to_hex())?.with_actor_class("agent")?,
             ActionClass::new("project.run")?,

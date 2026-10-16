@@ -6,7 +6,11 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use super::media::{AiOperation, MediaCaps, MediaRequest, Modality};
 use super::{FatalLlmError, ModelId, ModelLocality, UnsupportedCapability};
+
+/// The metadata key a catalog row's [`MediaCaps`] sit under.
+pub const MEDIA_METADATA_KEY: &str = "media";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,6 +119,55 @@ impl LlmCatalogEntry {
             if let Some(capability) = raw_control_capability(key, value) {
                 self.require(capability)?;
             }
+        }
+        Ok(())
+    }
+
+    /// What this row serves past text, from its `media` metadata. A row
+    /// with none serves text in and out, and images in when it takes them.
+    #[must_use]
+    pub fn media(&self) -> MediaCaps {
+        if let Some(caps) = self
+            .metadata
+            .get(MEDIA_METADATA_KEY)
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+        {
+            return caps;
+        }
+        let mut caps = MediaCaps::for_operation(AiOperation::Text);
+        if self.supports(&LlmCapability::ImageInput) {
+            caps.inputs.insert(Modality::Image);
+        }
+        caps
+    }
+
+    /// This row, serving `caps`.
+    #[must_use]
+    pub fn with_media(mut self, caps: &MediaCaps) -> Self {
+        if let Ok(value) = serde_json::to_value(caps) {
+            self.metadata.insert(MEDIA_METADATA_KEY.to_owned(), value);
+        }
+        self
+    }
+
+    /// Shared admission for one media call on this row: its model and
+    /// locality, no route selector, an operation and inputs the row serves,
+    /// and no more reference images than it takes.
+    pub fn admit_media(&self, request: &MediaRequest) -> super::LlmResult<()> {
+        if self.model != request.model
+            || self.locality != request.envelope.locality
+            || request
+                .admission_request()
+                .route_selector_override()
+                .is_some()
+        {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let caps = self.media();
+        if !caps.serves(request.operation, &request.inputs())
+            || request.references.len() > caps.max_references
+        {
+            return Err(FatalLlmError::InvalidRequest.into());
         }
         Ok(())
     }

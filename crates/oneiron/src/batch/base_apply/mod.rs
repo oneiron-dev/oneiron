@@ -157,6 +157,7 @@ pub(super) fn apply_ops_with_origin(
     let refinement_admission = gate_mode.refinement_admission.take();
     let birth_mask = gate_mode.birth_mask;
     let text_births = std::mem::take(&mut gate_mode.text_births);
+    let births = std::mem::take(&mut gate_mode.births);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
@@ -652,6 +653,15 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
+                // A batch-deleted world takes its keys with it (fix 7).
+                crate::world_keys::destroy_world_keys_in_txn(
+                    store,
+                    wtxn,
+                    id,
+                    crate::world_keys::WorldKeyDestroyCause::BatchDelete,
+                    None,
+                    mutation_recorded_at,
+                )?;
                 // Capture before tear (R2-F4): a PROJECT row's signed chain
                 // is kept as revisions before the row goes.
                 let captured = crate::workspace_roster::capture_before_tear(store, wtxn, id)?;
@@ -713,6 +723,10 @@ pub(super) fn apply_ops_with_origin(
     }
 
     require_consumed_claim_bindings(&claim_materializations, &claim_transitions)?;
+    // Rule A: each born row's made_by lands in the transaction that births it.
+    for (row, birth) in &births {
+        crate::provenance::birth::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
+    }
     if preflight_gate_decision_ids
         .values()
         .any(|ids| !ids.is_empty())

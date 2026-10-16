@@ -69,7 +69,9 @@ impl SyncServer {
                 },
             };
             match vault.settle_cooperative_deletion_delivery(&delivery, result, unix_now()) {
-                Ok(status) => tracing::info!(status = status.as_str(), "courtesy delete try settled"),
+                Ok(status) => {
+                    tracing::info!(status = status.as_str(), "courtesy delete try settled")
+                }
                 Err(error) => {
                     tracing::warn!(kind = ?error.kind(), "courtesy delete settle failed");
                 }
