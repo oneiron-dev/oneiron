@@ -23,7 +23,7 @@ use super::{
 const POLICY: SideTable<(), PurposeDefaultTable, LegacyJson> =
     SideTable::new(&side_table::LLM_PURPOSE_DEFAULTS);
 
-pub(super) fn read_effective_defaults(
+pub(crate) fn read_effective_defaults(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<ValidatedPurposeDefaults> {
