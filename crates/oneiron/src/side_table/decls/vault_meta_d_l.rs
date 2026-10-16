@@ -335,6 +335,8 @@ side_tables! {
     ESIGN_CAPABILITY_TOKEN: VaultMeta b"esign.capability.v1/" LegacyJson;
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw;
+    /// Held automated sign act, one per recipient. Key: hex32/string.
+    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
     /// Signing principal set owner stamp. Key: ().
@@ -384,6 +386,14 @@ side_tables! {
     FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
     /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
     FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
+    /// A folder the owner attached as a standing source of notes (OF-554): the folder, its
+    /// include patterns, default kind, source and trust tier, and its last rescan. Key: hex16
+    /// (hash of the folder).
+    FOLDER_SOURCE: VaultMeta b"folder-source:attached:v1:" Named;
+    /// What an attached folder's rescans know of one file: its note, the hash of its text and of
+    /// what the vault took from it, and whether it landed, waits as a fork or was retracted.
+    /// Key: string (`folder hash:path`, a long path by its hash).
+    FOLDER_SOURCE_FILE: VaultMeta b"folder-source:file:v1:" Named;
     /// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent introduction.
     /// Key: id16.
     GATE_FOREIGN_AGENT_INTRODUCTION: VaultMeta b"gate.foreign-agent.v1:" Named;

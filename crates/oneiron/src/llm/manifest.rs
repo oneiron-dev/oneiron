@@ -1,5 +1,5 @@
 //! Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors.
-use super::{AutoCheckOutcome, LlmRequest, ModelId, ModelLocality, ModelTierRef};
+use super::{AutoCheckOutcome, CallPurpose, LlmRequest, ModelId, ModelLocality, ModelTierRef};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
@@ -86,6 +86,26 @@ impl ModelRole {
                 | Self::ExtractionTeacher
         )
     }
+    /// The disposition a row that names none takes: the extraction teacher
+    /// is offline, every other role served (ARCH-0036 "one base, two roles").
+    #[must_use]
+    pub const fn default_disposition(self) -> ModelDisposition {
+        if matches!(self, Self::ExtractionTeacher) {
+            ModelDisposition::Offline
+        } else {
+            ModelDisposition::Served
+        }
+    }
+}
+/// Whether a role's model answers served calls. An offline role teaches the
+/// tagger and runs background passes (extraction, consolidation, eval); it
+/// never serves a turn. An owner who routes a seat to it marks its row
+/// `served` and pays its cost (owner, 2026-10-08).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelDisposition {
+    Offline,
+    Served,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +123,11 @@ pub struct ModelBinding {
     /// Explicit identities for narrower routes; a model ID has one catalog locality.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub route_models: BTreeMap<ModelLocality, ModelId>,
+    /// Offline or served; absent takes [`ModelRole::default_disposition`].
+    /// The teacher's binding hash covers it, so serving the teacher needs a
+    /// probe approval of that served row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disposition: Option<ModelDisposition>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -300,6 +325,13 @@ impl ModelManifest {
             .get(&role)
             .ok_or_else(|| invalid("missing role binding"))
     }
+    /// The row's own disposition, else the role's default.
+    pub fn disposition(&self, role: ModelRole) -> Result<ModelDisposition> {
+        Ok(self
+            .binding(role)?
+            .disposition
+            .unwrap_or(role.default_disposition()))
+    }
     pub fn bind_request(
         &self,
         role: ModelRole,
@@ -308,6 +340,18 @@ impl ModelManifest {
     ) -> Result<()> {
         self.validate()?;
         let binding = self.binding(role)?;
+        // An offline role binds background work only: a served call through
+        // it is refused until the owner marks its row served.
+        if self.disposition(role)? == ModelDisposition::Offline
+            && !matches!(
+                request.envelope.purpose,
+                CallPurpose::Extraction | CallPurpose::Consolidation | CallPurpose::Eval
+            )
+        {
+            return Err(invalid(
+                "this role is offline: it serves background passes, not a served call; set its manifest row's disposition to served to route a seat to it",
+            ));
+        }
         let widest = *self
             .routes
             .get(&binding.slot)
