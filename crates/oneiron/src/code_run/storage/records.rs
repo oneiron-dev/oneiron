@@ -314,6 +314,21 @@ impl Vault {
             .transpose()
     }
 
+    /// The whole body a context reference names, by its digest and length,
+    /// checked against both.
+    pub(crate) fn get_raw_body(
+        &self,
+        source: crate::compaction::output::OutputRef,
+    ) -> Result<Option<Vec<u8>>> {
+        let output = CodeRunRawOutput::of_ref(source);
+        let body = {
+            let rtxn = self.store.env.read_txn()?;
+            RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)?
+        };
+        body.map(|body| load_whole_body(&output, body, || Ok(vec![self.store.body_dir()?])))
+            .transpose()
+    }
+
     /// `len` bytes of `output`'s body from `offset`, cut at its end: an
     /// inline body is read in place, a file by range. Nothing else of the
     /// body is read.

@@ -50,6 +50,95 @@ pub(super) fn publish_output(
     Ok(output)
 }
 
+/// A step's model reply as the provider gave it, kept apart from the program
+/// healed out of it: untrusted evidence, never executed. It streams into its
+/// body as it is encoded.
+pub(super) fn record_reply_evidence(
+    storage: &ExecutorStorage<'_>,
+    record: &mut CodeRunReplayRecord,
+    seq: u64,
+    reply: &crate::LlmMessage,
+) -> EngineExecutorResult<()> {
+    let mut sink = storage.code_run_output_sink()?;
+    write_json(&mut sink, reply)?;
+    publish_output(storage, record, reply_output_path(seq), sink).map(drop)
+}
+
+/// Encodes `value` as JSON straight into a body sink, never whole first.
+pub(super) fn write_json(sink: &mut BodySink, value: &impl serde::Serialize) -> Result<()> {
+    let mut writer = std::io::BufWriter::with_capacity(64 * 1024, SinkWriter(sink));
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|error| Error::InvalidConfig(format!("result body encoding failed: {error}")))?;
+    std::io::Write::flush(&mut writer)?;
+    Ok(())
+}
+
+/// A body sink as a byte writer.
+struct SinkWriter<'s>(&'s mut BodySink);
+
+impl std::io::Write for SinkWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .write(bytes)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Counts the bytes an encoding would take, holding none of them.
+#[derive(Default)]
+pub(super) struct ByteCount(pub(super) usize);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(bytes.len());
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A verb answer whose JSON is longer than this is stored as a body of the
+/// run, and the guest and the replay row get its handle: no reply passes one
+/// message, and no answer is refused for its size.
+pub(super) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
+
+/// The guest's read path for a stored result body; `<path>/chunk/<offset>`
+/// reads up to [`RECOVERABLE_OUTPUT_CHUNK_BYTES`] from `offset`.
+pub(super) fn result_read_path(source: OutputRef) -> String {
+    format!(
+        "{RESULT_READ_ROOT}{}/{}",
+        crate::entity_id::bytes_to_hex_lower(&source.hash),
+        source.byte_len,
+    )
+}
+
+/// Where the guest reads stored result bodies.
+pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
+
+/// What the guest gets in place of a result stored as a body: its handle,
+/// size, kind, completion and preview, and where to read it.
+pub(super) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
+    json!({
+        "handle": output.handle,
+        "bytes": output.raw_len,
+        "kind": match output.kind {
+            crate::code_run::CodeRunOutputKind::Text => "text",
+            crate::code_run::CodeRunOutputKind::Binary => "binary",
+        },
+        "lines": output.lines,
+        "complete": output.complete,
+        "preview": output.preview.text,
+        "read": result_read_path(output.output_ref()),
+    })
+}
+
 /// A step's streamed result as its host took it: one body sink per target,
 /// written as each frame arrives, so no part of it is held whole.
 #[derive(Default)]
@@ -286,6 +375,24 @@ pub(super) fn recoverable_chunk_path(
     offset: u64,
 ) -> String {
     format!("{}/chunk/{offset}", recoverable_output_path(seq, source))
+}
+
+/// The provider's reply for step `seq`, kept as evidence.
+pub(super) fn reply_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.reply.json")
+}
+
+/// A bridge call's result, stored as a body because it was too large for
+/// one reply.
+pub(super) fn bridge_result_output_path(bridge_seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
+}
+
+/// Whether `path` names a stored bridge result.
+pub(super) fn is_bridge_result_output_path(path: &str) -> bool {
+    path.strip_prefix(SCRIPT_OUTPUT_DIR)
+        .and_then(|rest| rest.strip_prefix("/bridge/"))
+        .is_some_and(|rest| rest.ends_with(".result.json"))
 }
 
 pub(super) fn script_output_path(seq: u64) -> String {
