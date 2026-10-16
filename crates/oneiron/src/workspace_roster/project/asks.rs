@@ -41,10 +41,10 @@ impl Vault {
                 continue;
             }
             if placed.replace(id).is_some() {
-                return Err(
-                    RecordError::InvalidProjectBody("task is placed in more than one project")
-                        .into(),
-                );
+                return Err(RecordError::InvalidProjectBody(
+                    "task is placed in more than one project",
+                )
+                .into());
             }
         }
         let project = placed.ok_or_else(unplaced)?;

@@ -117,9 +117,7 @@ impl Vault {
             .frontier(id)?
             .is_some_and(|frontier| {
                 frontier.disposition == ProjectDisposition::Settled
-                    && frontier
-                        .witness
-                        .is_some_and(|witness| witness.head == head)
+                    && frontier.witness.is_some_and(|witness| witness.head == head)
             });
         if !installed {
             return Err(RecordError::ProjectAuthorityUnresolved {

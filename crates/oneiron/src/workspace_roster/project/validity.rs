@@ -373,7 +373,9 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             match witnessed_leader(self.reader, witness.project, witness.head)? {
                 None => return Ok(Some(ProjectVerdict::Pending(reason::PARENT_HEAD_PENDING))),
                 Some(leader) if leader != witness.leader.to_hex() => {
-                    return Ok(Some(ProjectVerdict::Quarantined(reason::PARENT_HEAD_LEADER)));
+                    return Ok(Some(ProjectVerdict::Quarantined(
+                        reason::PARENT_HEAD_LEADER,
+                    )));
                 }
                 Some(_) => {}
             }

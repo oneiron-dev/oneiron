@@ -29,7 +29,6 @@ mod revision;
 mod validity;
 mod widen;
 pub use asks::ProjectAsk;
-pub use owner_signer::OwnerProjectSigner;
 pub(crate) use capture::{
     capture_before_tear, capture_project_put, check_revision_put, projects_touched_by_put,
     rebuild_project_revision_indexes, refuse_revision_delete,
@@ -57,6 +56,7 @@ pub use history_policy::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
     ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectHistoryQuestion,
 };
+pub use owner_signer::OwnerProjectSigner;
 pub(crate) use refresh::refresh_project_frontiers;
 pub use resolution::{ProjectResolution, ProjectSeal};
 #[cfg(feature = "sync")]
@@ -630,7 +630,11 @@ impl Vault {
                 && changed
                 && let Some(head) = head
                 && frontier.witness.as_ref().map(|witness| witness.head) != Some(head)
-                && !history_policy::PROJECT_FROZEN_APPLIED.contains(&self.store, txn, &(id, head))?
+                && !history_policy::PROJECT_FROZEN_APPLIED.contains(
+                    &self.store,
+                    txn,
+                    &(id, head),
+                )?
             {
                 return Ok(ProjectWriteOutcome::Held(state.clone()));
             }

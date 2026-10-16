@@ -495,10 +495,9 @@ fn waits_on_parent_project(verdict: ProjectVerdict) -> bool {
         verdict,
         ProjectVerdict::Pending(
             reason::PARENT_MISSING | reason::PARENT_PENDING | reason::PARENT_HEAD_PENDING
+        ) | ProjectVerdict::Quarantined(
+            reason::PARENT_HIDDEN | reason::EXCEEDS_PARENT | reason::SPAWN
         )
-            | ProjectVerdict::Quarantined(
-                reason::PARENT_HIDDEN | reason::EXCEEDS_PARENT | reason::SPAWN
-            )
     )
 }
 
