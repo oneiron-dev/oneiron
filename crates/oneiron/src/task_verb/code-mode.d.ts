@@ -47,6 +47,9 @@ declare namespace self {
   };
   const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
+  const grants: {
+    ask(input: { pr: string; scope: { kind: 'messages' | 'summaries' | 'relationship_claims'; space_ref: string } | { kind: 'companion_profile'; facet_ref?: string | null } }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;
@@ -54,6 +57,7 @@ declare namespace self {
       review(input: { request: string; approve: boolean }): Promise<unknown>;
     };
   };
+  const message: (input: { pr: string; text: string }) => Promise<unknown>;
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;
     callables(input: object): Promise<unknown>;
@@ -163,6 +167,10 @@ declare const vault: {
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
+  };
+  people: {
+    get(input: { pr: string }): Promise<unknown>;
+    list(input: { vault?: string | null; page?: number | null }): Promise<unknown>;
   };
   projects: {
     confirm(input: { action_id: string; card_id: string; occurred_at: number }): Promise<unknown>;

@@ -31,6 +31,10 @@ report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+vaultPeopleList(input: unknown): unknown
+vaultPeopleGet(input: unknown): unknown
+selfMessage(input: unknown): unknown
+selfGrantsAsk(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown

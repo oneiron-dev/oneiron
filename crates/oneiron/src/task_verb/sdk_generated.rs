@@ -38,6 +38,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
             ),
             (
+                "vault.people.list",
+                crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
+            ),
+            (
+                "vault.people.get",
+                crate::code_run::vault_read::request_schema::<crate::memory::PersonRequest>(),
+            ),
+            (
+                "self.message",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessagePersonRequest>(
+                ),
+            ),
+            (
+                "self.grants.ask",
+                crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
+            ),
+            (
                 "self.memory.diary.query",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::DiaryQueryRequest,
@@ -754,6 +771,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.memory.diary.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.people.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.people.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.message" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.grants.ask" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1672,6 +1717,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary.review" => {
             let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
         }
+        "vault.people.list" => {
+            let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
+        }
+        "vault.people.get" => {
+            let _input: crate::memory::PersonRequest = decode(value.clone())?;
+        }
+        "self.message" => {
+            let _input: crate::memory::MessagePersonRequest = decode(value.clone())?;
+        }
+        "self.grants.ask" => {
+            let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
+        }
         "self.memory.diary.query" => {
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
@@ -2136,6 +2193,10 @@ pub fn invoke(
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
+        "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
+        "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
+        "self.message" => encode(self_message(memory, decode(value)?)?),
+        "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -2428,6 +2489,30 @@ pub fn self_memory_diary_review(
     input: crate::memory::DiaryReviewAnswer,
 ) -> MemoryResult<crate::memory::DiaryReadRequest> {
     memory.answer_diary_read(&input)
+}
+pub fn vault_people_list(
+    memory: &Memory<'_>,
+    input: crate::memory::PeopleListRequest,
+) -> MemoryResult<crate::memory::PeoplePage> {
+    memory.people_list(&input)
+}
+pub fn vault_people_get(
+    memory: &Memory<'_>,
+    input: crate::memory::PersonRequest,
+) -> MemoryResult<crate::context_board::PersonRow> {
+    memory.people_get(&input)
+}
+pub fn self_message(
+    memory: &Memory<'_>,
+    input: crate::memory::MessagePersonRequest,
+) -> MemoryResult<crate::memory::MessagePersonReceipt> {
+    memory.message_person(&input)
+}
+pub fn self_grants_ask(
+    memory: &Memory<'_>,
+    input: crate::memory::GrantAskRequest,
+) -> MemoryResult<crate::memory::GrantAskReceipt> {
+    memory.grants_ask(&input)
 }
 pub fn self_memory_diary_query(
     memory: &Memory<'_>,

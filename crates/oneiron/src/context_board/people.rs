@@ -18,14 +18,16 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::{EdgeActorClass, TimeRange, Vault, WriteActor};
 
 /// Token budget of one vault's `people` rows in the cached prefix. Rows past
-/// it page out behind `more: +N`; `people.list` reads the further pages.
+/// it page out behind `more: +N`; `vault.people.list` reads the further pages.
 pub const PEOPLE_PREFIX_BUDGET_TOK: usize = 512;
 
 /// Derivation domain of the model PERSON an agent definition is born with.
 const AGENT_PERSON_DOMAIN: &[u8] = b"oneiron.people.agent-person.v1";
 
 /// Whether a person is a human or an agent. The room roster's kind column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PersonKind {
     Human,
@@ -43,7 +45,7 @@ impl PersonKind {
 }
 
 /// One person the vault knows.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PersonRow {
     /// The PERSON entity.
     pub person: EntityId,
@@ -292,7 +294,7 @@ impl People {
         }
     }
 
-    /// One page of the roster for `people.list`: `page` counts from zero, and
+    /// One page of the roster for `vault.people.list`: `page` counts from zero, and
     /// a page holds `size` persons in handle order.
     #[must_use]
     pub fn page(&self, page: usize, size: usize) -> (&[PersonRow], usize) {

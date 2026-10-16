@@ -533,6 +533,10 @@ fn mcp_agent_verb_input(
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.people.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.people.get" => a.spec.clone().ok_or_else(invalid),
+        "self.message" => a.spec.clone().ok_or_else(invalid),
+        "self.grants.ask" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.query" => a.spec.clone().ok_or_else(invalid),
         "cancel" => {
             let mut map = serde_json::Map::new();
@@ -822,6 +826,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.people.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.people.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.message" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.grants.ask" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary.query" => {
@@ -1398,6 +1414,41 @@ async fn execute_agent_verb_listing(
             let input: oneiron::memory::DiaryReviewAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_memory_diary_review(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.people.list" => {
+            let input: oneiron::memory::PeopleListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_people_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.people.get" => {
+            let input: oneiron::memory::PersonRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_people_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.message" => {
+            let input: oneiron::memory::MessagePersonRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::self_message(&memory, input).map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.grants.ask" => {
+            let input: oneiron::memory::GrantAskRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_grants_ask(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
