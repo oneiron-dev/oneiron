@@ -4,8 +4,9 @@
 //! Only the thin read cache of an unpromoted item is pruned: its body
 //! (`ri:b:`), text document (`ri:d:`), opened marker (`ro:e:`) and touch row
 //! (`rt:e:`). The thin index, promoted windows, local writes, deletes and
-//! authority stay. No tombstone or Loro operation is produced: a pruned item
-//! is fetched again on its next touch.
+//! authority stay, and so does the cache of an item a legal hold names. No
+//! tombstone or Loro operation is produced: a pruned item is fetched again on
+//! its next touch.
 //!
 //! A promoted window is demoted only on request, once the home holds every
 //! op of it: its local replica goes with its `rp:w:` marker, and its items
@@ -17,6 +18,7 @@ use crate::EntityId;
 use crate::Vault;
 use crate::error::Result;
 use crate::store::Store;
+use crate::store::legal_hold::HoldActor;
 use crate::store::local_replica::{KeepControls, remove_local_replica_window_in_txn};
 use crate::sync::WindowKey;
 use crate::sync::window_rows::{WINDOW_SNAPSHOT, WINDOW_UPDATE};
@@ -88,6 +90,18 @@ pub fn prune_thin_items(vault: &Vault, before: u64) -> Result<usize> {
                 .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_ref()).ok())
                 .map_or(0, u64::from_be_bytes);
             if touched >= before {
+                continue;
+            }
+            // A legal hold keeps every byte of the rows it names, a cached
+            // copy too: a held item's cache stays (OF-470).
+            let Ok(item) = EntityId::from_hex(id) else {
+                continue;
+            };
+            if vault
+                .store
+                .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
+                .is_err()
+            {
                 continue;
             }
             for family in ["ri:b:", "ri:d:", TOUCH_PREFIX] {

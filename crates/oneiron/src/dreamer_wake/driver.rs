@@ -278,6 +278,8 @@ impl<'a> DreamerWakeDriver<'a> {
         crate::llm::resume_signalled_steps(self.vault, now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
+        // PEOPLE `about`: a person whose facts moved queues its lines anew.
+        crate::dreamer_consolidation::enqueue_person_about_on_wake(self.vault, now)?;
 
         Ok(())
     }
@@ -421,6 +423,22 @@ impl<'a> DreamerWakeDriver<'a> {
             let priority = match priority {
                 DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
                     self.store.admit_next_recipe_wake(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
+            // Then the TASKs routed to the Dreamer: the work a person or agent
+            // asked for, before the vault's own weaving.
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
+                    self.store.admit_next_task_realize(AdmitDreamerAttempt {
                         lease_owner: input.lease_owner.clone(),
                         now: input.now,
                         budget_id: self.budget_id.clone(),

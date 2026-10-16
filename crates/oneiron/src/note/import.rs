@@ -248,105 +248,18 @@ impl Vault {
             .collect::<Result<Vec<_>>>()?;
         self.with_write_txn(|txn| {
             let owner_actor = owner.revalidate_in_txn(self, txn)?;
-            let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
             scan_titles(&self.store, txn, batch)?;
             let receipt = self.approve_once_in_txn(txn, owner, digest)?;
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;
-            for id in &ids {
-                if self.local_hard_delete_marker_exists_in_txn(txn, id)?
-                    || self.get_raw_in(txn, id)?.is_some()
-                {
-                    return Err(super::document::invalid(
-                        "an imported note is no longer new; preview the folder again",
-                    ));
-                }
-            }
-            let landing: HashMap<&str, EntityId> = batch
-                .notes
-                .iter()
-                .zip(&ids)
-                .map(|(note, id)| (note.path.as_str(), *id))
-                .collect();
-            let read: &heed::RoTxn<'_> = txn;
-            let end = |path: &str| -> Result<EntityId> {
-                if let Some(id) = landing.get(path) {
-                    return Ok(*id);
-                }
-                let id = Self::imported_note_id(&batch.folder, path)?;
-                super::verbs::note_core(self, read, id)
-                    .map(|_| id)
-                    .map_err(|_| {
-                        super::document::invalid(
-                            "a linked note is not in the vault; preview the folder again",
-                        )
-                    })
-            };
-            let edges = batch
-                .links
-                .iter()
-                .map(|link| Ok((end(&link.from)?, end(&link.to)?)))
-                .collect::<Result<Vec<_>>>()?;
-            let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
-            for ((note, kind), id) in batch.notes.iter().zip(kinds).zip(&ids) {
-                let body = encode_note_body(&NoteBody {
-                    kind,
-                    author_ref: owner_actor,
-                    markdown: note.markdown.clone(),
-                    source_revision_ref: revision(&batch.folder, &note.path, &note.markdown),
-                })?;
-                content.apply_batch(
-                    self.batch_in()
-                        .put_authored_note(
-                            id,
-                            &owner_actor,
-                            TimeRange {
-                                start: note.written_at,
-                                end: note.written_at,
-                            },
-                            at,
-                            &body,
-                        )
-                        .edge(id, EdgeKind::AuthoredBy, &owner_actor, 1.0)
-                        .made_by(
-                            id,
-                            RowBirth::written(
-                                actor,
-                                MadeByClass::Stated,
-                                "note.import",
-                                &[],
-                                &[],
-                                at,
-                            ),
-                        ),
-                )?;
-                content.update_note(*id, |txn| {
-                    let doc = super::document_store::load(self, txn, *id)?;
-                    if let Some(title) = &note.title {
-                        doc.set_title(title, &actor)?;
-                        super::operations::record_authorship(
-                            &doc,
-                            &super::NoteAuthorship {
-                                operation: self.new_entity_id()?,
-                                actor: owner_actor,
-                                actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
-                                grant: None,
-                                command_hash: *blake3::hash(title.as_bytes()).as_bytes(),
-                            },
-                        )?;
-                    }
-                    super::document_store::persist_authoritative(self, txn, &doc)
-                })?;
-            }
-            if !edges.is_empty() {
-                let mut links = self.batch_in();
-                for (from, to) in &edges {
-                    links = links.edge(from, EdgeKind::Mentions, to, 1.0);
-                }
-                content.apply_batch(links)?;
-            }
-            content.finish()?;
-            drop(content);
+            let links = self.land_imported_notes_in_txn(
+                txn,
+                owner_actor,
+                &batch.folder,
+                &batch.notes,
+                kinds,
+                &ids,
+                &batch.links,
+            )?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?
                     .ok_or(Error::CorruptedIndex("consent approve-once marker"))?;
@@ -354,9 +267,117 @@ impl Vault {
             Ok(ImportedNoteBatchReceipt {
                 approval_digest: digest.to_hex(),
                 note_ids: ids.clone(),
-                links: edges.len(),
+                links,
             })
         })
+    }
+
+    /// Lands `notes` (with their `kinds` and `ids`, in order) and `links` as
+    /// `owner_actor` wrote them: an approved batch, or the new files of an
+    /// attached folder (OF-554). Returns how many links landed.
+    ///
+    /// # Errors
+    /// An id that is no longer new, a link whose end is not a note, or a
+    /// write the secret scan refuses.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn land_imported_notes_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner_actor: EntityId,
+        folder: &str,
+        notes: &[ImportedNote],
+        kinds: Vec<super::NoteKind>,
+        ids: &[EntityId],
+        links: &[ImportedNoteLink],
+    ) -> Result<usize> {
+        let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
+        for id in ids {
+            if self.local_hard_delete_marker_exists_in_txn(txn, id)?
+                || self.get_raw_in(txn, id)?.is_some()
+            {
+                return Err(super::document::invalid(
+                    "an imported note is no longer new; preview the folder again",
+                ));
+            }
+        }
+        let landing: HashMap<&str, EntityId> = notes
+            .iter()
+            .zip(ids)
+            .map(|(note, id)| (note.path.as_str(), *id))
+            .collect();
+        let read: &heed::RoTxn<'_> = txn;
+        let end = |path: &str| -> Result<EntityId> {
+            if let Some(id) = landing.get(path) {
+                return Ok(*id);
+            }
+            let id = Self::imported_note_id(folder, path)?;
+            super::verbs::note_core(self, read, id)
+                .map(|_| id)
+                .map_err(|_| {
+                    super::document::invalid(
+                        "a linked note is not in the vault; preview the folder again",
+                    )
+                })
+        };
+        let edges = links
+            .iter()
+            .map(|link| Ok((end(&link.from)?, end(&link.to)?)))
+            .collect::<Result<Vec<_>>>()?;
+        let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+        for ((note, kind), id) in notes.iter().zip(kinds).zip(ids) {
+            let body = encode_note_body(&NoteBody {
+                kind,
+                author_ref: owner_actor,
+                markdown: note.markdown.clone(),
+                source_revision_ref: revision(folder, &note.path, &note.markdown),
+            })?;
+            content.apply_batch(
+                self.batch_in()
+                    .put_authored_note(
+                        id,
+                        &owner_actor,
+                        TimeRange {
+                            start: note.written_at,
+                            end: note.written_at,
+                        },
+                        at,
+                        &body,
+                    )
+                    .edge(id, EdgeKind::AuthoredBy, &owner_actor, 1.0)
+                    .made_by(
+                        id,
+                        RowBirth::written(actor, MadeByClass::Stated, "note.import", &[], &[], at),
+                    ),
+            )?;
+            content.update_note(*id, |txn| {
+                let doc = super::document_store::load(self, txn, *id)?;
+                if let Some(title) = &note.title {
+                    doc.set_title(title, &actor)?;
+                    super::operations::record_authorship(
+                        &doc,
+                        &super::NoteAuthorship {
+                            operation: self.new_entity_id()?,
+                            actor: owner_actor,
+                            actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
+                            grant: None,
+                            command_hash: *blake3::hash(title.as_bytes()).as_bytes(),
+                        },
+                    )?;
+                }
+                super::document_store::persist_authoritative(self, txn, &doc)
+            })?;
+        }
+        if !edges.is_empty() {
+            let mut batch = self.batch_in();
+            for (from, to) in &edges {
+                batch = batch.edge(from, EdgeKind::Mentions, to, 1.0);
+            }
+            content.apply_batch(batch)?;
+        }
+        content.finish()?;
+        drop(content);
+        Ok(edges.len())
     }
 
     /// The owner's refusal of the whole batch: one denial receipt, nothing
@@ -384,7 +405,11 @@ impl Vault {
 /// Refuses `batch` when the secret scan is on and would refuse a title: the
 /// write door scans each note's body, and a title lands beside it. Approve
 /// asks this, never the digest, so a decline is recorded whatever the scan.
-fn scan_titles(store: &Store, txn: &heed::RoTxn<'_>, batch: &ImportedNoteBatch) -> Result<()> {
+pub(super) fn scan_titles(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    batch: &ImportedNoteBatch,
+) -> Result<()> {
     if secret_scan_mode_in_txn(store, txn)? == SecretScanMode::On {
         for title in batch.notes.iter().filter_map(|note| note.title.as_deref()) {
             scan_write_payload(title.as_bytes())?;
@@ -396,7 +421,7 @@ fn scan_titles(store: &Store, txn: &heed::RoTxn<'_>, batch: &ImportedNoteBatch) 
 /// The NOTE body's source revision: which text of which file landed. A
 /// re-import compares it, so later edits to the note do not read as a
 /// changed file.
-fn revision(folder: &str, path: &str, markdown: &str) -> [u8; 16] {
+pub(super) fn revision(folder: &str, path: &str, markdown: &str) -> [u8; 16] {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron notes.import revision v1");
     for part in [folder, path, markdown] {
         hasher.update(&(part.len() as u64).to_le_bytes());
@@ -447,7 +472,7 @@ fn decision_slot(batch: &ImportedNoteBatch) -> Result<[u8; 32]> {
     Ok(*hasher.finalize().as_bytes())
 }
 
-fn validate_batch(batch: &ImportedNoteBatch) -> Result<()> {
+pub(super) fn validate_batch(batch: &ImportedNoteBatch) -> Result<()> {
     let invalid = super::document::invalid;
     if crate::ingest::INGEST_SOURCE_REGISTRY
         .get_config(NOTES_IMPORT_SOURCE)

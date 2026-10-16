@@ -95,6 +95,17 @@ impl Memory<'_> {
         Ok(key)
     }
 
+    /// How a serving door hands the bound actor a file stored with keys in
+    /// it (OF-560): the vault owner's own key reads the stored bytes, every
+    /// other actor a copy with each key overwritten.
+    pub(crate) fn secret_sight(&self) -> MemoryResult<crate::secret_custody::SecretSight> {
+        Ok(if self.identity_read_key()?.reads_as_vault_owner() {
+            crate::secret_custody::SecretSight::Owner
+        } else {
+            crate::secret_custody::SecretSight::Masked
+        })
+    }
+
     /// Of `ids`, the ones a handle bound to a read credential reads, each
     /// judged by the lane's point read in one snapshot, as `get_entity`
     /// judges it. `None` is a handle bound to no credential: its surfaces

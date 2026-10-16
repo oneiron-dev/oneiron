@@ -69,6 +69,30 @@ impl Vault {
         Ok(standalone)
     }
 
+    /// When the next connector-send attempt becomes claimable, the instant a
+    /// served worker sleeps until (OF-187): the same readiness instant the
+    /// claim reads. `None` while nothing is queued.
+    pub fn next_connector_send_ready_at(&self) -> Result<Option<u64>, Error> {
+        Ok(AttemptQueue::new(self)
+            .list()?
+            .into_iter()
+            .filter(|attempt| {
+                attempt.kind == crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND
+                    && matches!(
+                        attempt.state,
+                        crate::attempt_queue::AttemptState::Queued
+                            | crate::attempt_queue::AttemptState::Scheduled
+                    )
+            })
+            .map(|attempt| {
+                attempt
+                    .scheduled_at
+                    .or(attempt.backoff_until)
+                    .unwrap_or(attempt.created_at)
+            })
+            .min())
+    }
+
     /// Claims pending connector-send TASK attempts and runs each through the
     /// existing outbound dispatch pipeline with a real delivery window.
     pub fn run_connector_task_executor<S: OutboundExecutionSink>(
