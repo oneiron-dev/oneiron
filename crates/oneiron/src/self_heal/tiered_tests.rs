@@ -71,7 +71,7 @@ fn decisions(local: &'static dyn DecisionProvider) -> DetectorDecisions<'static>
     }
 }
 fn grade(yes: bool) -> DetectorDecisions<'static> {
-    decisions(if yes { &grade(true) } else { &grade(false) })
+    decisions(if yes { &Grade(true) } else { &Grade(false) })
 }
 fn policy(n: usize) -> DetectorPolicy {
     DetectorPolicy {

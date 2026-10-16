@@ -5,8 +5,8 @@ use super::{
 };
 use crate::entity_id::derived_domains::DECISION_QUESTION;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass,
-    DecisionDial, DecisionLadder, DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
+    DecisionLadder, DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility,
 };
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use rmpv::Value;
@@ -94,7 +94,7 @@ impl DetectorPolicy {
                 examples.0, examples.1
             )
         };
-        let text = format!("{}\n\n{}{evidence_line}", self.prompt, self.rubric);
+        let text = format!("{}\n\nRubric:\n{}{evidence_line}", self.prompt, self.rubric);
         let id = EntityId::derive(
             DECISION_QUESTION,
             &[

@@ -119,7 +119,7 @@ fn telemetry_detector_asks_the_ladder_and_keeps_the_receipt() -> Result<()> {
     let policy = policy();
 
     let proposed = vault
-        .judge_retrieval_trace(&policy, &host, &[run.clone()])?
+        .judge_retrieval_trace(&policy, &host, std::slice::from_ref(&run))?
         .expect("a raised question proposes a diagnostic");
 
     let question = policy.question(ProposedTier::Judge, (0, 0))?;
@@ -156,7 +156,7 @@ fn an_unanswered_telemetry_question_fails_like_a_failed_judge() -> Result<()> {
 
     let abstains = HostHead::new(DecisionAnswer::Abstain);
     let host = decisions(Some(&abstains), principal);
-    let abstained = vault.judge_retrieval_trace(&policy, &host, &[run.clone()]);
+    let abstained = vault.judge_retrieval_trace(&policy, &host, std::slice::from_ref(&run));
     assert!(matches!(abstained, Err(Error::InvalidConfig(_))));
 
     let no_slot = vault.judge_retrieval_trace(&policy, &decisions(None, principal), &[run]);
