@@ -731,8 +731,18 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/origin.rs",
+     "purpose": "OF-221: the conversation that started a dispatch",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -848,9 +858,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 6,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "struct": 8
      }
     },
@@ -1008,6 +1018,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/anchored_annotation/anchor_text.rs",
+     "purpose": "What an anchor says: the text under a locator in one version's bytes, the exact places those words occur in…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/anchored_annotation/codec.rs",
      "purpose": "MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine",
      "surface": {
@@ -1037,7 +1057,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -1103,6 +1123,21 @@
      "surface": {
       "crate-vis": 3,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReattachOffer",
+      "UnattachedThread"
+     ],
+     "path": "src/anchored_annotation/recovery.rs",
+     "purpose": "Lost-anchor recovery (OF-368, owner ruling 2026-10-17)",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -1316,7 +1351,7 @@
      "path": "src/attempt_queue/completion.rs",
      "purpose": "Attempt completion inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -4796,7 +4831,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -4849,6 +4884,30 @@
      "path": "src/blob_artifact/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactExportFile",
+      "ArtifactExportRequest",
+      "ArtifactRefRequest",
+      "BornFromRequest",
+      "BornFromView",
+      "DeckProposeOutcome",
+      "DeckProposeRequest",
+      "DiscardedProposal",
+      "KeptProposal",
+      "NativeOutputRequest",
+      "ProposalSettleRequest",
+      "UndoneKeep"
+     ],
+     "path": "src/blob_artifact/verbs.rs",
+     "purpose": "The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every…",
+     "surface": {
+      "fn": 9,
+      "struct": 12
+     }
     },
     {
      "bucket": "s",
@@ -17697,7 +17756,7 @@
      "path": "src/edit_roundtrip/judgment_cells.rs",
      "purpose": "Independent OOXML reads for typed sheet answers",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -18082,7 +18141,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/edit_settle/settle.rs",
@@ -18124,7 +18183,7 @@
      "path": "src/edit_settle/undo.rs",
      "purpose": "Undo after Keep (ARCH-0077 \"Post-settle undo\"): a new operation, never a reversal",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -22128,12 +22187,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "NotificationMark",
+      "NotificationPage",
+      "NotificationRow"
+     ],
+     "path": "src/inbox/list.rs",
+     "purpose": "OF-221: the actor-bound inbox page over NOTIFICATION records, and the one write door that marks a…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/inbox/mod.rs",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue",
      "surface": {
       "crate-vis": 1,
-      "re-export": 1
+      "re-export": 3
      }
     },
     {
@@ -22161,6 +22237,25 @@
       "enum": 3,
       "fn": 5,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "NotificationBody",
+      "NotificationEvent",
+      "NotificationKind",
+      "NotificationSource"
+     ],
+     "path": "src/inbox/notification.rs",
+     "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
+     "surface": {
+      "const": 4,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -39974,6 +40069,8 @@
       "BoardSubscriptionRequest",
       "DescribeRequest",
       "EmptyRequest",
+      "InboxListRequest",
+      "InboxMarkRequest",
       "RecallRequest",
       "ReceiptsRequest",
       "RoomClaimRequest",
@@ -39995,7 +40092,7 @@
       "enum": 1,
       "fn": 6,
       "re-export": 1,
-      "struct": 17
+      "struct": 19
      }
     },
     {
@@ -40006,7 +40103,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 46
+      "fn": 55
      }
     },
     {
@@ -43841,7 +43938,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43869,7 +43966,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 11,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43911,7 +44008,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44361,7 +44458,7 @@
     "edit_settle": {
      "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
@@ -44534,7 +44631,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 5,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45255,9 +45352,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 66,
+   "over_bar": 67,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2714,
+   "source_files": 2720,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52517,7 +52614,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 28
+      "fn": 37
      }
     },
     {
@@ -53366,7 +53463,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 29
+      "fn": 38
      }
     },
     {
@@ -54909,7 +55006,7 @@
      "path": "src/api/blob_artifacts.rs",
      "purpose": "The artifact family's public HTTP surface (ARCH-0078, OF-511): one contract over every blob kind",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 25
      }
     },
     {
@@ -55631,7 +55728,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_verbs.rs",
@@ -60937,7 +61034,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 16,
+   "over_bar": 17,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 395,
    "test_files": 182
