@@ -2,6 +2,10 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
+
+/// A write door under test: it tries the forged ruling at an id and answers
+/// whether the door refused it.
+type RefusingDoor<'a> = Box<dyn Fn(EntityId) -> bool + 'a>;
 fn fixture() -> (
     tempfile::TempDir,
     Vault,
@@ -486,7 +490,7 @@ fn every_generic_door_meets_the_ruling_law() -> Result<()> {
         "confidence": 1.0,
         "source": "user_stated",
     });
-    let doors: [(&str, Box<dyn Fn(EntityId) -> bool + '_>); 4] = [
+    let doors: [(&str, RefusingDoor<'_>); 4] = [
         (
             "put_claim",
             Box::new(|id| vault.put_claim(&id, &forged, at, 3).is_err()),
