@@ -13999,7 +13999,7 @@
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 5
      }
     },
