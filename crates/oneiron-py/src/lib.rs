@@ -544,6 +544,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_skills_save(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.skills.save")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.skills.save", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_skills_fork(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.skills.fork")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.skills.fork", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_skills_callables(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.skills.callables")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.skills.callables", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_options(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.options")?;
         let output = py

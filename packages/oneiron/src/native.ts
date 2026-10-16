@@ -69,6 +69,9 @@ vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+selfSkillsSave(input: unknown): unknown
+selfSkillsFork(input: unknown): unknown
+selfSkillsCallables(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown

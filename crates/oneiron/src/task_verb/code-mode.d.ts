@@ -44,6 +44,11 @@ declare namespace self {
   const memory: {
     diary(input: { content: string; kind?: string | null }): Promise<unknown>;
   };
+  const skills: {
+    callables(input: object): Promise<unknown>;
+    fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
+    save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
+  };
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;

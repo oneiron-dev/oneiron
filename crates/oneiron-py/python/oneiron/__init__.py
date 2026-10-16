@@ -235,11 +235,23 @@ class Oneiron:
         @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
+        @property
+        def skills(self) -> "Oneiron._SelfSkillsVerbs":
+            return Oneiron._SelfSkillsVerbs(self._client)
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def diary(self, spec):
             return json.loads(_translate(lambda: self._client.self_memory_diary(json.dumps(spec))))
+    class _SelfSkillsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def save(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_save(json.dumps(spec))))
+        def fork(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_fork(json.dumps(spec))))
+        def callables(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

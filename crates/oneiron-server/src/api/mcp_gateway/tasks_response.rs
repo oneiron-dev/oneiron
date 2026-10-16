@@ -682,6 +682,9 @@ fn mcp_agent_verb_input(
             Ok(input)
         }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
+        "self.skills.save" => a.spec.clone().ok_or_else(invalid),
+        "self.skills.fork" => a.spec.clone().ok_or_else(invalid),
+        "self.skills.callables" => Ok(Value::Object(serde_json::Map::new())),
         "ai.options" => a.spec.clone().ok_or_else(invalid),
         "ai.image" => a.spec.clone().ok_or_else(invalid),
         "ai.speech" => a.spec.clone().ok_or_else(invalid),
@@ -906,6 +909,13 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.rooms.consent" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "self.skills.save" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.skills.fork" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.skills.callables" => {}
         "ai.options" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1505,6 +1515,30 @@ async fn execute_agent_verb_listing(
             let output = oneiron::task_verb::sdk::vault_rooms_consent(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.skills.save" => {
+            let input: oneiron::skill::helper::SkillSaveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_skills_save(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.skills.fork" => {
+            let input: oneiron::skill::helper::SkillForkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_skills_fork(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.skills.callables" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_skills_callables(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "ai.options" => {

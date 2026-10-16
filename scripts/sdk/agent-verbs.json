@@ -952,6 +952,40 @@
       "section": false
     },
     {
+      "name": "self.skills.save",
+      "input": "crate::skill::helper::SkillSaveRequest",
+      "output": "crate::memory::SkillAuthoringReceipt",
+      "call": "{ let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?; memory.skill_save_with_source(id, &record, files, input.expected_version.as_deref(), crate::unix_seconds_now())? }",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.fork",
+      "input": "crate::skill::helper::SkillForkRequest",
+      "output": "crate::memory::SkillAuthoringReceipt",
+      "call": "{ let (parent, id) = crate::skill::helper::fork_target(&input)?; memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())? }",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.callables",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::skill::helper::CallableCardView>",
+      "call": "memory.skill_callables()?",
+      "scope": "Read",
+      "mcp_fields": {},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "ai.options",
       "input": "AiOptionsRequest",
       "output": "crate::task_verb::sdk::AiOptions",
