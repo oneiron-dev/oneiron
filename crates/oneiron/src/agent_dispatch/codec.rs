@@ -134,9 +134,11 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
 /// The strict OF-540 team-stamp decode the codec and [`attempt_team_stamp`]
 /// share: a serialized stamp whose team reference passes the receipt rule.
 fn decode_team_stamp(value: &Value) -> Result<super::TeamRunStamp> {
-    let json = value.as_str().ok_or(Error::Artifact(
-        ArtifactError::InvalidAgentDispatchInput("team must be a serialized team-run stamp"),
-    ))?;
+    let json = value
+        .as_str()
+        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "team must be a serialized team-run stamp",
+        )))?;
     let stamp: super::TeamRunStamp = serde_json::from_str(json).map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             "team must decode as a team-run stamp",
