@@ -35,7 +35,7 @@ impl AtDiskFloor {
     /// Whether `error` is this refusal.
     #[must_use]
     pub fn is_in(error: &io::Error) -> bool {
-        error.get_ref().is_some_and(|inner| inner.is::<Self>())
+        matches!(error.get_ref(), Some(inner) if inner.is::<Self>())
     }
 }
 
