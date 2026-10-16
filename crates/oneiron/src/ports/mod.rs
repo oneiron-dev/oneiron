@@ -48,6 +48,7 @@ mod regeneration;
 mod safe_read;
 mod time;
 pub use safe_read::{safe_read_asset_text, safe_read_text};
+pub(crate) use safe_read::withdrawn_in_txn;
 #[cfg(test)]
 mod memory;
 #[cfg(test)]

@@ -167,6 +167,9 @@ impl Vault {
             .port_entity_ids_by_type(rtxn, ENTITY_TYPE_CLAIM, None)?
         {
             let id = entry?;
+            if crate::ports::withdrawn_in_txn(&self.store, rtxn, &id)? {
+                continue;
+            }
             let raw = self
                 .store
                 .port_entity_record(rtxn, &id)?
@@ -304,7 +307,9 @@ impl Vault {
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Ok(None);
         };
-        if header.entity_type != ENTITY_TYPE_CLAIM {
+        if header.entity_type != ENTITY_TYPE_CLAIM
+            || crate::ports::withdrawn_in_txn(&self.store, rtxn, id)?
+        {
             return Ok(None);
         }
         crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)

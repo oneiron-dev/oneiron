@@ -62,6 +62,10 @@ impl ClaimStore for Vault {
         let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(None);
         };
+        // History keeps every lifecycle status, never words a deletion withdrew.
+        if super::withdrawn_in_txn(&self.store, rtxn, id)? {
+            return Ok(None);
+        }
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
@@ -98,6 +102,9 @@ impl ClaimStore for Vault {
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
         let mut rows = Vec::new();
         self.for_each_claim_with_predicate_in_txn(rtxn, predicate, |id, body| {
+            if super::withdrawn_in_txn(&self.store, rtxn, &id)? {
+                return Ok(());
+            }
             if rows.len() >= MAX_PREDICATE_LIST_ROWS {
                 return Err(Error::IndexOverflow("claim predicate"));
             }

@@ -460,6 +460,9 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
             && vault
                 .store
                 .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
+        // Words a deletion withdrew never serve, at any selected version.
+        || (raw.len() > ENTITY_METADATA_HEADER_LEN
+            && crate::ports::withdrawn_in_txn(store, txn, id)?)
     {
         return Ok(None);
     }
