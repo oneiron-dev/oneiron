@@ -125,6 +125,15 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_str(&mut hasher, builder.turn_fold.as_str());
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
     fork_hash_opt_str(&mut hasher, builder.skill_executor.as_deref());
+    fork_hash_bool(&mut hasher, builder.skill_reliability_query.is_some());
+    if let Some(query) = &builder.skill_reliability_query {
+        fork_hash_str(&mut hasher, &query.type_ref.wire_form());
+        fork_hash_str(&mut hasher, &query.axis);
+        fork_hash_len(&mut hasher, query.type_parents.len());
+        for parent in &query.type_parents {
+            fork_hash_str(&mut hasher, &parent.wire_form());
+        }
+    }
     fork_hash_candidate_set(&mut hasher, evidence.candidate_set);
 
     hasher.finalize().into()
