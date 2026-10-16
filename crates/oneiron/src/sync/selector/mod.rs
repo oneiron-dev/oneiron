@@ -19,6 +19,7 @@ mod edge;
 mod held_retire;
 mod note_admission;
 mod scope;
+mod text_egress;
 pub(crate) use note_admission::admit_note_in_txn;
 #[cfg(test)]
 mod tests;

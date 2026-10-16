@@ -30,6 +30,7 @@ mod point_reads;
 mod reactions;
 mod receipt;
 mod retrieval_visibility;
+mod served_forms;
 mod versions;
 mod weave_digest;
 pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;

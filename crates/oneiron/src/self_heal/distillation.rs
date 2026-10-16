@@ -3,7 +3,7 @@
 use super::{
     DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticSourceKind,
     stored_diagnostic_event,
-    tiered::{DetectorPolicy, ProposedDiagnostic, TelemetryJudge},
+    tiered::{DetectorDecisions, DetectorPolicy, ProposedDiagnostic},
     validate_token,
 };
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
@@ -183,7 +183,7 @@ impl Vault {
     pub fn classify_minted_t2(
         &self,
         minted: &MintedT2,
-        judge: &impl TelemetryJudge,
+        decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
         let Some(current) = self.mint_t2(minted.policy.clone())? else {
@@ -196,29 +196,31 @@ impl Vault {
         {
             return Err(Error::InvalidConfig("T2 examples changed".into()));
         }
-        let mut examples = Vec::new();
-        for (ids, positive) in [
-            (&current.positive_events, true),
-            (&current.negative_events, false),
-        ] {
-            for id in ids {
-                let event = self.reviewed_diagnostic(id)?;
-                let mut rows = Vec::new();
-                for run_ref in &event.evidence_refs {
-                    let row = self
-                        .store
-                        .retrieval_run(RetrievalRunId::from_bytes(*run_ref.as_bytes()))?
-                        .ok_or(Error::EntityNotFound)?;
-                    rows.push(row);
-                }
-                rows.sort_by_key(|row| (row.started_at, row.run_id.as_bytes()));
-                if rows.is_empty() || !replays_group(&rows, &event)? {
-                    return Err(Error::CorruptedIndex("T3 example telemetry changed"));
-                }
-                examples.push((rows, positive));
+        for id in current
+            .positive_events
+            .iter()
+            .chain(&current.negative_events)
+        {
+            let event = self.reviewed_diagnostic(id)?;
+            let mut rows = Vec::new();
+            for run_ref in &event.evidence_refs {
+                let row = self
+                    .store
+                    .retrieval_run(RetrievalRunId::from_bytes(*run_ref.as_bytes()))?
+                    .ok_or(Error::EntityNotFound)?;
+                rows.push(row);
+            }
+            rows.sort_by_key(|row| (row.started_at, row.run_id.as_bytes()));
+            if rows.is_empty() || !replays_group(&rows, &event)? {
+                return Err(Error::CorruptedIndex("T3 example telemetry changed"));
             }
         }
-        self.classify_prompt_with_examples(&minted.policy, judge, runs, &examples)
+        self.classify_prompt_with_examples(
+            &minted.policy,
+            decisions,
+            runs,
+            (&current.positive_events, &current.negative_events),
+        )
     }
 
     /// Verify stored ARCH-0037 rows against a known closed-form detector.
