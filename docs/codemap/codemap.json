@@ -9377,7 +9377,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 33,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -12067,7 +12067,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CommitmentProjectionReport",
@@ -12076,6 +12076,7 @@
      "path": "src/commitment_schedule/projection.rs",
      "purpose": "The durable projection layer: series indexing, occurrence minting, and the close hook",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -12097,7 +12098,23 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommitmentReminderPlanner",
+      "CommitmentReminderRoute"
+     ],
+     "path": "src/commitment_wake/reminder.rs",
+     "purpose": "Served reminder delivery for commitment wakes (OF-187): the owner's reminder route, the planner the server…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -12911,7 +12928,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 5,
       "struct": 3,
       "trait": 1
      }
@@ -30607,7 +30624,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -30647,7 +30664,7 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -30668,6 +30685,19 @@
      "purpose": "Atomic send-receipt retry and terminal settlement",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServedChannelSink"
+     ],
+     "path": "src/outbound/served_sink.rs",
+     "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -48291,13 +48321,13 @@
     "commitment_schedule": {
      "files": 5,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Commitment schedule evaluation and durable projection (CMT-2, ONE-1539)"
     },
     "commitment_wake": {
-     "files": 6,
-     "impl_vault": false,
+     "files": 7,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
@@ -48856,7 +48886,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49465,9 +49495,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 107,
+   "over_bar": 108,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2986,
+   "source_files": 2988,
    "test_files": 903
   },
   "oneiron-android": {
@@ -61114,6 +61144,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/commitment_routes.rs",
+     "purpose": "Owner doors for where commitment reminders go (OF-187)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/conflict_routes.rs",
      "purpose": "`/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023…",
      "surface": {
@@ -65418,6 +65458,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/connector_sends.rs",
+     "purpose": "The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/cooperative_deletion.rs",
      "purpose": "Delivers queued courtesy deletion asks and answers (OF-273)",
      "surface": {
@@ -66261,7 +66311,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 247,
+     "files": 248,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66485,7 +66535,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66550,7 +66600,7 @@
    },
    "over_bar": 26,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 465,
+   "source_files": 467,
    "test_files": 182
   },
   "oneiron-spawn": {
