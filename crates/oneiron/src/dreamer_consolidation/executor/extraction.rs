@@ -228,7 +228,9 @@ impl ConsolidationExecutor<'_> {
     ) -> Vec<super::super::evidence::ExtractedCandidate> {
         let mut candidates = Vec::new();
         for (candidate, corrects) in parsed.into_iter().zip(corrects) {
-            match build_candidate(candidate, *corrects, partition, resources, attempt_id, now_ms) {
+            match build_candidate(
+                candidate, *corrects, partition, resources, attempt_id, now_ms,
+            ) {
                 Ok(candidate) => candidates.push(candidate),
                 Err(reason) => {
                     skipped += 1;
@@ -328,7 +330,10 @@ fn parse_candidate<'s>(
         value,
         confidence,
         rel: item.get("rel").filter(|value| !value.is_null()).cloned(),
-        topic: item.get("topic_key").filter(|value| !value.is_null()).cloned(),
+        topic: item
+            .get("topic_key")
+            .filter(|value| !value.is_null())
+            .cloned(),
         locators,
         evidence_turn_refs,
         project,
@@ -361,10 +366,7 @@ fn correction_state(
             .zip(&values)
             .filter(|((_, asked), _)| !asked.is_empty())
             .map(|((candidate, asked), value)| {
-                let ids: Vec<String> = asked
-                    .iter()
-                    .map(|&at| questions[at].id.to_hex())
-                    .collect();
+                let ids: Vec<String> = asked.iter().map(|&at| questions[at].id.to_hex()).collect();
                 serde_json::json!({
                     "questions": ids,
                     "subject": candidate.subject.to_hex(),
@@ -443,8 +445,12 @@ fn build_candidate(
             "extraction relationship crossed branch scope",
         ));
     }
-    let mut candidate =
-        ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, parsed.confidence);
+    let mut candidate = ClaimCandidate::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        value,
+        parsed.confidence,
+    );
     if let Some(rel) = rel {
         candidate = candidate.with_relationship(rel);
     }

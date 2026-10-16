@@ -58,9 +58,9 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
         ),
         (
             Value::from("type_ref"),
-            spec.type_ref.as_ref().map_or(Value::Nil, |type_ref| {
-                Value::from(type_ref.wire_form())
-            }),
+            spec.type_ref
+                .as_ref()
+                .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
         ),
         (Value::from("created_at"), Value::from(now)),
     ])
@@ -211,8 +211,7 @@ pub(super) fn validate_task_create_in(
     // runs against the seeded vault tree until OF-541's team-shape skill
     // carries the learned tree; unsure lands on the root.
     let kind_for_hint = spec.kind.unwrap_or(TaskKind::Standard);
-    let mut placement_request =
-        crate::task_type::PlacementRequest::new(spec.label.clone(), None);
+    let mut placement_request = crate::task_type::PlacementRequest::new(spec.label.clone(), None);
     if let Some(hint) = kind_for_hint.seed_task_type() {
         placement_request = placement_request.with_kind_hint(hint);
     }

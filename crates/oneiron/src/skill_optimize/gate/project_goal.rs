@@ -195,9 +195,9 @@ pub(super) fn project_rules(
     rules
 }
 
-/// One rung of the responsible-role chain a tradeoff ask climbs. Only live
-/// people are members: a pick becomes a preference, and preferences are
-/// learned from human picks.
+/// One rung of the responsible-role chain a tradeoff ask climbs. Live people
+/// and live bound agents are members (ROLES-EVERYWHERE): a pick by either
+/// becomes the role's preference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeoffRole {
@@ -238,7 +238,10 @@ fn live_people_in_txn(
 ) -> Result<BTreeSet<EntityId>> {
     let mut people = BTreeSet::new();
     for id in ids {
-        if crate::consent::person_is_live_in_txn(vault, txn, &id)? {
+        let agent = crate::write_envelope::WriteActor::new(id, crate::edge::EdgeActorClass::Agent);
+        if crate::consent::person_is_live_in_txn(vault, txn, &id)?
+            || vault.verify_write_actor_in_txn(txn, &agent).is_ok()
+        {
             people.insert(id);
         }
     }

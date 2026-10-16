@@ -258,13 +258,7 @@ impl ConsolidationExecutor<'_> {
             return Ok(PartitionRun::Checkpoint);
         }
         let candidates = Self::build_candidates(
-            parsed,
-            &corrects,
-            skipped,
-            &partition,
-            resources,
-            attempt_id,
-            ctx.now_ms,
+            parsed, &corrects, skipped, &partition, resources, attempt_id, ctx.now_ms,
         );
         // Assembly verifies and collapses evidence across ALL child slots
         // before counting corroboration or routing coupled conflicts.
