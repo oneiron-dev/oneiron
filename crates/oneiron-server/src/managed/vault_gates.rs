@@ -186,9 +186,14 @@ fn open_probed_vault(
     evidence: super::isolation::IsolationEvidence,
     owner: DerivationOwner,
 ) -> Result<oneiron::Vault, ManagedError> {
-    let isolated = evidence.admits();
-    let vault = oneiron::Vault::open_owned(data_dir, vault_config)
-        .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+    let isolated = evidence.admits() && evidence.directory.is_some();
+    // The probed directory itself, never what the path names by now: one
+    // renamed in under `data_dir` after the probe is refused, not opened.
+    let vault = match evidence.directory {
+        Some(directory) => oneiron::Vault::open_owned_held(directory, data_dir, vault_config),
+        None => oneiron::Vault::open_owned(data_dir, vault_config),
+    }
+    .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
     warn_if_reader_table_short(&vault);
     check_gates_with_isolation(&vault, vault_name, credentials, isolated)?;
     // Bind before any managed caller can enqueue or serve derived content.
@@ -248,7 +253,17 @@ pub(super) fn managed_lease_scope(vault: &oneiron::Vault) -> Result<u64, Managed
 }
 #[cfg(test)]
 mod isolation_gate_tests {
+    use super::super::isolation::IsolationEvidence;
     use super::*;
+    /// Evidence with these proofs about the directory at `path`, held open as
+    /// the probe holds it.
+    fn evidence_on(path: &Path, fscrypt: bool, dedicated_uid: bool) -> IsolationEvidence {
+        IsolationEvidence {
+            fscrypt,
+            dedicated_uid,
+            directory: Some(std::fs::File::open(path).unwrap()),
+        }
+    }
     #[test]
     fn real_vault_opens_only_with_both_isolation_proofs_and_keeps_its_lease_scope() {
         let root = tempfile::tempdir().unwrap();
@@ -262,16 +277,14 @@ mod isolation_gate_tests {
                 .enumerate()
         {
             let path = root.path().join(index.to_string());
-            let evidence = super::super::isolation::IsolationEvidence {
-                fscrypt,
-                dedicated_uid,
-            };
+            std::fs::create_dir(&path).unwrap();
+            let evidence = || evidence_on(&path, fscrypt, dedicated_uid);
             let result = open_probed_vault(
                 &path,
                 oneiron::VaultConfig::device(),
                 "real-vault",
                 &credentials,
-                evidence,
+                evidence(),
                 DerivationOwner([9; 32]),
             );
             if fscrypt && dedicated_uid {
@@ -289,7 +302,7 @@ mod isolation_gate_tests {
                     oneiron::VaultConfig::device(),
                     "real-vault",
                     &credentials,
-                    evidence,
+                    evidence(),
                     DerivationOwner([9; 32]),
                 )
                 .unwrap();
@@ -309,7 +322,7 @@ mod isolation_gate_tests {
                         oneiron::VaultConfig::device(),
                         "real-vault",
                         &wrong,
-                        evidence,
+                        evidence(),
                         DerivationOwner([9; 32]),
                     ),
                     Err(ManagedError::DekMacMismatch { .. })
@@ -320,7 +333,7 @@ mod isolation_gate_tests {
                         oneiron::VaultConfig::device(),
                         "real-vault",
                         &credentials,
-                        evidence,
+                        evidence(),
                         DerivationOwner([10; 32]),
                     ),
                     Err(ManagedError::DerivationOwnerRejected { .. })
@@ -332,5 +345,30 @@ mod isolation_gate_tests {
                 ));
             }
         }
+    }
+    #[test]
+    fn a_directory_swapped_after_the_probe_does_not_open() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("vault");
+        std::fs::create_dir(&path).unwrap();
+        let evidence = evidence_on(&path, true, true);
+        // Someone who can rename entries in the parent moves the probed
+        // directory aside and an unprobed one in under its name.
+        std::fs::rename(&path, root.path().join("probed")).unwrap();
+        std::fs::create_dir(root.path().join("unprobed")).unwrap();
+        std::fs::rename(root.path().join("unprobed"), &path).unwrap();
+        let result = open_probed_vault(
+            &path,
+            oneiron::VaultConfig::device(),
+            "real-vault",
+            &Credentials {
+                dek: [7; DEK_LEN],
+                token: [8; 32],
+            },
+            evidence,
+            DerivationOwner([9; 32]),
+        );
+        assert!(matches!(result, Err(ManagedError::VaultMeta(_))));
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
     }
 }

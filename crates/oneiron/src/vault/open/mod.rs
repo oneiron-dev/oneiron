@@ -107,7 +107,28 @@ impl Vault {
         std::fs::create_dir_all(path.as_ref())?;
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire(&canonical)?;
-        let store = Store::open_with_writer_lease(&canonical, &config, &lease)?;
+        Self::open_leased(&canonical, config, lease)
+    }
+
+    /// [`Self::open_owned`] on `directory`, a vault root the caller already
+    /// holds open, as a managed host's isolation probe does. The writer lease
+    /// and, on Linux, the LMDB environment bind that descriptor, so a
+    /// directory renamed in under `path` after the caller's checks is refused,
+    /// never opened. Refuses unless `path` still names `directory`.
+    #[cfg(unix)]
+    pub fn open_owned_held(
+        directory: std::fs::File,
+        path: impl AsRef<Path>,
+        config: VaultConfig,
+    ) -> Result<Self> {
+        validate_open_config(&config)?;
+        let canonical = path.as_ref().canonicalize()?;
+        let lease = VaultWriterLease::acquire_held(directory, &canonical)?;
+        Self::open_leased(&canonical, config, lease)
+    }
+
+    fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
+        let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
         let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
         vault.writer_lease = Some(lease);
         Ok(vault)
