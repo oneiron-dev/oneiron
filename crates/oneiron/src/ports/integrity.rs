@@ -309,7 +309,8 @@ fn withdraw_words_in_txn(
     worlds: &CarriedWorlds,
 ) -> Result<()> {
     withdraw_in_txn(store, txn, id, worlds)?;
-    crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, id)
+    crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, id)?;
+    crate::compaction::scrub_withdrawn_fold_summary_in_txn(store, txn, id)
 }
 
 /// Withdraws the epoch summaries in `pending` for `worlds`, and those written

@@ -33,7 +33,9 @@ impl EngineNativeExecutor<'_> {
             self.compaction = Some(seat);
             return Ok(());
         };
-        self.land_folds(finished.folds);
+        if let Some((_, byline, _)) = seat.swap_seat() {
+            self.land_folds(byline, finished.folds);
+        }
         let landed = match finished.epoch {
             None => Ok(()),
             Some(Err(suppression)) => {
@@ -283,6 +285,28 @@ impl EngineNativeExecutor<'_> {
             ));
         }
         let ids = super::compaction::span_ids(&window);
+        // What the summary derives from (Docs Q24): every record whose words
+        // could reach the span. No step boundary is stored with the run's
+        // calls, so that is everything the run was served and the host's own
+        // words to it, a superset that withdraws the summary with any of
+        // them, and never a summary before it: the span is raw turns.
+        let mut host = vec![turn_id];
+        for order in super::compaction::speech_orders(&record.bridge_calls) {
+            host.push(crate::code_run::executor_speech_message_id_in_run(
+                run_ref, run_id, order,
+            )?);
+        }
+        let sources = match &self.storage {
+            crate::code_run::ExecutorStorage::Canonical(vault) => {
+                let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+                super::compaction::served_sources(&vault.store, &rtxn, &record.bridge_calls, host)?
+            }
+            crate::code_run::ExecutorStorage::Session(binding) => binding.answered(|| {
+                let view = binding.session.read_view()?;
+                let rtxn = view.read().base().env.read_txn()?;
+                super::compaction::served_sources(&view, &rtxn, &record.bridge_calls, host)
+            })?,
+        };
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         let request = driver.fold_request(
@@ -290,6 +314,7 @@ impl EngineNativeExecutor<'_> {
             &session,
             window,
             pins,
+            sources,
             note,
             calls,
         )?;
@@ -305,9 +330,15 @@ impl EngineNativeExecutor<'_> {
     }
 
     /// One landed fold batch: every accepted fold becomes visible at once,
-    /// in one ledger write, and each failed mark keeps why. A batch that
-    /// cannot be written leaves its marks pending for the next pass.
-    fn land_folds(&self, folds: Vec<(FoldJob, Result<GatedCompaction, String>)>) {
+    /// in one ledger write, and each failed mark keeps why. Each summary is
+    /// stamped Generated under the host's `byline`, with the sources its
+    /// request was sealed with (Docs Q24). A batch that cannot be written
+    /// leaves its marks pending for the next pass.
+    fn land_folds(
+        &self,
+        byline: crate::WriteActor,
+        folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
+    ) {
         let Some(run_id) = folds.first().map(|(job, _)| job.run_id) else {
             return;
         };
@@ -315,24 +346,23 @@ impl EngineNativeExecutor<'_> {
         let mut failed = Vec::new();
         for (job, answer) in folds {
             match answer {
-                Ok(gated) => {
-                    let stub = super::compaction::fold_stub(&job, gated.summary_text());
-                    landed.push(FoldRecord {
-                        fold: job.fold,
-                        from: job.from,
-                        through: job.through,
-                        stub,
-                        summary: gated.summary_text().to_owned(),
-                        ids: job.ids,
-                        handles: job.handles,
-                    });
-                }
+                Ok(gated) => landed.push(FoldRecord {
+                    fold: job.fold,
+                    from: job.from,
+                    through: job.through,
+                    summary: Some(gated.summary_text().to_owned()),
+                    source: crate::claim::ClaimSource::Generated,
+                    actor: byline.entity_ref(),
+                    sources: gated.request().sources.clone(),
+                    ids: job.ids,
+                    handles: job.handles,
+                }),
                 Err(why) => failed.push((job.fold, why)),
             }
         }
         if self
             .storage
-            .update_code_run_folds(run_id, |ledger| ledger.land(landed, &failed))
+            .land_code_run_folds(run_id, landed, &failed)
             .is_err()
         {
             tracing::warn!("a fold batch did not land");
@@ -596,6 +626,13 @@ impl EngineNativeExecutor<'_> {
                     fold.through,
                     fold_handle(fold.fold)
                 );
+                // A withdrawn record's words reached this span (Docs Q23):
+                // its turns stay folded, so an unfold cannot bring them back.
+                if fold.summary.is_none() {
+                    unfolded.push_str(" withdrawn; its turns stay folded");
+                    messages.push(text(unfolded));
+                    continue;
+                }
                 for step in fold.from..=fold.through.min(completed.saturating_sub(1)) {
                     let turn = CodeRunHistoryTurn {
                         code: load_context_output(

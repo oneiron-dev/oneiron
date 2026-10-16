@@ -115,12 +115,21 @@ impl CompactionDriver {
     /// arbitrary span `window` covers, not the next epoch. It leaves the
     /// driver's state alone, since a fold mints no epoch and moves no
     /// watermark; the pass runs on the same backend and clears the same gate.
+    /// `sources` is every record whose words could reach the span, sealed
+    /// with it: what the landed summary derives from (Docs Q24). Unlike an
+    /// epoch's, it is not capped, since a fold's sources are only ever its
+    /// own dependency rows.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the sealed span, its pins and sources, the agent's note and the call count"
+    )]
     pub(crate) fn fold_request(
         &self,
         request_id: EntityId,
         session_ref: &EntityId,
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
+        sources: Vec<EntityId>,
         note: Option<String>,
         calls: u64,
     ) -> Result<CompactionRequest> {
@@ -147,7 +156,10 @@ impl CompactionDriver {
                 turn: Some(last),
             },
             pins,
-            sources: Vec::new(),
+            sources: {
+                let mut seen = std::collections::BTreeSet::new();
+                sources.into_iter().filter(|id| seen.insert(*id)).collect()
+            },
             note,
             log: WindowLog::Host { prior: None, calls },
         })

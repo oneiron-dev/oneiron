@@ -18,7 +18,7 @@ use crate::compaction::{
     CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
-    EpochPlacement, FoldLedger, GatedCompaction, fold_handle, gate_compaction,
+    EpochPlacement, FoldLedger, GatedCompaction, escape_compacted_text, gate_compaction,
 };
 use crate::entity_id::EntityId;
 use crate::tokenizer::count_context_pack_tokens;
@@ -653,16 +653,6 @@ pub(super) fn speech_orders(calls: &[CodeRunBridgeCall]) -> impl Iterator<Item =
         .filter_map(CodeRunBridgeCall::emitted_speech_order)
 }
 
-/// Frame marks a summary may not forge: the record marks and this frame.
-pub(super) fn escape_compacted_text(text: &str) -> String {
-    text.replace("<exec>", r"<\exec>")
-        .replace("</exec>", r"<\/exec>")
-        .replace("<console>", r"<\console>")
-        .replace("</console>", r"<\/console>")
-        .replace("<compacted", r"<\compacted")
-        .replace("</compacted", r"<\/compacted")
-}
-
 /// One epoch's steps as the model reads them after a swap: the accepted
 /// summary (none once it is withdrawn) and a handle to every original
 /// output, so nothing a reader may still need leaves reach.
@@ -737,9 +727,7 @@ pub(super) fn epoch_frame(
         }
         return Ok(Some(Some(crate::LlmMessage {
             role: crate::LlmMessageRole::User,
-            content: vec![ContentPart::Text {
-                text: fold.stub.clone(),
-            }],
+            content: vec![ContentPart::Text { text: fold.stub() }],
         })));
     };
     if seq as u64 != row.first() {
@@ -772,45 +760,6 @@ pub(super) fn epoch_frame(
             ),
         }],
     })))
-}
-
-/// The most ids a stub lists itself; `describe({fold})` lists them all.
-const STUB_IDS: usize = 64;
-
-/// A fold's one stub, written once when its batch lands and kept byte for
-/// byte, so the cached log holds: its handle and span, the accepted summary
-/// (model output), the ids its turns name that the summary does not, and a
-/// handle to every result the span covers.
-pub(super) fn fold_stub(job: &FoldJob, summary: &str) -> String {
-    let mut stub = format!(
-        "⟨{} · t{}–t{}⟩ {}",
-        fold_handle(job.fold),
-        job.from,
-        job.through,
-        escape_compacted_text(summary)
-    );
-    let ids: Vec<&str> = job
-        .ids
-        .iter()
-        .map(String::as_str)
-        .filter(|id| !summary.contains(id))
-        .collect();
-    if !ids.is_empty() {
-        stub.push_str("\nids: ");
-        stub.push_str(&ids[..ids.len().min(STUB_IDS)].join(", "));
-        if ids.len() > STUB_IDS {
-            stub.push_str(&format!(
-                " and {} more (describe({{fold: \"{}\"}}))",
-                ids.len() - STUB_IDS,
-                fold_handle(job.fold)
-            ));
-        }
-    }
-    for handle in &job.handles {
-        stub.push('\n');
-        stub.push_str(handle);
-    }
-    stub
 }
 
 /// Every entity id the window's text names, in order.
