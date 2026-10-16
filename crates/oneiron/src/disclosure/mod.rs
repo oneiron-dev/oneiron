@@ -37,6 +37,7 @@ pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_di
 
 pub(crate) use self::tier_classification::{disclosure_tier, validate_disclosure_claim_structure};
 pub(crate) use self::vault_agent::is_vault_agent_in;
+pub(crate) use self::vault_context::{contact_clearance_in_txn, contact_clearances_in_txn};
 use self::vault_context::disclosure_tier_a_marked_in;
 
 #[cfg(test)]
