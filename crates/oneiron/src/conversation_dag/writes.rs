@@ -94,7 +94,8 @@ fn stamp_body(
 }
 
 /// The summary association is stamped only by the summary door. Reply
-/// revisions are captured from the target body in this transaction.
+/// revisions are captured from the target body, and a quote's anchor pinned,
+/// in this transaction.
 pub(crate) fn append_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -203,10 +204,17 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
-    // Validate all recipients before minting the record. Addressing is never a
+    // The record id is the citation a quote pins under.
+    let id = vault.store.clock.entity_id()?;
+    let quote = input
+        .quote
+        .map(|quote| super::quote::prove_in_txn(vault, txn, input, quote, id))
+        .transpose()?;
+    let reply_to = super::quote::reply_target(input.reply_to, quote.as_ref())?;
+    // Validate all recipients before writing the record. Addressing is never a
     // room-membership or audience test: a non-member may be mentioned.
     let mut seen = std::collections::HashSet::new();
-    if input.reply_to.is_some() {
+    if reply_to.is_some() {
         if input.address != AddressMode::Broadcast {
             return Err(invalid("reply cannot also use direct addressing"));
         }
@@ -244,20 +252,18 @@ pub(crate) fn append_in_txn(
     else {
         return Err(invalid("record body must be a map"));
     };
-    if let Some(asking) = input.reply_to {
+    if let Some(asking) = reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
         entries.extend([
             (Value::from("addr"), Value::from("reply")),
             (
                 Value::from("reply_to"),
-                Value::Map(vec![
-                    (Value::from("record"), Value::from(asking.to_hex())),
-                    (
-                        Value::from("revision"),
-                        Value::from(blake3::hash(&asking_body).to_hex().to_string()),
-                    ),
-                ]),
+                super::quote::reply_pointer(
+                    asking,
+                    blake3::hash(&asking_body).to_hex().to_string(),
+                    quote.as_ref(),
+                ),
             ),
         ]);
         if let Some(summary) = summary {
@@ -286,8 +292,10 @@ pub(crate) fn append_in_txn(
     body.clear();
     rmpv::encode::write_value(&mut body, &Value::Map(entries))
         .map_err(|_| invalid("record encode failed"))?;
-    let id = vault.store.clock.entity_id()?;
     super::policy::check_append_policy(vault, txn, &id, input, &body)?;
+    if let Some(quote) = &quote {
+        super::quote::pin_in_txn(vault, txn, quote, input.actor)?;
+    }
     let fields: Vec<_> = input
         .text
         .iter()
@@ -312,7 +320,7 @@ pub(crate) fn append_in_txn(
             value(input.learned_at),
         );
     }
-    if let Some(asking) = input.reply_to {
+    if let Some(asking) = reply_to {
         batch = batch.edge_with_value_fields(
             &id,
             EdgeKind::RepliesTo,
