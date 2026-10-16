@@ -232,7 +232,8 @@ impl DiaryReadGate {
         agent: EntityId,
         entry: EntityId,
     ) -> Result<DiaryEntryAdmission> {
-        if agent == self.reader.entity_ref() {
+        let reader = self.reader;
+        if agent == reader.entity_ref() {
             return Ok(DiaryEntryAdmission::Read);
         }
         let state = self.agent_in(vault, txn, agent)?;
@@ -241,7 +242,7 @@ impl DiaryReadGate {
             None => delegated_grant(
                 vault,
                 txn,
-                &action_bound(vault, txn, self.reader, DIARY_READ_VERB, entry)?,
+                &action_bound(vault, txn, reader, DIARY_READ_VERB, entry)?,
             )?,
         };
         let hold = match grant {
