@@ -25,13 +25,14 @@ pub(crate) fn admit_witness(
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         return Ok(());
     }
-    // OF-529: a person speaks from its seat, as before. An agent needs no
-    // seat: it stands on a Ready receipt, checked once its thread is known.
+    // OF-529: an agent needs no seat: it stands on a Ready receipt, checked
+    // once its thread is known. A person stands on its seat or a live Ready
+    // join, or joins by this write, at the participation gate below (OF-417).
     let now = vault.store.clock.now_recorded_at();
     let speaker = participant_in_txn(vault, txn, actor, now)?;
     let current_room = match speaker {
-        Some(JoinSubject::Agent(_)) => room_in(vault, txn, room)?,
-        _ => require_member(vault, txn, room, actor)?,
+        Some(_) => room_in(vault, txn, room)?,
+        None => require_member(vault, txn, room, actor)?,
     };
     let mut mentions = BTreeSet::new();
     let mut reply_to = None;
