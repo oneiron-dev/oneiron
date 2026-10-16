@@ -386,10 +386,8 @@ pub fn require_join_for_branch_in_txn(
 }
 
 /// [`require_join_for_branch_in_txn`] for an actor a room door already
-/// verified. Its subject is the one OF-529 resolves from stored facts, never
-/// from a label or its class: a PERSON is a person, an AGENT_DEF with a live
-/// PERSON subject anchor is that person's pen, and any other AGENT_DEF is an
-/// agent.
+/// verified. Its subject comes from the actor's stored entity kind (a PERSON
+/// is a person, an AGENT_DEF an agent), never from a label or its class.
 pub fn require_actor_join_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -398,8 +396,11 @@ pub fn require_actor_join_in_txn(
     actor: EntityId,
     scope: Option<&SpendScopeId>,
 ) -> Result<JoinReceiptRef> {
-    let now = vault.store.clock.now_recorded_at();
-    let subject = super::rooms::join_subject_for_actor_in_txn(vault, txn, actor, now)?;
+    let subject = match vault.get_entity_type_in_txn(txn, &actor)? {
+        Some(ENTITY_TYPE_PERSON) => JoinSubject::Person(actor),
+        Some(ENTITY_TYPE_AGENT_DEF) => JoinSubject::Agent(actor),
+        _ => return Err(not_joined("only a person or an agent joins a room")),
+    };
     require_join_for_branch_in_txn(vault, txn, room, branch, &subject, scope)
 }
 
@@ -627,11 +628,12 @@ fn house_org_in_txn(
     agent: EntityId,
     at: u64,
 ) -> Result<Option<(EntityId, bool)>> {
-    let presets = super::records::PRESET.scan(&vault.store, txn)?;
-    if !presets
-        .iter()
-        .any(|(_, row)| row.preset.house_actor_ref == agent)
-    {
+    let presets: Vec<_> = super::records::PRESET
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, row)| row.preset)
+        .collect();
+    if !presets.iter().any(|preset| preset.house_actor_ref == agent) {
         return Ok(None);
     }
     let Some(anchor) = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
@@ -643,8 +645,7 @@ fn house_org_in_txn(
         .shared_vault_creation_in_txn(txn)?
         .map(|creation| creation.vault_id);
     let mut found = None;
-    for (_, row) in presets {
-        let preset = row.preset;
+    for preset in presets {
         if preset.house_actor_ref != agent || preset.org_ref != anchor.subject_ref {
             continue;
         }
