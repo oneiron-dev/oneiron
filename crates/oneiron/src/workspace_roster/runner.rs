@@ -108,18 +108,26 @@ impl Vault {
                         authenticated_writer,
                         |_| require_mailbox_revision(self, revision),
                     )?;
-                    return Ok(Some(outcome_of(&intent, completed_at)));
+                    let suggested = work_companion_suggested(self, &intent)?;
+                    return Ok(Some(outcome_of(&intent, completed_at, suggested)));
                 }
                 record.step.rank()
             }
             None => {
                 validate_workspace_references(self, &intent)?;
-                if read_preset(self, &intent.workspace.workspace_ref)?
-                    .is_some_and(|stored| stored != intent.workspace)
+                let stored = read_preset_row(self, &intent.workspace.workspace_ref)?;
+                if stored
+                    .as_ref()
+                    .is_some_and(|stored| stored.preset != intent.workspace)
                 {
                     return Err(invalid(
                         "workspace_ref is already bound to a different workspace preset",
                     ));
+                }
+                // Refused before anything is written; the companion step
+                // reads the policy again in the transaction that binds her.
+                if stored.is_some_and(|stored| !stored.work_companion.admits(&intent.companion)) {
+                    return Err(invalid(WORK_COMPANION_REQUIRED));
                 }
                 write_journal(
                     self,
@@ -168,7 +176,8 @@ impl Vault {
         if done < MemberOnboardingStep::Complete.rank() {
             return Ok(None);
         }
-        Ok(Some(outcome_of(&intent, intent.occurred_at)))
+        let suggested = work_companion_suggested(self, &intent)?;
+        Ok(Some(outcome_of(&intent, intent.occurred_at, suggested)))
     }
 
     /// Runs one pinned step. Each arm is individually idempotent, so a resumed
@@ -185,9 +194,12 @@ impl Vault {
             MemberOnboardingStep::Validated => establish_workspace(self, intent, writer),
             MemberOnboardingStep::ActorLinked => link_member_actor(self, intent, writer),
             MemberOnboardingStep::MemberGranted => grant_member_bundle(self, intent, writer),
-            MemberOnboardingStep::CompanionBorn => {
-                birth_companion(self, intent, intent.required_companion()?, writer)
-            }
+            MemberOnboardingStep::CompanionBorn => match &intent.companion {
+                CompanionChoice::Work(companion) => {
+                    birth_companion(self, intent, companion, writer)
+                }
+                CompanionChoice::Bring { .. } => bring_companion(self, intent, writer),
+            },
             MemberOnboardingStep::MailboxBound => match &intent.delegated_mailbox {
                 Some(mailbox) => {
                     bind_delegated_mailbox(self, intent, mailbox, writer)?;
@@ -229,10 +241,10 @@ impl Vault {
                 "house_display_name must be 1..=256 bytes and contain no NUL",
             )?;
         }
-        let prior = read_preset(self, workspace_ref)?.ok_or(Error::EntityNotFound)?;
-        let vault_id = prior.workspace_vault_id;
+        let prior = read_preset_row(self, workspace_ref)?.ok_or(Error::EntityNotFound)?;
+        let vault_id = prior.preset.workspace_vault_id;
         let mut next = prior.clone();
-        next.house_display_name = display_name;
+        next.preset.house_display_name = display_name;
         let key = workspace_ref.to_owned();
         self.with_write_txn_grouped(|txn| {
             self.authorize_shared_vault_write_in_txn(
@@ -290,4 +302,11 @@ impl Vault {
         }
         Ok(entries)
     }
+}
+
+/// Whether the policy in force now recommends a work companion to `intent`'s
+/// member, who brought her own. Advisory: it never refuses.
+fn work_companion_suggested(vault: &Vault, intent: &MemberOnboardingIntent) -> Result<bool> {
+    Ok(read_preset_row(vault, &intent.workspace.workspace_ref)?
+        .is_some_and(|row| row.work_companion.suggests_against(&intent.companion)))
 }

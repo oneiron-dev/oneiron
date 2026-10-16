@@ -10,7 +10,7 @@ use crate::error::RecordError;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 
 /// How a member speaks in a room. Engine upkeep holds neither role.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RoomSpeakingRole {
     /// Holds the room's speaking duty.
@@ -20,7 +20,7 @@ pub enum RoomSpeakingRole {
 }
 
 /// Who holds a room's speaking duty now.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RoomHosting {
     /// The nearest present leader, when exactly one is that near.
     pub host: Option<EntityId>,
@@ -31,7 +31,7 @@ pub struct RoomHosting {
 }
 
 /// A member's reading of its room's hosting and of its own speaking role.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RoomStanding {
     pub hosting: RoomHosting,
     /// `None` for an actor that speaks as no persona.

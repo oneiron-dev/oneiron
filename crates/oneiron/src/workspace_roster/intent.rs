@@ -55,16 +55,6 @@ impl WorkspaceRosterPreset {
     }
 }
 
-impl RawValue for WorkspaceRosterPreset {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(&preset_value(self))?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_preset(bytes)?)
-    }
-}
-
 /// The minimum membership a workspace member receives.
 ///
 /// Role and preset are carried rather than hardcoded so the door can REJECT a
@@ -79,8 +69,9 @@ pub struct MemberGrantBundle {
     pub role: FederationGrantRole,
     /// Must be [`FederationGrantPreset::Member`].
     pub preset: FederationGrantPreset,
-    /// Must name the required [`CompanionBirthIntent::profile_grant_ref`].
-    /// `None` is rejected during intent validation.
+    /// Names the work companion's [`CompanionBirthIntent::profile_grant_ref`],
+    /// and is `None` exactly when the member brings her own companion: a
+    /// brought companion's profile grant already exists and is not reminted.
     pub companion_profile_grant_ref: Option<EntityId>,
 }
 
@@ -109,6 +100,79 @@ pub struct CompanionBirthIntent {
     pub actor_definition: AgentDefinition,
     /// Display name for this companion; written into `actor_definition`.
     pub display_name: String,
+}
+
+/// How a member's companion enters the workspace (ONEIRON-ARCH-0063
+/// `work_companion`). A companion is a person everywhere and an agent only
+/// where she holds the pen: either way she is one someone, never a mode of
+/// her member.
+///
+/// Not `Eq` for the same reason as [`MemberOnboardingIntent`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompanionChoice {
+    /// The member brings the companion she already has. Her PERSON, its
+    /// substrate, her actor and its anchor stand as they are, and the
+    /// member's existing companion-profile grant must already name her:
+    /// nothing is reminted and the personal vault is not annexed. Only the
+    /// work facet she wears here is associated.
+    Bring {
+        /// The companion's existing `PERSON`.
+        person: EntityId,
+        /// The companion's existing `AGENT_DEF` actor, anchored to `person`.
+        actor: EntityId,
+        /// The existing work `FACET` she wears in this workspace.
+        work_facet: EntityId,
+        /// The member's own authenticated consent to bring her, revalidated
+        /// in the transaction that binds her. No part of the intent digest:
+        /// a retry under a fresh authentication is the same request.
+        proof: AuthenticatedOwner,
+    },
+    /// A work companion born for this workspace.
+    Work(CompanionBirthIntent),
+}
+
+impl CompanionChoice {
+    /// The companion `PERSON`, brought or born.
+    #[must_use]
+    pub fn person_ref(&self) -> EntityId {
+        match self {
+            Self::Bring { person, .. } => *person,
+            Self::Work(birth) => birth.person_ref,
+        }
+    }
+
+    /// The companion's `AGENT_DEF` actor, brought or born.
+    #[must_use]
+    pub fn actor_ref(&self) -> EntityId {
+        match self {
+            Self::Bring { actor, .. } => *actor,
+            Self::Work(birth) => birth.actor_ref,
+        }
+    }
+
+    /// The work `FACET` the companion wears in this workspace.
+    #[must_use]
+    pub fn work_facet_ref(&self) -> EntityId {
+        match self {
+            Self::Bring { work_facet, .. } => *work_facet,
+            Self::Work(birth) => birth.work_facet_ref,
+        }
+    }
+
+    /// The birth, when this is a work companion.
+    #[must_use]
+    pub fn birth(&self) -> Option<&CompanionBirthIntent> {
+        match self {
+            Self::Bring { .. } => None,
+            Self::Work(birth) => Some(birth),
+        }
+    }
+
+    /// Whether the member brings her own companion.
+    #[must_use]
+    pub fn is_bring(&self) -> bool {
+        matches!(self, Self::Bring { .. })
+    }
 }
 
 /// Optional delegated-mailbox step.
@@ -177,8 +241,10 @@ pub struct MemberOnboardingIntent {
     pub work_facet_ref: EntityId,
     /// The minimum membership bundle.
     pub grant_bundle: MemberGrantBundle,
-    /// Required quiz-named companion birth; `None` is rejected before writes.
-    pub companion_birth: Option<CompanionBirthIntent>,
+    /// The member's companion: brought, or born as a work companion. The
+    /// workspace's `work_companion` policy decides which it admits, read in
+    /// the transaction that binds her, never from this intent.
+    pub companion: CompanionChoice,
     /// Optional delegated mailbox.
     pub delegated_mailbox: Option<DelegatedMailboxOnboarding>,
     /// Event time stamped into every record this onboarding writes.
@@ -193,14 +259,18 @@ impl MemberOnboardingIntent {
             "onboarding_id must be 1..=256 bytes and contain no NUL",
         )?;
         self.workspace.validate()?;
-        let companion = self.required_companion()?;
         self.validate_grant_bundle()?;
-        validate_name(
-            &companion.display_name,
-            "companion display_name must be 1..=256 bytes and contain no NUL",
-        )?;
-        if companion.display_name.trim().is_empty() {
-            return Err(invalid("companion display_name must not be blank"));
+        if let Some(companion) = self.companion.birth() {
+            validate_name(
+                &companion.display_name,
+                "companion display_name must be 1..=256 bytes and contain no NUL",
+            )?;
+            if companion.display_name.trim().is_empty() {
+                return Err(invalid("companion display_name must not be blank"));
+            }
+        }
+        if self.companion.person_ref() == self.person_ref {
+            return Err(invalid("a member is not her own companion"));
         }
         if let Some(mailbox) = &self.delegated_mailbox {
             mailbox.validate()?;
@@ -209,12 +279,6 @@ impl MemberOnboardingIntent {
             }
         }
         self.validate_minted_ids()
-    }
-
-    pub(super) fn required_companion(&self) -> Result<&CompanionBirthIntent> {
-        self.companion_birth
-            .as_ref()
-            .ok_or_else(|| invalid("every onboarded principal requires a quiz-named companion"))
     }
 
     pub(super) fn validate_grant_bundle(&self) -> Result<()> {
@@ -229,10 +293,10 @@ impl MemberOnboardingIntent {
         // agree. Preferring one silently would let a caller believe it minted a
         // grant that the other field says does not exist.
         let bundle_ref = self.grant_bundle.companion_profile_grant_ref;
-        let birth_ref = self.companion_birth.as_ref().map(|c| c.profile_grant_ref);
+        let birth_ref = self.companion.birth().map(|c| c.profile_grant_ref);
         if bundle_ref != birth_ref {
             return Err(invalid(
-                "companion_profile_grant_ref must match the requested companion birth",
+                "companion_profile_grant_ref must match the work companion birth, or be absent for a brought companion",
             ));
         }
         Ok(())
@@ -252,13 +316,23 @@ impl MemberOnboardingIntent {
             self.workspace.house_actor_ref,
         ];
         referenced.extend(self.workspace.house_identity_ref);
-        if let Some(companion) = &self.companion_birth {
-            minted.extend([
-                companion.person_ref,
-                companion.actor_ref,
-                companion.profile_grant_ref,
-            ]);
-            referenced.push(companion.work_facet_ref);
+        match &self.companion {
+            CompanionChoice::Work(companion) => {
+                minted.extend([
+                    companion.person_ref,
+                    companion.actor_ref,
+                    companion.profile_grant_ref,
+                ]);
+                referenced.push(companion.work_facet_ref);
+            }
+            // A brought companion is referenced, never minted: her ids must
+            // not alias anything this onboarding writes.
+            CompanionChoice::Bring {
+                person,
+                actor,
+                work_facet,
+                ..
+            } => referenced.extend([*person, *actor, *work_facet]),
         }
         if let Some(mailbox) = &self.delegated_mailbox {
             minted.push(mailbox.identity_ref);
