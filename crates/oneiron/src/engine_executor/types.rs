@@ -243,8 +243,13 @@ pub trait JsCodeModeHost {
 
 /// Runtime seam for the CODE-1 plain-JS guest component.
 pub trait JsCodeModeRuntime {
-    fn bind_foreign_egress(&mut self, _relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Result<()> {
-        Err(crate::Error::InvalidConfig("runtime has no isolated foreign execution lane".into()))
+    fn bind_foreign_egress(
+        &mut self,
+        _relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<()> {
+        Err(crate::Error::InvalidConfig(
+            "runtime has no isolated foreign execution lane".into(),
+        ))
     }
 
     /// Executes one generated JS REPL step inside the sandbox boundary.

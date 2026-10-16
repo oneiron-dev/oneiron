@@ -841,9 +841,11 @@ impl Vault {
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )?;
             let fences_pass = |door: [&Scope; 3]| -> Result<bool> {
-                Ok(crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
-                    && self.epoch_fence_in(&txn, id, &raw, door, "read")?
-                    && self.text_fence_in(&txn, id, &raw, door, "read", |_| Ok(false))?)
+                Ok(
+                    crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
+                        && self.epoch_fence_in(&txn, id, &raw, door, "read")?
+                        && self.text_fence_in(&txn, id, &raw, door, "read", |_| Ok(false))?,
+                )
             };
             let withdrawn = crate::ports::withdrawn_in_txn(&self.store, &txn, &id)?;
             let allowed = !withdrawn
