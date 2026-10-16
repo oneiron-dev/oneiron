@@ -10,8 +10,8 @@ use crate::attempt_queue::{
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::{
-    CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TasksSection,
-    fold_up_status, one_line_token, task_is_acked, task_is_cancelled,
+    CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, fold_up_status,
+    one_line_token, task_is_acked, task_is_cancelled,
 };
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
@@ -125,15 +125,8 @@ fn cancel_rejection_pathology(record: &AttemptRecord) -> Option<CancelRejectionP
 
 /// Number of TASK ids fetched per sanctioned `entities_by_type_page` call.
 pub(super) const TASK_PRESENCE_PAGE_SIZE: usize = 256;
-/// Maximum TASK entity ids inspected for ONE board assembly. It bounds WORK;
-/// `TasksSection::RENDER_ROW_CAP` bounds tokens. A row beyond this prefix is
-/// hidden from the collapsed board, never gone — `describe` / `tasks.update`
-/// still reach it by id.
-pub(super) const TASK_PRESENCE_SCAN_CAP: usize = 4_096;
 
 const _: () = assert!(TASK_PRESENCE_PAGE_SIZE > 0);
-const _: () = assert!(TASK_PRESENCE_PAGE_SIZE <= TASK_PRESENCE_SCAN_CAP);
-const _: () = assert!(TasksSection::RENDER_ROW_CAP < TASK_PRESENCE_SCAN_CAP);
 
 #[derive(Debug)]
 pub(super) struct TaskPresenceSnapshot {
@@ -143,6 +136,8 @@ pub(super) struct TaskPresenceSnapshot {
     /// structured warnings before rendering the surviving rows.
     pub(super) read_failures: Vec<TaskPresenceReadFailure>,
     pub(super) scanned_task_entities: usize,
+    /// TASK index rows read, those passed over off this device too.
+    pub(super) index_rows_read: usize,
     /// `false` means the scan cap stopped the walk before the TASK type index
     /// ran out, so the projection is a PREFIX, not a census. Load-bearing
     /// honesty: the renderer marks its overflow count as a lower bound.
@@ -154,23 +149,31 @@ pub(super) fn task_presence(vault: &Vault) -> Result<TaskPresenceSnapshot> {
     task_presence_at(vault, crate::claim::CallerLocality::OnDevice)
 }
 
-/// The board's TASK presence for a reader at `locality`. Off this device a TASK a
-/// device-local world keeps is passed over before it takes a place in the
-/// scan, so neither the rows nor the scan cap count it (DEC-0005).
+/// The board's TASK presence for a reader at `locality`. It reads every TASK,
+/// however many the vault keeps, so no run of rows hides a live one (rule 5,
+/// F13 H222); past the threshold row the read raises the owner's check. Off
+/// this device a TASK a device-local world keeps is passed over before it
+/// takes a place in the rows (DEC-0005); the check counts it.
 pub(super) fn task_presence_at(
     vault: &Vault,
     locality: crate::claim::CallerLocality,
 ) -> Result<TaskPresenceSnapshot> {
-    task_presence_with_limits(
-        vault,
-        TASK_PRESENCE_PAGE_SIZE,
-        TASK_PRESENCE_SCAN_CAP,
-        locality,
-    )
+    let snapshot = task_presence_with_limits(vault, TASK_PRESENCE_PAGE_SIZE, usize::MAX, locality)?;
+    let txn = vault.store.env.read_txn()?;
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &txn,
+        crate::scan_check::EngineScan::TaskBoardRows,
+        &[],
+    )?;
+    drop(txn);
+    count.rows(snapshot.index_rows_read);
+    count.finish(vault);
+    Ok(snapshot)
 }
 
-/// Testable body: production uses the constants above; local tests inject small
-/// limits to force multi-page and scan-cap behaviour without a 100k-row vault.
+/// Testable body: production reads with no cap; local tests inject small
+/// limits to force multi-page and scan-cap behaviour.
 pub(super) fn task_presence_with_limits(
     vault: &Vault,
     page_size: usize,
@@ -182,11 +185,14 @@ pub(super) fn task_presence_with_limits(
         mut bare,
     } = job_backlinks(vault)?;
     let mut index_after: Option<EntityId> = None;
+    let mut index_rows_read = 0;
     let scan = scan_task_entity_pages(page_size, scan_cap, |after, limit| {
         if locality == crate::claim::CallerLocality::OnDevice {
-            return vault.entities_by_type_page(ENTITY_TYPE_TASK, after, limit);
+            let page = vault.entities_by_type_page(ENTITY_TYPE_TASK, after, limit)?;
+            index_rows_read += page.len();
+            return Ok(page);
         }
-        device_admitted_task_page(vault, &mut index_after, limit)
+        device_admitted_task_page(vault, &mut index_after, limit, &mut index_rows_read)
     })?;
 
     // Read-time clock: a consult past its deadline surfaces as expired from the
@@ -275,6 +281,21 @@ pub(super) fn task_presence_with_limits(
         }
     }
 
+    if locality != crate::claim::CallerLocality::OnDevice {
+        // Off this device, a job whose TASK a device-local world keeps stays
+        // withheld with that TASK (DEC-0005). Owners the rule lets through,
+        // missing ones included, still render as dangling bare jobs below.
+        let owners = realizing
+            .keys()
+            .filter_map(|task_hex| EntityId::from_hex(task_hex).ok())
+            .collect();
+        let readable: HashSet<EntityId> = vault.off_device_readable(owners)?.into_iter().collect();
+        realizing.retain(|task_hex, _| match EntityId::from_hex(task_hex) {
+            Err(_) => true,
+            Ok(owner) => readable.contains(&owner),
+        });
+    }
+
     if scan.source_exhausted {
         // P2 F7 (dangling backlink): every live realizing job must render
         // exactly once. A backlink naming no surviving intent (deleted /
@@ -309,6 +330,7 @@ pub(super) fn task_presence_with_limits(
         bare_jobs: bare,
         read_failures,
         scanned_task_entities: scan.scanned_task_entities,
+        index_rows_read,
         source_exhausted: scan.source_exhausted,
     };
     debug_assert!(

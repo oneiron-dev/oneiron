@@ -1520,3 +1520,105 @@ async fn contact_opt_out_family_supersession_retains_original_diff_after_edit() 
     assert_eq!(later["records"][1]["changes"][0]["before"], pinned_before);
     assert_eq!(later["records"][1]["changes"][0]["after"], pinned_after);
 }
+
+#[tokio::test]
+async fn a_turn_page_reads_a_bounded_run_of_edges_and_resumes_past_other_children() {
+    // F13 H47: 4,097 non-TURN children sort before the conversation's one
+    // TURN. A one-turn page reads a bounded run of edges and hands back a
+    // cursor, rather than reading every child to fill itself; following the
+    // cursor reaches the turn, and the exact count still counts it.
+    let (_dir, server) = test_server();
+    let (status, conversation) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            "/v1/core/conversations",
+            json!({"body": {"name": "long session"}}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{conversation}");
+    let conversation_id = conversation["id"].as_str().expect("id").to_owned();
+    let parent = oneiron::EntityId::from_hex(&conversation_id).expect("conversation id");
+    for chunk in 0..9_u16 {
+        let mut batch = server.vault.batch();
+        for index in (chunk * 512)..((chunk + 1) * 512).min(4_097) {
+            let [hi, lo] = index.to_be_bytes();
+            let child =
+                oneiron::EntityId::from_bytes([0, 0, 0, 0, hi, lo, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+                    .expect("child id");
+            batch = batch
+                .put(
+                    &child,
+                    oneiron::registry::ENTITY_TYPE_EVENT,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"event",
+                )
+                .edge(&child, oneiron::EdgeKind::ChildOf, &parent, 1.0);
+        }
+        batch.commit().expect("seed children");
+    }
+    let (status, turn) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            &format!("/v1/core/conversations/{conversation_id}/turns"),
+            json!({
+                "learned_at": 2_u64,
+                "occurred_start": 2_u64,
+                "occurred_end": 2_u64,
+                "body": {"txt": "the one turn", "spkr": "assistant", "at": 2_u64}
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{turn}");
+
+    let page = |after: Option<String>| {
+        let after = after.map_or_else(String::new, |after| format!("&after={after}"));
+        Request::builder()
+            .uri(format!(
+                "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none{after}"
+            ))
+            .body(Body::empty())
+            .expect("request")
+    };
+    let (status, first) = route_json(server.clone(), page(None)).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["items"].as_array().map(Vec::len), Some(0), "{first}");
+    let mut cursor = first["nextCursor"].as_str().map(str::to_owned);
+    assert!(
+        cursor.is_some(),
+        "a page that stopped early carries a cursor: {first}"
+    );
+    let mut listed = Vec::new();
+    for _ in 0..4 {
+        let Some(after) = cursor.take() else { break };
+        let (status, body) = route_json(server.clone(), page(Some(after))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        listed.extend(
+            body["items"]
+                .as_array()
+                .expect("items")
+                .iter()
+                .map(|item| item["id"].clone()),
+        );
+        cursor = body["nextCursor"].as_str().map(str::to_owned);
+    }
+    assert_eq!(listed, vec![turn["id"].clone()]);
+    assert_eq!(cursor, None);
+
+    let (status, counted) = route_json(
+        server,
+        Request::builder()
+            .uri(format!(
+                "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=exact"
+            ))
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{counted}");
+    assert_eq!(counted["meta"]["total"], Value::from(1), "{counted}");
+}

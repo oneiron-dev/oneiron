@@ -137,6 +137,8 @@ pub(crate) enum CoreContextPackStateKind {
     Ok,
     MissingData,
     LowConfidence,
+    /// The reader's profile takes no optional memory for this task.
+    Skipped,
 }
 
 /// Stable context-pack empty-result reason.
@@ -147,6 +149,7 @@ pub(crate) enum CoreContextPackStateReason {
     NoData,
     AllActivated,
     BelowThreshold,
+    SkippedByProfile,
 }
 
 /// Score component that contributed to a context-pack result.
@@ -555,6 +558,7 @@ pub(crate) fn core_context_pack_state(
     CoreContextPackState {
         kind: match empty.reason {
             oneiron::EmptyReason::BelowThreshold => CoreContextPackStateKind::LowConfidence,
+            oneiron::EmptyReason::SkippedByProfile => CoreContextPackStateKind::Skipped,
             oneiron::EmptyReason::FilterMatchedNone
             | oneiron::EmptyReason::NoData
             | oneiron::EmptyReason::AllActivated => CoreContextPackStateKind::MissingData,
@@ -573,6 +577,7 @@ pub(crate) fn core_context_pack_state_reason(
         oneiron::EmptyReason::NoData => CoreContextPackStateReason::NoData,
         oneiron::EmptyReason::AllActivated => CoreContextPackStateReason::AllActivated,
         oneiron::EmptyReason::BelowThreshold => CoreContextPackStateReason::BelowThreshold,
+        oneiron::EmptyReason::SkippedByProfile => CoreContextPackStateReason::SkippedByProfile,
     }
 }
 

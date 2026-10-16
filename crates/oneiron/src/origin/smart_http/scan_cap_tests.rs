@@ -10,15 +10,15 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::git_wire::GitWireRepo;
 use crate::origin::publication::OriginKeepRefKind;
-use crate::origin::scan_check::OriginScan;
+use crate::scan_check::EngineScan;
 
 /// The row each test lowers a scan to; every fixture reads one row past it.
 const ROW: u64 = 2;
 
-fn checks_raised(vault: &Vault, scan: OriginScan) -> usize {
+fn checks_raised(vault: &Vault, scan: EngineScan) -> usize {
     vault
-        .origin_scan_checks()
-        .expect("origin scan checks")
+        .scan_checks()
+        .expect("scan checks")
         .iter()
         .filter(|check| check.scan == scan.code())
         .count()
@@ -54,10 +54,8 @@ fn publish_refs_past_the_row(vault: &Vault, root: &Path) -> RepoRef {
 #[test]
 fn a_repository_keeps_serving_past_every_scan_row() {
     let (_vault_dir, vault) = temp_vault();
-    for scan in OriginScan::ALL {
-        vault
-            .set_origin_scan_threshold(scan, ROW)
-            .expect("lower the row");
+    for scan in EngineScan::ORIGIN {
+        vault.set_scan_threshold(scan, ROW).expect("lower the row");
     }
     let (source, repo_dir, first, second) = served_repo(&vault);
     let origin = PublicationTestOrigin::start(&vault, EntityId::now());
@@ -108,9 +106,9 @@ fn a_repository_keeps_serving_past_every_scan_row() {
         1 + branches.len(),
         "each published name has its slot"
     );
-    assert_eq!(checks_raised(&vault, OriginScan::VisibleRefRows), 1);
+    assert_eq!(checks_raised(&vault, EngineScan::VisibleRefRows), 1);
     assert_eq!(
-        checks_raised(&vault, OriginScan::ReceivePackIntents),
+        checks_raised(&vault, EngineScan::ReceivePackIntents),
         0,
         "the journal scan read only pending pushes"
     );
@@ -133,32 +131,30 @@ enum Door {
 #[test]
 fn no_origin_scan_refuses_for_its_row_count() {
     let mut refused = Vec::new();
-    for scan in OriginScan::ALL {
+    for scan in EngineScan::ORIGIN {
         let (_vault_dir, vault) = temp_vault();
-        vault
-            .set_origin_scan_threshold(scan, ROW)
-            .expect("lower the row");
+        vault.set_scan_threshold(scan, ROW).expect("lower the row");
         let (_repo_dir, root, oid) = seeded_repo();
         let past = usize::try_from(ROW + 1).expect("row fits usize");
         let wire = GitWire::new(&vault).expect("git wire");
         let door = match scan {
-            OriginScan::ReceivePackIntents => {
+            EngineScan::ReceivePackIntents => {
                 for index in 0..past {
                     let name = format!("refs/heads/declined-{index}");
                     fixture_intent(&vault, &root, vec![ref_update(&name, None, Some(&oid))]);
                 }
                 Door::Intents
             }
-            OriginScan::PublicationRows => {
+            EngineScan::PublicationRows => {
                 let repo = publish_refs_past_the_row(&vault, &root);
                 Door::PublicationIds(landed_repo_id(&vault, &repo, &root))
             }
-            OriginScan::VisibleRefRows => {
+            EngineScan::VisibleRefRows => {
                 let repo = publish_refs_past_the_row(&vault, &root);
                 let repo_id = landed_repo_id(&vault, &repo, &root);
                 Door::Projection(repo_id, wire.open_repo(repo, &root).expect("handle"))
             }
-            OriginScan::KeepOwnerRows => {
+            EngineScan::KeepOwnerRows => {
                 let handle = wire
                     .open_repo(local_repo_ref(&root, &oid).expect("repo ref"), &root)
                     .expect("handle");
@@ -178,6 +174,7 @@ fn no_origin_scan_refuses_for_its_row_count() {
                 let repo_id = lfs_repo_id(&handle.identity().as_hex()).expect("repo id");
                 Door::Census(repo_id, handle)
             }
+            other => unreachable!("{} is no origin scan", other.code()),
         };
         for _ in 0..2 {
             let read = match &door {
@@ -281,7 +278,7 @@ fn a_settled_row_a_crash_left_is_pruned_on_the_next_request() {
     drop(vault);
     let reopened = Arc::new(Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen"));
     reopened
-        .set_origin_scan_threshold(OriginScan::ReceivePackIntents, ROW)
+        .set_scan_threshold(EngineScan::ReceivePackIntents, ROW)
         .expect("lower the row");
     assert_eq!(advertise(&reopened, "git-upload-pack").status, 200);
     assert_eq!(
