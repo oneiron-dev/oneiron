@@ -40,14 +40,17 @@
 //!   it. The advertisement never offers `push-cert`, whatever the repository's
 //!   config says, and a request whose command section carries one is refused
 //!   before the backend reads a byte. That section, up to its first flush, is
-//!   the one part of a request body read ahead, under a fixed bound
-//!   (`ORIGIN_MAX_COMMAND_SECTION_BYTES`). A body the backend would inflate
+//!   the one part of a request body read ahead. It grows with the refs a push
+//!   names, so it is held whatever its size: in memory up to
+//!   `ORIGIN_COMMAND_SECTION_MEMORY_BYTES`, then in an unnamed file in the
+//!   door root ([`HeldBytes`]), above the disk floor its host keeps
+//!   ([`ExchangeBounds::spill_floor`]). A body the backend would inflate
 //!   (gzip, as JGit sends one) is inflated here instead, once, so the section
 //!   read is the one receive-pack reads; the backend gets it plain.
 //! - **Only journalable refs move.** The door window refuses a push whose
 //!   proposed names the landing could not journal — names outside the GitWire
-//!   ref grammar, a name proposed twice, or a batch larger than the GitWire
-//!   publication bound — WHILE the objects are still quarantined. The landing's
+//!   ref grammar or a name proposed twice — WHILE the objects are still
+//!   quarantined. A push may name any number of refs. The landing's
 //!   own parse is the last line of defence, not the first: discovering an
 //!   unpublishable name after `git receive-pack` has moved refs would leave a
 //!   mutated repository with no receipt.
@@ -84,11 +87,13 @@ mod door;
 mod door_window;
 mod evidence;
 mod exchange_idle;
+mod held;
 mod hooks;
 mod intent;
 mod landing;
 mod landing_lfs;
 mod maintain;
+mod owner_pins;
 mod paths;
 mod serve;
 mod serve_cmd;
@@ -98,6 +103,7 @@ pub use self::door::{DoorAdmissionStamp, DoorSeam};
 pub use self::door_window::{DoorWindowReport, DoorWindowVerdict};
 pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};
 pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
+pub use self::held::{AtDiskFloor, HeldBytes, SpillFloor};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
 pub use self::landing::{
@@ -107,10 +113,11 @@ pub use self::maintain::{
     SERVED_REPOSITORY_GC_TIMEOUT, ServedRepositoryMaintenance, maintain_served_repositories,
 };
 pub use self::paths::{
-    DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME, ORIGIN_MAX_REF_UPDATES,
-    ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REFUSED_REF_PREFIX, ORIGIN_REPO_DIR_SUFFIX,
-    ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_IDLE_TIMEOUT, SERVE_REQUEST_ENV_KEYS,
-    origin_repo_dir, origin_serving_root, validate_repo_name,
+    DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME,
+    ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REF_UPDATE_BATCH, ORIGIN_REFUSED_REF_PREFIX,
+    ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_IDLE_TIMEOUT,
+    SERVE_REQUEST_ENV_KEYS, origin_door_root, origin_repo_dir, origin_serving_root,
+    validate_repo_name,
 };
 pub use self::serve::{
     ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_with_authority,

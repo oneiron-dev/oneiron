@@ -1,6 +1,7 @@
 //! Native-human routing, follow-up cursor lifecycle and the wake driver.
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use rmpv::Value;
 
@@ -23,12 +24,13 @@ use crate::task_verb::{
 };
 
 use super::model::{
-    FOLLOWUP_WAKE_LIMIT, HUMAN_FOLLOWUP_VERB, HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION,
-    HumanFollowupDispatch, HumanFollowupStage, HumanTaskError, HumanTaskFollowupRecord,
-    HumanTaskResult, NativeHumanRoute, REBUILD_PAGE, REMINDER_AFTER_SECONDS,
+    FOLLOWUP_SWEEP_ROWS, FOLLOWUP_WAKE_LIMIT, HUMAN_FOLLOWUP_VERB,
+    HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION, HumanFollowupDispatch, HumanFollowupStage, HumanTaskError,
+    HumanTaskFollowupRecord, HumanTaskResult, NativeHumanRoute, REBUILD_PAGE,
+    REMINDER_AFTER_SECONDS,
 };
 use super::storage::{
-    FOLLOWUPS, KEY_PARTY_KEY, followup_record_in_txn, put_followup_record_in_txn,
+    FOLLOWUP_SWEEP, FOLLOWUPS, KEY_PARTY_KEY, followup_record_in_txn, put_followup_record_in_txn,
 };
 
 // ── native-human resolution ─────────────────────────────────────────────────
@@ -305,7 +307,8 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         Self { vault }
     }
 
-    /// Runs every follow-up whose cursor is due at `now`, up to `limit`.
+    /// Runs the follow-ups whose cursors are due at `now`, up to `limit`, from
+    /// one bounded run of cursors that resumes where the last pass stopped.
     ///
     /// Ordering is deliberate and mirrors ONE-1699's expiry sweep: the outbound
     /// is scheduled FIRST and the cursor advances after. A crash in between
@@ -315,7 +318,8 @@ impl<'a> HumanTaskFollowupDriver<'a> {
     /// the person twice.
     pub fn run_due(&self, now: u64, limit: usize) -> Result<Vec<HumanFollowupDispatch>> {
         let mut dispatched = Vec::new();
-        for record in self.due_records(now, limit)? {
+        let (due, read_after, resume_after) = self.due_records(now, limit)?;
+        for record in due {
             // A settled TASK closes its own loop: the authoritative synced fact
             // wins over anything the local cursor believed.
             let ask_settled = if let Some(owner) = task_create_owner(self.vault, record.task_ref)? {
@@ -373,6 +377,17 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             self.advance(&record, next_stage, interval, now, &dispatch.intent_ref)?;
             dispatched.push(dispatch);
         }
+        // Moved only once the run's decisions are made: a pass that fails
+        // part way re-reads the same run.
+        if resume_after != read_after {
+            self.vault
+                .with_write_txn_grouped(|wtxn| match resume_after {
+                    Some(task_ref) => FOLLOWUP_SWEEP.put(&self.vault.store, wtxn, &(), &task_ref),
+                    None => FOLLOWUP_SWEEP
+                        .delete(&self.vault.store, wtxn, &())
+                        .map(|_| ()),
+                })?;
+        }
         Ok(dispatched)
     }
 
@@ -416,15 +431,41 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         Ok(rebuilt)
     }
 
-    fn due_records(&self, now: u64, limit: usize) -> Result<Vec<HumanTaskFollowupRecord>> {
-        Ok(human_followup_records(self.vault)?
-            .into_iter()
-            .filter(|record| {
-                record.stage != HumanFollowupStage::Completed
-                    && record.next_due_at.is_some_and(|due| due <= now)
-            })
-            .take(limit)
-            .collect())
+    /// Up to `limit` due cursors from one run of at most
+    /// [`FOLLOWUP_SWEEP_ROWS`] cursors after the one the last pass read; that
+    /// TASK; and where the next pass resumes: `None` once the run reached the
+    /// end, so the next pass starts from the first cursor again.
+    fn due_records(
+        &self,
+        now: u64,
+        limit: usize,
+    ) -> Result<(
+        Vec<HumanTaskFollowupRecord>,
+        Option<EntityId>,
+        Option<EntityId>,
+    )> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let after = FOLLOWUP_SWEEP.get(&self.vault.store, &rtxn, &())?;
+        let lower = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+        let mut due = Vec::new();
+        if limit == 0 {
+            return Ok((due, after, after));
+        }
+        for (read, row) in FOLLOWUPS
+            .iter_range(&self.vault.store, &rtxn, lower, Bound::Unbounded)?
+            .enumerate()
+        {
+            let (task_ref, record) = row?;
+            if record.stage != HumanFollowupStage::Completed
+                && record.next_due_at.is_some_and(|due_at| due_at <= now)
+            {
+                due.push(record);
+            }
+            if due.len() >= limit || read + 1 >= FOLLOWUP_SWEEP_ROWS {
+                return Ok((due, after, Some(task_ref)));
+            }
+        }
+        Ok((due, after, None))
     }
 
     /// Schedules one follow-up notification through the OF-327 chokepoint.

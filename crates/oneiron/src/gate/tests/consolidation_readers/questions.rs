@@ -54,6 +54,7 @@ impl GraphAnswerer for Answerer {
             probability: 0.8,
             provider: provider(),
             cost_per_thousand: 0.25,
+            paired: None,
         }))
     }
 }
@@ -134,6 +135,7 @@ pub(super) fn standing_answer_source(
             probability: Some(0.9),
             evidence: vec![*id],
             providers: vec![provider()],
+            paired: Vec::new(),
             source_frontier: pin,
         };
         match backfill_standing_answer(v, principal, question, 1, actor, answer, 10) {
@@ -174,6 +176,7 @@ pub(super) fn question_refresh_source(
                     answer: DecisionAnswer::Noul(true),
                     probability: Some(0.8),
                     providers: vec![provider()],
+                    paired: Vec::new(),
                 })
             },
         )?;

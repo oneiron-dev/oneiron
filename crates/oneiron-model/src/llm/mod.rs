@@ -33,6 +33,7 @@ pub use self::scope::{Scope, ScopeResource};
 mod catalog;
 mod error;
 mod fallback;
+pub mod limit;
 pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
 mod failure_policy;
 pub use failure_policy::{DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute};
@@ -44,6 +45,8 @@ pub use failure_policy::{
     parse_failure_rules,
 };
 pub mod image;
+mod label_read;
+pub use label_read::{LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet};
 mod model_id;
 mod protocol;
 mod safeguard;

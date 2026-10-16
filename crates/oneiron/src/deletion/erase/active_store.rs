@@ -177,6 +177,7 @@ impl Vault {
         crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
         crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
+        crate::comm::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
         let Some(entity_record) =
             crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
         else {

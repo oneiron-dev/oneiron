@@ -32,7 +32,7 @@ pub(crate) use ruling_integrity::{
 mod pending_act;
 mod shared_creation;
 pub use pending_act::{
-    PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
+    ActExecution, PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
 };
 pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};

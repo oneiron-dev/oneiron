@@ -6,6 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::Store;
@@ -266,6 +267,10 @@ impl Store {
         Ok(records)
     }
 
+    /// The first `limit` pending gate consents, oldest proposal first. A
+    /// deferred proposal enters the tray late with its first proposal's
+    /// time, so the read takes every row and raises a check past its
+    /// threshold (F13).
     pub(crate) fn pending_gate_consents_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -275,13 +280,17 @@ impl Store {
             return Ok(Vec::new());
         }
 
+        let mut count = ScanCount::start(self, txn, EngineScan::PendingGateConsentRows, &[])?;
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        for (claim_id, record) in TRAY.scan(self, txn)? {
+        for row in TRAY.iter_from(self, txn, &[])? {
+            count.row();
+            let (claim_id, record) = row?;
             if record.claim_id != claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
             records.push(record);
         }
+        count.defer(self);
 
         records.sort_by(|left, right| {
             left.created_at

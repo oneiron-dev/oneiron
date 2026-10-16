@@ -1156,6 +1156,7 @@ fn motivating_shape_replay_reaches_each_disposition_without_speculation() {
             steps: vec![stemma::edit::EditStep::CommentCreate {
                 block_id: p.id.clone(),
                 expect: "$150".to_string(),
+                occurrence: None,
                 semantic_hash: None,
                 body: "Please confirm this figure.".to_string(),
                 author: Some("Reviewer".to_string()),

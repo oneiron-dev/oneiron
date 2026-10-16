@@ -273,6 +273,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
         verdict: DoorWindowVerdict::Clean,
         ref_updates: outcome.ref_updates.clone(),
         lfs_pointers: Vec::new(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     let attribution = vault

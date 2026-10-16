@@ -47,6 +47,7 @@ pub struct Tier1Observation<'vault> {
     pub(super) vault: &'vault Vault,
     pub(super) id: EntityId,
     pub(super) nonce: [u8; 16],
+    pub(super) kind: WitnessKind,
 }
 
 impl Vault {
@@ -69,7 +70,7 @@ impl Vault {
         }
         let observed_at = i64::try_from(event.valid_from)
             .map_err(|_| Error::ArithmeticOverflow("failure signal observation time"))?;
-        self.store.diagnostics.failure_signals.register(
+        self.register_tier1_witness(
             id,
             WitnessKind::Diagnostic {
                 body_hash: *blake3::hash(&body).as_bytes(),
@@ -188,7 +189,7 @@ impl Vault {
         }
         let observed_at = i64::try_from(at_ms / 1_000)
             .map_err(|_| Error::ArithmeticOverflow("failure signal observation time"))?;
-        self.store.diagnostics.failure_signals.register(
+        self.register_tier1_witness(
             claim_id,
             WitnessKind::Execution {
                 body_hash: *blake3::hash(&body).as_bytes(),
@@ -213,6 +214,7 @@ impl Vault {
                 vault: self,
                 id,
                 nonce: entry.nonce,
+                kind: entry.kind,
             }))
     }
 }

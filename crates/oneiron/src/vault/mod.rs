@@ -42,6 +42,7 @@ pub use self::doctor_manifest::{
 pub(crate) use self::doctor_manifest::{
     ensure_text_index_manifest_matches_wtxn, verify_text_index_manifest, write_text_index_manifest,
 };
+pub use self::edges::IdScanPage;
 #[cfg(test)]
 pub(crate) use self::edges::edge_kind_prefix;
 pub(crate) use self::edges::{
@@ -74,6 +75,9 @@ pub struct Vault {
     pub(crate) world_keys: crate::world_keys::WorldKeySession,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
+    /// Orders a trusted-contact notice's last consent read and send against
+    /// revocation and re-naming.
+    pub(crate) trusted_contact_send_order: std::sync::RwLock<()>,
     /// One housekeeping pass at a time on this handle.
     pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     #[cfg(feature = "sync")]

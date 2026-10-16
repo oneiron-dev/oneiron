@@ -120,7 +120,7 @@ pub(crate) fn row_deletion_marked(
     };
     Ok(!(EntityMetadataHeader::parse(raw).is_some_and(|header| {
         crate::registry::is_delete_protected_engine_record(header.entity_type)
-    }) || *id == crate::dreamer_runner::authority::dreamer_actor_id()?))
+    }) || crate::dreamer_runner::authority::is_base_agent_actor(id)?))
 }
 
 /// Whether any world window of `month` holds a pending tombstone marker.
@@ -274,9 +274,6 @@ pub enum MemoryOperationKind {
     DeleteEntity,
 }
 
-/// Cap for renderer timeline expansion across supersession edges.
-const MAX_MEMORY_TIMELINE_RECORDS: usize = 10_000;
-
 fn memory_timeline_record_cmp(
     left: &MemoryTimelineRecord,
     right: &MemoryTimelineRecord,
@@ -299,12 +296,23 @@ fn memory_timeline_record_cmp(
 
 impl Vault {
     /// Returns stable, renderer-facing data for the supersession chain that
-    /// contains `anchor`.
+    /// contains `anchor`: every record of it. Past the threshold row of an
+    /// anchor's chain the walk raises one check and reads on (rule 5).
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
+        let mut count = {
+            let txn = self.store.env.read_txn()?;
+            crate::scan_check::ScanCount::start(
+                &self.store,
+                &txn,
+                crate::scan_check::EngineScan::TimelineRecords,
+                anchor.as_bytes(),
+            )?
+        };
         let mut ids = std::collections::BTreeSet::new();
         let mut edges = std::collections::BTreeMap::new();
         let mut stack = vec![*anchor];
         ids.insert(*anchor);
+        count.row();
 
         while let Some(id) = stack.pop() {
             let older = self.targets(&id, EdgeKind::Supersedes, None)?;
@@ -312,13 +320,12 @@ impl Vault {
             edges.insert(id, (older.clone(), newer.clone()));
             for next in older.into_iter().chain(newer) {
                 if ids.insert(next) {
-                    if ids.len() > MAX_MEMORY_TIMELINE_RECORDS {
-                        return Err(Error::IndexOverflow("memory_timeline"));
-                    }
+                    count.row();
                     stack.push(next);
                 }
             }
         }
+        count.finish(self);
 
         let mut records = Vec::with_capacity(ids.len());
         for id in ids {

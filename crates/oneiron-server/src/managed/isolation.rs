@@ -4,13 +4,18 @@ use std::path::Path;
 /// Rows are `uid<TAB>vault-name<TAB>canonical-data-directory`.
 #[cfg(target_os = "linux")]
 const UID_REGISTRY: &str = "/etc/oneiron/vault-uids";
-#[derive(Clone, Copy, Debug)]
+/// What the probe proved, about the one directory object it holds open.
+#[derive(Debug)]
 pub(super) struct IsolationEvidence {
     pub fscrypt: bool,
     pub dedicated_uid: bool,
+    /// The probed directory, held open so its `(st_dev, st_ino)` stays this
+    /// object's: the open binds it, never what the path names by then. `None`
+    /// when the probe opened nothing; such evidence never counts as isolation.
+    pub directory: Option<std::fs::File>,
 }
 impl IsolationEvidence {
-    pub(super) fn admits(self) -> bool {
+    pub(super) fn admits(&self) -> bool {
         self.fscrypt && self.dedicated_uid
     }
 }
@@ -31,25 +36,26 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
         size: u64,
         bytes: [u8; 24],
     }
-    let absent = IsolationEvidence {
+    let absent = || IsolationEvidence {
         fscrypt: false,
         dedicated_uid: false,
+        directory: None,
     };
     let Ok(canonical) = path.canonicalize() else {
-        return absent;
+        return absent();
     };
     if canonical != path || !path.is_absolute() {
-        return absent;
+        return absent();
     }
     let Ok(dir) = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
         .open(path)
     else {
-        return absent;
+        return absent();
     };
     let Ok(metadata) = dir.metadata() else {
-        return absent;
+        return absent();
     };
     let mut policy = Policy {
         size: 24,
@@ -83,6 +89,7 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
             && metadata.uid() == uid
             && metadata.mode() & 0o077 == 0
             && allocated() == Some(true),
+        directory: Some(dir),
     }
 }
 #[cfg(not(target_os = "linux"))]
@@ -90,6 +97,7 @@ pub(super) fn probe(_path: &Path, _name: &str) -> IsolationEvidence {
     IsolationEvidence {
         fscrypt: false,
         dedicated_uid: false,
+        directory: None,
     }
 }
 #[cfg(any(target_os = "linux", test))]
@@ -129,7 +137,8 @@ mod tests {
             assert_eq!(
                 IsolationEvidence {
                     fscrypt,
-                    dedicated_uid
+                    dedicated_uid,
+                    directory: None,
                 }
                 .admits(),
                 expected

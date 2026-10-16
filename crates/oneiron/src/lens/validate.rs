@@ -14,7 +14,7 @@ use super::generated_ui::{GENERATED_UI_WIRE_VERSION, GeneratedUiSurfaceCapabilit
 use super::self_ui::SelfUiOption;
 use super::wire_ids::{MAX_LENS_COLLECTION_ITEMS, MAX_LENS_TREE_DEPTH, SelfUiOptionValue};
 
-const MAX_LENS_TOKEN_BYTES: usize = 128;
+pub(super) const MAX_LENS_TOKEN_BYTES: usize = 128;
 pub(super) const MAX_LENS_NODE_COUNT: usize = 4096;
 
 pub(super) fn validate_lens_tree(root: &LensNode) -> Result<()> {

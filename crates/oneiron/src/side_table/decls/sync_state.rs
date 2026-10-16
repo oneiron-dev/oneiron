@@ -26,8 +26,8 @@ side_tables! {
     /// signer. Key: string.
     AUTHLOG_INGEST_COUNT: SyncState b"authlog:ingest_count:" Raw;
     /// Device-local authority observation policy: stale-roster window, ingest window, ingest check
-    /// threshold, log signer bound, log headroom rows and handoffs (6x u64be; a 3x row reads with
-    /// the default bounds). Key: ().
+    /// threshold, log signer bound, log headroom rows, handoffs and ancestor pairs, and the fold's
+    /// memory floor (8x u64be; a 3x or 6x row reads with the default bounds). Key: ().
     AUTHLOG_OBSERVATION_POLICY: SyncState b"authlog:observation_policy:duration_v1" Raw;
     /// Durable high-water mark (u64be) of a signer's highest observed authority-log sequence number.
     /// Key: string.
@@ -209,6 +209,11 @@ side_tables! {
     /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
     /// Key: hex32.
     GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;
+    /// A model offer a provider refused for a quota or a limit, out of rotation until its reset
+    /// (OF-305): this deployment's routing state, never replicated, and runtime to a checkpoint,
+    /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire
+    /// model).
+    MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;

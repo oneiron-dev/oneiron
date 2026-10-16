@@ -223,6 +223,20 @@ pub(crate) struct CoreInterlocutorStamp {
     claims_not_instructions: bool,
 }
 
+/// The reader this pack is for: its agent definition's memory profile picks
+/// the optional recall for the task family (ARCH-0004 #reader-budget). It only
+/// narrows the request; it never widens a budget, a view or a read.
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct ContextPackReaderControls {
+    /// Hex id of the reader's agent definition; the caller must read it.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    pub(super) definition: String,
+    /// Task family the profile keys on; absent uses the profile's default.
+    #[serde(default)]
+    #[schema(example = "knowledge_update")]
+    pub(super) task_family: Option<String>,
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -314,6 +328,9 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional interlocutor presence controls (OF-365 ILD-1).
     #[serde(default)]
     pub(super) interlocutors: Option<CoreInterlocutorControls>,
+    /// Optional reader whose profile narrows this pack's optional recall.
+    #[serde(default)]
+    pub(super) reader: Option<ContextPackReaderControls>,
     /// Set by [`Self::clamp_limits`] when `limit` was past the ceiling.
     #[serde(skip)]
     pub(super) limit_clamped: bool,
@@ -381,14 +398,20 @@ impl CoreContextPackRequest {
         (self.limit, max_neighbors)
     }
 
-    /// The contacts this request names by ref. A revoked one resolves to its
-    /// stored label, so a keyed replay re-admits each of them as it does
-    /// every contact its pack stamped.
-    pub(crate) fn named_contacts(&self) -> Vec<oneiron::EntityId> {
+    /// The rows this request names by ref: its contacts and its reader's
+    /// definition. A revoked contact resolves to its stored label and the
+    /// reader's profile shapes the pack, so a keyed replay re-admits each of
+    /// them as it does every contact its pack stamped.
+    pub(crate) fn named_refs(&self) -> Vec<oneiron::EntityId> {
         self.interlocutors
             .iter()
             .flat_map(|controls| &controls.third_parties)
             .filter_map(|party| party.contact_ref.as_deref())
+            .chain(
+                self.reader
+                    .as_ref()
+                    .map(|reader| reader.definition.as_str()),
+            )
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
             .collect()
     }

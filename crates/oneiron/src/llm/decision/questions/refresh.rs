@@ -4,7 +4,7 @@
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
-use crate::llm::decision::{DecisionReceipt, TypedDecision};
+use crate::llm::decision::{DecisionReceipt, PairedReading, TypedDecision};
 use crate::side_table::SideKey;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -161,6 +161,7 @@ pub fn refresh_question(
                         band_version: 0,
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
+                        paired: p.proposal.paired.clone(),
                     },
                     human_ask: None,
                 },
@@ -349,6 +350,11 @@ fn validate_proposal(record: &QuestionRecord, proposal: &AnswerProposal) -> Resu
                 || p.model.is_empty()
                 || p.version.is_empty()
         })
+        || !PairedReading::rows_valid(
+            &proposal.paired,
+            record.definition.question.id,
+            &proposal.providers,
+        )
     {
         return Err(Error::InvalidConfig(
             "invalid standing question answer".into(),

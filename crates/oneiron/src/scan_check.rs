@@ -50,15 +50,110 @@ pub enum EngineScan {
     VisibleRefRows,
     /// One repository's keep-ref owners, every kind.
     KeepOwnerRows,
+    /// One entity type's rows in the type index.
+    TypeIndexRows,
+    /// One learned-at window's rows in the temporal index.
+    LearnedRangeRows,
+    /// One record's edges of one kind, one way.
+    EdgePeerRows,
+    /// The local receipt-record index a canonical window capture walks.
+    ReceiptRecordRows,
+    /// The records of one anchor's supersession chain.
+    TimelineRecords,
+    /// The gate-decision ledger a gate receipt query walks.
+    GateDecisionRows,
+    /// One record's edges a scoped reader's admission walks, one way.
+    ScopedEdgeRows,
+    /// The owner's MACHINE rows a mesh address bind walks for its endpoint.
+    MachineRows,
+    /// The access grants a companion persona list walks.
+    AccessGrantRows,
+    /// One seed's inbound mentions a specificity weight counts.
+    MentionRows,
+    /// The PPR cache's dependency rows a replaced or dead entry's walk reads.
+    PprCacheDepRows,
+    /// The sync rematerialization markers and quarantine rows a pack's
+    /// exclusion index reads.
+    PackQuarantineRows,
+    /// The legacy lexical-hint claims a target's hint lookup walks.
+    LexicalHintRows,
+    /// The graduation answer log a gate receipt query projects.
+    AnswerReceiptRows,
+    /// The proposal artifacts a substitution-mining pass indexes.
+    MinerArtifactRows,
+    /// The synced edge map's entries an unseated child's parent arbitration
+    /// walks.
+    ChildOfMapEntries,
+    /// The long-interval index a temporal window's spanner scan reads.
+    TemporalSpannerRows,
+    /// The timeline rows an occurred-range query reads, both halves.
+    OccurredRangeRows,
+    /// The retrieval run ledger a blend-weight tuning pass walks.
+    BlendTuningRuns,
+    /// One conversation's peers a Dreamer selection retry reads.
+    DreamerRetryPeers,
+    /// The pending gate-consent tray a consent list walks.
+    PendingGateConsentRows,
+    /// The tasks an omitted ask target or task context is resolved from, for
+    /// one asking actor.
+    TaskCensusRows,
+    /// One ask's words.
+    AskWordRows,
+    /// The room members' tasks a thread census reads, for one reader.
+    RoomThreadTasks,
+    /// The rows one session's read set holds.
+    ReadSetRows,
+    /// One room's history rows a message page passes over.
+    RoomPageRows,
+    /// One room's history rows a liveness snapshot reads.
+    RoomHistoryRows,
+    /// The TASK rows one board assembly reads.
+    TaskBoardRows,
+    /// The vault's inbound STOPs this replica has not projected yet, which
+    /// each external send reads. A STOP the projector keeps refusing stays.
+    PendingCommStops,
+    /// The contact claims naming a party, which an external send reads when
+    /// a party-wide opt-out stands for its party and no contact row held it.
+    PartyContactClaims,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 34] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
         Self::KeepOwnerRows,
+        Self::TypeIndexRows,
+        Self::LearnedRangeRows,
+        Self::EdgePeerRows,
+        Self::ReceiptRecordRows,
+        Self::TimelineRecords,
+        Self::GateDecisionRows,
+        Self::ScopedEdgeRows,
+        Self::MachineRows,
+        Self::AccessGrantRows,
+        Self::MentionRows,
+        Self::PprCacheDepRows,
+        Self::PackQuarantineRows,
+        Self::LexicalHintRows,
+        Self::AnswerReceiptRows,
+        Self::MinerArtifactRows,
+        Self::ChildOfMapEntries,
+        Self::TemporalSpannerRows,
+        Self::OccurredRangeRows,
+        Self::BlendTuningRuns,
+        Self::DreamerRetryPeers,
+        Self::PendingGateConsentRows,
+        Self::TaskCensusRows,
+        Self::AskWordRows,
+        Self::RoomThreadTasks,
+        Self::ReadSetRows,
+        Self::RoomPageRows,
+        Self::RoomHistoryRows,
+        Self::TaskBoardRows,
+        Self::PendingCommStops,
+        Self::PartyContactClaims,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -77,6 +172,36 @@ impl EngineScan {
             Self::PublicationRows => "publication_rows",
             Self::VisibleRefRows => "visible_ref_rows",
             Self::KeepOwnerRows => "keep_owner_rows",
+            Self::TypeIndexRows => "type_index_rows",
+            Self::LearnedRangeRows => "learned_range_rows",
+            Self::EdgePeerRows => "edge_peer_rows",
+            Self::ReceiptRecordRows => "receipt_record_rows",
+            Self::TimelineRecords => "memory_timeline_records",
+            Self::GateDecisionRows => "gate_decision_rows",
+            Self::ScopedEdgeRows => "scoped_edge_rows",
+            Self::MachineRows => "machine_rows",
+            Self::AccessGrantRows => "access_grant_rows",
+            Self::MentionRows => "mention_rows",
+            Self::PprCacheDepRows => "ppr_cache_dep_rows",
+            Self::PackQuarantineRows => "pack_quarantine_rows",
+            Self::LexicalHintRows => "lexical_hint_rows",
+            Self::AnswerReceiptRows => "answer_receipt_rows",
+            Self::MinerArtifactRows => "miner_artifact_rows",
+            Self::ChildOfMapEntries => "child_of_map_entries",
+            Self::TemporalSpannerRows => "temporal_spanner_rows",
+            Self::OccurredRangeRows => "occurred_range_rows",
+            Self::BlendTuningRuns => "blend_tuning_runs",
+            Self::DreamerRetryPeers => "dreamer_retry_peers",
+            Self::PendingGateConsentRows => "pending_gate_consent_rows",
+            Self::TaskCensusRows => "task_census_rows",
+            Self::AskWordRows => "ask_word_rows",
+            Self::RoomThreadTasks => "room_thread_tasks",
+            Self::ReadSetRows => "read_set_rows",
+            Self::RoomPageRows => "room_page_rows",
+            Self::RoomHistoryRows => "room_history_rows",
+            Self::TaskBoardRows => "task_board_rows",
+            Self::PendingCommStops => "pending_comm_stops",
+            Self::PartyContactClaims => "party_contact_claims",
         }
     }
 
@@ -86,6 +211,36 @@ impl EngineScan {
             Self::PublicationRows => 2,
             Self::VisibleRefRows => 3,
             Self::KeepOwnerRows => 4,
+            Self::TypeIndexRows => 16,
+            Self::LearnedRangeRows => 17,
+            Self::EdgePeerRows => 18,
+            Self::ReceiptRecordRows => 19,
+            Self::TimelineRecords => 20,
+            Self::GateDecisionRows => 21,
+            Self::ScopedEdgeRows => 22,
+            Self::MachineRows => 23,
+            Self::AccessGrantRows => 24,
+            Self::MentionRows => 48,
+            Self::PprCacheDepRows => 49,
+            Self::PackQuarantineRows => 50,
+            Self::LexicalHintRows => 51,
+            Self::AnswerReceiptRows => 52,
+            Self::MinerArtifactRows => 53,
+            Self::ChildOfMapEntries => 54,
+            Self::TemporalSpannerRows => 55,
+            Self::OccurredRangeRows => 56,
+            Self::BlendTuningRuns => 57,
+            Self::DreamerRetryPeers => 58,
+            Self::PendingGateConsentRows => 25,
+            Self::TaskCensusRows => 32,
+            Self::AskWordRows => 33,
+            Self::RoomThreadTasks => 34,
+            Self::ReadSetRows => 35,
+            Self::RoomPageRows => 36,
+            Self::RoomHistoryRows => 37,
+            Self::TaskBoardRows => 38,
+            Self::PendingCommStops => 64,
+            Self::PartyContactClaims => 65,
         }]
     }
 }
@@ -150,6 +305,13 @@ impl ScanCount {
     /// Counts one row read.
     pub(crate) fn row(&mut self) {
         self.rows = self.rows.saturating_add(1);
+    }
+
+    /// Counts `rows` rows read at once, for a scan that holds its rows.
+    pub(crate) fn rows(&mut self, rows: usize) {
+        self.rows = self
+            .rows
+            .saturating_add(u64::try_from(rows).unwrap_or(u64::MAX));
     }
 
     /// Raises the scan's check when it read past its row, once per scope:
@@ -315,6 +477,9 @@ impl Vault {
         Ok(checks.into_values().collect())
     }
 }
+
+#[cfg(test)]
+mod table_tests;
 
 #[cfg(test)]
 mod tests {

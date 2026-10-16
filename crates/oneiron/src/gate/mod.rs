@@ -168,7 +168,7 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::operational_policy::{
-    LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
+    LinearMirrorPolicy, LinearSyncBudget, ProviderCooldownPolicy, WaveHandoffPolicy,
 };
 pub(crate) use self::owner_answer::{
     OwnerAnswer, close_owner_answer_obligation_in_txn, show_owner_answer_item_in_txn,

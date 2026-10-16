@@ -410,11 +410,14 @@ pub(crate) fn embedded_owner_proof(vault: &Vault) -> crate::consent::Authenticat
         .expect("owner proof")
 }
 
-/// Binds `owner` as the rooted test vault's human owner, so owner verbs keep
-/// working after a fixture roots its vault.
+/// Roots the test vault under the test host, if nothing has, and binds
+/// `owner` as its human owner: owner verbs hold only for a bound owner
+/// (H149).
 pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
+    let issuer = test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
     vault
-        .bind_host_owner_for_test(&test_host_issuer(), owner)
+        .bind_host_owner_for_test(&issuer, owner)
         .expect("owner binding");
 }
 

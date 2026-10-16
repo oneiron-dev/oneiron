@@ -335,6 +335,13 @@ impl Vault {
                 "ask option link is no longer open",
             ));
         }
+        // The bearer's work stays bounded: an ask past the link bound is
+        // refused before any of its words are read or settled.
+        if ask_record::link_words_past_bound(self, &txn, row.group)? {
+            return Err(MemoryError::bad_request(
+                "ask holds more words than a link may add to",
+            ));
+        }
         let group = live_group(self, &mut txn, &row, false)?;
         if !group.effective.what.options.contains_key(option) {
             return Err(MemoryError::bad_request("unknown ask option id"));

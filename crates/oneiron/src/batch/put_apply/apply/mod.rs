@@ -388,7 +388,7 @@ pub(in crate::batch) fn apply_put(
     if replicated
         && !crate::registry::is_delete_protected_engine_record(entity_type)
         && revision_put.is_none()
-        && id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        && !crate::dreamer_runner::authority::is_base_agent_actor(&id)?
         && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
     {
         return Err(Error::InvariantViolation(
@@ -717,6 +717,9 @@ pub(in crate::batch) fn apply_put(
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
+    if entity_type == ENTITY_TYPE_COMM_RECORD {
+        crate::comm::maintain_pending_stop_put(store, wtxn, &id, data)?;
     }
     // A local put over an erased row is a sanctioned recreation: the row it
     // writes is live, so the fence goes in the same commit. A row that still

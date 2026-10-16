@@ -546,7 +546,6 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
             &turn,
             EdgeKind::PartOf,
             Some(crate::registry::ENTITY_TYPE_MESSAGE),
-            "imported message",
         )?[0]
     };
     let conversation = EntityId::derive(
