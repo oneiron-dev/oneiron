@@ -1,6 +1,5 @@
 //! JSON schemas for endpoint tools: setup, execute-code, paging, and verbs.
 
-use super::endpoint_args::MCP_CODE_TASK_MAX_CHARS;
 use super::schema_parts::{
     actor_schema, closed_object_schema, consent_schema, entity_id_schema, nonblank_string_schema,
     schema_version_property, tool_schema_root,
@@ -98,7 +97,6 @@ pub(super) fn execute_code_tool_schema() -> Value {
             "task": {
                 "type": "string",
                 "pattern": "\\S",
-                "maxLength": MCP_CODE_TASK_MAX_CHARS,
             },
             "page": page_request_schema(),
             "cache": cache_hint_schema(),

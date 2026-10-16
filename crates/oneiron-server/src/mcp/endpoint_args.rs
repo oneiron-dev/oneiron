@@ -152,9 +152,6 @@ pub struct McpExecuteCodeToolArgs {
     pub cache: Option<McpCacheHint>,
 }
 
-/// Hard ceiling on one `execute_code` task statement.
-pub const MCP_CODE_TASK_MAX_CHARS: usize = 8_192;
-
 impl McpExecuteCodeToolArgs {
     fn validate(&self) -> Result<(), McpToolValidationError> {
         validate_schema_version(MCP_EXECUTE_CODE_TOOL, &self.schema_version)?;
@@ -162,13 +159,6 @@ impl McpExecuteCodeToolArgs {
         self.consent.validate(MCP_EXECUTE_CODE_TOOL)?;
         validate_nonblank(MCP_EXECUTE_CODE_TOOL, "run_ref", &self.run_ref)?;
         validate_nonblank(MCP_EXECUTE_CODE_TOOL, "task", &self.task)?;
-        if self.task.chars().count() > MCP_CODE_TASK_MAX_CHARS {
-            return Err(McpToolValidationError::field(
-                MCP_EXECUTE_CODE_TOOL,
-                "task",
-                format!("must be at most {MCP_CODE_TASK_MAX_CHARS} characters"),
-            ));
-        }
         McpPageRequest::validate_optional(self.page.as_ref(), MCP_EXECUTE_CODE_TOOL)?;
         Ok(())
     }

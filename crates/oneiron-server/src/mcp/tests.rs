@@ -319,6 +319,30 @@ fn mcp_endpoint_tool_validation_fixtures_gate_args_before_execution() {
     }
 }
 
+/// An `execute_code` task is never refused for its length: a 64 KiB task
+/// statement passes the advertised schema and argument admission unchanged.
+/// The transport's whole-request body bound is the only size limit.
+#[test]
+fn execute_code_admits_a_64_kib_task() {
+    let task = "x".repeat(64 * 1024);
+    let schema = McpEndpointTool::ExecuteCode.schema().input_schema;
+    assert!(
+        draft2020_12_accepts(&schema["properties"]["task"], &json!(task)),
+        "the advertised task schema states no length ceiling",
+    );
+
+    let mut args = endpoint_envelope("execute_code");
+    args["run_ref"] = json!("long-task");
+    args["task"] = json!(task);
+    let McpValidatedToolArgs::ExecuteCode(parsed) =
+        validate_mcp_endpoint_tool_args(McpEndpointTool::ExecuteCode, McpToolArguments::from(args))
+            .expect("a 64 KiB task is admitted")
+    else {
+        panic!("execute_code decodes to its own arguments");
+    };
+    assert_eq!(parsed.task, task, "the task reaches the run unchanged");
+}
+
 /// ONE-1704 M3: durable ids are derived from the IMMUTABLE connector-scope
 /// identity through ONE central function, so one actor reusing one key under
 /// two disjoint credentials can never collide or replay.

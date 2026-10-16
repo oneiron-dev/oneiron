@@ -486,6 +486,46 @@ async fn quickjs_code_mode_recall_reads_back_a_phrase_saved_in_the_vault() {
     );
 }
 
+/// A long `execute_code` task is served, not refused for its length: a 64 KiB
+/// task goes through the HTTP MCP wire, reaches the model unchanged and the
+/// run completes. Before this change the gateway refused any task over 8,192
+/// characters with `tool_args_invalid`.
+#[tokio::test]
+async fn quickjs_execute_code_serves_a_64_kib_task() {
+    let mode = code_mode_server(vec![CODE_MODE_DONE.to_owned()]);
+    let actor = seeded_test_entity_id(0x0024_6521);
+    let credential = "quickjs-long-task-credential";
+    register_mcp_actor(
+        &mode.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let task = "x".repeat(64 * 1024);
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "write_memory"),
+        json!({"run_ref": "quickjs-long-task", "task": task}),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request("/mcp", credential, "long-task", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{}", body["error"]);
+    let structured = &body["result"]["structuredContent"];
+    assert_eq!(structured["result"]["status"], "complete", "{structured}");
+    let seen = mode.backend.requests.lock().unwrap();
+    assert!(
+        seen.iter()
+            .flat_map(|request| &request.messages)
+            .flat_map(|message| &message.content)
+            .any(|part| matches!(part, ContentPart::Text { text } if text.contains(&task))),
+        "the whole task reaches the model",
+    );
+}
+
 /// A connector narrowed to one world reaches no other world's memory through
 /// recall, on the tool list or in code mode; and a connector bound to fewer
 /// verbs cannot reach the rest through code mode. Code mode is a door onto the
