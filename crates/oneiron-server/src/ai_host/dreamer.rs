@@ -254,19 +254,8 @@ struct ObservedFactory {
     status: Arc<StatusCell>,
 }
 
-impl PassExecutorFactory for ObservedFactory {
-    type Exec<'p> =
-        ObservedExecutor<'p, <ConsolidationExecutorFactory as PassExecutorFactory>::Exec<'p>>;
-
-    /// Resolves each of the Dreamer's roles (extraction, the conflict
-    /// verdict, narrative) against the vault's live manifest and route, as a
-    /// chat turn does, so each role's backend attests the model the engine's
-    /// admission selects for it. A route this server does not serve stops
-    /// the pass before any attempt is admitted.
-    fn executor<'p>(
-        &'p mut self,
-        guard: &'p oneiron::BudgetGuard,
-    ) -> oneiron::Result<Self::Exec<'p>> {
+impl ObservedFactory {
+    fn prepare(&mut self, guard: &oneiron::BudgetGuard) -> oneiron::Result<()> {
         let routes = match role_routes(&self.runtime, &self.vault, &self.seat) {
             Ok(routes) => routes,
             Err((role, refusal)) => {
@@ -331,11 +320,52 @@ impl PassExecutorFactory for ObservedFactory {
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
-        let inner = self.inner.insert(factory);
+        self.inner = Some(factory);
+        Ok(())
+    }
+}
+
+impl PassExecutorFactory for ObservedFactory {
+    type Exec<'p> =
+        ObservedExecutor<'p, <ConsolidationExecutorFactory as PassExecutorFactory>::Exec<'p>>;
+
+    /// Resolves each of the Dreamer's roles (extraction, the conflict
+    /// verdict, narrative) against the vault's live manifest and route, as a
+    /// chat turn does, so each role's backend attests the model the engine's
+    /// admission selects for it. A route this server does not serve stops
+    /// the pass before any attempt is admitted.
+    fn executor<'p>(
+        &'p mut self,
+        guard: &'p oneiron::BudgetGuard,
+    ) -> oneiron::Result<Self::Exec<'p>> {
+        self.prepare(guard)?;
         Ok(ObservedExecutor {
-            inner: inner.executor(guard)?,
+            inner: self
+                .inner
+                .as_mut()
+                .expect("prepared factory")
+                .executor(guard)?,
             status: &self.status,
         })
+    }
+
+    fn macro_executors<'p>(
+        &'p mut self,
+        guard: &'p oneiron::BudgetGuard,
+        buckets: usize,
+    ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
+        self.prepare(guard)?;
+        let status = self.status.as_ref();
+        self.inner
+            .as_mut()
+            .expect("prepared factory")
+            .macro_executors(guard, buckets)
+            .map(|executors| {
+                executors
+                    .into_iter()
+                    .map(|inner| ObservedExecutor { inner, status })
+                    .collect()
+            })
     }
 
     fn actor(&self) -> Option<WriteActor> {

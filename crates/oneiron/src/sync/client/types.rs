@@ -44,7 +44,7 @@ pub struct SyncClientConfig {
     pub residence_home_route: Option<ResidenceHomeRoute>,
     /// Number of default windows to sync (current + previous). Default: 2.
     pub default_window_count: u8,
-    /// Debounce interval for rapid edits before sending. Default: 50ms.
+    /// Node proposal tick interval. Busy writers still flush every tick. Default: 50ms.
     pub sync_debounce_ms: u32,
     /// Maximum reconnection backoff delay. Default: 60s.
     pub reconnect_backoff_max_ms: u32,

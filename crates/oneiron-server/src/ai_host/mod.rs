@@ -245,11 +245,11 @@ impl AiHandle {
 
     /// Tells the Dreamer's session policy what the app saw. A no-op without
     /// a running Dreamer: no session is opened that nothing would close.
-    pub fn session_hint(&self, hint: SessionHint) {
+    pub fn session_hint(&self, key: oneiron::session_lifecycle::SessionKey, hint: SessionHint) {
         let Some(hints) = &self.hints else {
             return;
         };
-        if let Err(error) = hints.push_session_hint(hint, None) {
+        if let Err(error) = hints.push_session_hint(key, hint, None) {
             tracing::warn!(?error, ?hint, "dreamer session hint dropped");
         }
     }

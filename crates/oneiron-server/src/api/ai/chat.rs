@@ -147,7 +147,10 @@ fn revoked_line() -> Vec<u8> {
 
 /// The writer of the user's turn: the slip's principal, or the vault's own
 /// owner for an owner-grade credential that names none.
-fn principal(auth: &CoreAuth, vault: &Vault) -> Result<(EntityId, EdgeActorClass), Refused> {
+pub(super) fn principal(
+    auth: &CoreAuth,
+    vault: &Vault,
+) -> Result<(EntityId, EdgeActorClass), Refused> {
     let denied = || {
         refused(
             StatusCode::FORBIDDEN,
@@ -261,14 +264,21 @@ fn witness_turn(
 pub(super) async fn chat_turn(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    crate::auth::Locality(locality): crate::auth::Locality,
+    machine: Option<axum::Extension<oneiron::authority::PeerMachine>>,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
 ) -> Response {
-    start_turn(&auth, &server, payload).unwrap_or_else(|refused| *refused)
+    let peer = machine.map_or(oneiron::authority::PeerMachine::Unknown, |machine| {
+        machine.0
+    });
+    start_turn(&auth, &server, peer, locality, payload).unwrap_or_else(|refused| *refused)
 }
 
 fn start_turn(
     auth: &CoreAuth,
     server: &Arc<SyncServer>,
+    peer: oneiron::authority::PeerMachine,
+    locality: oneiron::claim::CallerLocality,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
 ) -> Result<Response, Refused> {
     // A turn reads the agent and the conversation, and writes both turns.
@@ -349,10 +359,12 @@ fn start_turn(
             .map_err(|error| engine(&error))?
             .idle_timeout_ms,
     );
-    server.ai.session_hint(SessionHint::AppOpen);
+    let session_key = super::bound_session_key(server, actor, peer, locality)?;
+    server.ai.session_hint(session_key, SessionHint::AppOpen);
     let at = vault.now_recorded_at();
     let user = vault
         .memory(actor, class)
+        .with_session(session_key)
         .witness(&witness_turn(
             &request.conversation_ref,
             WitnessAuthor::User,
@@ -372,6 +384,7 @@ fn start_turn(
     let begun = crate::server::blocking(|| {
         vault
             .memory(agent, EdgeActorClass::Agent)
+            .with_session(session_key)
             .begin_message_stream(
                 &turn,
                 Some(MessageWriteMode::Streamed {
@@ -419,6 +432,7 @@ fn start_turn(
         Err(reason) => {
             let _ = vault
                 .memory(agent, EdgeActorClass::Agent)
+                .with_session(session_key)
                 .cancel_stream(handle, StreamCancelReason::AgentAborted);
             return Err(refused(
                 StatusCode::PAYMENT_REQUIRED,
@@ -437,6 +451,7 @@ fn start_turn(
     let mut bus = LlmEventBus::new(Box::new(AssistantMessage {
         vault: Arc::clone(&vault),
         agent,
+        session_key,
         handle,
         credential: credential.clone(),
         streamed: Arc::clone(&streamed),
@@ -452,6 +467,7 @@ fn start_turn(
         stream,
         vault,
         agent,
+        session_key,
         handle,
         credential: credential.clone(),
         streamed,
@@ -460,7 +476,7 @@ fn start_turn(
     };
     tokio::spawn(async move {
         let result = produce(producer).await;
-        ai.session_hint(SessionHint::Activity);
+        ai.session_hint(session_key, SessionHint::Activity);
         // The answer is the agent's turn, so its own cadence dial counts it.
         ai.turn_landed(
             &landed.0,
@@ -575,6 +591,7 @@ fn message_text(message: &LlmMessage) -> String {
 struct AssistantMessage {
     vault: Arc<Vault>,
     agent: EntityId,
+    session_key: oneiron::session_lifecycle::SessionKey,
     handle: MessageStreamHandle,
     credential: TurnCredential,
     /// What the producer appended to the presence plane so far.
@@ -587,7 +604,10 @@ impl TerminalSink for AssistantMessage {
         if !self.credential.live() {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
-        let memory = self.vault.memory(self.agent, EdgeActorClass::Agent);
+        let memory = self
+            .vault
+            .memory(self.agent, EdgeActorClass::Agent)
+            .with_session(self.session_key);
         // The stream holds what was appended; a terminal carrying text the
         // deltas never did (a provider that sends it only at the end) is
         // appended before the one commit.
@@ -626,6 +646,7 @@ struct Producer {
     stream: LlmStream<'static>,
     vault: Arc<Vault>,
     agent: EntityId,
+    session_key: oneiron::session_lifecycle::SessionKey,
     handle: MessageStreamHandle,
     credential: TurnCredential,
     streamed: Arc<Mutex<String>>,
@@ -644,13 +665,16 @@ async fn produce(producer: Producer) -> Result<(), String> {
         mut stream,
         vault,
         agent,
+        session_key,
         handle,
         credential,
         streamed,
         keepalive,
         mut turn,
     } = producer;
-    let memory = vault.memory(agent, EdgeActorClass::Agent);
+    let memory = vault
+        .memory(agent, EdgeActorClass::Agent)
+        .with_session(session_key);
     let cancel = |reason: StreamCancelReason| {
         let _ = memory.cancel_stream(handle, reason);
     };
