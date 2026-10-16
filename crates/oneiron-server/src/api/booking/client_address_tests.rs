@@ -124,15 +124,20 @@ fn spent(fixture: &Fixture, address: &str, now: u64) -> u32 {
     LIMIT - u32::try_from(left).expect("count")
 }
 
+/// The budget an owner listing from `address` is charged to: the address and
+/// the credential it came under.
+fn owner_key(fixture: &Fixture, address: &str) -> String {
+    let auth = crate::test_credentials::authenticate(&fixture.server, "jti=booking-owner");
+    format!("{address}\0{}", auth.principal())
+}
+
 /// Whether the clock is still in the rate window `then` was in.
 fn same_minute(then: u64) -> bool {
     then / 60 == now_secs().expect("clock") / 60
 }
 
-/// Rule 5 took the authenticated route off the slot-list rate, so a rotated
-/// header there now charges nothing, and neither does the connection.
 #[tokio::test]
-async fn an_authenticated_listing_charges_neither_its_connection_nor_a_forwarding_header() {
+async fn authenticated_booking_charges_the_connection_not_a_forwarding_header() {
     for _ in 0..3 {
         let fixture = Fixture::new();
         install_slot_list_rate(&fixture);
@@ -147,9 +152,9 @@ async fn an_authenticated_listing_charges_neither_its_connection_nor_a_forwardin
             continue;
         }
         assert_eq!(
-            spent(&fixture, "203.0.113.9", now),
-            0,
-            "an authenticated listing pays no rate"
+            spent(&fixture, &owner_key(&fixture, "203.0.113.9"), now),
+            2,
+            "the connection pays"
         );
         for named in ["198.51.100.7", "198.51.100.8"] {
             assert_eq!(spent(&fixture, named, now), 0, "{named} minted no budget");
@@ -159,9 +164,8 @@ async fn an_authenticated_listing_charges_neither_its_connection_nor_a_forwardin
     panic!("could not list within one rate window");
 }
 
-/// The managed supervisor is one loopback caller to booking's anonymous
-/// route, whatever forwarding header it passes on; on the authenticated route
-/// it pays no rate (rule 5).
+/// The managed supervisor is one loopback caller to booking, on either route,
+/// whatever forwarding header it passes on.
 #[tokio::test]
 async fn the_managed_supervisor_is_charged_as_loopback_and_its_header_unread() {
     for owner in [true, false] {
@@ -185,12 +189,12 @@ async fn supervisor_listing_charges_loopback(owner: bool) {
             0,
             "owner route: {owner}"
         );
-        let expected = u32::from(!owner);
-        assert_eq!(
-            spent(&fixture, "127.0.0.1", now),
-            expected,
-            "owner route: {owner}"
-        );
+        let loopback = if owner {
+            owner_key(&fixture, "127.0.0.1")
+        } else {
+            "127.0.0.1".to_owned()
+        };
+        assert_eq!(spent(&fixture, &loopback, now), 1, "owner route: {owner}");
         return;
     }
     panic!("could not list within one rate window");
@@ -238,7 +242,7 @@ async fn trusted_proxy_chain_charges_each_client_behind_it() {
             (proxy, &["not-an-address"], false),
             // A peer outside the trusted block is charged as itself.
             (Peer::Tcp("203.0.113.9"), &["198.51.100.10"], false),
-            // The authenticated route charges no one (rule 5).
+            // The authenticated route reads the same chain.
             (proxy, &["198.51.100.11"], true),
         ];
         for (nth, (peer, forwarded, owner)) in listings.into_iter().enumerate() {
@@ -258,13 +262,13 @@ async fn trusted_proxy_chain_charges_each_client_behind_it() {
         ] {
             assert_eq!(spent(&fixture, charged, now), 1, "{charged} pays once");
         }
-        for untouched in [
-            "192.0.2.50",
-            "10.0.0.3",
-            "192.0.2.51",
-            "198.51.100.10",
-            "198.51.100.11",
-        ] {
+        let owner = owner_key(&fixture, "198.51.100.11");
+        assert_eq!(
+            spent(&fixture, &owner, now),
+            1,
+            "the owner listing pays once"
+        );
+        for untouched in ["192.0.2.50", "10.0.0.3", "192.0.2.51", "198.51.100.10"] {
             assert_eq!(spent(&fixture, untouched, now), 0, "{untouched}");
         }
         return;

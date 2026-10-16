@@ -29,7 +29,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"self_heal:signed:",
                 b"booking:anti_abuse:v1:rate\0",
                 b"booking:anti_abuse:v1:cache\0",
-                b"booking:actor_budget_count:v1:",
                 b"gate_pending:critical_confirm_expiry_cursor:v1",
                 b"gate_pending:critical_confirm_list_cursor:v1",
                 b"outbound:authorized_recovery_lease:v1",

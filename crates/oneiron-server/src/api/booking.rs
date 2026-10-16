@@ -40,7 +40,6 @@ use oneiron::booking::agent_api::{
     BookingCancelInput, BookingConfirmInput, BookingConstraintInput, BookingHoldInput,
     BookingOperationRequest, BookingOperationResponse, BookingRescheduleInput, SelectedSlot,
 };
-use oneiron::booking::anti_abuse::BookingBudgetKind;
 use oneiron::booking::{
     BookingError, BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmSpec,
     ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken,
@@ -48,9 +47,7 @@ use oneiron::booking::{
 };
 use oneiron::{EntityId, Vault};
 
-use super::booking_anti_abuse::{
-    admit_authenticated, enforce_amend, enforce_book, enforce_hold, enforce_slot_list,
-};
+use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
 use super::{check_api_auth, json_payload};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;
@@ -67,6 +64,7 @@ mod public;
 mod public_availability;
 mod subject;
 mod transport;
+mod turn;
 mod validate;
 
 use self::admission::{admission_facts, admission_short_circuit};
@@ -80,6 +78,8 @@ use self::lifecycle::{booking_oracle, run_booking_verb};
 use self::offerability::unoffered_slot_answer;
 pub(crate) use self::page_token::{booking_page_token, resolve_booking_page};
 pub(super) use self::public::public_booking_router;
+#[cfg(test)]
+pub(crate) use self::public::turn_tests::cross_the_booking_windows;
 use self::subject::{resolve_booker_contact, session_key};
 use self::transport::http_transport_context;
 use self::validate::validate_operation_shape;
@@ -125,14 +125,26 @@ impl BookingTransport {
 pub(crate) struct BookingTransportContext {
     pub(crate) source_ip: IpAddr,
     pub(crate) authenticated_actor_ref: Option<EntityId>,
+    /// The verified credential an authenticated request came under; `None`
+    /// for an anonymous visitor. It keys its own budget, and past a window it
+    /// waits for it to open.
+    pub(crate) credential: Option<String>,
+    /// Whether that credential is owner-grade. Such a caller books for the
+    /// owner and is not held to the per-email cap on active bookings, which
+    /// sheds anonymous visitors.
+    pub(crate) owner_grade: bool,
     pub(crate) transport: BookingTransport,
 }
 
 impl BookingTransportContext {
-    /// The actor key mixed into admission. An authenticated actor keys its own
-    /// budget; an owner-bearer HTTP caller keys on the source address alone.
+    /// The actor key mixed into admission. An authenticated actor, or else
+    /// the credential an authenticated request came under, keys its own
+    /// budget; an anonymous visitor keys on the source address alone.
     fn actor_key(&self) -> Option<String> {
-        self.authenticated_actor_ref.as_ref().map(EntityId::to_hex)
+        self.authenticated_actor_ref
+            .as_ref()
+            .map(EntityId::to_hex)
+            .or_else(|| self.credential.clone())
     }
 }
 
@@ -430,41 +442,36 @@ pub(crate) async fn execute_booking_operation(
     }
     validate_operation_shape(&request)?;
     check_action_token_page(&server.vault, page_ref, &request)?;
-    let now = now_secs()?;
 
     // ── 2. the one admission call ───────────────────────────────────────
-    let facts = admission_facts(server, page_ref, &request, transport, now)?;
     let cache = public_availability::cached_response(
         server,
         page_ref,
         &request,
         public_authority.as_ref(),
     )?;
-    let budget = match &request {
-        BookingOperationRequest::Availability(_) => BookingBudgetKind::SlotList,
-        BookingOperationRequest::Book(BookingBookInput::Hold(_)) => BookingBudgetKind::Hold,
-        BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => BookingBudgetKind::Book,
-        BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
-            BookingBudgetKind::Amend
-        }
-    };
-    // The owner's rates and caps shed the anonymous route; an authenticated
-    // caller is counted, never refused for rate or count (rule 5).
-    let disposition = match &request {
-        _ if transport.transport == BookingTransport::PublicHttp => {
-            admit_authenticated(server, facts, budget, transport.authenticated_actor_ref)?
-        }
-        BookingOperationRequest::Availability(_) => {
-            enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
-        }
-        BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
-            enforce_hold(State(Arc::clone(server)), facts).await?
-        }
-        BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => {
-            enforce_book(State(Arc::clone(server)), facts).await?
-        }
-        BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
-            enforce_amend(State(Arc::clone(server)), facts).await?
+    // An authenticated caller past a window waits for it and is admitted
+    // again (`turn::Turn`), so the clock and the facts are read each time.
+    let mut turn = turn::Turn::new(server, transport);
+    let (now, disposition) = loop {
+        let now = now_secs()?;
+        let facts = admission_facts(server, page_ref, &request, transport, now)?;
+        let disposition = match &request {
+            BookingOperationRequest::Availability(_) => {
+                enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
+            }
+            BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
+                enforce_hold(State(Arc::clone(server)), facts).await?
+            }
+            BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => {
+                enforce_book(State(Arc::clone(server)), facts).await?
+            }
+            BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
+                enforce_amend(State(Arc::clone(server)), facts).await?
+            }
+        };
+        if let Some(disposition) = turn.after(disposition).await? {
+            break (now, disposition);
         }
     };
     if let Some(response) = admission_short_circuit(&request, disposition)? {
