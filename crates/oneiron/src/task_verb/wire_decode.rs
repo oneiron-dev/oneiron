@@ -223,6 +223,9 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
         refusal: task_body_optional(entries, "refusal")?
             .map(decode_task_refusal_record)
             .transpose()?,
+        brief: task_body_optional(entries, "brief")?
+            .map(decode_stored_brief)
+            .transpose()?,
     })
 }
 
@@ -245,6 +248,13 @@ fn decode_task_refusal_record(value: &Value) -> Result<TaskRefusalRecord> {
             .as_u64()
             .ok_or_else(invalid)?,
     })
+}
+
+/// Inverse of [`super::wire_encode::stored_brief_value`].
+pub(super) fn decode_stored_brief(value: &Value) -> Result<super::brief::StoredBrief> {
+    let bytes = super::wire_encode::canonical_bytes(value);
+    rmp_serde::from_slice(&bytes)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.body.brief")))
 }
 
 /// Reads one additive body key. Absent (schema-v1 row) and explicitly `Nil`
@@ -656,6 +666,21 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
                 consent_required,
             })
         }
+        Some("blocked") => Ok(TaskExecutionState::Blocked {
+            since: task_body_field(entries, "since")?
+                .as_u64()
+                .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.body.state",
+                )))?,
+            on: task_body_field(entries, "on")?
+                .as_array()
+                .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                    "tasks.body.state",
+                )))?
+                .iter()
+                .map(|value| decode_entity_ref(value, "tasks.body.state.on"))
+                .collect::<Result<Vec<_>>>()?,
+        }),
         Some("terminal") => Ok(TaskExecutionState::Terminal(decode_task_terminal_record(
             task_body_field(entries, "terminal")?,
         )?)),

@@ -130,7 +130,10 @@ impl TaskAssignee {
 
 /// Absolute expiry instant. A relative duration would mean a different wall
 /// time on every replica, so the caller's clock is resolved once, here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
 pub struct TaskTtl {
     pub deadline_at: u64,
 }

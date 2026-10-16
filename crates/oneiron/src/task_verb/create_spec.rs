@@ -26,6 +26,11 @@ pub struct TaskCreateSpec {
     /// create path places it (unsure uses the root) — a landed TASK and
     /// its receipts always carry one; see [`Self::resolved_type_ref`].
     pub type_ref: Option<TaskTypeRef>,
+    /// OF-220: a typed brief. A create that carries one, with its intent
+    /// key, is a post and runs through the task highway.
+    pub brief: Option<super::brief::QueueTaskBrief>,
+    /// The caller's idempotency key for a briefed create.
+    pub intent_key: Option<String>,
 }
 
 impl TaskCreateSpec {
@@ -47,7 +52,21 @@ impl TaskCreateSpec {
             assignee: None,
             ttl: None,
             type_ref: None,
+            brief: None,
+            intent_key: None,
         }
+    }
+
+    /// Makes this create a post: one typed brief under one intent key.
+    #[must_use]
+    pub fn with_brief(
+        mut self,
+        intent_key: impl Into<String>,
+        brief: super::brief::QueueTaskBrief,
+    ) -> Self {
+        self.intent_key = Some(intent_key.into());
+        self.brief = Some(brief);
+        self
     }
 
     #[must_use]

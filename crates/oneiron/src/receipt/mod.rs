@@ -39,8 +39,8 @@ pub use self::kernel::{
 };
 pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
 pub use self::pack_attribution::{
-    ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution,
-    UsedProvenanceEdge,
+    ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
+    SkillContribution, UsedProvenanceEdge,
 };
 pub(crate) use self::pack_attribution::{
     has_attempt_pack_attribution_in_txn, put_attempt_pack_attribution_in_txn,

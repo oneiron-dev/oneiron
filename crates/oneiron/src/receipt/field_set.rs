@@ -228,11 +228,21 @@ pub fn append_pack_attribution_fields(
     attribution.validate()?;
     let encoded = serde_json::to_string(attribution)
         .map_err(|_| Error::InvariantViolation("pack attribution encode"))?;
-    if receipt.fields.get(FIELD_MODEL).is_some_and(|model| model != &attribution.executor) {
-        return Err(Error::InvalidClaimBody("pack attribution executor disagrees with receipt"));
+    if receipt
+        .fields
+        .get(FIELD_MODEL)
+        .is_some_and(|model| model != &attribution.executor)
+    {
+        return Err(Error::InvalidClaimBody(
+            "pack attribution executor disagrees with receipt",
+        ));
     }
-    receipt.fields.insert(FIELD_MODEL.to_owned(), attribution.executor.clone());
-    receipt.fields.insert(FIELD_MANIFEST_ATTRIBUTION.to_owned(), encoded);
+    receipt
+        .fields
+        .insert(FIELD_MODEL.to_owned(), attribution.executor.clone());
+    receipt
+        .fields
+        .insert(FIELD_MANIFEST_ATTRIBUTION.to_owned(), encoded);
     Ok(())
 }
 
@@ -328,14 +338,19 @@ impl ReceiptRecord {
 
     /// Reads the frozen attribution context; an absent required stamp is invalid.
     pub fn pack_attribution_fields(&self) -> Result<super::PackAttributionFields> {
-        let encoded = self.fields.get(FIELD_MANIFEST_ATTRIBUTION).ok_or(
-            Error::InvalidClaimBody("pack receipt requires attribution context and typeRef"),
-        )?;
+        let encoded =
+            self.fields
+                .get(FIELD_MANIFEST_ATTRIBUTION)
+                .ok_or(Error::InvalidClaimBody(
+                    "pack receipt requires attribution context and typeRef",
+                ))?;
         let fields: super::PackAttributionFields = serde_json::from_str(encoded)
             .map_err(|_| Error::InvalidClaimBody("malformed pack attribution context"))?;
         fields.validate()?;
         if self.fields.get(FIELD_MODEL) != Some(&fields.executor) {
-            return Err(Error::InvalidClaimBody("pack receipt executor disagrees with attribution"));
+            return Err(Error::InvalidClaimBody(
+                "pack receipt executor disagrees with attribution",
+            ));
         }
         Ok(fields)
     }

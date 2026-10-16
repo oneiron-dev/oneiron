@@ -48,7 +48,9 @@ enum GuestFrame {
         from: String,
         to: String,
     },
-    StepResult { result_json: String },
+    StepResult {
+        result_json: String,
+    },
     Finish {
         status: i32,
     },
@@ -273,11 +275,15 @@ fn receive_proposals(
                     deadline,
                 )?;
             }
-            GuestFrame::StepResult { result_json: result } => {
-                if result_json.is_some() || result.len() > oneiron_sandbox_contract::MAX_FILE_BYTES {
+            GuestFrame::StepResult {
+                result_json: result,
+            } => {
+                if result_json.is_some() || result.len() > oneiron_sandbox_contract::MAX_FILE_BYTES
+                {
                     return Err(refused("duplicate or oversized guest step result"));
                 }
-                serde_json::from_str::<serde_json::Value>(&result).map_err(|_| refused("invalid guest result JSON"))?;
+                serde_json::from_str::<serde_json::Value>(&result)
+                    .map_err(|_| refused("invalid guest result JSON"))?;
                 result_json = Some(result);
             }
             GuestFrame::Finish { status } => {
