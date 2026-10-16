@@ -78,6 +78,59 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "vault.artifacts.view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactExportRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.born_from",
+                crate::code_run::vault_read::request_schema::<crate::blob_artifact::BornFromRequest>(
+                ),
+            ),
+            (
+                "vault.artifacts.proposals",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.propose_deck",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::DeckProposeRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.propose_output",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::NativeOutputRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.keep",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.discard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.undo",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
+            ),
+            (
                 "can",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::TaskCanAskRequest,
@@ -370,6 +423,69 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.born_from" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.propose_deck" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.propose_output" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.keep" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.undo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "can" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -581,6 +697,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.artifacts.view" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.export" => {
+            let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.born_from" => {
+            let _input: crate::blob_artifact::BornFromRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.proposals" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.propose_deck" => {
+            let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.propose_output" => {
+            let _input: crate::blob_artifact::NativeOutputRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.keep" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.discard" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.undo" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
         "can" => {
             let _input: crate::task_verb::sdk::TaskCanAskRequest = decode(value.clone())?;
         }
@@ -686,6 +829,19 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
+        "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
+        "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
+        "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
+        "vault.artifacts.propose_deck" => {
+            encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
+        }
+        "vault.artifacts.propose_output" => {
+            encode(vault_artifacts_propose_output(memory, decode(value)?)?)
+        }
+        "vault.artifacts.keep" => encode(vault_artifacts_keep(memory, decode(value)?)?),
+        "vault.artifacts.discard" => encode(vault_artifacts_discard(memory, decode(value)?)?),
+        "vault.artifacts.undo" => encode(vault_artifacts_undo(memory, decode(value)?)?),
         "can" => encode(can(memory, decode(value)?)?),
         "peek" => encode(peek(memory, decode(value)?)?),
         "ask" => encode(ask(memory, decode(value)?)?),
@@ -929,6 +1085,60 @@ pub fn vault_kv_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn vault_artifacts_view(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
+    memory.artifacts_view(&input)
+}
+pub fn vault_artifacts_export(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactExportRequest,
+) -> MemoryResult<Option<crate::blob_artifact::ArtifactExportFile>> {
+    memory.artifacts_export(&input)
+}
+pub fn vault_artifacts_born_from(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::BornFromRequest,
+) -> MemoryResult<crate::blob_artifact::BornFromView> {
+    memory.artifacts_born_from(&input)
+}
+pub fn vault_artifacts_proposals(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Vec<crate::edit_settle::PendingProposalView>> {
+    memory.artifacts_proposals(&input)
+}
+pub fn vault_artifacts_propose_deck(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::DeckProposeRequest,
+) -> MemoryResult<crate::blob_artifact::DeckProposeOutcome> {
+    memory.artifacts_propose_deck(&input)
+}
+pub fn vault_artifacts_propose_output(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::NativeOutputRequest,
+) -> MemoryResult<crate::edit_settle::PendingProposalView> {
+    memory.artifacts_propose_output(&input)
+}
+pub fn vault_artifacts_keep(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::KeptProposal> {
+    memory.artifacts_keep(&input)
+}
+pub fn vault_artifacts_discard(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::DiscardedProposal> {
+    memory.artifacts_discard(&input)
+}
+pub fn vault_artifacts_undo(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::UndoneKeep> {
+    memory.artifacts_undo(&input)
 }
 pub fn can(
     memory: &Memory<'_>,

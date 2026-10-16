@@ -147,14 +147,13 @@ impl Vault {
             if version.version <= kept {
                 return Err(Error::CorruptedIndex("undo appended no version"));
             }
-            // Threads on the kept version carry over by identity; OF-368's
-            // exact-identity reattachment owns the detached ones.
-            let reanchor = self.reanchor_annotation_threads_in_txn(
+            // The undo version is the restored version's bytes: threads that
+            // stood on it, or drifted off it, reattach by exact stored identity.
+            let reanchor = self.reattach_restored_threads_in_txn(
                 wtxn,
                 artifact_id,
-                kept,
+                restored,
                 version.version,
-                &[],
                 actor,
                 occurred,
                 learned_at,
@@ -171,6 +170,103 @@ impl Vault {
             Ok(KeepUndoOutcome {
                 undo,
                 version,
+                reanchor,
+            })
+        })
+    }
+
+    /// Restores an earlier version (ARCH-0078 "Versions and forks"): its bytes
+    /// become the next version, with an `artifact.restore` made_by naming the
+    /// restored and replaced versions. Comments that stood on the restored
+    /// version, or drifted off it, reattach by exact stored identity.
+    pub fn restore_blob_artifact_version(
+        &self,
+        artifact_id: &EntityId,
+        version: u64,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<KeepUndoOutcome> {
+        self.with_write_txn_grouped(|wtxn| {
+            let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            if version >= head.version {
+                return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                    "restore names an earlier version than the head",
+                )));
+            }
+            let restored = self
+                .blob_artifact_version_metadata_in_txn(wtxn, artifact_id, version)?
+                .ok_or(Error::EntityNotFound)?;
+            let bytes = self
+                .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
+                .ok_or(Error::EntityNotFound)?;
+            let human = actor.actor_class() == EdgeActorClass::Human;
+            let key = hash_hex(blake3::hash(&version.to_be_bytes()).as_bytes());
+            let provenance = if human {
+                BlobVersionProvenance::UserUpload
+            } else {
+                BlobVersionProvenance::AgentRun {
+                    run_ref: format!("restore:{key}"),
+                }
+            };
+            let made_by = MadeBy {
+                inputs: [restored.claim_id, head.claim_id]
+                    .into_iter()
+                    .map(|row| MadeByInput {
+                        row,
+                        role: MadeByInputRole::Input,
+                    })
+                    .collect(),
+                process: MadeByProcess {
+                    actor: actor.entity_ref(),
+                    class: if human {
+                        MadeByClass::Stated
+                    } else {
+                        MadeByClass::Concluded
+                    },
+                    identity: "artifact.restore".to_owned(),
+                    version: "1".to_owned(),
+                    params_hash: key,
+                },
+                at: learned_at,
+                trigger: None,
+            };
+            let appended = self.append_blob_artifact_version_made_by_in_txn(
+                wtxn,
+                artifact_id,
+                None,
+                &bytes,
+                &provenance,
+                &made_by,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+            if appended.version <= head.version {
+                return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                    "the head already holds that version's bytes",
+                )));
+            }
+            let reanchor = self.reattach_restored_threads_in_txn(
+                wtxn,
+                artifact_id,
+                version,
+                appended.version,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+            Ok(KeepUndoOutcome {
+                undo: KeepUndo {
+                    proposal_ref: String::new(),
+                    kept_version: head.version,
+                    restored_version: version,
+                    version: appended.version,
+                    actor: actor.entity_ref(),
+                    at: learned_at,
+                },
+                version: appended,
                 reanchor,
             })
         })

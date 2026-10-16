@@ -580,6 +580,15 @@ fn mcp_agent_verb_input(
         "vault.kv.delete" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.search" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.propose_deck" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.propose_output" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.keep" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.discard" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.undo" => a.spec.clone().ok_or_else(invalid),
         "can" => a.spec.clone().ok_or_else(invalid),
         "peek" => a.spec.clone().ok_or_else(invalid),
         "ask" => a.spec.clone().ok_or_else(invalid),
@@ -760,6 +769,33 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.kv.namespaces" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.view" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.born_from" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.proposals" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.propose_deck" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.propose_output" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.keep" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.discard" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.undo" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "can" => {
@@ -1157,6 +1193,78 @@ async fn execute_agent_verb_listing(
             let output = oneiron::task_verb::sdk::vault_kv_namespaces(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.view" => {
+            let input: oneiron::blob_artifact::ArtifactRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_view(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.export" => {
+            let input: oneiron::blob_artifact::ArtifactExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_export(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.born_from" => {
+            let input: oneiron::blob_artifact::BornFromRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_born_from(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.proposals" => {
+            let input: oneiron::blob_artifact::ArtifactRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_proposals(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.propose_deck" => {
+            let input: oneiron::blob_artifact::DeckProposeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_propose_deck(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.propose_output" => {
+            let input: oneiron::blob_artifact::NativeOutputRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_propose_output(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.keep" => {
+            let input: oneiron::blob_artifact::ProposalSettleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_keep(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.discard" => {
+            let input: oneiron::blob_artifact::ProposalSettleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_discard(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.undo" => {
+            let input: oneiron::blob_artifact::ProposalSettleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_undo(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "can" => {

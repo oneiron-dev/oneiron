@@ -57,6 +57,9 @@ pub(super) struct Saved {
     pub(super) linked: usize,
     /// Provisional entities it minted.
     pub(super) minted: usize,
+    /// The saved set's surprise beside the set it replaced; `None` for a
+    /// turn's first.
+    pub(super) surprise: Option<f32>,
     /// Context links that found no saved span and kept no antecedent.
     pub(super) unresolved_context_links: usize,
     /// Speaker links that named no one person.
@@ -123,7 +126,8 @@ pub(super) fn save_in_txn(
         .iter()
         .map(|message| EntityId::from_hex(&message.id))
         .collect::<Result<Vec<_>>>()?;
-    if let Some(held) = tag_set_in_txn(&vault.store, txn, &turn)?
+    let held = tag_set_in_txn(&vault.store, txn, &turn)?;
+    if let Some(held) = held.as_ref()
         && held.envelope == envelope
     {
         let kept = |wanted: fn(&MentionReference) -> bool| {
@@ -139,6 +143,7 @@ pub(super) fn save_in_txn(
                 .filter(|mention| mention.link != MentionLink::Tag)
                 .count(),
             minted: 0,
+            surprise: held.surprise,
             unresolved_context_links: output
                 .context_links
                 .len()
@@ -251,16 +256,7 @@ pub(super) fn save_in_txn(
             link_confidence,
         });
     }
-    let saved = Saved {
-        linked: mentions
-            .iter()
-            .filter(|mention| mention.link != MentionLink::Tag)
-            .count(),
-        minted: linker.minted,
-        unresolved_context_links,
-        unresolved_speaker_links,
-    };
-    let tags = TurnTags {
+    let mut tags = TurnTags {
         turn,
         envelope,
         messages,
@@ -268,6 +264,22 @@ pub(super) fn save_in_txn(
         merge_evidence,
         mood: output.vad,
         saved_at: now,
+        surprise: None,
+    };
+    // The gate between the families runs here, on the set this save
+    // replaces, so the reader of the tags finds the delta's surprise with
+    // them and no model is called to measure it.
+    tags.surprise = held.as_ref().map(|held| tags.surprise_since(held));
+    let saved = Saved {
+        linked: tags
+            .mentions
+            .iter()
+            .filter(|mention| mention.link != MentionLink::Tag)
+            .count(),
+        minted: linker.minted,
+        surprise: tags.surprise,
+        unresolved_context_links,
+        unresolved_speaker_links,
     };
     replace_in_txn(vault, txn, &turn, Some(&tags))?;
     Ok(saved)
