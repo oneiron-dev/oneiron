@@ -76,12 +76,12 @@ pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
 ];
 
 /// The pinned sub-map keys for a profile's `output_decay`, in encode order.
-pub const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
+pub(super) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
 
 /// Most literal verbatim pins one profile carries, and the most bytes one
 /// pin may hold.
-pub const MAX_MEMORY_PROFILE_VERBATIM_PINS: usize = 64;
-pub const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
+pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PINS: usize = 64;
+pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
 
 /// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.
 pub const CONTEXT_BUDGET_SPLIT_KEYS: [&str; 4] = ["claims", "turns", "summaries", "other"];
