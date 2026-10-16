@@ -194,11 +194,24 @@ impl Ladder {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<TypedDecision> {
+        self.run_on(true, question, policy, ceiling, reversibility, deadline)
+    }
+
+    /// The ladder with its stronger rung's slot filled or empty.
+    fn run_on(
+        &self,
+        stronger: bool,
+        question: &DecisionQuestion,
+        policy: &DecisionBandPolicy,
+        ceiling: DecisionRung,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> Result<TypedDecision> {
         DecisionLadder {
             rule: None,
             local: None,
             system_one: Some(&self.first),
-            escalation: Some(&self.stronger),
+            escalation: stronger.then_some(&self.stronger as &dyn DecisionProvider),
             big: None,
             human: &self.queue,
             human_pin: pin(DecisionRung::Human),
@@ -452,6 +465,33 @@ fn a_stronger_rung_starts_only_for_a_cause_and_on_the_same_clock() {
             .collect();
         assert_eq!(paired, expected);
     }
+
+    // A rung that abstains answered nothing: the receipt names no answering rung.
+    let q = question();
+    let abstains = ProviderDecision {
+        answer: DecisionAnswer::Abstain,
+        probability: None,
+        paired: None,
+        person: None,
+    };
+    let ladder = Ladder::new(
+        Rung::new(DecisionRung::SystemOne, ms(200), Some(abstains)),
+        Rung::new(DecisionRung::Escalation, ms(100), None),
+    );
+    let decision = ladder
+        .run(
+            &q,
+            &policy(&q, None, false),
+            DecisionRung::Big,
+            Reversibility::ReversibleRead,
+            &clock(),
+        )
+        .expect("the call runs");
+    assert_eq!(decision.answer, DecisionAnswer::Abstain);
+    assert_eq!(
+        (time(&decision).stop, time(&decision).answered),
+        (StopCause::Done, None)
+    );
 }
 
 #[test]
@@ -522,42 +562,45 @@ fn a_reply_after_the_cut_is_never_taken_and_only_a_reversible_step_keeps_its_ans
     );
     assert!(ladder.queue.asks().is_empty());
 
-    // An answer inside its enforced band is not eligible at the cut, even for a reversible step.
-    let q = question();
-    let ladder = Ladder::new(
-        Rung::new(
-            DecisionRung::SystemOne,
-            ms(100),
-            Some(answer(true, 0.5, None)),
-        ),
-        Rung::new(
-            DecisionRung::Escalation,
-            ms(950),
-            Some(answer(true, 0.99, None)),
-        ),
-    );
-    let decision = ladder
-        .run(
-            &q,
-            &policy(&q, None, true),
-            DecisionRung::Big,
-            Reversibility::ReversibleRead,
-            &clock(),
-        )
-        .expect("a cut is an outcome, not an error");
-    assert_eq!(decision.answer, DecisionAnswer::Abstain);
-    assert_eq!(decision.probability, None);
-    assert!(decision.in_band);
-    assert_eq!(decision.human_ask, Some(HumanAskReason::Deadline));
-    let time = time(&decision);
-    assert_eq!(
-        (time.stop, time.answered, time.reasoning),
-        (
-            StopCause::Deadline,
-            None,
-            Reasoning::Cut(ReasoningCause::SmallMargin)
-        )
-    );
+    // An answer inside its band is not eligible at the cut, even for a reversible step,
+    // whether the band is enforced (a small margin steps up) or in shadow (a paired
+    // reading at its row steps up).
+    for (enforce, cause) in [
+        (true, ReasoningCause::SmallMargin),
+        (false, ReasoningCause::PairedHigh),
+    ] {
+        let q = question();
+        let ladder = Ladder::new(
+            Rung::new(
+                DecisionRung::SystemOne,
+                ms(100),
+                Some(answer(true, 0.5, Some(0.8))),
+            ),
+            Rung::new(
+                DecisionRung::Escalation,
+                ms(950),
+                Some(answer(true, 0.99, None)),
+            ),
+        );
+        let decision = ladder
+            .run(
+                &q,
+                &policy(&q, Some(0.7), enforce),
+                DecisionRung::Big,
+                Reversibility::ReversibleRead,
+                &clock(),
+            )
+            .expect("a cut is an outcome, not an error");
+        assert_eq!(decision.answer, DecisionAnswer::Abstain);
+        assert_eq!(decision.probability, None);
+        assert!(decision.in_band);
+        assert_eq!(decision.human_ask, Some(HumanAskReason::Deadline));
+        let cut = time(&decision);
+        assert_eq!(
+            (cut.stop, cut.answered, cut.reasoning),
+            (StopCause::Deadline, None, Reasoning::Cut(cause))
+        );
+    }
 }
 
 #[test]
@@ -595,6 +638,34 @@ fn no_rung_starts_in_the_last_quarter_under_either_clock() {
                 Reasoning::Skipped(ReasoningCause::PairedHigh)
             );
         }
+    }
+    // With no stronger provider the step skips to the person, on the same clock: with
+    // the work time spent it does not start, and the cut rule decides.
+    for reversibility in [Reversibility::ReversibleRead, Reversibility::OutboundEffect] {
+        let q = question();
+        let ladder = Ladder::new(
+            Rung::new(
+                DecisionRung::SystemOne,
+                WORK,
+                Some(answer(true, 0.9, Some(0.8))),
+            ),
+            Rung::new(DecisionRung::Escalation, ms(0), None),
+        );
+        let decision = ladder
+            .run_on(
+                false,
+                &q,
+                &policy(&q, Some(0.7), false),
+                DecisionRung::Human,
+                reversibility,
+                &clock(),
+            )
+            .expect("a cut is an outcome, not an error");
+        assert_cut_rule(&ladder, &decision, reversibility, DecisionRung::Human);
+        assert_eq!(
+            time(&decision).reasoning,
+            Reasoning::Skipped(ReasoningCause::PairedHigh)
+        );
     }
 }
 

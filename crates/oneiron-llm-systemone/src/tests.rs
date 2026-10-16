@@ -114,6 +114,7 @@ async fn negative_recheck_preserves_pin_and_complete_wrong_revision_is_refused()
             .ask(
                 request(AnswerContract::Noul, vec![]),
                 &BudgetLease::for_test("seat"),
+                std::time::Duration::from_secs(3600),
             )
             .await;
         let requests = handle.join().unwrap();
@@ -157,7 +158,8 @@ async fn malformed_choice_probabilities_and_unpinned_endpoint_fail_closed() {
                 },
                 vec![]
             ),
-            &BudgetLease::for_test("seat")
+            &BudgetLease::for_test("seat"),
+            std::time::Duration::from_secs(3600)
         )
         .await
         .is_err()
@@ -192,7 +194,8 @@ async fn rejects_307_and_308_without_reposting_to_redirect_target() {
         assert!(
             seat.ask(
                 request(AnswerContract::Noul, vec![]),
-                &BudgetLease::for_test("seat")
+                &BudgetLease::for_test("seat"),
+                std::time::Duration::from_secs(3600)
             )
             .await
             .is_err()

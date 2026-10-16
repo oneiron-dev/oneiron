@@ -85,7 +85,7 @@ impl ReadRequest {
             },
             paired: &probe.paired,
             person: probe.person.as_deref(),
-            time_left: None,
+            work_until: None,
         }
     }
 }

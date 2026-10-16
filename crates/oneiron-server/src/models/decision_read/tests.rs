@@ -163,7 +163,7 @@ async fn read(
                 },
                 paired: "Think?",
                 person: person.then_some("Person?"),
-                time_left: None,
+                work_until: None,
             },
             &lease(),
         )
@@ -276,7 +276,7 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
         },
         paired: "Think?",
         person: Some("Person?"),
-        time_left: None,
+        work_until: None,
     });
     assert_eq!(reserve, Ok(prompt.len() as u64 + 1));
     assert!(prompt.starts_with("HEAD\n(1) When? (2) Think? (3) Person?\nA: bin 0; more thinking no; ask a person no\nB: bin 0; more thinking yes; ask a person no\nC: bin 0; more thinking no; ask a person yes\n"));

@@ -5,10 +5,11 @@
 use super::ladder::{DecisionProvider, PairedAnswer, ProviderDecision, validate_pin};
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
-use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet};
+use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
+use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
 const DISTRIBUTION_TOLERANCE: f64 = 1e-6;
@@ -104,6 +105,18 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 return Err(invalid("a decision read takes noul and choice questions"));
             }
         };
+        let lease = self
+            .guard
+            .admit()
+            .map_err(|_| invalid("decision read refused by the budget"))?
+            .lease;
+        // Admission may wait; a read admitted after the work time is spent never starts.
+        if !deadline.decision_may_start() {
+            self.guard
+                .settle_per_call(&lease, &LlmUsage::zero())
+                .map_err(|_| invalid("decision read settlement refused"))?;
+            return Err(invalid("decision read admitted after the work time"));
+        }
         let request = LabelReadRequest {
             state: self.call.state,
             primary: LabelReadout {
@@ -112,13 +125,9 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             },
             paired: &self.paired.text,
             person: self.person.map(|person| person.text.as_str()),
-            time_left: Some(deadline.decision_time_left()),
+            // An instant, not a duration, so the reader's own preparation spends it too.
+            work_until: Some(Instant::now() + deadline.decision_time_left()),
         };
-        let lease = self
-            .guard
-            .admit()
-            .map_err(|_| invalid("decision read refused by the budget"))?
-            .lease;
         let read = match self.reader.read(&request, &lease) {
             Ok(read) => {
                 self.guard

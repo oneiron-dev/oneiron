@@ -233,8 +233,9 @@ pub trait HumanDecisionQueue: Send + Sync {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()>;
 }
 
-/// Slots are fixed and cannot silently skip a missing rung. The last rung is
-/// a queue, not a model-produced human answer.
+/// Slots are fixed. A step up skips a rung with no provider, up to the dial's
+/// ceiling, and the receipt's pins name every rung that ran. The last rung is a
+/// queue, not a model-produced human answer.
 pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
@@ -249,10 +250,11 @@ impl DecisionLadder<'_> {
     /// One typed decision under one clock, `deadline` (an anytime budget, or a raw
     /// deadline). The first permitted rung answers first; a stronger rung starts only
     /// while work time is left, and only for a cause: a small margin under an enforced
-    /// band, or a paired reading at its row. At a cut a reversible step takes the
-    /// answer it holds and an irreversible one abstains and asks; with no answer, or
-    /// an answer inside its enforced band, the call abstains. The last quarter of the
-    /// time stays the answer's.
+    /// band, or a paired reading at its row. A step skips a rung with no provider, up
+    /// to the ceiling; with none left the call abstains. At a cut a reversible step
+    /// takes the answer it holds and an irreversible one abstains and asks; with no
+    /// answer, or an answer inside its band, the call abstains. The last quarter of
+    /// the time stays the answer's.
     #[expect(
         clippy::too_many_arguments,
         reason = "the call's clock joins the question, its scope, the dial and the policy"
@@ -283,6 +285,7 @@ impl DecisionLadder<'_> {
         let mut answered = None;
         let mut in_band = false;
         let mut needs_person = false;
+        let mut unavailable = false;
         let mut stop = StopCause::Done;
         let mut reasoning = Reasoning::NotNeeded;
         if rung != DecisionRung::Human {
@@ -298,11 +301,19 @@ impl DecisionLadder<'_> {
                     if needs_person {
                         rung = DecisionRung::Human;
                     } else if let Some(cause) = cause {
-                        let next = next_rung(rung);
-                        if next == DecisionRung::Human {
-                            rung = next;
-                        } else {
-                            match self.run_provider(
+                        // A stronger rung, the person's included, starts only while work
+                        // time is left.
+                        match self.next_available(rung, dial.ceiling) {
+                            None => {
+                                unavailable = true;
+                                reasoning = Reasoning::Skipped(cause);
+                            }
+                            Some(_) if !deadline.decision_may_start() => {
+                                stop = StopCause::Deadline;
+                                reasoning = Reasoning::Skipped(cause);
+                            }
+                            Some(DecisionRung::Human) => rung = DecisionRung::Human,
+                            Some(next) => match self.run_provider(
                                 next,
                                 question,
                                 evidence,
@@ -327,19 +338,17 @@ impl DecisionLadder<'_> {
                                     }
                                     prior = Some(answer);
                                 }
-                            }
+                            },
                         }
                     }
                 }
             }
         }
         // At a cut an irreversible step never takes an unfinished answer, and no step
-        // takes an answer the call does not have, or one its enforced band does not
-        // accept as it stands (an in-band answer is not eligible).
+        // takes an answer the call does not have, or one inside its band, enforced or
+        // in shadow (packet rule 5: an in-band answer is not eligible).
         let abstains_at_cut = stop == StopCause::Deadline
-            && (prior.is_none()
-                || reversibility == Reversibility::OutboundEffect
-                || in_band && row.mode == BandMode::Enforce);
+            && (prior.is_none() || reversibility == Reversibility::OutboundEffect || in_band);
         if abstains_at_cut && dial.ceiling == DecisionRung::Human {
             rung = DecisionRung::Human;
         }
@@ -367,15 +376,19 @@ impl DecisionLadder<'_> {
             })?;
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
-            answered = None;
             abstained()
         } else if abstains_at_cut {
             human_ask = Some(HumanAskReason::Deadline);
-            answered = None;
+            abstained()
+        } else if unavailable {
+            // No rung up to the ceiling can take the step: a typed abstention.
+            human_ask = Some(HumanAskReason::ProviderUnavailable);
             abstained()
         } else {
             prior.expect("a non-human rung has an answer")
         };
+        // A rung that abstained answered nothing.
+        let answered = answered.filter(|_| outcome.answer != DecisionAnswer::Abstain);
         Ok(TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,
@@ -404,9 +417,37 @@ impl DecisionLadder<'_> {
         })
     }
 
-    /// One provider read on the call's clock. A missing slot fails even with no time
-    /// left, so a cut never hides a ladder that would skip a rung. A failure with time
-    /// left still fails the call.
+    fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
+        match rung {
+            DecisionRung::Rule => self.rule,
+            DecisionRung::Local => self.local,
+            DecisionRung::SystemOne => self.system_one,
+            DecisionRung::Escalation => self.escalation,
+            DecisionRung::Big => self.big,
+            DecisionRung::Human => None,
+        }
+    }
+
+    /// The next rung above `rung` that can answer, up to `ceiling`. The person's
+    /// queue is always present (ARCH-0076 #posture: no house model sends the step
+    /// to the big model or the person).
+    fn next_available(
+        &self,
+        mut rung: DecisionRung,
+        ceiling: DecisionRung,
+    ) -> Option<DecisionRung> {
+        while rung < ceiling {
+            rung = next_rung(rung);
+            if rung == DecisionRung::Human || self.slot(rung).is_some() {
+                return Some(rung);
+            }
+        }
+        None
+    }
+
+    /// One provider read on the call's clock. Routing skips an empty slot, so only
+    /// the dial's own first rung reaches here empty, and it fails even with no time
+    /// left. A failure with time left still fails the call.
     fn run_provider(
         &self,
         rung: DecisionRung,
@@ -415,15 +456,9 @@ impl DecisionLadder<'_> {
         deadline: &RetrievalDeadline,
         readings: &mut Readings,
     ) -> Result<Read> {
-        let provider = match rung {
-            DecisionRung::Rule => self.rule,
-            DecisionRung::Local => self.local,
-            DecisionRung::SystemOne => self.system_one,
-            DecisionRung::Escalation => self.escalation,
-            DecisionRung::Big => self.big,
-            DecisionRung::Human => None,
-        }
-        .ok_or_else(|| invalid("decision provider unavailable"))?;
+        let provider = self
+            .slot(rung)
+            .ok_or_else(|| invalid("decision provider unavailable"))?;
         let pin = provider.pin();
         validate_pin(&pin, rung)?;
         if !deadline.decision_may_start() {

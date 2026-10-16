@@ -238,7 +238,8 @@ pub enum Reasoning {
     /// A clear answer stopped there.
     NotNeeded,
     Ran(ReasoningCause),
-    /// It did not start: no time was left, or its admission was refused.
+    /// It did not start: no time was left, no rung up to the ceiling could take it, or
+    /// its admission was refused.
     Skipped(ReasoningCause),
     /// It started, and the deadline came before its answer.
     Cut(ReasoningCause),
