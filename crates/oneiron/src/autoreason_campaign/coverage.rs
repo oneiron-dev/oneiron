@@ -155,7 +155,7 @@ impl CoverageFloorComparison {
         }
     }
 
-    fn score_case(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+    pub(crate) fn score_case(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         if self.before.matches(case) {
             Ok(1.0)
         } else if self.after.matches(case) {
@@ -215,12 +215,8 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         self.inner.record_decision(question, decision, state)
     }
 
-    /// The coverage floor is measured from the archive, never judged.
-    fn measured_axis(&self, case: &HeldOutReplayCase<'_>, axis: &str) -> Result<Option<f32>> {
-        if axis == "coverage" {
-            return self.comparison.score_case(case).map(Some);
-        }
-        self.inner.measured_axis(case, axis)
+    fn coverage_floor(&self) -> Option<&CoverageFloorComparison> {
+        Some(self.comparison)
     }
 
     fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
