@@ -273,8 +273,27 @@ Beside sittings, the Dreamer's wake policy (ARCH-0026) wakes its three
 recipes from the vault's wake-policy row: Continuous after landed turns,
 Weave on accumulation, a quiet window or the longest wait, and Nightly on its
 cadence. Continuous reads new turns through the sieve. Nightly queues the
-vault cleanup pass and the Coach's retrieval tune. Weave's input waits in the
-policy outbox for its recipe body. Each wake waits for no running chat turn,
+vault cleanup pass, the Coach's nightly jobs, and the Dreamer's curator and
+harness audit. Weave's input waits in the policy outbox for its recipe body.
+
+The curator grades the Dreamer's own aged consolidations and files the next
+demotion rung for each as a proposal; the harness audit scores the Dreamer's
+recorded tuning config (its role models, prompt hash and pass dials, plus the
+Coach's retrieval weights) by how often you accepted its reviewed proposals,
+and files a retune proposal naming the surfaces a backbone change or a score
+drop implicates. Both land in the owner run tray (`/v1/owner/runs`), one
+run per night. Approve a curator run and its next pass applies each demotion
+whose target is unchanged since grading; a retune proposal is advice only and
+changes nothing.
+
+The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
+detectors (refused Dreamer consolidations, consent storms and denials,
+per-actor write drift) over the last day of Gate receipts, and the read-side
+pass runs the retrieval-miss detector. Each run is signed by the scheduled
+detector instance, and a run that does not verify stores nothing. A retrieval
+miss files a proposed reindex and a refused consolidation a proposed retry,
+through the production healer host (`Vault::healer_proposal`); nothing applies
+them. Each wake waits for no running chat turn,
 no running workflow and `idle_secs` of quiet since the last turn. A peer's sync apply wakes the
 Dreamer too, so turns another host wrote are read without waiting for a local
 one.
@@ -413,6 +432,15 @@ reasoning seat by its role's key (`checker`, `local_reasoner`,
 above. Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
+
+A run in an off-record room compacts the same way, inside the room: the pass
+reads the room's view, and the summary, its sources and its step coverage
+stay in the room's overlay. Nothing reaches the vault, no summary is embedded
+or exported, and closing the room drops them with the rest of it. A room
+closed or flipped on record while a pass runs refuses its summary, and the
+run keeps its raw window. An anonymous room keeps no summary, and a room
+already on record when the run started does not compact yet: both report
+`sticky` with `why: "off_record_run"`.
 
 ### Type check (shadow mode)
 
@@ -692,3 +720,30 @@ The verbs, each the owner's and checked against the vault's inference policy:
   when it ends.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
+
+## 11. When a provider refuses for a limit
+
+A rung refused for a limit hands the call to the next rung of its ladder, and
+its offer (adapter, origin, key and model) rests in the vault, so a restart
+keeps it:
+
+- **A rate limit** (a 429 that names no long wait) rests for the wait it
+  names, or, naming none, for a backoff that doubles with each refusal in a
+  row from the vault's default rest, with jitter, up to the longest rest.
+- **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
+  wait of 15 minutes or more) is parked until the reset it names.
+- **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
+  "billing") is parked until the owner tops up or clears it.
+
+While only rests stop a call, it waits for the first offer back and tries the
+chain again, until its waits pass the vault's longest wait in all (a caller
+with its own deadline passes its own budget). A call whose every offer is
+parked on credit fails `quota_spent`; one that ran out of wait fails
+`rate_limited` with the earliest reset.
+
+A spent window or spent credit leaves the owner a question in
+`GET /v1/ai/status` (`quota_questions`: the provider, model, route, what was
+spent, the reset if any, and the choices). Answer it with
+`POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
+`top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
+`add_account` close the question and leave the offer parked until its reset.
