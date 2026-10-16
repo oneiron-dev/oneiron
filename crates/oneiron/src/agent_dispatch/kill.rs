@@ -265,6 +265,10 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
+        // OF-532: a killed child settles its lease with the kill.
+        if outcome.effect == AttemptInterventionEffect::Cancelled {
+            self.settle_child_in_txn(&mut wtxn, spawn_attempt_id, now)?;
+        }
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
         match outcome.effect {

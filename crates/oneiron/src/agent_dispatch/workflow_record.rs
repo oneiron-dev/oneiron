@@ -52,6 +52,9 @@ pub struct WorkflowDispatchStatus {
     pub definition: WorkflowDefinition,
     pub active_step: AttemptId,
     pub results: Vec<WorkflowStepResult>,
+    /// The whole workflow's launch statement (OF-532): one agent per leaf,
+    /// the sum of their expected spend, and the cap, frozen at admission.
+    pub launch: Option<super::LaunchStatement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +68,12 @@ pub(super) struct WorkflowIntent {
     pub context_from: Vec<String>,
     pub depth_remaining: Option<u8>,
     pub project_ref: Option<String>,
+    /// The spawn's `budget`: a hard carve for the whole workflow.
+    #[serde(default)]
+    pub budget: Option<u64>,
+    /// A root workflow's spend scope.
+    #[serde(default)]
+    pub spend: Option<super::SpendScopeId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +86,8 @@ pub(super) struct WorkflowRecord {
     pub steps: Vec<Vec<u8>>,
     pub active: AttemptId,
     pub results: Vec<WorkflowStepResult>,
+    #[serde(default)]
+    pub launch: Option<super::LaunchStatement>,
 }
 
 pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
@@ -284,6 +295,7 @@ impl super::AgentDispatcher<'_> {
             definition: crate::agent_def::workflow::decode_workflow(&record.intent.definition)?,
             active_step: record.active,
             results: record.results.clone(),
+            launch: record.launch.clone(),
         })
     }
 }

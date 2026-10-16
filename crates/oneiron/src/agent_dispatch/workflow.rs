@@ -85,6 +85,8 @@ impl AgentDispatcher<'_> {
                 .collect(),
             depth_remaining: spawn.depth_remaining,
             project_ref: spawn.project_ref.map(|id| id.to_hex()),
+            budget: spawn.budget,
+            spend: spawn.spend.as_ref().map(|spend| spend.scope.clone()),
         };
         Ok((definition, intent))
     }
@@ -140,6 +142,22 @@ impl AgentDispatcher<'_> {
                 self.workflow_status_from(row, &record)?,
             )));
         }
+        // OF-532: the whole workflow is one launch: one agent per leaf. Its
+        // budget carves (or its expected spend holds) for the wrapper; each
+        // leaf holds its own share under the wrapper's scope at its release.
+        let launch = self.admit_launch_in_txn(
+            txn,
+            input.parent_attempt,
+            spawn.spend.as_ref(),
+            spawn.budget,
+            &input.target,
+            input.now,
+        )?;
+        let leaf_spawn = AgentSpawnContext {
+            budget: None,
+            spend: None,
+            ..spawn.clone()
+        };
         let mut steps = Vec::with_capacity(definition.steps.len());
         let mut first = None;
         for id in &definition.steps {
@@ -149,7 +167,7 @@ impl AgentDispatcher<'_> {
                     target: AgentDispatchTarget::Custom(*id),
                     ..input.clone()
                 },
-                spawn.clone(),
+                leaf_spawn.clone(),
             )?;
             let mut bytes = Vec::new();
             rmpv::encode::write_value(&mut bytes, &super::encode_agent_dispatch_input(&frozen)?)
@@ -189,6 +207,8 @@ impl AgentDispatcher<'_> {
                 },
             )?
             .record;
+        // The wrapper is not an agent: its settlement calibrates nothing.
+        launch.reserve_in_txn(self, txn, root.id, None, input.now)?;
         let mut record = WorkflowRecord {
             version: 1,
             root: root.id,
@@ -196,11 +216,13 @@ impl AgentDispatcher<'_> {
             steps,
             active: root.id,
             results: Vec::new(),
+            launch: Some(launch.statement),
         };
         record.active = self.enqueue_prepared_workflow_step(
             txn,
             &record,
             first.ok_or_else(|| invalid("workflow has no first step"))?,
+            0,
             input.now,
         )?;
         RECORD.put(&self.vault.store, txn, &root.id, &record)?;
@@ -266,7 +288,7 @@ impl AgentDispatcher<'_> {
             record.intent.run_id.as_deref(),
             live.scope.to_world_scope(),
         )?;
-        self.enqueue_prepared_workflow_step(txn, record, frozen, now)
+        self.enqueue_prepared_workflow_step(txn, record, frozen, ordinal, now)
     }
 
     /// Only initial admission and the checked release path above call this.
@@ -276,9 +298,18 @@ impl AgentDispatcher<'_> {
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &WorkflowRecord,
-        frozen: AgentDispatchInput,
+        mut frozen: AgentDispatchInput,
+        ordinal: usize,
         now: u64,
     ) -> Result<crate::attempt_queue::AttemptId> {
+        // OF-532: each leaf is a launch under the wrapper's scope, stated and
+        // reserved at its release. Calibration keys on the requested leaf.
+        let requested = *crate::agent_def::workflow::decode_workflow(&record.intent.definition)?
+            .steps
+            .get(ordinal)
+            .ok_or_else(|| invalid("workflow step is missing"))?;
+        let launch = self.admit_leaf_in_txn(txn, record.root, requested, ordinal, now)?;
+        frozen.launch = Some(launch.statement.clone());
         let EnqueueDreamerAttemptOutcome::Enqueued(status) =
             self.runner.enqueue_with_task_ref_in_txn(
                 txn,
@@ -295,6 +326,7 @@ impl AgentDispatcher<'_> {
         else {
             return Err(invalid("new workflow step unexpectedly deduped"));
         };
+        launch.reserve_in_txn(self, txn, status.attempt.id, Some(requested), now)?;
         let index: Vec<_> = frozen
             .definition
             .skills
