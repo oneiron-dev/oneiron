@@ -646,3 +646,58 @@ The owner can probe the read at `POST /v1/llm/decision_read`
 (`oneiron.skills.md`): it returns the raw read, writes nothing and decides
 nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 `[limits] decision_reads` probes wait their turn.
+
+## 10. Media calls (`ai.image`, `ai.video`, `ai.speech`, `ai.transcribe`, `ai.embed`)
+
+Image, video, speech, transcription and embedding calls have their own seats,
+outside the text tiers: one ladder per operation in `[models.media]`, each rung
+`"<provider>:<model>"` on an OpenAI-compatible provider (`openai-compat` or
+`local-openai-compat`, keyed by `key_env`; the credential broker sends chat
+calls only). A media call is admitted, sent and settled like a text call:
+each rung it reaches gets its own permit on the media meter, an offer refused
+for a limit rests and the call goes to the next rung, and the run's receipts
+show every rung.
+
+```toml
+[models.media]
+budget_units = 10000000          # the media meter, in token units
+
+[models.media.image]             # POST /v1/images/generations, /v1/images/edits
+rungs = ["openai:gpt-image-1"]
+max_references = 8               # reference images make the call an edit
+rates = [{ unit = "image", per = 1, tokens = 4000 }]
+
+[models.media.video]             # POST /v1/videos, polled, then /content
+rungs = ["openai:sora-2"]
+
+[models.media.speech]            # POST /v1/audio/speech
+rungs = ["openai:gpt-4o-mini-tts", "local:kokoro"]
+
+[models.media.transcribe]        # POST /v1/audio/transcriptions
+rungs = ["local:whisper-large-v3"]
+
+[models.media.embed]             # POST /v1/embeddings
+rungs = ["local:qwen3-embedding"]
+```
+
+A provider that counts tokens is charged them; one that counts images,
+seconds or characters is charged its row's `rates` (defaults: an image 4000
+tokens, an audio second 50, a video second 10000, four characters of speech
+one). `inputs = ["text", "image"]` narrows or widens what a row takes.
+
+The verbs, each the owner's and checked against the vault's inference policy:
+
+- `GET /v1/ai/options?operation=image&inputs=text,image`: every row that
+  serves the call (text seats' rungs too), where it runs, what it takes, its
+  rates, and `media_units_left`.
+- `POST /v1/ai/image`, `/speech`, `/transcribe`, `/embed`:
+  `{"prompt": "...", "input": [parts], "references": [parts], "params": {...},
+  "model": "<row or seat id>"}`. A part is `{"kind": "text", "text": ...}` or
+  `{"kind": "image" | "audio", "media_type": ..., "data": "<base64>"}`. The
+  answer is `{"model", "parts", "usage"}`.
+- `POST /v1/ai/video` answers `202` with a job ticket; `GET
+  /v1/ai/video/{job}` polls it (a finished job answers with its clip, once)
+  and `DELETE` stops it. A job's permit is held while it renders and settled
+  when it ends.
+
+Seats show in `GET /v1/ai/status` as `media.<operation>`.
