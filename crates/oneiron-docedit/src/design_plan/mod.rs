@@ -538,4 +538,4 @@ fn fault(block: &str, fault: TraceFault) -> CompileError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

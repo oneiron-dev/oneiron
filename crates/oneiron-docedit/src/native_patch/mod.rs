@@ -9,20 +9,24 @@ mod chart;
 mod table;
 mod workbook;
 
+use crate::deck::Placeholder;
 use crate::design_plan::{Cell, Dataset, Rect};
 use crate::ooxml::XmlError;
 use crate::retained_opc::{self, Package};
 
 pub use chart::{ChartData, Sequence, SeriesData, chart_data};
+pub(crate) use table::{insert_frame, placeholder_xml};
 
 /// Where a new graphic frame goes: the slide part, its new `p:cNvPr` id
-/// (unique in the slide) and name, and its bounds.
+/// (unique in the slide) and name, its bounds, and the layout placeholder it
+/// fills, if any.
 #[derive(Debug, Clone, Copy)]
 pub struct Frame<'a> {
     pub slide: &'a str,
     pub id: u32,
     pub name: &'a str,
     pub bounds: Rect,
+    pub placeholder: Option<&'a Placeholder>,
 }
 
 /// A merge rectangle over the table grid, header row 0 included.
@@ -232,12 +236,14 @@ pub fn native_patch(
         }
     };
     // The independent check: what the export would carry, not what the
-    // writer meant to write.
-    let changed: Vec<String> = next
-        .changed_parts()
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    // writer meant to write. Only this operation's writes count, whatever
+    // the package carried before it.
+    let mut changed = Vec::new();
+    for part in next.changed_parts() {
+        if package.part(part)? != next.part(part)? {
+            changed.push(part.to_owned());
+        }
+    }
     if let Some(outside) = changed.iter().find(|part| !allowed.contains(part)) {
         return Err(NativeRefusal::OutsideAllowedParts(outside.clone()));
     }

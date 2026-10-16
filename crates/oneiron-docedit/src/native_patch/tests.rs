@@ -65,6 +65,7 @@ fn frame(id: u32) -> Frame<'static> {
             cx: 6_000_000,
             cy: 3_000_000,
         },
+        placeholder: None,
     }
 }
 

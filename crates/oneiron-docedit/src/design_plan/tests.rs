@@ -16,7 +16,7 @@ const TITLE_SLIDE: &str = "ppt/slideLayouts/slideLayout1.xml";
 const TITLE_AND_CONTENT: &str = "ppt/slideLayouts/slideLayout2.xml";
 const TWO_CONTENT: &str = "ppt/slideLayouts/slideLayout3.xml";
 const TITLE_ONLY: &str = "ppt/slideLayouts/slideLayout4.xml";
-const NAMES: [&str; 4] = [
+pub(crate) const NAMES: [&str; 4] = [
     "Title Slide",
     "Title and Content",
     "Two Content",
@@ -88,7 +88,7 @@ fn title_placeholder() -> String {
 }
 
 /// Four layouts, named `names` in master order; selection must not care.
-fn template_parts(names: [&str; 4]) -> Vec<(&'static str, String)> {
+pub(crate) fn template_parts(names: [&str; 4]) -> Vec<(&'static str, String)> {
     let subtitle = r#"<p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr marL="0" indent="0" algn="ctr"><a:buNone/><a:defRPr sz="2400"/></a:lvl1pPr></a:lstStyle><a:p/></p:txBody>"#;
     let layouts = [
         layout(
@@ -215,6 +215,32 @@ fn template_parts(names: [&str; 4]) -> Vec<(&'static str, String)> {
     ]
 }
 
+/// The template without its sample slide, as emission takes it: a new deck
+/// holds only planned slides.
+pub(crate) fn bare_parts() -> Vec<(&'static str, String)> {
+    template_parts(NAMES)
+        .into_iter()
+        .filter(|(name, _)| !name.starts_with("ppt/slides/"))
+        .map(|(name, body)| match name {
+            "ppt/presentation.xml" => (
+                name,
+                body.replace(
+                    r#"<p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>"#,
+                    "",
+                ),
+            ),
+            "ppt/_rels/presentation.xml.rels" => (
+                name,
+                rels(&[
+                    ("rId1", "slideMaster", "slideMasters/slideMaster1.xml"),
+                    ("rId3", "theme", "theme/theme1.xml"),
+                ]),
+            ),
+            _ => (name, body),
+        })
+        .collect()
+}
+
 fn template_named(names: [&str; 4]) -> Package {
     Package::open(&archive(&template_parts(names)), limits()).unwrap()
 }
@@ -238,7 +264,7 @@ fn pin(quote: &str) -> Value {
     })
 }
 
-fn title(id: &str, text: &str) -> Value {
+pub(crate) fn title(id: &str, text: &str) -> Value {
     json!({"id": id, "kind": "title", "text": text})
 }
 
@@ -250,7 +276,7 @@ fn data(id: &str, dataset: &str, carriers: &[&str]) -> Value {
     json!({"id": id, "kind": "data", "dataset": dataset, "carriers": carriers})
 }
 
-fn page(id: &str, division: &str, blocks: Vec<Value>) -> Value {
+pub(crate) fn page(id: &str, division: &str, blocks: Vec<Value>) -> Value {
     json!({"id": id, "job": "explain", "division": division, "blocks": blocks})
 }
 
@@ -259,7 +285,7 @@ fn words(n: usize) -> String {
     vec!["word"; n].join(" ")
 }
 
-fn brief() -> Value {
+pub(crate) fn brief() -> Value {
     let mut results = claim("a-claim", "Revenue grew from 4.1 to 8.3 million.");
     results["qualifications"] = json!(["Unaudited."]);
     results["evidence"][0]["drift"] = json!(true);
@@ -355,11 +381,11 @@ fn brief() -> Value {
     })
 }
 
-fn bytes(brief: &Value) -> Vec<u8> {
+pub(crate) fn bytes(brief: &Value) -> Vec<u8> {
     serde_json::to_vec(brief).unwrap()
 }
 
-fn kept<'a>(version: &'a str, bytes: &'a [u8]) -> KeptBrief<'a> {
+pub(crate) fn kept<'a>(version: &'a str, bytes: &'a [u8]) -> KeptBrief<'a> {
     KeptBrief {
         version,
         content_hash: *blake3::hash(bytes).as_bytes(),

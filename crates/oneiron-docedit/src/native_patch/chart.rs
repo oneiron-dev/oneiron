@@ -485,6 +485,13 @@ pub(super) fn create(
         .into_iter()
         .map(|cell| as_kind(Kind::Text, cell))
         .collect();
+    // PowerPoint smooths a line series that does not say otherwise, which
+    // draws a shape between points the data does not have.
+    let smooth = if family == ChartFamily::Line {
+        "<c:smooth val=\"0\"/>"
+    } else {
+        ""
+    };
     let mut sers = String::new();
     for (at, col) in series.iter().enumerate() {
         let letter =
@@ -492,7 +499,7 @@ pub(super) fn create(
         let name = Range::column(sheet, letter, (1, 1));
         let values = Range::column(sheet, letter, (2, last));
         sers.push_str(&format!(
-            "<c:ser><c:idx val=\"{at}\"/><c:order val=\"{at}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>General</c:formatCode>{}</c:numCache></c:numRef></c:val></c:ser>",
+            "<c:ser><c:idx val=\"{at}\"/><c:order val=\"{at}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>General</c:formatCode>{}</c:numCache></c:numRef></c:val>{smooth}</c:ser>",
             escape_text(&name.formula()),
             points("c:", &[Cell::Text(header(col))]),
             escape_text(&categories.formula()),

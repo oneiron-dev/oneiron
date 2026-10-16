@@ -2,6 +2,7 @@
 //! cell text writes that refuse a continuation cell.
 use super::workbook::{header, number};
 use super::{Frame, Merge, NativeRefusal};
+use crate::deck::Placeholder;
 use crate::design_plan::{Cell, Dataset};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
@@ -14,16 +15,34 @@ const TABLE_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/table"
 /// is well formed whatever the slide binds.
 pub(super) fn graphic_frame(frame: &Frame<'_>, uri: &str, inner: &str) -> String {
     let Frame {
-        id, name, bounds, ..
+        id,
+        name,
+        bounds,
+        placeholder,
+        ..
     } = *frame;
     format!(
-        "<p:graphicFrame xmlns:p=\"{PML}\" xmlns:a=\"{DML}\"><p:nvGraphicFramePr><p:cNvPr id=\"{id}\" name=\"{}\"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></p:xfrm><a:graphic><a:graphicData uri=\"{uri}\">{inner}</a:graphicData></a:graphic></p:graphicFrame>",
+        "<p:graphicFrame xmlns:p=\"{PML}\" xmlns:a=\"{DML}\"><p:nvGraphicFramePr><p:cNvPr id=\"{id}\" name=\"{}\"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr>{}</p:nvPr></p:nvGraphicFramePr><p:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></p:xfrm><a:graphic><a:graphicData uri=\"{uri}\">{inner}</a:graphicData></a:graphic></p:graphicFrame>",
         escape_text(name),
+        placeholder.map(placeholder_xml).unwrap_or_default(),
         bounds.x,
         bounds.y,
         bounds.cx,
         bounds.cy,
     )
+}
+
+/// `p:ph` for a layout placeholder; the implied `obj` type and index 0 are
+/// left implied.
+pub(crate) fn placeholder_xml(placeholder: &Placeholder) -> String {
+    let mut out = String::from("<p:ph");
+    if placeholder.kind != "obj" {
+        out.push_str(&format!(" type=\"{}\"", escape_text(&placeholder.kind)));
+    }
+    if placeholder.idx != 0 {
+        out.push_str(&format!(" idx=\"{}\"", placeholder.idx));
+    }
+    out + "/>"
 }
 
 /// A table frame: a header row of column names, then the dataset rows.
@@ -150,7 +169,7 @@ pub(super) fn frame_xml(
 }
 
 /// Append a frame to the slide's shape tree; its id must be new in the slide.
-pub(super) fn insert_frame(
+pub(crate) fn insert_frame(
     package: &mut Package,
     slide: &str,
     id: u32,
