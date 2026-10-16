@@ -13936,7 +13936,7 @@
      "path": "src/deletion/erase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -36039,7 +36039,7 @@
      "path": "src/sync/connection/handshake.rs",
      "purpose": "Handshake: run loop, connect_and_sync, overflow check, resync markers",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -36065,7 +36065,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -36079,7 +36079,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/sync/connection/tests.rs",
@@ -38503,7 +38503,7 @@
      "path": "src/tests/support.rs",
      "purpose": "Shared fixtures, oracles and low-level read helpers for the vault tests",
      "surface": {
-      "crate-vis": 82
+      "crate-vis": 83
      }
     },
     {
