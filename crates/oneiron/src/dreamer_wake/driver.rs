@@ -331,6 +331,22 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 outcome => outcome,
             };
+            // The wake policy's recipe receipts follow maintenance: a recipe
+            // body queues work of its own, which admits after it.
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty => {
+                    self.store.admit_next_recipe_wake(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
             // Only the NEW recipe-vs-connector choice is policy data. Cleanup
             // and maintenance remain first; consolidation's home-node stop
             // remains last. Read the owner row once per pass below.
@@ -520,6 +536,10 @@ impl<'a> DreamerWakeDriver<'a> {
                         == crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
                     {
                         crate::dreamer_runner::maintenance::execute(&admitted, &ctx)
+                    } else if admitted.status.attempt.kind
+                        == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
+                    {
+                        super::recipe_wake::execute(&admitted, &ctx)
                     } else {
                         exec.execute(&admitted, &mut ctx).await
                     }

@@ -6,15 +6,15 @@
 //! `/api/health` and `GET /v1/ai/status`. Writes never wait on a model.
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use oneiron::dreamer_consolidation::DREAMER_EXTRACTION_ROLE;
-use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
+use oneiron::dreamer_wake::{AgentWakeSignals, WakeIdleState, WakeTurnSubject};
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
-use oneiron_driver::{HintPusher, SessionHint};
+use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
 use crate::models::{
@@ -72,6 +72,9 @@ pub struct AiHandle {
     /// Each paid recall's line for its rerank calls (`[models.recall]`).
     rerank_budget_units: u64,
     turns: TurnTracker,
+    /// When the last turn landed, in seconds: the inbound silence the
+    /// Dreamer's wake policy waits out before an idle recipe.
+    inbound: Arc<AtomicU64>,
     /// The running Dreamer has a summary instruction to write bodies with.
     summaries: bool,
 }
@@ -112,8 +115,24 @@ impl AiHandle {
             raw_budget_units: models.map(|models| models.raw_budget_units),
             rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
             turns: TurnTracker::new(),
+            inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
         }
+    }
+
+    /// What the Dreamer's wake policy samples before each decision (ARCH-0026
+    /// #wake): running chat turns, live workflow work and the last landed
+    /// turn. The Dreamer runs only on a seat, so compute is there.
+    fn idle_sample(&self) -> IdleSample {
+        let turns = self.turns.clone();
+        let status = Arc::clone(&self.status);
+        let inbound = Arc::clone(&self.inbound);
+        Arc::new(move || WakeIdleState {
+            running_turns: turns.running(),
+            live_background_work: status.snapshot().workflows.state == WorkState::Working,
+            compute_available: true,
+            last_inbound_at: inbound.load(Ordering::Acquire),
+        })
     }
 
     /// Whether a declared scope summary will be written: only the Dreamer
@@ -231,6 +250,7 @@ impl AiHandle {
     /// (ARCH-0026 RD-26), off the request path. A no-op without a running
     /// Dreamer, so a model-free vault queues nothing that never runs.
     pub fn turn_landed(&self, vault: &Arc<Vault>, subject: WakeTurnSubject) {
+        self.inbound.fetch_max(unix_now(), Ordering::AcqRel);
         drop(self.wake_on_turn(vault, subject));
     }
 
@@ -244,9 +264,10 @@ impl AiHandle {
         self.hints.as_ref()?;
         let (vault, handle) = (Arc::clone(vault), self.clone());
         Some(tokio::task::spawn_blocking(move || {
+            // Queued or not, the turn is news to the wake policy: the pass
+            // the hint takes re-reads its rows and re-arms its quiet timer.
             match vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
-                Ok(true) => handle.attempt_queued(),
-                Ok(false) => {}
+                Ok(_) => handle.attempt_queued(),
                 Err(error) => tracing::warn!(%error, ?subject, "turn wake not queued"),
             }
         }))
@@ -374,7 +395,8 @@ impl AiHost {
             return host;
         };
         let status = Arc::clone(&handle.status);
-        match start_dreamer(&vault, &runtime, models, host_root, &status).await {
+        let idle = handle.idle_sample();
+        match start_dreamer(&vault, &runtime, models, host_root, &status, idle).await {
             Ok(dreamer) => {
                 handle.hints = Some(dreamer.hints());
                 handle.summaries = models.dreamer.summary_instruction.is_some();
@@ -541,6 +563,7 @@ async fn start_dreamer(
     models: &ModelsConfig,
     host_root: bool,
     status: &Arc<StatusCell>,
+    idle: IdleSample,
 ) -> Result<DreamerHost, IdleReason> {
     if !models.dreamer.enabled {
         return Err(IdleReason::Disabled);
@@ -603,6 +626,7 @@ async fn start_dreamer(
         settings: models.dreamer.clone(),
         egress,
         status: Arc::clone(status),
+        idle,
     })
     .await
     .map_err(|error| {

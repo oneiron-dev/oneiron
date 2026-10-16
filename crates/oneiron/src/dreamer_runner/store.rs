@@ -15,8 +15,8 @@ use super::codec::{
 };
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
-    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
     DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
@@ -249,6 +249,32 @@ impl<'a> DreamerRunnerStore<'a> {
         let (EnqueueDreamerAttemptOutcome::Enqueued(status)
         | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
         Ok(status.attempt.id)
+    }
+
+    /// Queues the wake policy's receipt for `trigger`'s recipe in the
+    /// policy's own commit, beside its outbox row and cursors. One receipt
+    /// per decision: a receipt whose input a later one already consumed
+    /// settles as nothing to do.
+    pub(crate) fn enqueue_recipe_wake_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        trigger: &crate::dreamer_wake::WakePolicyTrigger,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let input = serde_json::to_string(trigger)
+            .map_err(|_| invalid_dreamer_runner("dreamer recipe wake input is not encodable"))?;
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_RECIPE_WAKE_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::from(input),
+                parent_attempt: None,
+            },
+            None,
+            None,
+            now,
+        )
     }
 
     /// Co-commits a Timer/Macro wake and its cleanup attempt.
