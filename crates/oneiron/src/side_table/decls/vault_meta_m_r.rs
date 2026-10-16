@@ -339,6 +339,17 @@ side_tables! {
     PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named;
+    /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
+    PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
+    /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
+    /// (occurrence).
+    PROVENANCE_BODY: VaultMeta b"provenance:body:v1:" Named;
+    /// Who holds a body digest. Key: bytes32 (BLAKE3) + id16 (occurrence).
+    PROVENANCE_BODY_DIGEST: VaultMeta b"provenance:body_digest:v1:" Named;
+    /// File digests no descriptor holds, for the body-file collector. Key: bytes32 (BLAKE3).
+    PROVENANCE_BODY_RELEASED: VaultMeta b"provenance:body_released:v1:" Named;
+    /// One row's immutable birth envelope (Rule A made_by). Key: id16.
+    PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named;
     /// Disposable cache: which PERSON actor currently represents one provider key. Key: bytes32
     /// (sha256 of provider key).
     PROVIDER_ACTOR_INDEX: VaultMeta b"provider_confidence/actor/v1\0" Raw;

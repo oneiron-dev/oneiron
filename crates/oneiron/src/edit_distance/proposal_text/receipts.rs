@@ -217,6 +217,8 @@ fn trigger_is_valid(vault: &crate::Vault, trigger: &MadeByTrigger) -> Result<boo
     let (id, expected) = match trigger {
         MadeByTrigger::Task(id) => (id, crate::registry::ENTITY_TYPE_TASK),
         MadeByTrigger::Ask(id) => (id, crate::registry::ENTITY_TYPE_TURN),
+        MadeByTrigger::Skill(id) => (id, crate::registry::ENTITY_TYPE_SKILL),
+        MadeByTrigger::Run(id) => return crate::provenance::birth::run_exists(vault, id),
     };
     Ok(vault.get_entity_type(id)? == Some(expected))
 }

@@ -142,6 +142,8 @@
 
 mod actor_substrate;
 mod archive;
+pub mod birth;
+pub mod body;
 pub(crate) use archive::archived_provenance_body;
 mod codec;
 mod derived_attachment;
@@ -200,6 +202,19 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use rmpv::Value;
+
+/// Drops `row`'s birth envelope and the bodies it owns, queuing each file no
+/// other descriptor holds. The erase paths call it beside the row's other
+/// carriers.
+pub(crate) fn erase_row_provenance_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    birth::erase_row_birth_in_txn(store, txn, row)?;
+    body::release_owner_bodies_in_txn(store, txn, row)?;
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests;

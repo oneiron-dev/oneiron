@@ -22,6 +22,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// Every source each ASSET_TEXT this batch births was written from: its
     /// birth copies their one facet (`BatchBuilder::asset_text_birth`).
     pub(super) text_births: HashMap<EntityId, Vec<EntityId>>,
+    /// The Rule A birth envelope of each row this batch births, stamped
+    /// after every op has applied.
+    pub(super) births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
     /// BM25 analyses of this batch's text ops, done before the write
     /// transaction opened; consumed per id in op order.
     pub(super) pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
@@ -49,6 +52,7 @@ impl ApplyOpsGateMode {
             preflight_gate_decision_ids: HashMap::new(),
             birth_mask: None,
             text_births: HashMap::new(),
+            births: Vec::new(),
             pre_analyzed_text: HashMap::new(),
             nsw_plans: HashMap::new(),
             owner_authored: None,
@@ -82,6 +86,15 @@ impl ApplyOpsGateMode {
     /// written from; a text put that births no row here copies nothing.
     pub(crate) fn with_text_births(mut self, births: HashMap<EntityId, Vec<EntityId>>) -> Self {
         self.text_births = births;
+        self
+    }
+
+    /// Stamps each row's Rule A birth envelope once the batch's ops apply.
+    pub(crate) fn with_births(
+        mut self,
+        births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    ) -> Self {
+        self.births = births;
         self
     }
 
