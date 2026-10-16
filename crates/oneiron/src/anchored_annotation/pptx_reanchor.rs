@@ -144,8 +144,7 @@ fn identity_rebind(
         .shapes
         .iter()
         .filter(|s| {
-            s.creation_id.as_deref().is_some_and(|g| key(g) == wanted)
-                || number == Some(s.shape_id)
+            s.creation_id.as_deref().is_some_and(|g| key(g) == wanted) || number == Some(s.shape_id)
         })
         .collect();
     let [old_shape] = old_shapes.as_slice() else {
