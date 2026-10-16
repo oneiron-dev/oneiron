@@ -500,7 +500,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_limit_nonzero(
                 input
                     .limit
-                    .unwrap_or(crate::task_verb::sdk::RECALL_LIMIT_DEFAULT),
+                    .unwrap_or(crate::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT),
             )?;
             crate::memory::caps::check_as_of(input.as_of)?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
@@ -801,7 +801,7 @@ pub fn vault_recall(
     crate::memory::caps::check_limit_nonzero(
         input
             .limit
-            .unwrap_or(crate::task_verb::sdk::RECALL_LIMIT_DEFAULT),
+            .unwrap_or(crate::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT),
     )?;
     crate::memory::caps::check_as_of(input.as_of)?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;

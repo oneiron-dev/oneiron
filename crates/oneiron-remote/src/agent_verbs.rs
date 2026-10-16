@@ -276,7 +276,7 @@ impl OneironClient {
         oneiron::memory::caps::check_limit_nonzero(
             input
                 .limit
-                .unwrap_or(oneiron::task_verb::sdk::RECALL_LIMIT_DEFAULT),
+                .unwrap_or(oneiron::task_verb::sdk::VAULT_RECALL_LIMIT_DEFAULT),
         )?;
         oneiron::memory::caps::check_as_of(input.as_of)?;
         oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
