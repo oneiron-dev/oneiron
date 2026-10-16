@@ -1,4 +1,6 @@
 //! Deterministic root-first, no-forks thread selection over a single read snapshot.
+//! A thread continues on Parent edges; a reply's RepliesTo target is its
+//! semantic answer and may lie on the trunk.
 
 use super::graph::{conversation_of, edge_ids, invalid, require_member};
 use crate::edge::EdgeKind;
@@ -36,7 +38,7 @@ pub(super) fn chain_in_txn(
             &vault.store,
             txn,
             &current,
-            EdgeKind::RepliesTo,
+            EdgeKind::Parent,
             true,
             MAX_ANCESTOR_DEPTH.saturating_sub(examined),
         )?;
@@ -51,8 +53,8 @@ pub(super) fn chain_in_txn(
                 continue;
             }
             require_member(&vault.store, txn, &conversation, &child)?;
-            if edge_ids(&vault.store, txn, &child, EdgeKind::RepliesTo, false, 2)? != [current] {
-                return Err(invalid("record needs exactly one reply target"));
+            if super::graph::parent(&vault.store, txn, &child)? != Some(current) {
+                return Err(invalid("record needs exactly one Parent"));
             }
             if !super::graph::is_thread_record(&vault.store, txn, &child)? {
                 continue;
