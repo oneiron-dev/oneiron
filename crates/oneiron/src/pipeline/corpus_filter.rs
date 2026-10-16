@@ -44,6 +44,7 @@ impl CorpusFilter {
             corpus_scope: &self.0,
             device_local: None,
             deadline: builder.deadline,
+            disclosure: builder.disclosure_preselect.as_ref(),
         }
     }
 
