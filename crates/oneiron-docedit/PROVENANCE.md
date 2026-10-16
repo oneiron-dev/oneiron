@@ -32,5 +32,5 @@ The comment-occurrence change (2026-10-16) touches `src/edit/verbs/comments.rs`,
 optional 1-based `occurrence` that anchors the n-th copy of a repeated quote, counted over the
 paragraph's visible text the way `set_format` counts its targets. An out-of-range copy is refused. Without
 `occurrence` the first-copy anchor is unchanged. A quote that matches more than one copy now yields a
-warning diagnostic naming the copy count and the anchored copy, which `apply_with_diagnostics`
-returns (the value-only `apply` drops it).
+typed `EditNote` with the copy count and the anchored copy, which `apply_with_notes` returns (the
+value-only `apply` drops it).

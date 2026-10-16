@@ -10740,6 +10740,49 @@ fn apply_set_block_range_attr(
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+/// A non-fatal fact a step reports about how it applied; the transaction still
+/// commits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditNote {
+    /// `CommentCreate`'s `expect` occurs `copies` times (non-overlapping) in the
+    /// paragraph's visible text. `anchored` is the 1-based copy the comment
+    /// encloses; `None` when the first-copy default took a copy that overlaps
+    /// the counted ones (a self-overlapping quote). `occurrence` addresses any
+    /// counted copy.
+    RepeatedCommentQuote {
+        step_index: usize,
+        block_id: NodeId,
+        expected: String,
+        copies: usize,
+        anchored: Option<usize>,
+    },
+}
+
+impl std::fmt::Display for EditNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditNote::RepeatedCommentQuote {
+                step_index,
+                block_id,
+                expected,
+                copies,
+                anchored,
+            } => {
+                write!(
+                    f,
+                    "step {step_index}: comment anchor {expected:?} occurs {copies} times in \
+                     paragraph '{block_id}'; "
+                )?;
+                match anchored {
+                    Some(copy) => write!(f, "anchored copy {copy}")?,
+                    None => write!(f, "anchored a copy that overlaps the counted ones")?,
+                }
+                write!(f, "; set occurrence (1-based) to anchor a counted copy")
+            }
+        }
+    }
+}
+
 /// Find the maximum revision_id in a document's tracked changes.
 /// Used to determine the starting counter for new revision IDs.
 fn max_revision_id(doc: &CanonDoc) -> u32 {
@@ -10786,19 +10829,18 @@ pub fn apply_transaction_with_id_floor(
     transaction: &EditTransaction,
     external_max_revision_id: u32,
 ) -> Result<(CanonDoc, PendingParts), EditError> {
-    apply_transaction_with_diagnostics(doc, transaction, external_max_revision_id)
+    apply_transaction_with_notes(doc, transaction, external_max_revision_id)
         .map(|(doc, pending, _)| (doc, pending))
 }
 
-/// [`apply_transaction_with_id_floor`], also returning the non-fatal
-/// diagnostics its steps report (a `CommentCreate` quote that matched more
-/// than one copy names the copy it anchored).
-pub(crate) fn apply_transaction_with_diagnostics(
+/// [`apply_transaction_with_id_floor`], also returning the [`EditNote`]s its
+/// steps report.
+pub(crate) fn apply_transaction_with_notes(
     doc: &CanonDoc,
     transaction: &EditTransaction,
     external_max_revision_id: u32,
-) -> Result<(CanonDoc, PendingParts, Vec<crate::runtime::Diagnostic>), EditError> {
-    let mut diagnostics = Vec::new();
+) -> Result<(CanonDoc, PendingParts, Vec<EditNote>), EditError> {
+    let mut notes = Vec::new();
     // Every guard supplied in one atomic transaction describes the snapshot
     // the caller inspected before submitting that transaction. Keep that
     // immutable snapshot available while the mutable clone advances through
@@ -11801,7 +11843,7 @@ pub(crate) fn apply_transaction_with_diagnostics(
                 author,
                 rationale: _,
             } => {
-                let repeated = verbs::comments::apply_create(
+                notes.extend(verbs::comments::apply_create(
                     &mut doc,
                     block_id,
                     expect,
@@ -11811,19 +11853,7 @@ pub(crate) fn apply_transaction_with_diagnostics(
                     author.clone(),
                     &transaction.revision,
                     step_index,
-                )?;
-                if let Some(repeated) = repeated {
-                    diagnostics.push(crate::runtime::Diagnostic {
-                        level: crate::runtime::DiagnosticLevel::Warning,
-                        message: format!(
-                            "step {step_index}: comment anchor {expect:?} occurs {} times in \
-                             paragraph '{block_id}'; anchored copy {}; set occurrence (1-based) \
-                             to anchor another copy",
-                            repeated.copies, repeated.anchored
-                        ),
-                        context: Some(format!("comment_create step {step_index}")),
-                    });
-                }
+                )?);
             }
             EditStep::CommentReply {
                 parent_comment_id,
@@ -12414,7 +12444,7 @@ pub(crate) fn apply_transaction_with_diagnostics(
     })?;
     // H2: one unified body-state validator after this producer's normalizers.
     crate::tracked_model::debug_assert_body_invariants(&doc, "apply_transaction");
-    Ok((doc, pending, diagnostics))
+    Ok((doc, pending, notes))
 }
 
 /// Re-attribute a tracked mark that a paragraph-append/delete/move step placed on

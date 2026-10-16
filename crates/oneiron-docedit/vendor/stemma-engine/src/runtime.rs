@@ -8897,16 +8897,15 @@ impl EditSnapshot {
     /// Pure twin of [`SimpleRuntime::apply_edit`]: precondition-checked and
     /// atomic. Returns a new snapshot; mutates nothing.
     pub fn apply(&self, txn: &crate::edit::EditTransaction) -> Result<EditSnapshot, RuntimeError> {
-        self.apply_with_diagnostics(txn)
-            .map(|(snapshot, _)| snapshot)
+        self.apply_with_notes(txn).map(|(snapshot, _)| snapshot)
     }
 
-    /// [`Self::apply`], also returning the non-fatal diagnostics the
+    /// [`Self::apply`], also returning the [`crate::edit::EditNote`]s the
     /// transaction's steps report.
-    pub fn apply_with_diagnostics(
+    pub fn apply_with_notes(
         &self,
         txn: &crate::edit::EditTransaction,
-    ) -> Result<(EditSnapshot, Vec<Diagnostic>), RuntimeError> {
+    ) -> Result<(EditSnapshot, Vec<crate::edit::EditNote>), RuntimeError> {
         // Package-aware style-existence check (verbs/styles.rs §"style existence"
         // + EditError::StyleNotFound). `apply_transaction` operates on a
         // `&CanonDoc`, which carries no style table, so it CANNOT verify a
@@ -8969,7 +8968,7 @@ impl EditSnapshot {
             )
         });
 
-        let (mut edited, pending, diagnostics) = crate::edit::apply_transaction_with_diagnostics(
+        let (mut edited, pending, notes) = crate::edit::apply_transaction_with_notes(
             &self.canonical,
             txn,
             // Block-opaque interiors keep their bytes in the serialize
@@ -9043,10 +9042,10 @@ impl EditSnapshot {
             )
             .map_err(map_update_fields_error)?;
             return rebuild_metadata_snapshot(self, with_settings)
-                .map(|snapshot| (snapshot, diagnostics));
+                .map(|snapshot| (snapshot, notes));
         }
 
-        Ok((next, diagnostics))
+        Ok((next, notes))
     }
 
     /// Refuse an authored write whose Word author label matches one of this

@@ -175,16 +175,15 @@ impl Document {
         Ok(self.derived(self.snapshot.apply(txn)?))
     }
 
-    /// [`Document::apply`], also returning the non-fatal diagnostics the
+    /// [`Document::apply`], also returning the [`crate::edit::EditNote`]s the
     /// transaction's steps report (for example a comment quote that matched
-    /// more than one copy). They describe this edit only; [`Document::diagnostics`]
-    /// stays import provenance.
-    pub fn apply_with_diagnostics(
+    /// more than one copy, and the copy it anchored).
+    pub fn apply_with_notes(
         &self,
         txn: &EditTransaction,
-    ) -> Result<(Document, Vec<Diagnostic>), RuntimeError> {
-        let (snapshot, diagnostics) = self.snapshot.apply_with_diagnostics(txn)?;
-        Ok((self.derived(snapshot), diagnostics))
+    ) -> Result<(Document, Vec<crate::edit::EditNote>), RuntimeError> {
+        let (snapshot, notes) = self.snapshot.apply_with_notes(txn)?;
+        Ok((self.derived(snapshot), notes))
     }
 
     /// [`Document::apply`], but refusing a tracked write whose `txn.revision.author`

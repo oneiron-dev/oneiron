@@ -30,7 +30,7 @@ fn native_docx_refuses_stale_guard_and_invalid_transactions() {
 }
 
 #[test]
-fn a_comment_on_a_repeated_quote_tells_the_proposal_which_copy_it_anchored() {
+fn a_comment_on_a_repeated_quote_carries_the_engine_note_into_the_proposal() {
     use super::WarningCode;
     let doc = Document::parse(DOCX).expect("fixture parses");
     let block = &doc.read().blocks[0];
@@ -49,18 +49,12 @@ fn a_comment_on_a_repeated_quote_tells_the_proposal_which_copy_it_anchored() {
         };
         proposal.manifest.warnings
     };
-    // "ba" opens both "bar" and "baz".
-    for (occurrence, anchored) in [(None, 1), (Some(2), 2)] {
+    // "ba" opens both "bar" and "baz"; the engine's note on it reaches the
+    // proposal for the default and for an explicit copy.
+    for occurrence in [None, Some(2)] {
         let warnings = warnings("ba", occurrence);
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert_eq!(warnings[0].code, WarningCode::SessionReported);
-        let detail = &warnings[0].detail;
-        assert!(detail.contains("occurs 2 times"), "{detail}");
-        assert!(
-            detail.contains(&format!("anchored copy {anchored}")),
-            "{detail}"
-        );
-        assert!(detail.contains("occurrence"), "{detail}");
+        let codes: Vec<_> = warnings.iter().map(|warning| warning.code).collect();
+        assert_eq!(codes, [WarningCode::SessionReported], "{warnings:?}");
     }
     assert!(warnings("bar", None).is_empty());
 }

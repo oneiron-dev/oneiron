@@ -93,7 +93,7 @@
 //!   thread) and keeps `commentsExtended` coherent — deleting a leaf reply
 //!   removes only that reply.
 
-use super::super::{EditError, find_block_index};
+use super::super::{EditError, EditNote, find_block_index};
 use crate::domain::{
     BlockNode, CanonDoc, CommentExtended, CommentStory, InlineNode, NodeId, OpaqueKind,
     ParagraphNode, RevisionInfo, TrackedBlock, TrackedSegment, TrackingStatus,
@@ -109,16 +109,6 @@ struct SpanPlan {
     last: usize,
     start: usize,
     end: usize,
-}
-
-/// A `CommentCreate` quote that occurs more than once in the paragraph's
-/// visible text: how many copies there are and which one the comment encloses.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RepeatedQuote {
-    /// Copies of the quote (non-overlapping, as `set_format` counts them).
-    pub(crate) copies: usize,
-    /// The 1-based copy the comment anchored on.
-    pub(crate) anchored: usize,
 }
 
 /// Allocate a fresh comment `w:id` not colliding with any existing comment.
@@ -181,7 +171,7 @@ pub(crate) fn apply_create(
     author: Option<String>,
     revision: &RevisionInfo,
     step_index: usize,
-) -> Result<Option<RepeatedQuote>, EditError> {
+) -> Result<Option<EditNote>, EditError> {
     // No silent fallback: an empty comment body is meaningless, refuse it.
     if body.trim().is_empty() {
         return Err(EditError::CommentEmptyBody { step_index });
@@ -273,13 +263,14 @@ pub(crate) fn apply_create(
         _ => None,
     };
     // The copy a default anchor encloses: the fast path's hit, else the first
-    // visible copy. A fast hit that starts inside an earlier counted copy (a
-    // self-overlapping quote) is reported as that copy.
+    // visible copy. A fast hit that is not a counted start (it overlaps one, in
+    // a self-overlapping quote) has no copy number to report.
     let anchored = match chosen {
-        Some((n, _)) => n,
-        None => fast_start.map_or(1, |at| {
-            1 + starts.iter().take_while(|&&s| s + quote_len <= at).count()
-        }),
+        Some((n, _)) => Some(n),
+        None if fast.is_none() => Some(1),
+        None => fast_start
+            .and_then(|at| starts.iter().position(|&s| s == at))
+            .map(|i| i + 1),
     };
 
     match (fast, chosen) {
@@ -288,12 +279,18 @@ pub(crate) fn apply_create(
         // markers inside that segment (no new segments), exactly as before
         // tracked-anchor support.
         (Some(plan), None) => splice_markers(&mut para.segments, plan, &comment_id),
-        (Some(plan), Some((_, start_k))) if fast_start == Some(start_k) => {
-            splice_markers(&mut para.segments, plan, &comment_id);
-        }
+        // A chosen copy inside one contiguous Normal text run is spliced the
+        // same way, so its markers hug the text; any other copy is placed on
+        // segment boundaries like a cross-segment anchor.
         (_, Some((_, start_k))) => {
-            let cross = cross_plan(&para.segments, &map, start_k, start_k + quote_len);
-            apply_cross_segment_markers(&mut para.segments, cross, &comment_id);
+            let end_k = start_k + quote_len;
+            match span_plan_at(&para.segments, &map, start_k, end_k) {
+                Some(plan) => splice_markers(&mut para.segments, plan, &comment_id),
+                None => {
+                    let cross = cross_plan(&para.segments, &map, start_k, end_k);
+                    apply_cross_segment_markers(&mut para.segments, cross, &comment_id);
+                }
+            }
         }
         (None, None) => {
             // The anchor crosses a segment boundary and/or touches an Inserted
@@ -327,7 +324,10 @@ pub(crate) fn apply_create(
         content_hash,
         tracking_status: None,
     });
-    Ok((starts.len() > 1).then_some(RepeatedQuote {
+    Ok((starts.len() > 1).then(|| EditNote::RepeatedCommentQuote {
+        step_index,
+        block_id: block_id.clone(),
+        expected: expect.to_string(),
         copies: starts.len(),
         anchored,
     }))
@@ -1136,9 +1136,15 @@ fn copy_starts(visible: &str, expect: &str) -> Vec<usize> {
     if expect.is_empty() {
         return Vec::new();
     }
+    // Advance one cursor through the gaps so each char is counted once.
+    let (mut chars, mut bytes) = (0, 0);
     visible
         .match_indices(expect)
-        .map(|(byte, _)| visible[..byte].chars().count())
+        .map(|(byte, _)| {
+            chars += visible[bytes..byte].chars().count();
+            bytes = byte;
+            chars
+        })
         .collect()
 }
 
@@ -1157,6 +1163,47 @@ fn span_plan_visible_start(
         .sum();
     map.iter()
         .position(|&at| at == (plan.seg_idx, before + plan.start))
+}
+
+/// A fast-path [`SpanPlan`] for the visible chars `[start_k, end_k)` when they
+/// lie in one contiguous Text run of a Normal segment.
+fn span_plan_at(
+    segments: &[TrackedSegment],
+    map: &[(usize, usize)],
+    start_k: usize,
+    end_k: usize,
+) -> Option<SpanPlan> {
+    let (seg_idx, local_start) = map[start_k];
+    let (end_seg, local_last) = map[end_k - 1];
+    if end_seg != seg_idx || segments[seg_idx].status != TrackingStatus::Normal {
+        return None;
+    }
+    let inlines = &segments[seg_idx].inlines;
+    let (mut i, mut offset) = (0, 0);
+    while i < inlines.len() {
+        if !matches!(inlines[i], InlineNode::Text(_)) {
+            i += 1;
+            continue;
+        }
+        // Contiguous Text run [i, j) covering text offsets [run_start, offset).
+        let run_start = offset;
+        let mut j = i;
+        while let Some(InlineNode::Text(t)) = inlines.get(j) {
+            offset += t.text.chars().count();
+            j += 1;
+        }
+        if (run_start..offset).contains(&local_start) {
+            return (local_last < offset).then_some(SpanPlan {
+                seg_idx,
+                first: i,
+                last: j - 1,
+                start: local_start - run_start,
+                end: local_last + 1 - run_start,
+            });
+        }
+        i = j;
+    }
+    None
 }
 
 /// Place the range markers for the visible chars `[start_k, end_k)`.

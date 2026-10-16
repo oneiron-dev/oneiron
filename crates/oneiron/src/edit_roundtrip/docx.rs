@@ -54,14 +54,12 @@ pub(super) fn run_docx_revision_with_limits(
                 "native docx revision transaction is invalid",
             ))
         })?;
-    let (current, diagnostics) =
-        oneiron_docedit::revise_with_diagnostics(input_bytes, &transaction, limits).map_err(
-            |_| {
-                Error::Artifact(ArtifactError::EditRoundtripFailed(
-                    "native docx revision failed validation or could not be written",
-                ))
-            },
-        )?;
+    let (current, notes) = oneiron_docedit::revise_with_notes(input_bytes, &transaction, limits)
+        .map_err(|_| {
+            Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "native docx revision failed validation or could not be written",
+            ))
+        })?;
     let after = match opc::read_with_limits(&current, limits) {
         Ok(package) => package,
         Err(_) => {
@@ -88,9 +86,9 @@ pub(super) fn run_docx_revision_with_limits(
             ops: vec![EditOp::DocxRevision { transaction }],
             touched_parts: diff_parts(&before, &after),
             mutation_mode: MutationMode::Full,
-            warnings: diagnostics
-                .into_iter()
-                .map(|note| EditWarning::new(WarningCode::SessionReported, note.message))
+            warnings: notes
+                .iter()
+                .map(|note| EditWarning::new(WarningCode::SessionReported, note.to_string()))
                 .collect(),
             pptx_holder_limits: None,
             slide_judgments: Vec::new(),
