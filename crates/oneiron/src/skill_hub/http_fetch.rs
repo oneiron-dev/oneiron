@@ -377,7 +377,9 @@ impl HttpEndpointSkillHubAdapter {
             }
             (Some("archive"), _, _) => Err(invalid("well-known skill archives are not read yet")),
             (None, _, Some(files)) if !files.is_empty() && files.len() <= MAX_HUB_PACKAGE_FILES => {
-                crate::skill::canonical_skill_tree_hash(files.iter().map(|f| (f.as_str(), &[][..])))?;
+                crate::skill::canonical_skill_tree_hash(
+                    files.iter().map(|f| (f.as_str(), &[][..])),
+                )?;
                 let deadline = std::time::Instant::now() + Duration::from_secs(60);
                 let mut remaining = MAX_HUB_PACKAGE_TOTAL_BYTES;
                 let mut out = Vec::with_capacity(files.len());

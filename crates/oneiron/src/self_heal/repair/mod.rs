@@ -8,9 +8,7 @@ mod dev_runner;
 mod invocation;
 mod validation;
 
-pub use dev_runner::{
-    DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget,
-};
+pub use dev_runner::{DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget};
 
 pub use invocation::HealerInvocationStamp;
 #[cfg_attr(not(test), allow(unused_imports))]

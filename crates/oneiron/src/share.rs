@@ -338,16 +338,24 @@ pub(crate) fn share_effect_target(
     id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
+    travel: &crate::share_travel::TravelChoice,
 ) -> Result<String> {
     let mut grant = share.grant();
     grant.status = AccessGrantStatus::Active;
     grant.revoked_at = None;
     let mut hash = Sha256::new();
-    hash.update(b"oneiron.share.effect.v1\0");
+    hash.update(b"oneiron.share.effect.v2\0");
     hash.update(id.as_bytes());
     hash.update(issuer.entity_ref().as_bytes());
     hash.update([issuer.actor_class() as u8]);
     hash.update(encode_access_grant_body(&grant)?);
+    // OF-491: the born-with text the sharer chose to send is part of what was
+    // approved. An approval to share a brief alone cannot release its prompt.
+    hash.update((travel.born_with.len() as u64).to_be_bytes());
+    for field in &travel.born_with {
+        hash.update(field.as_str().as_bytes());
+        hash.update(b"\0");
+    }
     Ok(format!(
         "share:brief:{}",
         crate::entity_id::bytes_to_hex_lower(&hash.finalize())
@@ -380,7 +388,8 @@ fn read_admitted_share_in_txn(
     let Some(admission) = ShareAdmission::decode(&bytes) else {
         return Ok(None);
     };
-    let target = share_effect_target(id, &admission.issuer, &share)?;
+    let travel = crate::share_travel::brief_travel_for_store_in_txn(store, txn, id)?;
+    let target = share_effect_target(id, &admission.issuer, &share, &travel)?;
     let digest: [u8; 32] = Sha256::digest(target.as_bytes()).into();
     if admission.digest != digest || admission.revoked_at != share.revoked_at {
         return Ok(None);
@@ -506,12 +515,32 @@ impl Vault {
 
     /// Creates an active share only after recording an allowing external-effect decision.
     /// The transport must derive `issuer` from the authenticated principal, not request data.
-    /// Pending and denied decisions are durable but never create a grant.
+    /// Pending and denied decisions are durable but never create a grant. The brief's
+    /// born-with text stays home; [`Self::create_share_travelling`] lets the sharer send it.
     pub fn create_share(
         &self,
         share_id: &EntityId,
         issuer: &WriteActor,
         share: &Share,
+    ) -> Result<()> {
+        self.create_share_travelling(
+            share_id,
+            issuer,
+            share,
+            &crate::share_travel::TravelChoice::default_for(
+                crate::share_travel::TravelKind::Brief,
+            ),
+        )
+    }
+
+    /// [`Self::create_share`], with the born-with text of the brief the sharer
+    /// chose to send (OF-491), fixed in the transaction that admits the share.
+    pub fn create_share_travelling(
+        &self,
+        share_id: &EntityId,
+        issuer: &WriteActor,
+        share: &Share,
+        travel: &crate::share_travel::TravelChoice,
     ) -> Result<()> {
         let grant = share.grant();
         let data = encode_access_grant_body(&grant)?;
@@ -544,7 +573,14 @@ impl Vault {
         }
         verify_share_actor(&self.store, &txn, issuer)?;
         let (gate_id, decision) =
-            crate::gate::check_share_create_policy(&self.store, &mut txn, share_id, issuer, share)?;
+            crate::gate::check_share_create_policy(
+                &self.store,
+                &mut txn,
+                share_id,
+                issuer,
+                share,
+                travel,
+            )?;
         if decision.outcome() != GateOutcome::Allow {
             let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),
@@ -557,7 +593,7 @@ impl Vault {
             txn.commit()?;
             return Err(error);
         }
-        let target = share_effect_target(share_id, issuer, share)?;
+        let target = share_effect_target(share_id, issuer, share, travel)?;
         let admission = ShareAdmission {
             issuer: *issuer,
             gate_id,
@@ -567,6 +603,7 @@ impl Vault {
         };
         self.apply_access_grant_body(&mut txn, share_id, share.created_at, data)?;
         ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
+        crate::share_travel::put_brief_travel_in_txn(self, &mut txn, share_id, travel)?;
         txn.commit()?;
         Ok(())
     }

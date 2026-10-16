@@ -98,7 +98,11 @@ impl GmailReplyThread {
         in_reply_to: &str,
         parent_references: &[S],
     ) -> Result<Self> {
-        validate_gmail_id(gmail_thread_id, MAX_GMAIL_THREAD_ID_BYTES, "gmail thread id")?;
+        validate_gmail_id(
+            gmail_thread_id,
+            MAX_GMAIL_THREAD_ID_BYTES,
+            "gmail thread id",
+        )?;
         let in_reply_to = canonical_message_id(in_reply_to)?;
         let mut references = canonical_message_id_list(parent_references)?;
         references.retain(|reference| reference != &in_reply_to);
@@ -182,7 +186,13 @@ impl GmailSendPlan {
             .ok_or_else(|| Error::InvalidConfig("gmail mailbox has no domain".to_owned()))?;
         let mut seed = blake3::Hasher::new();
         seed.update(b"oneiron.gmail.send.message_id.v1");
-        for part in [logical_ref, from_mailbox.as_str(), to.as_str(), subject, body_text] {
+        for part in [
+            logical_ref,
+            from_mailbox.as_str(),
+            to.as_str(),
+            subject,
+            body_text,
+        ] {
             hash_part(&mut seed, part);
         }
         let digest = seed.finalize().to_hex();
@@ -210,7 +220,11 @@ impl GmailSendPlan {
     ///
     /// [`Error::InvalidConfig`] for a blank, header-unsafe or over-long name.
     pub fn with_display_name(mut self, display_name: &str) -> Result<Self> {
-        validate_header_text(display_name, MAX_DISPLAY_NAME_BYTES, "gmail From display name")?;
+        validate_header_text(
+            display_name,
+            MAX_DISPLAY_NAME_BYTES,
+            "gmail From display name",
+        )?;
         if display_name.trim().is_empty() {
             return Err(Error::InvalidConfig(
                 "gmail From display name must not be blank".to_owned(),
@@ -386,9 +400,7 @@ fn is_reserved_header(name: &str) -> bool {
 /// that is how a value would smuggle a second header into the block.
 fn validate_header_text(value: &str, max: usize, label: &str) -> Result<()> {
     if value.len() > max {
-        return Err(Error::InvalidConfig(format!(
-            "{label} exceeds {max} bytes"
-        )));
+        return Err(Error::InvalidConfig(format!("{label} exceeds {max} bytes")));
     }
     if value.chars().any(char::is_control) {
         return Err(Error::InvalidConfig(format!(
@@ -639,14 +651,11 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     .with_receipt_fields(fields)
                     .with_possible_delivery();
                 }
-                let (rfc_message_id, source) = match sent
-                    .rfc_message_id
-                    .as_deref()
-                    .map(canonical_message_id)
-                {
-                    Some(Ok(observed)) => (observed, "provider"),
-                    _ => (plan.message_id.clone(), "plan"),
-                };
+                let (rfc_message_id, source) =
+                    match sent.rfc_message_id.as_deref().map(canonical_message_id) {
+                        Some(Ok(observed)) => (observed, "provider"),
+                        _ => (plan.message_id.clone(), "plan"),
+                    };
                 fields.insert(
                     RECEIPT_GMAIL_MESSAGE_ID.to_owned(),
                     sent.gmail_message_id.clone(),
@@ -795,7 +804,11 @@ impl GmailDelegatedAdapter {
             .get_channel_identity(&identity_ref)?
             .ok_or_else(invalid)?;
         let actor = request.actor.actor_entity_ref.ok_or_else(invalid)?;
-        if !request.intent.channel.trim().eq_ignore_ascii_case(EMAIL_CHANNEL)
+        if !request
+            .intent
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(EMAIL_CHANNEL)
             || !request.intent.verb.trim().eq_ignore_ascii_case("send")
             || request.intent_ref.trim().is_empty()
             || !request

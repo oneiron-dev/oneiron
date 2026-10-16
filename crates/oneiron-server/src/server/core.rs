@@ -83,6 +83,10 @@ pub struct SyncServer {
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    /// Node-side account API key verifier (OF-448), installed by a host
+    /// that supplies the control-plane checker. `None`: account keys are
+    /// never admitted.
+    pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
     /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     /// Stable across served runs and policy refreshes; empty until the host grants.
@@ -136,6 +140,10 @@ pub struct SyncServer {
     /// on every server, with the rungs `[models]` binds once the AI host
     /// attaches.
     pub(crate) decisions: crate::decision_host::DecisionHost,
+    /// The hook sandbox the fact-hook runner runs bodies on, set by `serve`
+    /// once it loads; `vault.hooks.replay` replays on the same one. Empty
+    /// under `--no-hooks`, or when the sandbox did not load.
+    pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -156,6 +164,9 @@ pub struct SyncServer {
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
+    /// Managed serve's artifact origin on a unix socket of its own
+    /// (`--artifact-http-socket`), which has no port to advertise.
+    artifact_socket: bool,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -352,6 +363,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            account_keys: None,
             mcp_registry,
             mcp_code_host: None,
             browser_guest: None,
@@ -364,6 +376,7 @@ impl SyncServer {
             decision_read: None,
             decision_reads,
             decisions,
+            hook_runtime: std::sync::OnceLock::new(),
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
@@ -372,6 +385,7 @@ impl SyncServer {
             feedback: None,
             feedback_flood,
             artifact_port: None,
+            artifact_socket: false,
             #[cfg(test)]
             booking_test_now_secs: None,
             #[cfg(test)]
@@ -427,6 +441,18 @@ impl SyncServer {
             runs,
             Arc::clone(self.wire_telemetry.limit_questions()),
         )));
+        self
+    }
+
+    /// Installs the node-side account API key verifier a host built
+    /// around its control-plane checker (OF-448). Without one, no account
+    /// key is ever admitted.
+    #[must_use]
+    pub fn with_account_keys(
+        mut self,
+        keys: Option<Arc<crate::managed::key_sync::AccountKeys>>,
+    ) -> Self {
+        self.account_keys = keys;
         self
     }
 
@@ -629,6 +655,21 @@ impl SyncServer {
 
     pub(crate) fn artifact_port(&self) -> Option<u16> {
         self.artifact_port
+    }
+
+    /// Records that the artifact-only router serves this server's `/a/` on a
+    /// unix socket of its own (managed serve, OF-356). As with a port, the
+    /// API's own `/a/` then sandboxes code bundles.
+    #[must_use]
+    pub fn with_artifact_socket(mut self) -> Self {
+        self.artifact_socket = true;
+        self
+    }
+
+    /// Whether an artifact-only listener serves this server's `/a/` on an
+    /// origin apart from the API's.
+    pub(crate) fn has_artifact_origin(&self) -> bool {
+        self.artifact_port.is_some() || self.artifact_socket
     }
 
     /// Returns the vault backing this server (used by integration tests to
