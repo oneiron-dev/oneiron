@@ -169,6 +169,12 @@ pub trait McpCodeExecutionHost: Send + Sync {
     ) -> Pin<
         Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
     >;
+
+    /// The engine-native host behind this seam, for a host worker that runs
+    /// on the same provider and run permits; `None` for any other host.
+    fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
+        None
+    }
 }
 
 /// The engine-native pieces one durable run needs, bound by the HOST.
@@ -295,11 +301,26 @@ impl McpEngineNativeCodeHost {
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
         }
     }
+
+    /// The provider every run of this host executes on.
+    pub(crate) fn provider(&self) -> &Arc<dyn McpCodeModeProvider> {
+        &self.provider
+    }
+
+    /// The permits every run of this host waits its turn for, an
+    /// `execute_code` run's and a host worker's alike.
+    pub(crate) fn runs(&self) -> &Admission<String> {
+        &self.runs
+    }
 }
 
 impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     fn production_runtime_available(&self) -> bool {
         self.provider.production_runtime_available()
+    }
+
+    fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
+        Some(self)
     }
 
     fn execute<'a>(
