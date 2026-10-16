@@ -502,12 +502,17 @@ pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
 /// verb's claims carry the run's `Generated` source, lineage and provenance,
 /// never a source the guest's input names. Its answer lists the rows the
 /// verb served, as its other doors list them for release.
+///
+/// The door binds `invocation`, the call's step's id, as the logical verb
+/// the row's verb hooks fire once for (ARCH-0080 §3). The outer `Err` is
+/// only a hook's stop (`Error::VerbHook`); every refusal is the inner one.
 pub trait AgentVerbDoor: Send + Sync {
     fn call(
         &self,
         call: &SelfAgentVerbCall,
         origin: &crate::memory::HostWriteOrigin,
-    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal>;
+        invocation: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>>;
 
     /// Admits one call the run serves itself, before it runs. The host's
     /// ceiling and credential bind these as they bind [`Self::call`], so a run

@@ -128,7 +128,9 @@ async fn report(
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("report", &value)?;
     let (actor, class) = facade_actor(&auth)?;
-    Ok(Json(facade_output(
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "report", value).await?;
+    let value = hooks.args.clone();
+    let output = facade_output(
         server
             .report_off_runtime(
                 actor,
@@ -139,7 +141,8 @@ async fn report(
                 facade_input(value)?,
             )
             .await?,
-    )?))
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn self_memory_diary(
     auth: CoreAuth,
@@ -205,23 +208,25 @@ async fn describe(
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("describe", &value)?;
+    facade_outside_room_turn(&headers, "describe")?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "describe", value).await?;
+    let value = hooks.args.clone();
     if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) {
-        facade_outside_room_turn(&headers, "describe")?;
-        return Ok(Json(
-            crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?,
-        ));
+        let output =
+            crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?;
+        return Ok(Json(facade_hooks_post(&server, hooks, output).await?));
     }
     let (actor, class) = facade_actor(&auth)?;
-    facade_outside_room_turn(&headers, "describe")?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
-    Ok(Json(facade_readable_task_rows(
+    let output = facade_readable_task_rows(
         &server.vault,
         &auth,
         oneiron::task_verb::sdk::describe(
             &credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality()),
             facade_input(value)?,
         )?,
-    )?))
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn tasks_create(
     auth: CoreAuth,
@@ -333,7 +338,9 @@ async fn vault_recall(
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.recall", &value)?;
     let (actor, class) = facade_actor(&auth)?;
-    Ok(Json(facade_output(
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.recall", value).await?;
+    let value = hooks.args.clone();
+    let output = facade_output(
         server
             .recall_off_runtime(
                 actor,
@@ -344,7 +351,8 @@ async fn vault_recall(
                 facade_input(value)?,
             )
             .await?,
-    )?))
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_export(
     auth: CoreAuth,
@@ -363,13 +371,14 @@ async fn vault_export(
     }
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.export", &value)?;
-    let input: oneiron::memory::ExportOptions = facade_input(value)?;
     let proof = auth.verified_slip().ok_or_else(|| {
         FacadeApiError::forbidden(
             "full-vault export requires verified owner authority",
             ["Present a verified owner credential."],
         )
     })?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.export", value).await?;
+    let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
     let output = if proof.claims().holder_ref == "host" {
         server
             .vault
@@ -382,14 +391,15 @@ async fn vault_export(
             .at(auth.locality())
             .export_with_verified_owner(&input, proof)?
     };
-    Ok(Json(serde_json::to_value(output).map_err(|_| {
+    let output = serde_json::to_value(output).map_err(|_| {
         FacadeApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             MEMORY_CODE_INTERNAL,
             "export result encoding failed",
             ["Report this SDK response mismatch."],
         )
-    })?))
+    })?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_receipts(
     auth: CoreAuth,
@@ -542,9 +552,12 @@ async fn vault_packs_put(
     facade_outside_room_turn(&headers, "vault.packs.put")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.packs.put", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::vault_packs_put(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.packs.put", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_packs_put(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_artifacts_view(
     auth: CoreAuth,
@@ -1195,9 +1208,11 @@ async fn ai_options(
     facade_outside_room_turn(&headers, "ai.options")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.options", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_options(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.options", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_options(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn ai_image(
     auth: CoreAuth,
@@ -1210,9 +1225,11 @@ async fn ai_image(
     facade_outside_room_turn(&headers, "ai.image")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.image", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_image(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.image", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_image(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn ai_speech(
     auth: CoreAuth,
@@ -1225,9 +1242,11 @@ async fn ai_speech(
     facade_outside_room_turn(&headers, "ai.speech")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.speech", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_speech(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.speech", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_speech(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn ai_transcribe(
     auth: CoreAuth,
@@ -1240,9 +1259,11 @@ async fn ai_transcribe(
     facade_outside_room_turn(&headers, "ai.transcribe")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.transcribe", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_transcribe(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.transcribe", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_transcribe(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn ai_embed(
     auth: CoreAuth,
@@ -1255,9 +1276,11 @@ async fn ai_embed(
     facade_outside_room_turn(&headers, "ai.embed")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.embed", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_embed(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.embed", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_embed(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn ai_video(
     auth: CoreAuth,
@@ -1270,9 +1293,11 @@ async fn ai_video(
     facade_outside_room_turn(&headers, "ai.video")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.video", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_video(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.video", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_video(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn ai_video_poll(
     auth: CoreAuth,
@@ -1285,9 +1310,11 @@ async fn ai_video_poll(
     facade_outside_room_turn(&headers, "ai.video.poll")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.video.poll", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_video_poll(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.video.poll", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_video_poll(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn ai_video_cancel(
     auth: CoreAuth,
@@ -1300,9 +1327,12 @@ async fn ai_video_cancel(
     facade_outside_room_turn(&headers, "ai.video.cancel")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("ai.video.cancel", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::ai_video_cancel(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.video.cancel", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_video_cancel(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn connector_list(
     auth: CoreAuth,

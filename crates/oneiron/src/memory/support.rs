@@ -548,7 +548,8 @@ impl<'v> Memory<'v> {
                 // A room turn writes into the room's talk, not as the owner
                 // in person.
                 owner_authorship: None,
-                invocation: None,
+                // The same logical verb, run inside the turn.
+                invocation: self.invocation,
             },
         })
     }
