@@ -175,6 +175,17 @@ impl Document {
         Ok(self.derived(self.snapshot.apply(txn)?))
     }
 
+    /// [`Document::apply`], also returning the [`crate::edit::EditNote`]s the
+    /// transaction's steps report (for example a comment quote that matched
+    /// more than one copy, and the copy it anchored).
+    pub fn apply_with_notes(
+        &self,
+        txn: &EditTransaction,
+    ) -> Result<(Document, Vec<crate::edit::EditNote>), RuntimeError> {
+        let (snapshot, notes) = self.snapshot.apply_with_notes(txn)?;
+        Ok((self.derived(snapshot), notes))
+    }
+
     /// [`Document::apply`], but refusing a tracked write whose `txn.revision.author`
     /// collides with one of the document's ORIGIN Word author labels — the
     /// labels already present in the redline this `Document` was parsed from (see

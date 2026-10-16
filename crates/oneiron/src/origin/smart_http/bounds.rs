@@ -1,9 +1,11 @@
 //! What one served exchange may cost the machine: how long it may sit idle,
-//! how long a push waits for its repository, and the memory and disk floors
-//! its door scan keeps.
+//! how long a push waits for its repository, the memory and disk floors its
+//! door scan keeps, and the disk floor what it holds past memory keeps.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use super::held::SpillFloor;
 use crate::error::{Error, Result};
 
 /// The per-blob bound when the machine's memory cannot be read.
@@ -15,7 +17,7 @@ const DOOR_SCAN_DISK_FLOOR_BYTES: u64 = 1024 * 1024 * 1024;
 /// The bounds a transport that admits exchanges by permit serves one under.
 /// They come from trusted host configuration, never from the request, and
 /// are fixed before the backend is spawned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct ExchangeBounds {
     /// How long the exchange may move no byte, in either direction, before
     /// its backend is ended.
@@ -24,6 +26,9 @@ pub struct ExchangeBounds {
     pub repository_wait: Duration,
     /// The floors the door's scan keeps.
     pub scan: ScanBounds,
+    /// The free disk a push's command section keeps when it is held past
+    /// memory; `None` keeps none past the disk's own.
+    pub spill_floor: Option<Arc<dyn SpillFloor>>,
 }
 
 /// The floors a push's door scan keeps. The door holds one blob at a time, so

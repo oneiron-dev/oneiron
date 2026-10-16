@@ -39,6 +39,7 @@ mod core_memory_conversations;
 mod credential_reads;
 mod device_local_reads;
 mod facet_read;
+mod feedback_inbox;
 mod mcp_booking_publication;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_admission;

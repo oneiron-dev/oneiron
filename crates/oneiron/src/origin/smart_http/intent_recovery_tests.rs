@@ -48,6 +48,7 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         verdict: DoorWindowVerdict::Clean,
         ref_updates: updates,
         lfs_pointers: Vec::new(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault
@@ -278,6 +279,124 @@ fn receive_pack_partial_effect_superseded_before_recovery_is_not_reapplied() {
     );
 }
 
+/// Journal bytes one recovery of a push of `refs` declined creations writes,
+/// intent included.
+fn declined_push_journal_bytes(refs: usize) -> u64 {
+    let (_vault_dir, vault) = temp_vault();
+    let (_repo_dir, root, oid) = seeded_repo();
+    let updates = (0..refs)
+        .map(|index| ref_update(&format!("refs/heads/declined-{index:05}"), None, Some(&oid)))
+        .collect();
+    let written = || super::intent::JOURNAL_BYTES_WRITTEN.with(std::cell::Cell::get);
+    let before = written();
+    fixture_intent(&vault, &root, updates);
+    vault
+        .reconcile_receive_pack_operations(&root)
+        .expect("census");
+    // Settled, the push is pruned (#1473); every creation was declined, so
+    // nothing published.
+    assert_eq!(vault.receive_pack_intent_rows_for_test(&root), 0);
+    assert!(vault.origin_publication_ids(None).expect("ids").is_empty());
+    written() - before
+}
+
+/// A push's intent is written once and its progress batch by batch, so the
+/// journal bytes a push writes grow linearly in its refs: four times the refs
+/// write four times the bytes, not sixteen.
+#[test]
+fn receive_pack_journal_bytes_grow_linearly_in_the_refs_a_push_names() {
+    let small = declined_push_journal_bytes(2_500);
+    let large = declined_push_journal_bytes(10_000);
+    assert!(
+        large * 10 <= small * 4 * 11,
+        "2,500 refs wrote {small} bytes, 10,000 wrote {large}"
+    );
+}
+
+/// Recovery resumes from a push's saved progress: a batch saved as observed
+/// before a crash is read back as observed, so a ref another writer moved
+/// since is superseded rather than declined, and every other ref publishes.
+#[test]
+fn receive_pack_recovery_resumes_from_progress_saved_mid_push() {
+    let (_vault_dir, vault) = temp_vault();
+    let (_repo_dir, root, first) = seeded_repo();
+    let later = commit_file(&root, "later.txt", "later\n");
+    let refs = ORIGIN_REF_UPDATE_BATCH + 2;
+    let names: Vec<String> = (0..refs)
+        .map(|index| format!("refs/heads/resumed-{index:03}"))
+        .collect();
+    fixture_intent(
+        &vault,
+        &root,
+        names
+            .iter()
+            .map(|name| ref_update(name, None, Some(&first)))
+            .collect(),
+    );
+    for name in &names {
+        git(&root, &["update-ref", name, first.as_str()]);
+    }
+    // The crash came after the first batch's observations were saved and
+    // before any of its refs published.
+    let (key, mut intent) = vault
+        .receive_pack_intents(&root)
+        .expect("journal")
+        .remove(0);
+    for entry in &mut intent.refs[..ORIGIN_REF_UPDATE_BATCH] {
+        entry.observed = true;
+    }
+    vault
+        .save_receive_pack_progress(&key, &intent, 0)
+        .expect("first batch progress");
+    git(&root, &["update-ref", &names[0], later.as_str()]);
+    vault
+        .reconcile_receive_pack_operations(&root)
+        .expect("recover");
+    // Settled, the push is pruned with its progress (#1473); the refs it
+    // published, and not the one superseded, are the vault's publications.
+    assert_eq!(vault.receive_pack_intent_rows_for_test(&root), 0);
+    assert_eq!(vault.receive_pack_progress_rows_for_test(&root), 0);
+    assert_eq!(published_ref_names(&vault), names[1..].to_vec());
+    assert_eq!(git(&root, &["rev-parse", &names[0]]), later.as_str());
+}
+
+/// A progress row is applied only as its writer saves it: exactly its own
+/// batch of its own intent (review round 3, both F2). A row that runs into the
+/// next batch, falls short of its own, or names a batch past the intent is
+/// refused, never read as settling a ref.
+#[test]
+fn receive_pack_progress_rows_of_another_shape_are_refused() {
+    let refs = ORIGIN_REF_UPDATE_BATCH + 1;
+    let settled = |count: usize| vec![(true, ReceivePackRefStatus::Published); count];
+    for (batch, row) in [
+        (0, settled(refs)),
+        (0, settled(ORIGIN_REF_UPDATE_BATCH - 1)),
+        (2, Vec::new()),
+    ] {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        let updates = (0..refs)
+            .map(|index| ref_update(&format!("refs/heads/shaped-{index:03}"), None, Some(&oid)))
+            .collect();
+        fixture_intent(&vault, &root, updates);
+        let (key, _) = vault
+            .receive_pack_intents(&root)
+            .expect("journal")
+            .remove(0);
+        vault
+            .put_receive_pack_progress_for_test(&key, batch, row.clone())
+            .expect("planted row");
+        assert!(
+            matches!(
+                vault.receive_pack_intents(&root),
+                Err(Error::CorruptedIndex("receive-pack progress batch"))
+            ),
+            "batch {batch} with {} refs",
+            row.len()
+        );
+    }
+}
+
 #[test]
 fn receive_pack_no_hook_advertisement_recovers_a_pre_outcome_crash() {
     let (vault_dir, vault) = temp_vault();
@@ -467,5 +586,150 @@ fn recovery_stops_at_an_lfs_check_that_waited_out_and_leaves_its_refs_pending() 
             .expect("journal")
             .is_empty(),
         "both refs settled, so no intent is left pending"
+    );
+}
+
+/// Room for `left` manifest reads, then none; counts the reads it was asked for.
+#[derive(Default)]
+struct RoomFor {
+    left: std::sync::atomic::AtomicUsize,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl crate::origin::lfs::LfsReadRoom for RoomFor {
+    fn hold(&self, _row_bytes: u64) -> Option<Box<dyn std::any::Any + Send>> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        let left = self
+            .left
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            });
+        left.ok()
+            .map(|_| Box::new(()) as Box<dyn std::any::Any + Send>)
+    }
+}
+
+/// Guards for [`three_branch_push`]'s directories.
+type PushDirs = (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir);
+
+/// A vault journaling one push of three branches that carry one LFS object,
+/// the branches already moved in its repository, with `room` lent to the
+/// checks its recovery makes.
+fn three_branch_push(room: Arc<RoomFor>) -> (PushDirs, Arc<Vault>, std::path::PathBuf) {
+    let (vault_dir, vault) = temp_vault();
+    let bytes = b"an asset three recovered branches carry".to_vec();
+    let oid = LfsOid::digest(&bytes);
+    let size = u64::try_from(bytes.len()).expect("size");
+    vault
+        .put_lfs_object(oid, &bytes, landing_time(), LANDING_LEARNED_AT)
+        .expect("asset");
+    let (source, repo_dir, _first, _second) = served_repo(&vault);
+    let work = tempfile::tempdir().expect("work tree");
+    let served = repo_dir.to_str().expect("utf-8 repo path");
+    git(work.path(), &["clone", "--quiet", "--", served, "."]);
+    let tip = commit_file(work.path(), "assets/logo.bin", &pointer_file(oid, size));
+    let branches = ["refs/heads/one", "refs/heads/two", "refs/heads/three"];
+    for branch in branches {
+        let target = format!("HEAD:{branch}");
+        git(work.path(), &["push", "--quiet", "origin", &target]);
+    }
+    fixture_intent_with_pointers(
+        &vault,
+        &repo_dir,
+        branches
+            .iter()
+            .map(|branch| ref_update(branch, None, Some(&tip)))
+            .collect(),
+        vec![LfsPushedPointer {
+            path: "assets/logo.bin".to_owned(),
+            oid,
+            size_bytes: size,
+        }],
+    );
+    vault.set_lfs_read_room(room as Arc<dyn crate::origin::lfs::LfsReadRoom>);
+    ((vault_dir, source, work), vault, repo_dir)
+}
+
+/// The ref names the vault published, in order.
+fn published_ref_names(vault: &Vault) -> Vec<String> {
+    let mut names: Vec<String> = vault
+        .origin_publication_ids(None)
+        .expect("publications")
+        .into_iter()
+        .filter_map(|id| vault.origin_publication(id).expect("publication"))
+        .filter(|record| record.status == OriginPublicationStatus::Published)
+        .map(|record| record.ref_name.as_str().to_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Each ref's status, as the journal holds it on disk.
+fn journaled_statuses(vault: &Vault, repo_dir: &std::path::Path) -> Vec<ReceivePackRefStatus> {
+    vault.receive_pack_intents(repo_dir).expect("journal")[0]
+        .1
+        .refs
+        .iter()
+        .map(|entry| entry.status)
+        .collect()
+}
+
+/// The merge of #1464 into #1468's batched recovery (Engine, 10-15): a
+/// recovery whose LFS check waits out after some refs of its batch have
+/// published keeps what they published. On disk they read as Published, not
+/// observed and Pending, and the next pass finishes the rest under the same
+/// outcome ids, ending as a recovery that never waited out does.
+#[test]
+fn a_batch_that_waits_out_keeps_the_refs_it_published() {
+    use ReceivePackRefStatus::{Pending, Published};
+    let counted = Arc::new(RoomFor {
+        left: usize::MAX.into(),
+        ..RoomFor::default()
+    });
+    let (_dirs, clean, clean_repo) = three_branch_push(Arc::clone(&counted));
+    clean
+        .reconcile_receive_pack_operations(&clean_repo)
+        .expect("a recovery that never waits out");
+    let asked = counted.asked.load(Ordering::SeqCst);
+    assert!(
+        asked > 0 && asked.is_multiple_of(3),
+        "{asked} reads for three refs"
+    );
+    assert_eq!(clean.receive_pack_intent_rows_for_test(&clean_repo), 0);
+
+    // Room for the first two refs' reads only.
+    let room = Arc::new(RoomFor {
+        left: (asked / 3 * 2).into(),
+        ..RoomFor::default()
+    });
+    let (_dirs, vault, repo_dir) = three_branch_push(Arc::clone(&room));
+    let waited = vault.reconcile_receive_pack_operations(&repo_dir);
+    assert!(
+        matches!(
+            waited,
+            Err(Error::Code(crate::error::CodeError::LfsReadRoomWaitedOut))
+        ),
+        "{waited:?}"
+    );
+    assert_eq!(
+        journaled_statuses(&vault, &repo_dir),
+        vec![Published, Published, Pending],
+        "the refs the batch published are settled on disk"
+    );
+    assert_eq!(vault.receive_pack_progress_rows_for_test(&repo_dir), 1);
+
+    room.left.store(usize::MAX, Ordering::SeqCst);
+    vault
+        .reconcile_receive_pack_operations(&repo_dir)
+        .expect("the next pass");
+    // Settled, the push is pruned with its progress, as the clean run's is,
+    // and it published what the clean run did, each once: no ref went out
+    // again under a new outcome id.
+    assert_eq!(vault.receive_pack_intent_rows_for_test(&repo_dir), 0);
+    assert_eq!(vault.receive_pack_progress_rows_for_test(&repo_dir), 0);
+    assert_eq!(published_ref_names(&vault), published_ref_names(&clean));
+    assert_eq!(
+        vault.origin_publication_ids(None).expect("ids").len(),
+        clean.origin_publication_ids(None).expect("ids").len()
     );
 }

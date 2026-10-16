@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 
 use super::config::{
-    MAX_ARTIFACT_SCAN, MAX_SUBSTITUTION_TOKENS, MINER_K_DEFAULT, MINER_K_ROW_LABEL,
-    PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid,
+    MAX_SUBSTITUTION_TOKENS, MINER_K_DEFAULT, MINER_K_ROW_LABEL, PAYLOAD_KEY_SESSION, TONE_LEXICON,
+    invalid,
 };
 use super::emission::emit_cluster;
 use super::model::{
@@ -24,6 +24,7 @@ use crate::edit_distance::attribution::{
 use crate::edit_distance::delta::{DeltaSource, amendment_delta};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 /// Dial: distinct-receipt count K needed before the substitution miner acts
@@ -425,11 +426,12 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
         records: Vec::new(),
         by_refs: BTreeMap::new(),
     };
-    for entry in PROPOSAL_ARTIFACT
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(MAX_ARTIFACT_SCAN)
-    {
+    // Every artifact is indexed: past the threshold row the scan raises one
+    // check and reads on, so no judged artifact drops out of mining.
+    let mut rows = ScanCount::start(&vault.store, &rtxn, EngineScan::MinerArtifactRows, &[])?;
+    for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, &rtxn, &[])? {
         let (_, record) = entry?;
+        rows.row();
         let position = index.records.len();
         index.by_refs.insert(
             (
@@ -447,6 +449,7 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
         );
         index.records.push(record);
     }
+    rows.finish(vault);
     Ok(index)
 }
 
