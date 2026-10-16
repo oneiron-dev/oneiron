@@ -243,7 +243,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 .checked_add(1)
                 .ok_or(failure("random counter overflow"))?;
             hash.finalize_xof().fill(&mut bytes);
-            Ok(json!({"bytes":bytes}).to_string())
+            Ok(json!({"base64":base64_bytes(&bytes)}).to_string())
         }
         _ => {
             if name == "self.verbs.call"
@@ -791,7 +791,12 @@ fn recoverable_reply_respects_encoded_wire_limit_without_losing_bytes() {
             .expect("at least one encoded byte fits");
         assert!(reply.len() <= 300, "the whole framed reply fits");
         let body: serde_json::Value = serde_json::from_str(&reply).expect("wire JSON");
-        let bytes: Vec<u8> = serde_json::from_value(body["bytes"].clone()).expect("byte array");
+        let bytes = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(body["base64"].as_str().expect("base64 field"))
+                .expect("base64 bytes")
+        };
         assert!(!bytes.is_empty());
         restored.extend(bytes);
     }
