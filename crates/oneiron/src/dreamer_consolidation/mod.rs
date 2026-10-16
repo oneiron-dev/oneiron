@@ -61,6 +61,7 @@ mod sieve_attempt;
 mod step_charge;
 mod support;
 mod task_realize;
+mod weave_lens;
 mod turn_text;
 mod wake_plan;
 mod watermark;
@@ -87,6 +88,7 @@ pub use resident_dream::{
 };
 pub use resources::ScopedConsolidationWrite;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
+pub use weave_lens::{WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, run_weave_lens};
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,

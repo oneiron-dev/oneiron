@@ -39,6 +39,16 @@ pub use weave_digest::{
     WeaveDigestSchedule,
 };
 mod weave_correction;
+mod weave_lens;
+pub(crate) use weave_lens::{
+    weave_lens_attempt_input, weave_lens_attempt_period, weave_lens_model_input,
+    weave_lens_plan_schema,
+};
+pub use weave_lens::{
+    WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_READ_RATE_AXIS, WEAVE_REPORT_SKILL_NAME,
+    WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender,
+    weave_report_skill_id,
+};
 mod weave_report;
 mod weave_serve;
 pub use weave_serve::{

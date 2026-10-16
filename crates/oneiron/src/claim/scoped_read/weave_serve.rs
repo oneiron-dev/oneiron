@@ -4,12 +4,13 @@
 //! reads the person lens, an agent the agent lens, and only a live owner
 //! proof reads the owner lens.
 use super::{
-    ClaimReadStatus, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader,
-    WeaveDigestSchedule, WeaveItem, WeaveLinkCorrection, WeaveReader, WeaveReport,
-    WeaveSectionKind, WeaveSectionSpec,
+    ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLinkCorrection, WeaveReader,
+    WeaveReport, WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::lens::GeneratedLens;
 use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
 use crate::EntityId;
@@ -164,13 +165,16 @@ pub struct WeaveReportView {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// One saved digest period, with the receipt saved with it.
+/// One saved digest period, with the receipt saved with it, and its lens
+/// once the generate step has rendered the period.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WeaveDigestView {
     pub scheduled_for: u64,
     pub rendered_at: u64,
     pub sections: Vec<WeaveSectionView>,
     pub narrowing: ScopedReadReceipt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<GeneratedLens>,
 }
 
 /// Who a schedule is for, on the owner's wire.
@@ -306,7 +310,7 @@ impl Memory<'_> {
             None => read.read_latest_weave_digest(reader)?,
         };
         stored
-            .map(|stored| self.weave_digest_view(stored))
+            .map(|stored| self.weave_digest_view(&read, stored))
             .transpose()
     }
 
@@ -326,16 +330,29 @@ impl Memory<'_> {
         Ok(WeaveLinkCorrectionView::from_correction(&filed))
     }
 
-    fn weave_digest_view(&self, stored: StoredWeaveDigest) -> MemoryResult<WeaveDigestView> {
+    /// A saved period's view. Its render composes under `read`, the
+    /// opener's own read; a render that no longer composes is left out and
+    /// the period's data still serves.
+    fn weave_digest_view(
+        &self,
+        read: &ScopedRead<'_>,
+        stored: StoredWeaveDigest,
+    ) -> MemoryResult<WeaveDigestView> {
+        let lens = stored.lens.as_ref().and_then(|render| {
+            super::weave_lens::compose_weave_lens(read, &stored.report.value, render)
+                .inspect_err(|error| tracing::warn!(?error, "weave lens did not compose"))
+                .ok()
+        });
         Ok(WeaveDigestView {
             scheduled_for: stored.scheduled_for,
             rendered_at: stored.rendered_at,
             sections: self.weave_sections(&stored.report.value)?,
             narrowing: stored.report.receipt,
+            lens,
         })
     }
 
-    fn weave_sections(&self, report: &WeaveReport) -> MemoryResult<Vec<WeaveSectionView>> {
+    pub(super) fn weave_sections(&self, report: &WeaveReport) -> MemoryResult<Vec<WeaveSectionView>> {
         report
             .sections
             .iter()

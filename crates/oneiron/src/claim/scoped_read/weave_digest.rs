@@ -3,7 +3,9 @@
 //! read and lands in that reader's inbox in the same write. An owner's
 //! digest needs the owner's live proof, so the timer sends the owner a due
 //! notice and the digest renders when the owner opens it. No composition
-//! policy lives here.
+//! policy lives here. Each published period with anything in it queues the
+//! lens's generate step (`weave_lens.rs`), whose render lands on the row.
+use super::weave_lens::{WeaveLensRender, settle_weave_lens_axes};
 use super::{
     ScopedRead, ScopedReadReceipt, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport,
     WeaveSection, WeaveSectionKind, WeaveSectionSpec,
@@ -38,6 +40,32 @@ pub enum WeaveDigestReader {
 }
 
 impl WeaveDigestReader {
+    /// The reader's own id.
+    #[must_use]
+    pub fn id(self) -> EntityId {
+        match self {
+            Self::Person(id) | Self::Owner(id) | Self::Agent(id) => id,
+        }
+    }
+
+    /// The reader's role tag, as its keys and inbox events spell it.
+    pub(super) fn tag(self) -> (&'static str, EntityId) {
+        match self {
+            Self::Person(id) => ("p", id),
+            Self::Owner(id) => ("o", id),
+            Self::Agent(id) => ("a", id),
+        }
+    }
+
+    pub(super) fn from_tag(tag: &str, id: EntityId) -> Option<Self> {
+        match tag {
+            "p" => Some(Self::Person(id)),
+            "o" => Some(Self::Owner(id)),
+            "a" => Some(Self::Agent(id)),
+            _ => None,
+        }
+    }
+
     fn key(self, prefix: &[u8]) -> Vec<u8> {
         let (kind, id) = match self {
             Self::Person(id) => (b'p', id),
@@ -69,7 +97,7 @@ impl WeaveDigestReader {
 
     /// The reader's inbox event for one period's digest. With the producer
     /// it derives the NOTIFICATION id, so a replay lands the same row.
-    fn notification(self, scheduled_for: u64, now: u64) -> NotificationEvent {
+    pub(super) fn notification(self, scheduled_for: u64, now: u64) -> NotificationEvent {
         let (kind, id) = match self {
             Self::Person(id) => ("p", id),
             Self::Owner(id) => ("o", id),
@@ -123,6 +151,8 @@ pub struct StoredWeaveDigest {
     pub scheduled_for: u64,
     pub rendered_at: u64,
     pub report: ScopedReadResult<WeaveReport>,
+    /// The lens's generate step's render of this period, once it landed.
+    pub lens: Option<WeaveLensRender>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -210,6 +240,8 @@ struct WireDigest {
     rendered_at: u64,
     receipt: ScopedReadReceipt,
     sections: Vec<WireSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lens: Option<WeaveLensRender>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -302,6 +334,7 @@ impl WireDigest {
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,
+            lens: None,
         })
     }
     fn into_report(self) -> Result<ScopedReadResult<WeaveReport>> {
@@ -727,6 +760,123 @@ impl Vault {
     }
 }
 
+impl Vault {
+    /// One saved period as the lens's generate step reads it: a person's or
+    /// an agent's under its own current read, an owner's from the row with
+    /// its sources still live. The Dreamer holds no owner proof, and only the
+    /// owner's own door ever serves what it renders.
+    pub(crate) fn weave_digest_for_lens(
+        &self,
+        reader: WeaveDigestReader,
+        scheduled_for: u64,
+    ) -> Result<Option<StoredWeaveDigest>> {
+        let (class, lens_reader) = match reader {
+            WeaveDigestReader::Person(id) => (EdgeActorClass::Human, WeaveReader::Person(id)),
+            WeaveDigestReader::Agent(id) => (EdgeActorClass::Agent, WeaveReader::Agent(id)),
+            WeaveDigestReader::Owner(_) => {
+                let txn = self.store.env.read_txn()?;
+                let Some(bytes) = self
+                    .store
+                    .vault_meta
+                    .get(&txn, &digest_key(reader, scheduled_for))?
+                else {
+                    return Ok(None);
+                };
+                let mut wire: WireDigest =
+                    serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+                let rendered_at = wire.rendered_at;
+                let lens = wire.lens.take();
+                let report = wire.into_report()?;
+                if !sources_live_in_txn(&self.store, &txn, &report.value)? {
+                    return Ok(None);
+                }
+                return Ok(Some(StoredWeaveDigest {
+                    reader,
+                    scheduled_for,
+                    rendered_at,
+                    report,
+                    lens,
+                }));
+            }
+        };
+        let memory = self.memory(reader.id(), class);
+        let read = memory
+            .read_lane(super::ClaimReadStatus::Surfaceable)
+            .map_err(|error| Error::InvalidConfig(format!("weave digest reader: {error}")))?;
+        read.read_weave_digest(lens_reader, scheduled_for)
+    }
+
+    /// Save the generate step's render on its period, only while the row is
+    /// still the one it rendered from and holds no render yet. Then settle
+    /// the reader's previous rendered period on the skill's axes. `true`:
+    /// the render landed.
+    pub(crate) fn attach_weave_lens(
+        &self,
+        reader: WeaveDigestReader,
+        scheduled_for: u64,
+        rendered_at: u64,
+        render: &WeaveLensRender,
+    ) -> Result<bool> {
+        let key = digest_key(reader, scheduled_for);
+        let landed = self.with_write_txn_grouped(|txn| {
+            let Some(bytes) = self.store.vault_meta.get(&*txn, &key)? else {
+                return Ok(false);
+            };
+            let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if wire.rendered_at != rendered_at || wire.lens.is_some() {
+                return Ok(false);
+            }
+            wire.lens = Some(render.clone());
+            let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
+            self.store.vault_meta.put(txn, &key, &bytes)?;
+            Ok(true)
+        })?;
+        if landed && let Some((at, report, previous)) = self.previous_weave_lens(reader, scheduled_for)? {
+            // The axes are evidence about the skill, never a gate on the
+            // render: a refusal here leaves the render landed.
+            if let Err(error) =
+                settle_weave_lens_axes(self, reader, at, &report, &previous, render.rendered_at)
+            {
+                tracing::warn!(?error, "weave lens axes did not settle");
+            }
+        }
+        Ok(landed)
+    }
+
+    /// The reader's newest period before `scheduled_for` that holds a render.
+    fn previous_weave_lens(
+        &self,
+        reader: WeaveDigestReader,
+        scheduled_for: u64,
+    ) -> Result<Option<(u64, WeaveReport, WeaveLensRender)>> {
+        let txn = self.store.env.read_txn()?;
+        let prefix = reader.key(DIGEST_PREFIX);
+        let mut previous = None;
+        for row in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
+            let (key, bytes) = row?;
+            let Some(at) = key
+                .strip_prefix(prefix.as_slice())
+                .and_then(|at| <[u8; 8]>::try_from(at).ok())
+                .map(u64::from_be_bytes)
+            else {
+                continue;
+            };
+            if at >= scheduled_for {
+                break;
+            }
+            let mut wire: WireDigest = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            if let Some(lens) = wire.lens.take() {
+                previous = Some((at, wire.into_report()?.value, lens));
+            }
+        }
+        Ok(previous)
+    }
+}
+
+fn digest_key(reader: WeaveDigestReader, scheduled_for: u64) -> Vec<u8> {
+    [reader.key(DIGEST_PREFIX), scheduled_for.to_be_bytes().to_vec()].concat()
+}
+
 impl ScopedRead<'_> {
     /// Load historical digest content only for its bound reader, applying the
     /// CURRENT read policy to the SAVED bodies and each referenced endpoint.
@@ -781,8 +931,9 @@ impl ScopedRead<'_> {
         let Some(bytes) = self.vault.store.vault_meta.get(&txn, &key)? else {
             return Ok(None);
         };
-        let wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         let rendered_at = wire.rendered_at;
+        let lens = wire.lens.take();
         let report = wire.into_report()?;
         if report.value.sections.len() > allowed.max_sections
             || report.value.sections.iter().any(|section| {
@@ -866,6 +1017,7 @@ impl ScopedRead<'_> {
             scheduled_for,
             rendered_at,
             report,
+            lens,
         }))
     }
 
@@ -1018,21 +1170,31 @@ impl ScopedRead<'_> {
             // Delivery is the reader's inbox, in this same write, for a
             // digest with anything in it. An owner's notice went out when
             // its digest fell due, and the owner is the one opening it now.
-            if owner.is_none()
-                && report
-                    .value
-                    .sections
-                    .iter()
-                    .any(|section| !section.items.is_empty())
-            {
+            let any = report
+                .value
+                .sections
+                .iter()
+                .any(|section| !section.items.is_empty());
+            if owner.is_none() && any {
                 self.vault
                     .record_notification_in_txn(txn, &id.notification(row.next_due_at, now))?;
+            }
+            // The lens's generate step renders the period on the Dreamer's
+            // lent model, queued in this same write.
+            if any {
+                crate::dreamer_runner::DreamerRunnerStore::new(self.vault).enqueue_weave_lens_in_txn(
+                    txn,
+                    id,
+                    row.next_due_at,
+                    now,
+                )?;
             }
             Ok(Some(StoredWeaveDigest {
                 reader: id,
                 scheduled_for: row.next_due_at,
                 rendered_at: now,
                 report,
+                lens: None,
             }))
         })
     }
