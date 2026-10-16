@@ -15273,7 +15273,7 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -15364,7 +15364,7 @@
      "path": "src/dreamer_consolidation/neighbourhood.rs",
      "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -15383,6 +15383,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/open_conflict.rs",
      "purpose": "A judge outage is an open question, persisted through the shared write gate",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/parallel.rs",
+     "purpose": "Read-only neighbourhood fan-out, followed by one parent-owned merge",
      "surface": {
       "crate-vis": 1
      }
@@ -15476,6 +15486,16 @@
      "purpose": "Actor- and branch-filtered graph/vector inputs for mechanical selection",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/slices.rs",
+     "purpose": "Read-only extraction children attenuated from one prepared branch",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -15781,6 +15801,16 @@
       "crate-vis": 14,
       "fn": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/watermark/codec.rs",
+     "purpose": "Codec for the exact consolidation cursor position",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -44621,7 +44651,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 52,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45589,7 +45619,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2737,
+   "source_files": 2740,
    "test_files": 903
   },
   "oneiron-android": {
