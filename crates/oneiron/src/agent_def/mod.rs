@@ -16,6 +16,7 @@ mod doors;
 mod id_pin;
 mod manifest;
 mod types;
+mod widening;
 pub mod workflow;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
@@ -43,6 +44,7 @@ pub(crate) use self::manifest::{
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
 };
 pub(crate) use self::types::forked_from_row_ref;
+pub(crate) use self::widening::agent_definition_put_widens_in_txn;
 
 // The flat agent_def.rs module used to provide these names to the sibling test
 // module through `use super::*`: every agent_def-internal item the tests name

@@ -463,12 +463,13 @@ fn copy_admitted_entities(
 ) -> Result<()> {
     let source_entities = source.get_map("entities");
     let target_entities = target.get_map("entities");
+    let rtxn = vault.store.env.read_txn()?;
     let mut result = Ok(());
     map_for_each_value_bytes(&source_entities, |key, value| {
         if result.is_err() {
             return;
         }
-        result = admit_federated_entity_blob(vault, policy, key, value)
+        result = admit_federated_entity_blob(vault, policy, &rtxn, key, value)
             .and_then(|blob| map_insert_bytes(&target_entities, key, &blob));
     });
     result
@@ -478,6 +479,7 @@ fn copy_admitted_entities(
 pub(crate) fn admit_federated_entity_blob(
     vault: &Vault,
     policy: &crate::gate::PolicyManifestResolution,
+    txn: &heed::RoTxn<'_>,
     key: &str,
     value: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
@@ -515,6 +517,22 @@ pub(crate) fn admit_federated_entity_blob(
             header.entity_type,
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
+        // Turning a definition back on is the owner's, and a peer is not the
+        // owner. Typed as the peer's bytes, so the frame quarantines.
+        if header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+            && crate::agent_def::agent_definition_put_widens_in_txn(
+                &vault.store,
+                txn,
+                &id,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+            )?
+        {
+            return Err(Error::Artifact(
+                crate::error::ArtifactError::InvalidAgentDefBody(
+                    "a federation peer cannot turn an agent definition back on",
+                ),
+            ));
+        }
         return Ok(blob.to_vec());
     }
 
