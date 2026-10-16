@@ -79,13 +79,14 @@ impl Memory<'_> {
     /// With `also_same_bytes`, which only a live owner of this vault may set,
     /// every other record the preview names as holding the same blob bytes
     /// ([`DeleteEntityPreview::same_bytes_matches`]) is then erased the same
-    /// way, in id order, each through its own checked delete with its own
-    /// tombstone, purge and receipt. In a shared vault a record another actor
-    /// wrote is held, not erased, unless the reason is a GDPR request. Owner
-    /// authority, the preview and every holder's classification are read in
-    /// one snapshot before anything is destroyed. A failure on the confirmed
-    /// record returns the error and erases nothing else; a later row's
-    /// failure never hides an earlier completed erase.
+    /// way, in id order: its own live brief grants are revoked, then its own
+    /// checked delete writes its tombstone, purge and receipt. In a shared
+    /// vault a record another actor wrote is held, not erased, unless the
+    /// reason is a GDPR request. Owner authority, the preview and every
+    /// holder's classification are read in one snapshot before anything is
+    /// destroyed. A failure on the confirmed record returns the error and
+    /// erases nothing else; a later row's failure never hides an earlier
+    /// completed erase.
     ///
     /// A byte carrier (the content-addressed ASSET every holder reads its
     /// bytes through) is refused: erasing it would take the bytes from every
@@ -153,19 +154,62 @@ impl Memory<'_> {
 
     /// One planned match through its own checked delete.
     fn erase_match(&self, planned: &PlannedMatch, reason: EraseReason) -> SameBytesOutcome {
+        match self.unshare_and_erase_match(planned, reason) {
+            Ok(receipt) => SameBytesOutcome::Erased(receipt),
+            Err(error) => SameBytesOutcome::Failed(error),
+        }
+    }
+
+    /// As for the confirmed record: the match's own live brief grants are
+    /// revoked first, then every destructive transaction of its delete
+    /// refuses while a grant on it is live.
+    fn unshare_and_erase_match(
+        &self,
+        planned: &PlannedMatch,
+        reason: EraseReason,
+    ) -> MemoryResult<DeleteReceipt> {
+        let store = &self.vault.store;
+        let check = |txn: &heed::RoTxn<'_>| {
+            self.still_erasable_in_txn(txn, &planned.holder, &planned.hashes, reason)
+        };
+        let shares = {
+            let txn = store.env.read_txn().map_err(crate::Error::from)?;
+            check(&txn)?;
+            crate::share::active_brief_shares_for(
+                store,
+                &txn,
+                &planned.holder,
+                store.clock.now_recorded_at(),
+            )?
+        };
+        let actor = WriteActor::new(self.actor, self.actor_class);
+        for (share_id, _) in shares {
+            self.vault
+                .revoke_share(&share_id, &actor, store.clock.now_recorded_at())?;
+        }
         #[cfg(all(test, feature = "sync"))]
         if FAIL_NEXT_MATCH_AFTER_TOMBSTONE.replace(false) {
             crate::deletion::arm_fail_after_tombstone_before_purge();
         }
-        let result = self.safe_delete_checked(
+        self.safe_delete_checked(
             &planned.holder.to_hex(),
             reason.safe_delete_reason(),
-            |txn| self.still_erasable_in_txn(txn, &planned.holder, &planned.hashes, reason),
-        );
-        match result {
-            Ok(receipt) => SameBytesOutcome::Erased(receipt),
-            Err(error) => SameBytesOutcome::Failed(error),
-        }
+            |txn| {
+                check(txn)?;
+                if crate::share::active_brief_shares_for(
+                    store,
+                    txn,
+                    &planned.holder,
+                    store.clock.now_recorded_at(),
+                )?
+                .is_empty()
+                {
+                    Ok(())
+                } else {
+                    Err(Error::ConcurrentWrite("delete shares changed").into())
+                }
+            },
+        )
     }
 
     /// The same-bytes flag reaches records the caller did not name, so it asks for a live owner

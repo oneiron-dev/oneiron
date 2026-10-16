@@ -482,3 +482,63 @@ fn a_holder_whose_version_claim_was_deleted_is_held_and_keeps_its_bytes() {
     assert!(erased(&vault, &a));
     assert!(live(&vault, &b) && live(&vault, &asset(SHARED)));
 }
+
+/// An active brief grant on `brief` that `issuer` creates under the share tests' policy.
+fn brief_grant(vault: &crate::Vault, issuer: EntityId, brief: EntityId) -> EntityId {
+    let issuer = crate::write_envelope::WriteActor::new(issuer, EdgeActorClass::Human);
+    let share = crate::share::Share {
+        recipient_ref: put_person(vault, 0xE3),
+        brief_ref: brief.to_hex(),
+        world_refs: BTreeSet::new(),
+        facet_refs: BTreeSet::new(),
+        include_unscoped: true,
+        status: crate::access_grant::AccessGrantStatus::Active,
+        created_at: 42,
+        revoked_at: None,
+        expires_at: None,
+    };
+    crate::share::tests::policy(vault, &issuer, &share, true, None).expect("share policy");
+    let grant = EntityId::from_bytes([0xC8; 16]).expect("grant id");
+    vault.create_share(&grant, &issuer, &share).expect("share");
+    grant
+}
+
+#[test]
+fn a_match_with_its_own_brief_grant_is_erased_and_keeps_no_grant() {
+    for reason in [EraseReason::UserHardDelete, EraseReason::GdprDelete] {
+        let (_dir, vault) = blob_vault();
+        let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        let memory = facade_for(&vault, owner);
+        let a = artifact(&memory, &[SHARED]);
+        let b = artifact(&memory, &[SHARED]);
+        let grant = brief_grant(&vault, owner, b);
+        let preview = memory.preview_entity_delete(&a).expect("preview");
+        assert!(preview.shared_with().is_empty(), "only the match is shared");
+
+        let outcome = memory
+            .confirm_entity_erase(
+                &preview,
+                EraseOptions {
+                    reason,
+                    also_same_bytes: true,
+                },
+            )
+            .expect("erase");
+
+        let row = rows(&outcome).remove(&b);
+        assert!(
+            matches!(row, Some(SameBytesOutcome::Erased(_))),
+            "{reason:?}: {row:?}"
+        );
+        assert!(erased(&vault, &a) && erased(&vault, &b), "{reason:?}");
+        assert_eq!(
+            vault
+                .get_share(&grant)
+                .expect("read grant")
+                .expect("grant")
+                .status,
+            crate::access_grant::AccessGrantStatus::Revoked,
+            "{reason:?}: the erased match's grant outlived it"
+        );
+    }
+}
