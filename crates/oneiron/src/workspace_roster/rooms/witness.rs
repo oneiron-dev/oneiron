@@ -1,7 +1,12 @@
 //! Claim-before-speaking guard inside the existing witness transaction.
+use super::participation::{
+    addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
+    record_addressed_in_txn, thread_root_in_txn,
+};
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessTurn};
+use crate::workspace_roster::JoinSubject;
 
 #[expect(
     clippy::too_many_arguments,
@@ -20,7 +25,14 @@ pub(crate) fn admit_witness(
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         return Ok(());
     }
-    let current_room = require_member(vault, txn, room, actor)?;
+    // OF-529: a person speaks from its seat, as before. An agent needs no
+    // seat: it stands on a Ready receipt, checked once its thread is known.
+    let now = vault.store.clock.now_recorded_at();
+    let speaker = participant_in_txn(vault, txn, actor, now)?;
+    let current_room = match speaker {
+        Some(JoinSubject::Agent(_)) => room_in(vault, txn, room)?,
+        _ => require_member(vault, txn, room, actor)?,
+    };
     let mut mentions = BTreeSet::new();
     let mut reply_to = None;
     let mut thread_of = None;
@@ -53,12 +65,15 @@ pub(crate) fn admit_witness(
                 // to every companion in the room.
                 let addressed = HANDLES
                     .get(&vault.store, txn, &(room, handle.to_owned()))?
-                    .ok_or_else(invalid)?
-                    .to_hex();
-                if !current_room.member_ids.contains(&addressed) {
+                    .ok_or_else(invalid)?;
+                // An agent may be named without a seat: naming enrolls no
+                // one and grants nothing (OF-529).
+                if !current_room.member_ids.contains(&addressed.to_hex())
+                    && !addressable_agent_in_txn(vault, txn, addressed, now)?
+                {
                     return Err(invalid());
                 }
-                mentions.insert(addressed);
+                mentions.insert(addressed.to_hex());
             }
         }
     }
@@ -91,6 +106,25 @@ pub(crate) fn admit_witness(
                 .transpose()?;
         }
     }
+    // The participation gate (OF-529): the thread this turn lands in is its
+    // root, and a person's turn is its join there.
+    let branch = thread_root_in_txn(vault, txn, turn_id, reply_to, thread_of)?;
+    let admitted = super::admit_participation_in_txn(
+        vault,
+        txn,
+        room,
+        branch,
+        crate::WriteActor::new(actor, class),
+        JoinCause::Wrote { turn: turn_id },
+        None,
+        now,
+    )?;
+    let standing = match speaker {
+        Some(JoinSubject::Agent(agent)) => Some(
+            agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(invalid)?,
+        ),
+        _ => None,
+    };
     // An agent cannot masquerade as a user to evade a claim. The witness
     // author ceiling remains an additional, independent gate below this one.
     let is_response = class != EdgeActorClass::Human
@@ -99,9 +133,9 @@ pub(crate) fn admit_witness(
             .iter()
             .any(|m| m.author == WitnessAuthor::Companion);
     if is_response {
-        // Only a member who speaks as a persona answers; the claim door
+        // Only a speaker who speaks as a persona answers; the claim door
         // checks the same, and upkeep never holds one.
-        super::hosting::admit_room_speech_in(vault, txn, room, actor)?;
+        admit_speech_in(vault, txn, room, actor, standing.as_ref())?;
         let parent = reply_to.ok_or_else(invalid)?;
         let claim = CLAIMS
             .get(&vault.store, txn, &parent)?
@@ -150,5 +184,14 @@ pub(crate) fn admit_witness(
     }
     TURNS.put(&vault.store, txn, &turn_id, &turn)?;
     super::history::index_turn(&vault.store, txn, &turn)?;
-    Ok(())
+    admitted.record_in_txn(vault, txn, now)?;
+    record_addressed_in_txn(
+        vault,
+        txn,
+        room,
+        branch,
+        turn_id,
+        &turn.addressed_agents,
+        now,
+    )
 }
