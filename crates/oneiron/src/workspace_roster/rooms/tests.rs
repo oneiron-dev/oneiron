@@ -1546,3 +1546,64 @@ fn exact_project_and_room_batch_still_has_a_roster_audience() -> Result<()> {
     assert_eq!(vault.room_audience_members(room)?, vec![leader, peer]);
     Ok(())
 }
+
+/// Class-A rows 66 and 67: a message page and a liveness snapshot read every
+/// history row they need, however many (rule 5). Main refused past 100,000
+/// rows; here each scan's threshold row is lowered to 2 and both serve past
+/// it, raising the owner's check for the room once each.
+#[test]
+fn room_history_reads_past_its_threshold_row_and_checks_once() -> Result<()> {
+    use crate::scan_check::EngineScan;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let record = ProjectRecord::new(project, Some(root), root, owner)?;
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner])?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    vault.bind_room_handle(room, "@owner", owner)?;
+    let mut turns = Vec::new();
+    for n in 0..4 {
+        let id = EntityId::now();
+        memory
+            .rooms_speak(&turn(
+                room,
+                id,
+                WitnessAuthor::User,
+                serde_json::json!({}),
+                2 + n,
+            ))
+            .expect("speak");
+        turns.push(id);
+    }
+    for scan in [EngineScan::RoomPageRows, EngineScan::RoomHistoryRows] {
+        vault.set_scan_threshold(scan, 2)?;
+    }
+    for _ in 0..2 {
+        let page = memory.rooms_messages_page(room, None, 4).expect("page");
+        assert_eq!(page.rows.len(), 4);
+        memory
+            .rooms_find_threads(room, None, 4)
+            .expect("a thread census reads every turn");
+    }
+    let checks = vault.scan_checks()?;
+    for scan in [EngineScan::RoomPageRows, EngineScan::RoomHistoryRows] {
+        let raised: Vec<_> = checks
+            .iter()
+            .filter(|check| check.scan == scan.code())
+            .collect();
+        assert_eq!(raised.len(), 1, "{} raised its check once", scan.code());
+        assert_eq!(raised[0].scope, Some(room.to_hex()));
+    }
+    Ok(())
+}

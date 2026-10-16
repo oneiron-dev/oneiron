@@ -36,16 +36,7 @@ impl Memory<'_> {
             if let Some(group) = ask_record::read_group(self.vault(), txn, group_ref)? {
                 return replay_receipt(group_ref, group, self.actor(), &digest);
             }
-            // Revocation and admission observe the SAME snapshot.
-            let holders = self.ask_holders_in_txn(txn, input)?;
-            let bound = self.ask_class_in_txn(txn, input.task_ref)?;
-            let context_class = bound.as_ref().map(|(_, class)| class.clone());
-            let effective = input.effective(
-                &holders.iter().copied().collect(),
-                now,
-                context_class.clone(),
-            )?;
-            self.ask_question_in(txn, &effective.what)?;
+            // An actor that may not ask is refused before any census runs.
             if super::rate_limit::task_actor_ceiling(
                 self.vault(),
                 txn,
@@ -59,6 +50,16 @@ impl Memory<'_> {
                     "Propose the ask through the authority surface.",
                 ));
             }
+            // Revocation and admission observe the SAME snapshot.
+            let holders = self.ask_holders_in_txn(txn, input)?;
+            let bound = self.ask_class_in_txn(txn, input.task_ref)?;
+            let context_class = bound.as_ref().map(|(_, class)| class.clone());
+            let effective = input.effective(
+                &holders.iter().copied().collect(),
+                now,
+                context_class.clone(),
+            )?;
+            self.ask_question_in(txn, &effective.what)?;
             // One ask counts once on the asker's ask window, whatever its
             // recipients; a replay returned above never counts again.
             super::rate_limit::record_task_ask(
@@ -235,13 +236,12 @@ impl Memory<'_> {
             crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, self.actor())?;
             return Ok(self.actor());
         }
-        let scan =
-            super::presence_pages::scan_admitted_tasks_in(self.vault(), txn, self.locality())?;
-        if !scan.source_exhausted {
-            return Err(MemoryError::bad_request(
-                "agent principal cannot be resolved from a truncated task scan",
-            ));
-        }
+        let tasks = super::presence_pages::all_admitted_tasks_in(
+            self.vault(),
+            txn,
+            self.locality(),
+            self.actor().as_bytes(),
+        )?;
         // Before an authority root exists, only the seeded vault owner has
         // an independently established human identity. A free-form PERSON
         // owner fact cannot classify its writer as human rather than agent.
@@ -251,7 +251,7 @@ impl Memory<'_> {
             .vault_id
             .is_some();
         let mut principal = None;
-        for task in scan.pages.into_iter().flatten() {
+        for task in tasks {
             let Some(body) = super::wire_decode::task_verb_body_in(self.vault(), txn, task)? else {
                 continue;
             };
@@ -348,21 +348,19 @@ impl Memory<'_> {
     /// The task context of an ask that omits `task_ref`: the one live TASK
     /// assigned to this actor whose spec binds an `ask_class`.
     ///
-    /// A walk the scan cap stops before the TASK index ends cannot prove that
-    /// no governed task exists, so the omission is refused, never admitted.
+    /// The walk reads every TASK, so "none" is a complete answer.
     fn governed_task_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<Option<EntityId>> {
         let name_the_task = |message: &str| {
             MemoryError::bad_request_with(message, &["Name the governing task in task_ref."])
         };
-        let scan =
-            super::presence_pages::scan_admitted_tasks_in(self.vault(), txn, self.locality())?;
-        if !scan.source_exhausted {
-            return Err(name_the_task(
-                "too many tasks to find this ask's task context",
-            ));
-        }
+        let tasks = super::presence_pages::all_admitted_tasks_in(
+            self.vault(),
+            txn,
+            self.locality(),
+            self.actor().as_bytes(),
+        )?;
         let mut found = None;
-        for task in scan.pages.into_iter().flatten() {
+        for task in tasks {
             let Ok(Some(body)) = super::wire_decode::task_verb_body_in(self.vault(), txn, task)
             else {
                 continue;

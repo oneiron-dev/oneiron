@@ -605,3 +605,47 @@ fn token_answer_completes_its_member_and_suppresses_due_reminder_while_group_wai
         0
     );
 }
+
+/// F13 H221: a wake pass reads a bounded run of follow-up cursors, due or
+/// not, and the next pass resumes after it. 4,096 settled cursors fill the
+/// first run, so the unreadable cursor past them is read, and reported, only
+/// by the next pass.
+#[test]
+fn a_wake_pass_reads_a_bounded_run_of_followup_cursors() -> crate::Result<()> {
+    use crate::side_table::SideTableDbs;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    vault.with_write_txn(|wtxn| {
+        for index in 0..4_096_u16 {
+            let [hi, lo] = index.to_be_bytes();
+            let task_ref =
+                EntityId::from_bytes([0, 0, 0, 0, hi, lo, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])?;
+            super::storage::put_followup_record_in_txn(
+                &vault,
+                wtxn,
+                &super::model::HumanTaskFollowupRecord {
+                    schema_version: super::model::HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION,
+                    task_ref,
+                    assignee_ref: task_ref,
+                    stage: super::model::HumanFollowupStage::Completed,
+                    stage_generation: 0,
+                    next_due_at: None,
+                    reminders_sent: 0,
+                    last_receipt_ref: None,
+                    completed_at: Some(1),
+                },
+            )?;
+        }
+        let key = [b"human_task.followup.v1\0".as_slice(), &[0x7F; 16]].concat();
+        vault.store.side_vault_meta().put(wtxn, &key, &[0xC1])?;
+        Ok(())
+    })?;
+
+    let driver = HumanTaskFollowupDriver::new(&vault);
+    assert!(driver.run_due(10, 64)?.is_empty());
+    assert!(
+        driver.run_due(10, 64).is_err(),
+        "the next pass reads on and reports the unreadable cursor"
+    );
+    Ok(())
+}

@@ -384,14 +384,19 @@ pub(super) fn put_group(
     put(vault, txn, id, GROUP, group, group.created_at)
 }
 
-pub(super) fn evidence_in(
+/// Words an ask holds past which a link bearer's word is refused.
+pub(super) const LINK_WORDS_PER_ASK: usize = 4096;
+
+/// Whether the ask holds more than [`LINK_WORDS_PER_ASK`] word rows. A link
+/// bearer is a stranger to this vault, so its door reads at most one row past
+/// the bound and never the words themselves.
+pub(super) fn link_words_past_bound(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-    group: &AskGroup,
-) -> Result<Vec<TaskAskEvidence>> {
-    let mut evidence = Vec::new();
-    for (count, row) in vault
+) -> Result<bool> {
+    let mut rows = 0_usize;
+    for row in vault
         .store
         .port_edges(
             txn,
@@ -400,11 +405,37 @@ pub(super) fn evidence_in(
             Some(crate::EdgeKind::About),
             None,
         )?
-        .enumerate()
+        .take(LINK_WORDS_PER_ASK + 1)
     {
-        if count >= 4096 {
-            return Err(Error::IndexOverflow("ask words"));
-        }
+        row?;
+        rows += 1;
+    }
+    Ok(rows > LINK_WORDS_PER_ASK)
+}
+
+pub(super) fn evidence_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+) -> Result<Vec<TaskAskEvidence>> {
+    // Every word is read, however many (rule 5); `txn` is the caller's and
+    // may be a write, so a crossing is deferred.
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::AskWordRows,
+        id.as_bytes(),
+    )?;
+    let mut evidence = Vec::new();
+    for row in vault.store.port_edges(
+        txn,
+        &id,
+        crate::ports::EdgeDirection::In,
+        Some(crate::EdgeKind::About),
+        None,
+    )? {
+        count.row();
         let word_ref = row?.target;
         let Some(fact) = read_answer(vault, txn, word_ref)? else {
             continue;
@@ -480,6 +511,7 @@ pub(super) fn evidence_in(
         });
     }
     evidence.sort_by_key(|entry| (entry.order, entry.answer.word_ref));
+    count.defer(&vault.store);
     Ok(evidence)
 }
 

@@ -15,6 +15,9 @@ use super::model::{
 /// The follow-up cursor for one TASK, keyed by the task's own id.
 pub(super) const FOLLOWUPS: SideTable<EntityId, HumanTaskFollowupRecord, Raw> =
     SideTable::new(&side_table::HUMAN_TASK_FOLLOWUP);
+/// The TASK whose follow-up cursor the due sweep read last. Key: ().
+pub(super) const FOLLOWUP_SWEEP: SideTable<(), EntityId, Raw> =
+    SideTable::new(&side_table::HUMAN_TASK_FOLLOWUP_SWEEP);
 
 /// One C9 wait binding, keyed by the task's own id.
 pub(super) const WAIT_BINDINGS: SideTable<EntityId, HumanTaskWaitBinding, Raw> =

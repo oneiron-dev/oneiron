@@ -56,9 +56,9 @@ impl Memory<'_> {
     /// the render cap left out is stated in the section's additive overflow
     /// footer, never silently dropped.
     ///
-    /// A named task's card is read direct by id: a row outside the collapsed
-    /// board prefix is hidden, never gone, so the card never inherits the
-    /// section's scan cap.
+    /// A named task's card is read direct by id: a row the collapsed board
+    /// leaves out is hidden, never gone, so the card never inherits the
+    /// section's render cap.
     ///
     /// A handle bound to a read credential describes only the TASKs that
     /// credential reads: a task it does not read has no card, as an absent

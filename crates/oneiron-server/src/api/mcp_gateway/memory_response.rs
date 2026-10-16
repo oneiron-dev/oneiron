@@ -41,6 +41,7 @@ pub(super) async fn execute(
                 // belongs to the served row, not a new post-await read txn.
                 staged
                     .observe_lifecycle(
+                        &reader,
                         observation.id,
                         oneiron::context_board::ServedLifecycle::Active,
                     )

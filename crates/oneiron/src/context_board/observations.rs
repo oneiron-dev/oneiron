@@ -27,19 +27,25 @@ impl SessionReadSet {
         let Some(state) = state else {
             return Ok(receipt);
         };
-        self.require_capacity(&id.to_hex())?;
         if loaded && kind == ENTITY_TYPE_SKILL {
             let skill = crate::skill::decode_skill_record(body)?;
             self.loaded_skill(id.to_hex(), skill.version);
         }
         self.served(id.to_hex(), state);
+        self.check_size(read.vault());
         Ok(receipt)
     }
 
-    /// Record lifecycle metadata captured from an authorized, actually served row.
-    pub fn observe_lifecycle(&mut self, id: EntityId, state: ServedLifecycle) -> Result<()> {
-        self.require_capacity(&id.to_hex())?;
+    /// Record lifecycle metadata captured from an authorized, actually served
+    /// row by `read`.
+    pub fn observe_lifecycle(
+        &mut self,
+        read: &ScopedRead<'_>,
+        id: EntityId,
+        state: ServedLifecycle,
+    ) -> Result<()> {
         self.served(id.to_hex(), state);
+        self.check_size(read.vault());
         Ok(())
     }
 
