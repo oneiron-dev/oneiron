@@ -495,8 +495,8 @@ impl Vault {
 
 fn has_identity_topology_events(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, None)?
         .next()
+        .transpose()?
         .is_some())
 }

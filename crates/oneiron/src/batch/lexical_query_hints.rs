@@ -513,21 +513,24 @@ pub(crate) fn legacy_lexical_query_hint_claim_ids_for_target(
 ) -> Result<Vec<EntityId>> {
     let mut rows = ScanCount::start(store, wtxn, EngineScan::LexicalHintRows, &[])?;
     let mut candidates = Vec::new();
-    let mut prefix = Vec::with_capacity(1 + crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX.len());
-    prefix.push(crate::registry::ENTITY_TYPE_CLAIM);
-    prefix.extend_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
-    for entry in store.type_index.prefix_iter(wtxn, &prefix)? {
-        let (key, _) = entry?;
-        rows.row();
-        if key.len() != 1 + ENTITY_ID_LEN {
-            return Err(Error::CorruptedIndex("type index key"));
+    let hint = crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX;
+    // The type stream resumes after an id: the largest id below the hint
+    // prefix starts it at the first hint, and the first id past them ends it.
+    let mut floor = [u8::MAX; ENTITY_ID_LEN];
+    floor[..hint.len()].copy_from_slice(&hint);
+    floor[hint.len() - 1] -= 1;
+    let claims = crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        store,
+        wtxn,
+        crate::registry::ENTITY_TYPE_CLAIM,
+        Some(EntityId::from_bytes(floor)?),
+    )?;
+    for candidate in claims {
+        let candidate = candidate?;
+        if !candidate.as_bytes().starts_with(&hint) {
+            break;
         }
-        let candidate = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("type index key"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("type index key"))?;
+        rows.row();
         candidates.push(candidate);
     }
     rows.defer(store);

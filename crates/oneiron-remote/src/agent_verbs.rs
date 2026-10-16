@@ -358,6 +358,9 @@ impl OneironClient {
                 "vault.companions.sharing.get" => remote_agent_verb_output::<
                     oneiron::workspace_roster::CompanionSharingView,
                 >(client, verb, &input),
+                "vault.companions.sharing.set" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::CompanionSharingView,
+                >(client, verb, &input),
                 "vault.workspace.work_companion.get" => remote_agent_verb_output::<
                     oneiron::workspace_roster::WorkCompanionPolicy,
                 >(client, verb, &input),
@@ -1809,6 +1812,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.companions.sharing.get", value)
+    }
+    pub fn vault_companions_sharing_set(
+        &self,
+        input: &oneiron::task_verb::sdk::CompanionSharingSetRequest,
+    ) -> Result<oneiron::workspace_roster::CompanionSharingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.companions.sharing.set", value)
     }
     pub fn vault_workspace_work_companion_get(
         &self,
