@@ -13774,6 +13774,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -16119,9 +16120,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 2,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -16232,6 +16233,22 @@
      "purpose": "The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResidentDreamModel",
+      "ResidentDreamProgress"
+     ],
+     "path": "src/dreamer_consolidation/resident_dream.rs",
+     "purpose": "A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -16821,7 +16838,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 18
+      "fn": 19
      }
     },
     {
@@ -16848,15 +16865,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "DreamerAuthorityStamp"
+      "DreamerAuthorityStamp",
+      "ResidentAuthorityStamp"
      ],
      "path": "src/dreamer_runner/authority.rs",
      "purpose": "Two vault-owned base-agent principals on one runner: the Dreamer and the Coach (ARCH-0026 #base-agents)",
      "surface": {
       "crate-vis": 10,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -16948,7 +16966,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 21,
+      "const": 22,
       "crate-vis": 34
      }
     },
@@ -17255,7 +17273,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 14,
       "struct": 1
      }
@@ -47274,7 +47292,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48277,7 +48295,7 @@
    },
    "over_bar": 88,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2911,
+   "source_files": 2912,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58002,7 +58020,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -65076,6 +65094,7 @@
      "path": "src/lib/host_adapters.rs",
      "purpose": "Host adapters",
      "surface": {
+      "fn": 2,
       "re-export": 4,
       "struct": 2,
       "trait": 2
