@@ -131,9 +131,16 @@ embedder_requests = 2048          # requests `embedder serve` holds at once; pas
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
+git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
 ```
+
+The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
+its memory floor per blob, never a cap on the push: a push of any size lands
+while each blob fits and the disk keeps `git_scan_disk_floor_bytes` free. A
+push past either is refused whole, with a reason that names the key.
 
 Only the machine's own floors and the anonymous surface hold work back. Past
 `max_connections` the server stops accepting, so new sockets wait in the
