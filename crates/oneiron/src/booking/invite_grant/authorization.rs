@@ -10,7 +10,7 @@ use crate::booking::lifecycle::{
     BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BookingBookerContactValue,
     BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus, BookingStatusValue,
 };
-use crate::calendar::CALENDAR_INVITE_CHANNEL;
+use crate::calendar::CALENDAR_INVITE_VERB;
 use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrantScope;
@@ -29,8 +29,8 @@ pub(super) struct BookingInviteBinding {
 
 /// Whether one booking-page grant scope authorizes this exact invite.
 ///
-/// Three independent walls, all of which must hold: the scope dial must cover
-/// the verb (exactly `calendar.invite`), the booking must be persisted on
+/// Three independent walls, all of which must hold: the verb must be exactly
+/// `calendar.invite`, the booking must be persisted on
 /// exactly the scoped page, and the requested recipient must equal the
 /// booker identity that booking recorded. A scope of any other kind answers
 /// `false` rather than falling through to a permissive default.
@@ -48,12 +48,7 @@ pub fn booking_page_invites_authorizes(
     let StandingOutboundGrantScope::BookingPageInvites { page_ref } = scope else {
         return Ok(false);
     };
-    if !scope.matches_effect(
-        context.verb_kind,
-        CALENDAR_INVITE_CHANNEL,
-        Some(context.requested_recipient),
-        None,
-    ) {
+    if context.verb_kind.trim() != CALENDAR_INVITE_VERB {
         return Ok(false);
     }
     let Some(binding) = confirmed_booking_binding(vault, &context.booking_ref)? else {
@@ -151,6 +146,32 @@ impl BookingInviteCoverage {
             None => Ok(false),
         }
     }
+}
+
+/// Whether booking-page grant `grant_ref` still covers an invite to
+/// `recipient` for the booking EVENT `booking_ref`, through the caller's
+/// transaction: that EVENT is a confirmed booking on the grant's page whose
+/// booker is the recipient.
+pub(crate) fn page_grant_covers_booking_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    grant_ref: &EntityId,
+    booking_ref: &EntityId,
+    recipient: &str,
+) -> Result<bool, BookingError> {
+    let Some(grant) =
+        crate::outbound_grant::standing_outbound_grant_in_txn(&vault.store, rtxn, grant_ref)
+            .map_err(|error| engine_failure("standing grant read", error))?
+    else {
+        return Ok(false);
+    };
+    let StandingOutboundGrantScope::BookingPageInvites { page_ref } = &grant.scope else {
+        return Ok(false);
+    };
+    let Some(binding) = confirmed_booking_binding_in_txn(vault, rtxn, booking_ref)? else {
+        return Ok(false);
+    };
+    Ok(binding.page_ref == *page_ref && identities_match(&binding.recipient, recipient))
 }
 
 /// The page/booker binding `booking_ref` carries, or `None` when this EVENT is

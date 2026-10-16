@@ -20,7 +20,6 @@ mod thread_membership;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::claims::validate_comm_claim_structure;
 pub use self::claims::{
     COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, ClaimClassDescriptorRow, CommClaim, CommClaimValue,
     CommClearOptOutOutcome, CommError, CommResult, PREDICATE_COMM_LAST_TOUCH,
@@ -28,6 +27,7 @@ pub use self::claims::{
     PREDICATE_COMM_THREAD_MEMBER, SendOverrideMatch, SendOverrideScope, claim_class_descriptors,
     is_comm_claim_predicate,
 };
+pub(crate) use self::claims::{guard_send_override_put, validate_comm_claim_structure};
 pub use self::consent::{
     approve_pending_opt_out_clear, count_active_comm_claims, count_active_thread_member_claims,
     count_contact_record_claim_entries, count_opt_out_clear_receipts,

@@ -6,6 +6,7 @@
 
 use super::gate::text_response;
 use super::status_codec::{concat_chunks, rewrite_receive_pack_status};
+use crate::admission::WaitTimedOut;
 use crate::api::transfer::{self, BodyPiece, BodyReader};
 use crate::server::SyncServer;
 use axum::body::Body;
@@ -42,15 +43,36 @@ pub(super) const GIT_HTTP_MAX_HELD_CHUNKS: usize = 4096;
 /// holds a whole body: a chunk moves when the far side has room for it, and
 /// neither waits on the other past the transfer idle limit. The exchange's
 /// permit is taken before any child exists and is held by the worker, which
-/// outlives this handler whenever the response streams.
+/// outlives this handler whenever the response streams. Past the bound the
+/// exchange waits its turn; a push first waits for its repository's turn,
+/// behind the pushes to that repository that came before it, so no worker
+/// thread ever sits waiting for a repository.
 pub(super) async fn run_serve(
     server: Arc<SyncServer>,
     repo: String,
     request: smart_http::ServeRequest,
     body: Body,
 ) -> Response {
-    let Ok(permit) = server.transfers.admit_git(request.remote_user.as_deref()) else {
-        return saturated();
+    let principal = request.remote_user.as_deref();
+    // A repository that does not resolve has no line; the exchange says why.
+    let turn = match request
+        .is_receive_pack()
+        .then(|| smart_http::push_queue_key(server.vault(), &repo).ok())
+        .flatten()
+    {
+        Some(key) => match server.transfers.push_turn(key, principal).await {
+            Ok(turn) => Some(turn),
+            Err(WaitTimedOut) => return waited_out(),
+        },
+        None => None,
+    };
+    let Ok(permit) = server.transfers.admit_git(principal).await else {
+        return waited_out();
+    };
+    let bounds = smart_http::ExchangeBounds {
+        idle: server.transfers.idle,
+        repository_wait: server.transfers.wait,
+        scan: server.transfers.scan,
     };
     // A push is held until its landing is journaled; everything else streams.
     let held = request.is_receive_pack();
@@ -67,8 +89,8 @@ pub(super) async fn run_serve(
     ));
 
     let runtime = Handle::current();
-    let worker = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+    let worker = transfer::spawn_worker(move || {
+        let _held = (turn, permit);
         let mut reader = BodyReader::new(request_rx);
         let mut sink = ChannelSink {
             head: Some(head_tx),
@@ -84,7 +106,7 @@ pub(super) async fn run_serve(
             &repo,
             &request,
             smart_http::DoorSeam::Landed,
-            idle,
+            bounds,
             &mut reader,
             &mut sink,
         )
@@ -116,7 +138,7 @@ pub(super) async fn run_serve(
 pub(super) async fn held_response(
     head: oneshot::Receiver<ResponseHead>,
     mut chunks: mpsc::Receiver<Bytes>,
-    worker: tokio::task::JoinHandle<oneiron::Result<smart_http::ServeReport>>,
+    worker: oneshot::Receiver<oneiron::Result<smart_http::ServeReport>>,
 ) -> Response {
     let head = head.await.ok();
     let mut body = Vec::new();
@@ -159,7 +181,7 @@ pub(super) async fn held_response(
 pub(super) fn landed_response(
     head: Option<ResponseHead>,
     body: Vec<Bytes>,
-    joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
+    joined: Result<oneiron::Result<smart_http::ServeReport>, transfer::WorkerGone>,
 ) -> Response {
     let report = match joined {
         Ok(Ok(report)) => report,
@@ -192,11 +214,11 @@ pub(super) fn landed_response(
 
 pub(super) type ResponseHead = (u16, Vec<(String, String)>);
 
-/// Every git exchange permit is held: refused now, never queued.
-fn saturated() -> Response {
+/// The exchange waited its whole deadline for its turn. Nothing was started.
+fn waited_out() -> Response {
     let mut response = text_response(
         StatusCode::SERVICE_UNAVAILABLE,
-        "git transfers are at their limit; retry later",
+        "git transfer waited past limits.queue_wait_timeout_ms for its turn; nothing was started; retry",
     );
     response
         .headers_mut()
@@ -205,7 +227,7 @@ fn saturated() -> Response {
 }
 
 pub(super) fn serve_failure(
-    joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
+    joined: Result<oneiron::Result<smart_http::ServeReport>, transfer::WorkerGone>,
 ) -> Response {
     if let Ok(Err(error)) = &joined {
         tracing::warn!(kind = ?error.kind(), "git smart-http worker failed");
@@ -228,7 +250,12 @@ pub(super) fn serve_failure(
         ),
         Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::GitHttpRepositoryBusy))) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "the repository is busy with another writer; nothing was received; retry later"
+            "another writer held the repository past limits.queue_wait_timeout_ms; nothing was received; retry"
+                .to_owned(),
+        ),
+        Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::LfsReadRoomWaitedOut))) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no room to check the LFS objects came within limits.queue_wait_timeout_ms; ref effects may be partial; retry to recover"
                 .to_owned(),
         ),
         Ok(Err(
