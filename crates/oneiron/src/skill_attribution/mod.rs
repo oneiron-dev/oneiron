@@ -39,7 +39,9 @@ mod judge;
 mod judge_supersession;
 #[cfg(test)]
 pub(crate) use judge_supersession::set_pre_writer_hook;
-pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
+pub(crate) use judge_supersession::{
+    judgment_displaced, judgment_displaced_in_txn, judgment_judge_in_txn,
+};
 mod late_credit;
 mod pack_learning;
 pub use late_credit::{LateCreditReceipt, LateCreditShare, late_credit_receipt};
@@ -51,7 +53,8 @@ pub use self::positive::{
 };
 mod projector;
 pub(crate) use self::projector::{
-    draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn, withdraw_edit_proposal_in_txn,
+    attribution_judgments_in_txn, draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn,
+    withdraw_edit_proposal_in_txn,
 };
 mod split;
 pub(crate) use self::split::{classify_split, settled_split, unclear_floor};
