@@ -220,11 +220,15 @@ fn holds(served: &Served, bytes: usize) -> bool {
 /// 32 MiB while it waited for the rest.
 #[test]
 fn a_request_without_the_key_is_refused_before_its_body_is_read() {
-    let served = Arc::new(Served::new(
-        synthetic(),
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-    ));
+    let served = Arc::new(
+        Served::new(
+            synthetic(),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     for key in [None, Some("another key")] {
         let mut stream = post_head(addr, key, MAX_BODY_BYTES);
@@ -238,34 +242,42 @@ fn a_request_without_the_key_is_refused_before_its_body_is_read() {
 
 /// Review P2: callers with the key share a byte budget for bodies, taken
 /// before a body is read. Past it a large body is not read until an earlier
-/// one's request ends, a few at most wait for that, and a query, which draws
-/// on its own budget, still answers. Review R7-3 and R7-4 (Sol): a body of no
-/// declared length waited on the large budget whatever its size, and any
-/// number of requests could wait, each holding what the transport had read.
+/// one's request ends, and a query, which draws on its own budget, still
+/// answers. Review R7-3 (Sol): a body of no declared length waited on the
+/// large budget whatever its size. Review r2 (Sol and Astra, P1): past 32
+/// waiters the next request with the key was refused with a 503; under the
+/// rate law it waits its turn like the rest.
 #[test]
 fn bodies_wait_for_their_budget_before_they_are_read() {
     use std::io::Write;
-    let served = Arc::new(Served::new(
-        synthetic(),
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-    ));
+    /// More than the 32 that once could wait.
+    const WAITERS: usize = 40;
+    let served = Arc::new(
+        Served::new(
+            synthetic(),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
-    let mut uploads: Vec<_> = (0..2 + BODY_WAITERS)
+    let mut uploads: Vec<_> = (0..2 + WAITERS)
         .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
         .collect();
     let queued = (0..500).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(10));
-        served.large_bodies.waiting() == BODY_WAITERS
+        served.large_bodies.waiting() == WAITERS
     });
-    assert!(queued, "every waiter queued");
+    assert!(
+        queued,
+        "every request past the budget waits; none is turned away"
+    );
     assert_eq!(
         served.body_bytes_held(),
         LARGE_BODIES_BYTES,
         "two bodies reserved, the rest wait unread"
     );
-    let mut one_more = post_head(addr, Some(KEY), MAX_BODY_BYTES);
-    assert_eq!(status(&mut one_more).expect("refused at once"), 503);
 
     let mut chunked = std::net::TcpStream::connect(addr).expect("connected");
     chunked
@@ -295,6 +307,58 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     assert!(holds(&served, MAX_BODY_BYTES), "one body left");
     drop(uploads);
     assert!(holds(&served, 0), "every request's bytes returned");
+}
+
+/// Review r5 (Sol R5-2, Astra R5-2): freed bytes went to the one waiting
+/// body before its task ran again, but the budget still counted it as
+/// waiting, so the next request to wait, after the line had run empty,
+/// crossed the row and did not ask.
+#[tokio::test]
+async fn a_wait_after_the_line_ran_empty_crosses_the_body_row_again() {
+    use futures_util::FutureExt;
+    // One window holds every crossing below.
+    let into_minute = oneiron_vault_contract::now_ts() % 60;
+    if into_minute > 50 {
+        tokio::time::sleep(Duration::from_secs(61 - into_minute)).await;
+    }
+    let wait = Duration::from_secs(60);
+    let questions = Arc::new(LimitQuestions::default());
+    let budget = Arc::new(ByteLine::new(
+        LimitRow::EmbedderBodyBytes,
+        LARGE_BODIES_BYTES,
+    ));
+    let crossings = || {
+        questions
+            .latest(LimitRow::EmbedderBodyBytes)
+            .map_or(0, |question| question.crossings)
+    };
+    let first = budget.reserve(MAX_BODY_BYTES, wait, &questions).await;
+    let second = budget.reserve(MAX_BODY_BYTES, wait, &questions).await;
+    assert!(first.is_some() && second.is_some(), "two bodies fit");
+    let waiter = tokio::spawn({
+        let budget = Arc::clone(&budget);
+        let questions = Arc::clone(&questions);
+        async move {
+            budget
+                .reserve(MAX_BODY_BYTES, wait, &questions)
+                .await
+                .is_some()
+        }
+    });
+    while budget.waiting() == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(crossings(), 1);
+
+    // The freed bytes go to the waiter, whose task runs again only when
+    // this one, on the same thread, yields. Nobody waits now.
+    drop(first);
+    let next = budget
+        .reserve(MAX_BODY_BYTES, wait, &questions)
+        .now_or_never();
+    assert!(next.is_none(), "no bytes are free for it");
+    assert_eq!(crossings(), 2, "a wait after the line ran empty crosses");
+    assert!(waiter.await.expect("waiter"), "the waiter has its bytes");
 }
 
 /// Review P1 (Astra, #1361): a vault may name the model by an alias, and the
@@ -339,5 +403,415 @@ fn every_row_and_answer_names_the_model_loaded() {
     assert_eq!(
         answer["provenance"],
         serde_json::json!({ "device": "cuda", "runtime": "candle 0.11.0 q8_0" })
+    );
+}
+
+/// A model that takes a while over each request, so several are in flight.
+struct Slow(Arc<dyn ServedModel>);
+
+impl ServedModel for Slow {
+    fn model_id(&self) -> &str {
+        self.0.model_id()
+    }
+
+    fn dimensions(&self) -> usize {
+        self.0.dimensions()
+    }
+
+    fn transform(&self) -> &str {
+        self.0.transform()
+    }
+
+    fn profile(&self) -> &RunProfile {
+        self.0.profile()
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        self.0.provenance()
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        side: Side,
+        instruction: Option<&str>,
+        priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        self.0.embed_raw(texts, side, instruction, priority)
+    }
+}
+
+/// Sends a whole embeddings request for `input` and reads its status.
+fn embed(addr: SocketAddr, input: &serde_json::Value) -> u16 {
+    use std::io::Write;
+    let body = serde_json::json!({ "model": SYNTHETIC_MODEL, "input": input }).to_string();
+    let mut stream = post_head(addr, Some(KEY), body.len());
+    stream.write_all(body.as_bytes()).expect("body sent");
+    status(&mut stream).unwrap_or_default()
+}
+
+/// Joins every caller, counting those not answered 200. All of them were
+/// started before any is joined, so they wait at once.
+fn unanswered(calls: Vec<std::thread::JoinHandle<u16>>) -> usize {
+    calls
+        .into_iter()
+        .map(|call| call.join().ok())
+        .filter(|status| *status != Some(200))
+        .count()
+}
+
+/// Rule five at the embedder's request row: `callers` requests past a row
+/// of one all answer, and the row asks.
+pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
+    // A row of one: past the first request in flight, the rest wait.
+    let limits = crate::config::LimitsConfig {
+        embedder_requests: 1,
+        ..Default::default()
+    };
+    let served = Arc::new(
+        Served::new(
+            Arc::new(Slow(synthetic())),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &limits,
+        )
+        .expect("served"),
+    );
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let calls: Vec<_> = (0..callers)
+        .map(|n| {
+            std::thread::spawn(move || {
+                embed(
+                    addr,
+                    &serde_json::json!([format!("document {n}"), "another"]),
+                )
+            })
+        })
+        .collect();
+    let refused = unanswered(calls);
+    crate::admission::Crossing {
+        refused,
+        asked: served
+            .questions
+            .latest(LimitRow::EmbedderRequests)
+            .is_some(),
+    }
+}
+
+/// Rule five at the embedder's body row: past a large budget two held
+/// bodies fill, `callers` large requests wait, then all answer once the two
+/// let go, and the row asks.
+pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
+    let served = Arc::new(
+        Served::new(
+            synthetic(),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let holders: Vec<_> = (0..2)
+        .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
+        .collect();
+    assert!(holds(&served, LARGE_BODIES_BYTES), "the budget is full");
+    // Over the small-body size, so each draws on the large budget.
+    let large = "x".repeat(SMALL_BODY_BYTES + 1);
+    let calls: Vec<_> = (0..callers)
+        .map(|_| {
+            let large = large.clone();
+            std::thread::spawn(move || embed(addr, &serde_json::json!(large)))
+        })
+        .collect();
+    let queued = (0..500).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        served.large_bodies.waiting() + calls.iter().filter(|call| call.is_finished()).count()
+            == callers
+    });
+    assert!(queued, "every caller reached the budget");
+    drop(holders);
+    let refused = unanswered(calls);
+    crate::admission::Crossing {
+        refused,
+        asked: served
+            .questions
+            .latest(LimitRow::EmbedderBodyBytes)
+            .is_some(),
+    }
+}
+
+/// Rule five at the embedder's answer row: with room for one answer at a
+/// time, `callers` requests each wait for the answer before theirs to be
+/// delivered, then all answer, and the row asks.
+pub(crate) fn cross_the_answers(callers: usize) -> crate::admission::Crossing {
+    // Room for one answer of the most inputs a request carries, which each
+    // caller sends.
+    let limits = crate::config::LimitsConfig {
+        embedder_answer_bytes: answer_bytes(MAX_INPUTS, SYNTHETIC_DIMS) as u64,
+        ..Default::default()
+    };
+    let served = Arc::new(
+        Served::new(
+            Arc::new(Slow(synthetic())),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &limits,
+        )
+        .expect("served"),
+    );
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let calls: Vec<_> = (0..callers)
+        .map(|n| {
+            std::thread::spawn(move || {
+                let inputs: Vec<String> = (0..MAX_INPUTS).map(|m| format!("{n}:{m}")).collect();
+                embed(addr, &serde_json::json!(inputs))
+            })
+        })
+        .collect();
+    let refused = unanswered(calls);
+    crate::admission::Crossing {
+        refused,
+        asked: served
+            .questions
+            .latest(LimitRow::EmbedderAnswerBytes)
+            .is_some(),
+    }
+}
+
+/// Floats in each row the wide model answers.
+const WIDE_DIMS: usize = 4_096;
+
+/// A model whose rows are `WIDE_DIMS` wide, so an answer of many inputs is
+/// far larger than the sockets between server and client take; it counts
+/// the requests it is given.
+#[derive(Default)]
+struct Wide {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl Wide {
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl ServedModel for Wide {
+    fn model_id(&self) -> &str {
+        SYNTHETIC_MODEL
+    }
+
+    fn dimensions(&self) -> usize {
+        WIDE_DIMS
+    }
+
+    fn transform(&self) -> &str {
+        SYNTHETIC_TRANSFORM
+    }
+
+    fn profile(&self) -> &RunProfile {
+        static PROFILE: std::sync::OnceLock<RunProfile> = std::sync::OnceLock::new();
+        PROFILE.get_or_init(|| RunProfile::of(&EmbedderConfig::default()))
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::new(oneiron::embed::EmbeddingDevice::Cuda, "candle 0.11.0 q8_0")
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        _side: Side,
+        _instruction: Option<&str>,
+        _priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Embedded {
+            rows: texts.iter().map(|_| vec![0.5; WIDE_DIMS]).collect(),
+            tokens: texts.len(),
+        })
+    }
+}
+
+/// Review r7 (Astra, P1): an answer kept its whole encoding until its
+/// reader took the last piece, and only `embedder_requests` bounded how many
+/// did, so callers who read slowly could hold gigabytes of answers. An
+/// answer now takes its room in `embedder_answer_bytes` before the model
+/// makes it and keeps it until it is delivered; past the row the next
+/// request waits its turn, and the row asks.
+#[test]
+fn an_unread_answer_keeps_its_room_and_the_next_request_waits_for_it() {
+    use std::io::Write;
+    // Room for one answer of the most inputs a request carries at a time.
+    let limits = crate::config::LimitsConfig {
+        embedder_answer_bytes: answer_bytes(MAX_INPUTS, WIDE_DIMS) as u64,
+        ..Default::default()
+    };
+    let wide = Arc::new(Wide::default());
+    let served = Arc::new(
+        Served::new(
+            Arc::clone(&wide) as Arc<dyn ServedModel>,
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &limits,
+        )
+        .expect("served"),
+    );
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let inputs: Vec<String> = (0..MAX_INPUTS).map(|n| format!("input {n}")).collect();
+    let body = serde_json::json!({ "model": SYNTHETIC_MODEL, "input": inputs }).to_string();
+    let send = || {
+        let mut stream = post_head(addr, Some(KEY), body.len());
+        stream.write_all(body.as_bytes()).expect("body sent");
+        stream
+    };
+    let soon = |done: &dyn Fn() -> bool| {
+        (0..1_000).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            done()
+        })
+    };
+
+    // A 32 MiB answer nobody reads: more than the sockets take.
+    let unread = send();
+    assert!(soon(&|| wide.calls() == 1), "the first request is embedded");
+    let mut next = send();
+    assert!(
+        soon(&|| served
+            .questions
+            .latest(LimitRow::EmbedderAnswerBytes)
+            .is_some()),
+        "the next request waits for the answer row, and the row asks"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(
+        wide.calls(),
+        1,
+        "no answer is made while the one before it holds the row"
+    );
+
+    // Once the first answer's reader goes, the next is made and answered.
+    drop(unread);
+    assert_eq!(status(&mut next).expect("an answer"), 200);
+    assert_eq!(wide.calls(), 2);
+}
+
+/// Review r8 (Sol R8-2, P2): the answer row clipped a larger answer's claim
+/// to the whole row, so with the row set below one answer an answer was
+/// made at once into an empty row, holding more than the row bounds. Such a
+/// row is now a config error, and no claim is held for less than it asks.
+#[tokio::test]
+async fn an_answer_row_smaller_than_the_models_largest_answer_is_never_served_under() {
+    let largest = answer_bytes(MAX_INPUTS, WIDE_DIMS);
+    let served = |row: usize| {
+        Served::new(
+            Arc::new(Wide::default()),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig {
+                embedder_answer_bytes: row as u64,
+                ..Default::default()
+            },
+        )
+    };
+    let refused = served(largest - 1).err().expect("a row under one answer");
+    assert!(
+        refused.to_string().contains("limits.embedder_answer_bytes"),
+        "{refused}"
+    );
+    assert!(served(largest).is_ok(), "a row of one answer serves");
+
+    // The first claim into an empty row of fewer bytes is not granted.
+    let questions = LimitQuestions::default();
+    let row = ByteLine::new(LimitRow::EmbedderAnswerBytes, largest - 1);
+    let claim = row
+        .reserve(largest, Duration::from_secs(1), &questions)
+        .await;
+    assert!(claim.is_none(), "no answer is held under a smaller claim");
+    assert_eq!(row.held_bytes(), 0);
+}
+
+/// A model whose every float is its one value, in rows of `CONSTANT_DIMS`.
+struct Constant(f32);
+
+/// Floats in each row the constant model answers.
+const CONSTANT_DIMS: usize = 64;
+
+impl ServedModel for Constant {
+    fn model_id(&self) -> &str {
+        SYNTHETIC_MODEL
+    }
+
+    fn dimensions(&self) -> usize {
+        CONSTANT_DIMS
+    }
+
+    fn transform(&self) -> &str {
+        SYNTHETIC_TRANSFORM
+    }
+
+    fn profile(&self) -> &RunProfile {
+        static PROFILE: std::sync::OnceLock<RunProfile> = std::sync::OnceLock::new();
+        PROFILE.get_or_init(|| RunProfile::of(&EmbedderConfig::default()))
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::new(oneiron::embed::EmbeddingDevice::Cuda, "candle 0.11.0 q8_0")
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        _side: Side,
+        _instruction: Option<&str>,
+        _priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        Ok(Embedded {
+            rows: texts.iter().map(|_| vec![self.0; CONSTANT_DIMS]).collect(),
+            tokens: texts.len(),
+        })
+    }
+}
+
+/// Review r9 (Astra R9-2, P2): an answer was encoded into a buffer that grew
+/// by doubling, so it could hold up to twice the room it took. It is now
+/// encoded into a buffer of exactly its room's encoding share, never grown,
+/// which holds an answer of the most inputs, every float in one of the
+/// longest forms JSON writes.
+#[test]
+fn an_answer_of_the_longest_floats_fits_the_room_it_took() {
+    // Written `-0.0000010000008`: a sign, `0.`, five zeros and eight digits.
+    let longest = f32::from_bits(0xb586_37c4);
+    let written = serde_json::to_string(&longest).expect("float");
+    assert_eq!(written.len(), 16, "{written}");
+    let served = Arc::new(
+        Served::new(
+            Arc::new(Constant(longest)),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let inputs: Vec<String> = (0..MAX_INPUTS).map(|n| format!("input {n}")).collect();
+    let answer = reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/v1/embeddings"))
+        .header(header::AUTHORIZATION, format!("Bearer {KEY}"))
+        .json(&serde_json::json!({ "model": SYNTHETIC_MODEL, "input": inputs }))
+        .send()
+        .expect("answer");
+    assert_eq!(answer.status(), 200);
+    let body = answer.bytes().expect("body");
+    assert!(body.len() <= encoding_bytes(MAX_INPUTS, CONSTANT_DIMS));
+    let floats = body
+        .windows(written.len())
+        .filter(|window| *window == written.as_bytes())
+        .count();
+    assert_eq!(
+        floats,
+        MAX_INPUTS * CONSTANT_DIMS,
+        "every float in its longest form"
     );
 }
