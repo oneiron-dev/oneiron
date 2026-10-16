@@ -300,9 +300,9 @@ handles; an export-first removal's archive, like any export to a contact or shar
 custody record.
 
 A diary is exported as a read of it (OF-490): only diaries the owner's grant covers, logged on the
-receipt with the reason `export`. An agent that reviews each read of its diary first
-(`Vault::set_agent_diary_read_review`, on for Eiri) has its diaries held out of the archive, and
-the manifest's `diary_holds` names it.
+receipt with the reason `export`. An agent that reviews each read of its diary first (its
+OF-490 review setting, on for Eiri) has its diaries held out of the archive, and the manifest's
+`diary_holds` names it.
 
 On a running server, `POST /v1/core/facade/vault.export` with `{}` (or `{"format": "archive"}`)
 and an owner credential; the reply's `archive` is the ZIP in standard base64. Each export tries to
