@@ -13291,6 +13291,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GateExplanation",
+      "MemoryExplanation"
+     ],
+     "path": "src/context_board/explain.rs",
+     "purpose": "Explain receipts (OF-278): why a memory appeared, and why a write needed approval",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -13468,7 +13482,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 7,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -13688,6 +13702,7 @@
       "ProposalChange",
       "ProposalReason",
       "ServedLifecycle",
+      "ServedWhy",
       "SessionReadSet"
      ],
      "path": "src/context_board/read_set.rs",
@@ -13695,8 +13710,8 @@
      "surface": {
       "crate-vis": 8,
       "enum": 4,
-      "fn": 13,
-      "struct": 5
+      "fn": 16,
+      "struct": 6
      }
     },
     {
@@ -47154,7 +47169,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48262,7 +48277,7 @@
    },
    "over_bar": 88,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2910,
+   "source_files": 2911,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58617,6 +58632,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/explain.rs",
+     "purpose": "Explain receipts (OF-278): GET /v1/core/explain/memory/{entity} answers why a memory appeared in the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -58643,7 +58668,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -64473,7 +64498,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 234,
+     "files": 235,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64734,7 +64759,7 @@
    },
    "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 438,
+   "source_files": 439,
    "test_files": 182
   },
   "oneiron-spawn": {
