@@ -1057,7 +1057,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 8
      }
     },
@@ -5413,7 +5413,7 @@
      "path": "src/booking/lifecycle/claim.rs",
      "purpose": "Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "struct": 1
      }
@@ -5519,7 +5519,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/booking/lifecycle/tests.rs",
@@ -6448,7 +6448,7 @@
      "path": "src/calendar/origin.rs",
      "purpose": "Calendar EVENT origin union: atomic recorded provenance and source invalidation",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
      }
@@ -6592,7 +6592,7 @@
      "path": "src/calendar/query/facts.rs",
      "purpose": "Lane admission and fail-closed fact reduction",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 1
      }
@@ -6646,6 +6646,14 @@
       "crate-vis": 2,
       "fn": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/calendar/query/tests.rs",
+     "purpose": "A claim awaiting its owner's critical confirm in the calendar's operational reads: free/busy, and the rows…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -8481,7 +8489,7 @@
      "path": "src/claim/read.rs",
      "purpose": "`Vault` claim read doors: targeted `get_claim`, the subject/predicate scans, the session-bundle projection…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 2
      }
     },
@@ -18536,7 +18544,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 2,
       "re-export": 13
      }
@@ -26680,7 +26688,7 @@
      "purpose": "Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement…",
      "surface": {
       "crate-vis": 1,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -30317,7 +30325,7 @@
      "path": "src/reaction/mod.rs",
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 6
      }
     },
@@ -30331,7 +30339,7 @@
      "purpose": "Connector-neutral outbound reactions (connector out)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -38865,7 +38873,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 36
      }
     },
     {
@@ -39141,7 +39149,7 @@
      "path": "src/thread_passport/graph.rs",
      "purpose": "Thread components are derived from observed Message-ID relationships",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -42283,7 +42291,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43553,7 +43561,7 @@
    "over_bar": 50,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2614,
-   "test_files": 899
+   "test_files": 900
   },
   "oneiron-android": {
    "files": [
