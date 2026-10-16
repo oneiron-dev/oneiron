@@ -1,0 +1,12 @@
+[Unit]
+Description=Oneiron local sync daemon socket
+Documentation=https://github.com/oneiron-dev/oneiron
+
+[Socket]
+# systemd binds the daemon's socket and passes it in on start, so a client
+# that connects while the daemon starts waits in the backlog.
+ListenStream=127.0.0.1:9090
+Accept=no
+
+[Install]
+WantedBy=sockets.target
