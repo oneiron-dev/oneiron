@@ -266,9 +266,9 @@ pub(super) fn reply_target(
     quote: Option<&ProvenQuote>,
 ) -> Result<Option<EntityId>> {
     match (asked, quote) {
-        (Some(asked), Some(quote)) if asked != quote.turn => Err(invalid(
-            "a quote answers the turn that holds its message",
-        )),
+        (Some(asked), Some(quote)) if asked != quote.turn => {
+            Err(invalid("a quote answers the turn that holds its message"))
+        }
         (asked, quote) => Ok(asked.or(quote.map(|quote| quote.turn))),
     }
 }

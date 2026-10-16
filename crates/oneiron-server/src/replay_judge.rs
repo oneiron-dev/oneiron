@@ -152,7 +152,7 @@ fn response_text(vault: &Vault, attempt: &AttemptRecord) -> String {
                         .as_deref()
                         .unwrap_or(exhaust.stdout.as_slice()),
                 )
-                    .into_owned()
+                .into_owned()
             })
             .unwrap_or_default();
     }
@@ -202,10 +202,14 @@ pub struct PersonTime {
 /// Records `minutes` of a person's time spent on `receipt`'s run.
 pub fn record_person_time(vault: &Vault, receipt: &str, minutes: f64, act: &str) -> Result<()> {
     if receipt.is_empty() || receipt.len() > 256 || receipt.contains(['\0', '|']) {
-        return Err(invalid("a person-time receipt is 1..=256 bytes, without NUL or '|'"));
+        return Err(invalid(
+            "a person-time receipt is 1..=256 bytes, without NUL or '|'",
+        ));
     }
     if !minutes.is_finite() || minutes <= 0.0 || minutes > MAX_ACT_MINUTES {
-        return Err(invalid("person-time is more than 0 and at most a day, in minutes"));
+        return Err(invalid(
+            "person-time is more than 0 and at most a day, in minutes",
+        ));
     }
     if act.is_empty() || act.len() > 64 {
         return Err(invalid("a person-time act is 1..=64 bytes"));
@@ -491,7 +495,9 @@ impl ServeAxisBandit {
         let target = provenance_str(&staged.provenance, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY)
             .and_then(|hex| EntityId::from_hex(&hex).ok())
             .ok_or_else(|| invalid("an optimizer proposal names the skill it revises"))?;
-        let current = vault.get_skill_record(&target)?.ok_or(Error::EntityNotFound)?;
+        let current = vault
+            .get_skill_record(&target)?
+            .ok_or(Error::EntityNotFound)?;
         Ok(Self {
             incumbent: Arm {
                 skill: target,
@@ -536,11 +542,13 @@ impl GoalAxisBandit for ServeAxisBandit {
             .ok_or_else(|| invalid(format!("no live run of {} is left to pull", arm.loaded)))?;
         taken.insert(run.receipt_id.clone());
         drop(taken);
-        let defect = attribution_judgments(&self.vault)?.into_iter().any(|judgment| {
-            judgment.verdict == AttributionVerdict::SkillDefect
-                && judgment.subject == arm.skill
-                && judgment.evidence_receipts.contains(&run.receipt_id)
-        });
+        let defect = attribution_judgments(&self.vault)?
+            .into_iter()
+            .any(|judgment| {
+                judgment.verdict == AttributionVerdict::SkillDefect
+                    && judgment.subject == arm.skill
+                    && judgment.evidence_receipts.contains(&run.receipt_id)
+            });
         Ok(OnlineAxisSample {
             success: run.outcome == COMPLETED && !defect,
             human_minutes: person_minutes(&self.vault, &run.receipt_id)?.unwrap_or(0.0),
@@ -559,7 +567,10 @@ impl GoalAxisBandit for ServeAxisBandit {
         if wins > pulls {
             return Err(invalid("more wins than pulls"));
         }
-        #[expect(clippy::cast_precision_loss, reason = "pull counts stay far below 2^24")]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "pull counts stay far below 2^24"
+        )]
         let posterior = SkillReliabilityPosterior {
             alpha: 1.0 + wins as f32,
             beta: 1.0 + (pulls - wins) as f32,
