@@ -622,9 +622,11 @@ impl ScopedRead<'_> {
     }
 
     /// Whether `row` of `id` is a TASK, or one of its authority facts, whose
-    /// birth stamp sits outside the worlds or facets the read's verified
-    /// credential grants (ARCH-0067 §5, DEC-0005). One that cannot prove its
-    /// position counts as outside.
+    /// birth stamp sits outside the worlds the read's verified credential
+    /// grants (ARCH-0067 §5, DEC-0005). One that cannot prove its position
+    /// counts as outside. Its facets are judged by the lane's one facet rule
+    /// (`outside_credential_facets_in`), owner exemption included, never
+    /// here.
     fn outside_credential_task_position_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -638,10 +640,14 @@ impl ScopedRead<'_> {
         if row.entity_type != crate::registry::ENTITY_TYPE_TASK {
             return Ok(false);
         }
+        let worlds_only = crate::federation::Scope {
+            facets: crate::federation::ScopeAxis::All,
+            ..granted.clone()
+        };
         let raw = row.encode();
         let inside = match self.session_view {
-            Some(view) => task_inside_credential(view, txn, *id, &raw, granted)?,
-            None => task_inside_credential(&self.vault.store, txn, *id, &raw, granted)?,
+            Some(view) => task_inside_credential(view, txn, *id, &raw, &worlds_only)?,
+            None => task_inside_credential(&self.vault.store, txn, *id, &raw, &worlds_only)?,
         };
         Ok(!inside)
     }

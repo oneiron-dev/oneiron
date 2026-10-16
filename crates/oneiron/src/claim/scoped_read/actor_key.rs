@@ -348,6 +348,29 @@ impl ScopedReadActorKey {
         self.owner
     }
 
+    /// Whether this key reads past every facet bound in `txn` (owner ruling
+    /// FACET-READ = A): the vault owner's own key, and a narrower credential
+    /// of the owner's while its holder is still the bound owner there. A
+    /// delegate's key, or a transferred one, never is. The one predicate the
+    /// read lane and every door that judges a facet narrowing share.
+    pub(crate) fn facets_owner_exempt_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<bool> {
+        if self.owner.is_some() {
+            return Ok(true);
+        }
+        let Some(owner) = self.owner_exemption else {
+            return Ok(false);
+        };
+        crate::memory::owner_exemption_holds_in_txn(vault, txn, owner).map_err(|refusal| {
+            crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
+                Box::new(refusal),
+            ))
+        })
+    }
+
     /// Whether this is the vault owner's own key, which reads all of the
     /// owner's vault while its binding holds (`Self::vault_owner`).
     #[must_use]

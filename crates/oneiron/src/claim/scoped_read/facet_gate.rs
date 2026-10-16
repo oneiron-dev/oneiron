@@ -81,17 +81,8 @@ impl ScopedRead<'_> {
             None => None,
         }
         .filter(|facets| !matches!(facets, ScopeAxis::All));
-        if (credential.is_none() && room.is_none()) || self.actor_key.vault_owner_ref().is_some() {
-            return Ok(true);
-        }
-        if let Some(owner) = self.actor_key.owner_exemption
-            && crate::memory::owner_exemption_holds_in_txn(self.vault, txn, owner).map_err(
-                |refusal| {
-                    crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
-                        Box::new(refusal),
-                    ))
-                },
-            )?
+        if (credential.is_none() && room.is_none())
+            || self.actor_key.facets_owner_exempt_in(self.vault, txn)?
         {
             return Ok(true);
         }
