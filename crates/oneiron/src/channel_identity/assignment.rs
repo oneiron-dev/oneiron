@@ -111,10 +111,13 @@ pub(super) fn by_assignment(
     key: &AssignmentKey,
 ) -> Result<Option<(EntityId, ChannelIdentity)>> {
     let slot = read_slot(store, txn, key)?;
-    let occupant = slot
-        .occupant
-        .map(|id| read_indexed_row(store, txn, key, id).map(|row| (id, row)))
-        .transpose()?;
+    let occupant = match slot.occupant {
+        // A deleted self-held row's hold on its address routes nothing.
+        Some(id) if ERASED.get(store, txn, &id)?.is_some() => None,
+        held => held
+            .map(|id| read_indexed_row(store, txn, key, id).map(|row| (id, row)))
+            .transpose()?,
+    };
     if let Some((id, row)) = &occupant
         && matches!(
             row.state(),
@@ -179,6 +182,20 @@ pub(crate) fn maintain_assignment_put(
             "delegated identity must be born Requested",
         )));
     }
+    // A deleted self-held id still holds its own address. Coming back on
+    // another one would drop that hold with its marker, and coming back
+    // delegated would make it a hold the next delete frees (H102).
+    if ERASED.get(store, txn, id)?.is_some() {
+        let own = index_key(&key);
+        for item in SLOTS.iter_from(store, &*txn, &[])? {
+            let (held, slot) = item?;
+            if slot[..16] == *id.as_bytes() && (held != own || next.is_delegated()) {
+                return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                    "channel identity assignment, custody and binding are immutable",
+                )));
+            }
+        }
+    }
     let mut slot = read_slot(store, txn, &key)?;
     if next.occupies_assignment_key() {
         if slot.occupant.is_some_and(|other| other != *id) {
@@ -206,6 +223,12 @@ pub(crate) fn maintain_assignment_put(
 /// Scan the small assignment projection rather than deriving just one key
 /// from the body: a damaged body or stray second slot must not leave a dangling
 /// occupant or predecessor behind. A successor in the other slot is preserved.
+///
+/// A self-held row holds its address forever (never-recycle), so its delete
+/// keeps it as the key's occupant: the record goes, the address stays bound to
+/// the deleted id, and a fresh id is refused (H102). The deletion marker below
+/// is what tells readers that occupant routes nothing. A delegated row frees
+/// its key, as its retirement does.
 pub(crate) fn clear_assignment_for_delete(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -215,15 +238,26 @@ pub(crate) fn clear_assignment_for_delete(
     if entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
         return Ok(());
     }
+    let holds_address = match store.port_entity_record(txn, id)? {
+        Some(row) => match decode_channel_identity_body(&row.body) {
+            Ok(row) => !row.is_delegated(),
+            // A soft erase's shell kept the hold it took then.
+            Err(_) => ERASED.get(store, txn, id)?.is_some(),
+        },
+        None => false,
+    };
     let mut changed = Vec::new();
     for item in SLOTS.iter_from(store, &*txn, &[])? {
         let (key, mut slot) = item?;
         let mut touched = false;
-        for half in slot.chunks_exact_mut(16) {
-            if half == id.as_bytes() {
-                half.fill(0);
-                touched = true;
-            }
+        let (occupant, predecessor) = slot.split_at_mut(16);
+        if occupant == id.as_bytes() && !holds_address {
+            occupant.fill(0);
+            touched = true;
+        }
+        if predecessor == id.as_bytes() {
+            predecessor.fill(0);
+            touched = true;
         }
         if touched {
             changed.push((key, slot));
@@ -237,8 +271,8 @@ pub(crate) fn clear_assignment_for_delete(
         }
     }
     // Soft erase retains the type-index row and a metadata-only shell. This
-    // marker proves that empty body was deleted rather than live corruption.
-    // Hard delete has no shell; its marker is harmless and is retired on put.
+    // marker proves that empty body was deleted rather than live corruption,
+    // and on either tier marks a kept occupant as a hold. It is retired on put.
     ERASED.put(store, txn, id, &[1])?;
     Ok(())
 }
@@ -246,7 +280,23 @@ pub(crate) fn clear_assignment_for_delete(
 /// Explicit CID-7 recovery. Only this door scans stored rows; normal routing
 /// and write admission use the index. Pre-release vaults have no ABI migration.
 pub(super) fn rebuild(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    // A deleted self-held row's hold has no row left to rebuild it from, so
+    // recovery carries it over.
+    let mut holds = Vec::new();
+    for item in SLOTS.iter_from(store, &*txn, &[])? {
+        let (key, slot) = item?;
+        if let Some(id) = decode_id(&slot[..16])?
+            && ERASED.get(store, txn, &id)?.is_some()
+        {
+            let mut held = [0_u8; 32];
+            held[..16].copy_from_slice(id.as_bytes());
+            holds.push((key, held));
+        }
+    }
     SLOTS.delete_from(store, txn, &[])?;
+    for (key, held) in holds {
+        SLOTS.put(store, txn, &key, &held)?;
+    }
     let mut rows = Vec::new();
     for item in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
         let id = item?;

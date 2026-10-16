@@ -200,15 +200,14 @@ impl HostSelfDispatcher<'_> {
         }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault
-                .put_claim_candidate_without_lexical_query_reconcile(
-                    &call.id,
-                    candidate,
-                    &envelope,
-                    call.occurred,
-                    call.learned_at,
-                    |_| Ok(()),
-                )?,
+            ExecutorStorage::Canonical(vault) => vault.put_claim_candidate_with_landing(
+                &call.id,
+                candidate,
+                &envelope,
+                call.occurred,
+                call.learned_at,
+                |_| Ok(()),
+            )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
                 &call.id,

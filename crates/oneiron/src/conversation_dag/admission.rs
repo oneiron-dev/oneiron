@@ -18,6 +18,10 @@ const APPEND_PERMITS: SideTable<EntityId, EntityId, Raw> =
 /// Content pin of one immutable DAG record body, by record id.
 const BODY_PINS: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::CONVERSATION_DAG_BODY_PIN);
+/// The pin of a deleted record: fixed, so it names no word of the bytes it
+/// outlived (ARCH-0038: a hash that outlives its bytes is a confirmation
+/// oracle). No body hashes to it, so the id still refuses every re-put.
+const WITHDRAWN_PIN: [u8; 32] = [0; 32];
 /// Durable room owner of a TURN. The pin survives deleted/missing ChildOf rows.
 const ROOM_OWNERS: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::CONVERSATION_DAG_ROOM_OWNER);
@@ -224,7 +228,8 @@ pub(crate) fn pin_record(
         return Ok(());
     };
     if let Some(prior) = BODY_PINS.get(store, txn, id)? {
-        if prior != pin {
+        // A withdrawn record's shell is not compared: the pin stays withdrawn.
+        if prior != pin && prior != WITHDRAWN_PIN {
             return Err(invalid("DAG records are append-only"));
         }
     } else {
@@ -418,11 +423,35 @@ pub(crate) fn pin_membership(
     Ok(())
 }
 
-/// The delete path's pin: written when none is stored, never compared.
+/// Replace a deleted record's content pin with [`WITHDRAWN_PIN`], before its
+/// bytes go. Reached by soft and hard erase, local and replayed.
+pub(crate) fn withdraw_body_pin(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    record: &EntityId,
+) -> Result<()> {
+    if BODY_PINS.get(store, txn, record)?.is_some() {
+        BODY_PINS.put(store, txn, record, &WITHDRAWN_PIN)?;
+    }
+    Ok(())
+}
+
+/// The stored body pin of `id`, for checks that a deleted record's pin names
+/// none of its words.
+#[cfg(test)]
+pub(crate) fn stored_body_pin_for_test(
+    vault: &crate::Vault,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let txn = vault.store.env.read_txn()?;
+    BODY_PINS.get(&vault.store, &txn, id)
+}
+
+/// The delete path's pin: always [`WITHDRAWN_PIN`], never compared.
 ///
 /// A purge may meet a record `user_delete` already reduced to its shell, whose
-/// bytes no longer hash to the pin written at append. The stored pin stays as
-/// it is, so a re-creation after the purge is still refused.
+/// bytes no longer hash to the pin written at append. The withdrawn pin keeps
+/// a re-creation after the purge refused without keeping a hash of the words.
 pub(crate) fn keep_membership_pin(
     store: &impl ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
@@ -451,10 +480,10 @@ pub(crate) fn keep_membership_pin(
     if !is_dag_membership(store, txn, kind, conversation)? {
         return Ok(());
     }
-    if BODY_PINS.get(store, txn, record)?.is_none()
-        && let Some(pin) = stored_record_pin(store, txn, record)?
+    if BODY_PINS.get(store, txn, record)?.is_some()
+        || stored_record_pin(store, txn, record)?.is_some()
     {
-        BODY_PINS.put(store, txn, record, &pin)?;
+        BODY_PINS.put(store, txn, record, &WITHDRAWN_PIN)?;
     }
     Ok(())
 }

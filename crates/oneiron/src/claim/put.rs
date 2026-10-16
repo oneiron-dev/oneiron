@@ -160,7 +160,7 @@ impl Vault {
 
     /// `landing` runs first in the write transaction; its refusal writes
     /// nothing. (An off-record stretch on record checks its saver there.)
-    pub(crate) fn put_claim_candidate_without_lexical_query_reconcile(
+    pub(crate) fn put_claim_candidate_with_landing(
         &self,
         id: &EntityId,
         candidate: ClaimCandidate,
@@ -170,8 +170,8 @@ impl Vault {
         landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         // Same family rule the public batch doors carry, on the door the
-        // code-run traps reach. This helper skips the lexical-query
-        // reconcile, not the write gate, so an agent-authored candidate for a
+        // code-run traps reach. This helper carries its own landing check,
+        // not a weaker write gate, so an agent-authored candidate for a
         // family that owns its own supersession chain would land here as a
         // second live head. Both traps — the canonical put and the
         // session-routed one, which composes onto this same helper — are
@@ -186,14 +186,22 @@ impl Vault {
             &self.config,
             &self.analyzer,
             &mut wtxn,
-            vec![BatchOp::ClaimCandidate {
-                id: *id,
-                candidate: Box::new(candidate),
-                envelope: envelope.clone(),
-                occurred,
-                learned_at,
-                internal_lexical_query_hint: false,
-            }],
+            // The batch door's pairing: an overwrite drops the prospective
+            // query hints the prior claim carried (H83).
+            vec![
+                BatchOp::ClaimCandidate {
+                    id: *id,
+                    candidate: Box::new(candidate),
+                    envelope: envelope.clone(),
+                    occurred,
+                    learned_at,
+                    internal_lexical_query_hint: false,
+                },
+                BatchOp::ReconcileLexicalQueryHints {
+                    source: *id,
+                    keep: Vec::new(),
+                },
+            ],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
@@ -407,7 +415,7 @@ impl Vault {
     /// no default, and nothing inferred from the body's shape — because it says
     /// something only the caller knows: whether the `ClaimBody` handed here is a
     /// persisted candidate or the host's own synthetic effect body for a memory
-    /// verb. The candidate doors (`put_claim_candidate_without_lexical_query_reconcile`
+    /// verb. The candidate doors (`put_claim_candidate_with_landing`
     /// and every `BatchOp::ClaimCandidate`) never reach this helper and keep the
     /// full GATE-12 floor.
     #[expect(

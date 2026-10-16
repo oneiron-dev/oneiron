@@ -20,8 +20,8 @@ pub(crate) use self::codec::{
 };
 pub use self::lifecycle::{drop_contact_cache_row, rematerialize_contact_cache};
 pub(crate) use self::lifecycle::{
-    rematerialize_contact_cache_in_txn, rematerialize_party_contact_cache_in_txn,
-    supersede_family_owned_claim_in_txn,
+    drop_contact_index_rows_in_txn, rematerialize_contact_cache_in_txn,
+    rematerialize_party_contact_cache_in_txn, supersede_family_owned_claim_in_txn,
 };
 pub(crate) use self::storage::{
     counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,

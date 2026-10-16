@@ -192,14 +192,8 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
     proposed.evidence = Some(precommit_evidence(vec![test_id(0xA8)]));
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(&vault, &proposed, test_id(0xA8), "run-a")?;
-    vault.put_claim_candidate_without_lexical_query_reconcile(
-        &id,
-        candidate,
-        &envelope,
-        test_time(3),
-        3,
-        |_| Ok(()),
-    )?;
+    vault
+        .put_claim_candidate_with_landing(&id, candidate, &envelope, test_time(3), 3, |_| Ok(()))?;
 
     let pending = vault.with_write_txn(|wtxn| {
         vault

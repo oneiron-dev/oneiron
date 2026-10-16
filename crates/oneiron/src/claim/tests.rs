@@ -3319,7 +3319,7 @@ fn the_code_run_candidate_put_refuses_an_expression_preference() -> Result<()> {
     );
     let claim_id = EntityId::now();
 
-    let refusal = vault.put_claim_candidate_without_lexical_query_reconcile(
+    let refusal = vault.put_claim_candidate_with_landing(
         &claim_id,
         expression_preference_candidate(subject),
         &envelope,

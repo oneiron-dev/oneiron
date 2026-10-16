@@ -2990,6 +2990,80 @@ fn facet_op_with_map(
     })
 }
 
+/// H175: a deleted claim stays assigned to no one, in either index
+/// direction. The claim kept on the origin is the control.
+#[test]
+fn a_deleted_claim_leaves_no_reassignment_row() {
+    let (_dir, vault) = open_vault();
+    let original = put_person(&vault, 0x61);
+    let head_a = put_person(&vault, 0x62);
+    let head_b = put_person(&vault, 0x63);
+    let purged = write_note_claim(&vault, id(0x71), original);
+    let batch_deleted = write_note_claim(&vault, id(0x72), original);
+    let residue = write_note_claim(&vault, id(0x73), original);
+    let kept = write_note_claim(&vault, id(0x74), original);
+    let entry = |claim, target| ReassignmentEntry {
+        item: ClaimSubject::Entity(claim),
+        target,
+    };
+    expect_applied(
+        vault
+            .apply_identity_topology_op(
+                &split_op_with_map(
+                    original,
+                    vec![head_a, head_b],
+                    vec![
+                        entry(purged, ReassignmentTarget::Head(head_a)),
+                        entry(batch_deleted, ReassignmentTarget::Head(head_b)),
+                        entry(residue, ReassignmentTarget::Residue),
+                        entry(kept, ReassignmentTarget::Head(head_a)),
+                    ],
+                ),
+                &IdentityOpWrite::auto(ClaimSource::Inferred),
+                200,
+            )
+            .expect("apply split with map"),
+    );
+
+    vault
+        .delete_entity_with_reason(&purged, crate::deletion::DeleteReason::UserHardDelete)
+        .expect("purge assigned claim");
+    // The origin goes before the next two claims, and their ClaimOf edges
+    // with it: their rows are found by the claim id they carry.
+    vault
+        .batch()
+        .delete(&original)
+        .commit()
+        .expect("batch delete the split origin");
+    vault
+        .batch()
+        .delete(&batch_deleted)
+        .commit()
+        .expect("batch delete assigned claim");
+    vault
+        .delete_entity_with_reason(&residue, crate::deletion::DeleteReason::UserHardDelete)
+        .expect("purge residue claim");
+
+    assert_eq!(
+        vault.claims_assigned_to(&head_a).expect("head a"),
+        vec![kept]
+    );
+    assert!(
+        vault
+            .claims_assigned_to(&head_b)
+            .expect("head b")
+            .is_empty()
+    );
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let on_origin: Vec<EntityId> = super::reassignment_map::REASSIGNMENT_ORIGIN_INDEX
+        .scan_from(&vault.store, &rtxn, original.as_bytes())
+        .expect("origin rows")
+        .into_iter()
+        .map(|((_, _, claim), _)| claim)
+        .collect();
+    assert_eq!(on_origin, vec![kept]);
+}
+
 /// r2/r6: application records WHERE each claim went and rewrites NOTHING.
 /// The stored subject bytes are the provenance an unmerge has to unwind, so
 /// the assignment lives beside them, never on top of them.

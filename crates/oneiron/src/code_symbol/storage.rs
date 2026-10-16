@@ -377,7 +377,7 @@ pub fn apply_code_symbol_anchor_transfer(
     crate::code_memory::transfer_code_memory_anchor(store, txn, transfer)
 }
 
-pub(super) fn delete_code_symbol_manifest_in_txn(
+pub(crate) fn delete_code_symbol_manifest_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,

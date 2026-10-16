@@ -135,6 +135,7 @@ pub(crate) use lifecycle_state::{
     shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
 };
 pub(crate) use op_vocabulary::is_identity_topology_op_kind;
+pub(crate) use reassignment_map::forget_claim_reassignments_in_txn;
 use reassignment_map::{
     REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX, ReassignmentContext,
     apply_reassignment_in_txn,

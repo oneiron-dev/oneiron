@@ -11,7 +11,7 @@ use super::keys::{
     COUNT_KEY, ENTRY_POINT_KEY, ERR_COUNT_UNDERFLOW, ERR_ENTRY_POINT_MISSING,
     ERR_NEIGHBOR_KEY_BYTES, ERR_REMAINING_NODES_MISSING,
 };
-use super::one_way::purge_one_way_exceptions_for_target;
+use super::one_way::{forget_one_way_holder, purge_one_way_exceptions_for_target};
 use super::storage::{
     collect_backlink_targets, decode_neighbors, read_count, read_entry_point,
     scrub_backlinks_in_place,
@@ -45,6 +45,7 @@ pub(super) fn hnsw_deindex_probed(
         Some(raw) => decode_neighbors(&raw, false)?,
         None => return Ok(()),
     };
+    forget_one_way_holder(store, wtxn, id, &own_neighbors, ops)?;
     let discipline = read_link_discipline(store, &*wtxn)?;
     let backlink_targets = match discipline {
         // Symmetric invariant: the nodes holding links back to `id` are

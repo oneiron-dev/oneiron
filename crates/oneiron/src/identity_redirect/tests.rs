@@ -104,6 +104,44 @@ fn table_snapshot(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
         .collect()
 }
 
+/// H173: a purged participant leaves no redirect row, by key or as a head,
+/// and the CID-7 rebuild agrees.
+#[test]
+fn a_purged_topology_participant_leaves_no_redirect_row() {
+    let (_dir, vault) = open_vault();
+    let source = put_person(&vault, 0xC7);
+    let survivor = put_person(&vault, 0xC8);
+    merge(&vault, vec![source], survivor, 200);
+    assert_eq!(resolved(&vault, &source), vec![survivor]);
+    let retired = put_person(&vault, 0xC9);
+    split(&vault, retired, Vec::new(), 300);
+    assert!(resolved(&vault, &retired).is_empty());
+
+    for gone in [survivor, retired] {
+        vault
+            .delete_entity_with_reason(&gone, crate::deletion::DeleteReason::UserHardDelete)
+            .expect("purge a topology participant");
+    }
+
+    let names = |rows: &[(Vec<u8>, Vec<u8>)], gone: &EntityId| {
+        rows.iter().any(|(key, heads)| {
+            key.ends_with(gone.as_bytes())
+                || heads[1..]
+                    .chunks_exact(ENTITY_ID_LEN)
+                    .any(|head| head == gone.as_bytes())
+        })
+    };
+    let incremental = table_snapshot(&vault);
+    for gone in [survivor, retired] {
+        assert!(!names(&incremental, &gone), "{gone:?} kept a redirect row");
+    }
+    assert!(!resolved(&vault, &source).contains(&survivor));
+    vault
+        .rebuild_redirect_projection_from_edges()
+        .expect("rebuild");
+    assert_eq!(table_snapshot(&vault), incremental);
+}
+
 #[test]
 fn zero_head_shell_is_not_a_live_merge_target() {
     let (_dir, vault) = open_vault();
