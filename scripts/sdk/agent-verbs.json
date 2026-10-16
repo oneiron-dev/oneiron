@@ -385,6 +385,17 @@
       }
     },
     {
+      "name": "vault.receipts.get",
+      "input": "crate::receipt::CallReceiptRequest",
+      "output": "Option<crate::receipt::CallReceipt>",
+      "call": "memory.call_receipt(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.kv.get",
       "input": "crate::memory::KeyValueAddress",
       "output": "Option<crate::memory::KeyValueItem>",
@@ -1547,6 +1558,13 @@
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
+    },
+    {
+      "name": "self.skills.call",
+      "input": "crate::code_run::SkillCallInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "SkillsCall"
     }
   ]
 }

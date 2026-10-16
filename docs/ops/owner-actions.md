@@ -649,6 +649,36 @@ The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inb
 &limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
 carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
 
+## Answer the decision ladder's asks
+
+When a typed decision climbs past every model rung (the dial reaches the
+owner, the read says "ask up?", or the clock cut an irreversible step), the
+server's decision ladder queues it for you (run-with-models.md, section 12).
+The ask waits in the vault, through restarts, until you answer.
+
+`GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=true` lists them
+oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
+- its arrival number `seq`;
+- the question (its text and the answers its contract takes);
+- the principal it is for, and the evidence ids;
+- why it was asked;
+- the answer the ladder held, if any, and the model that read it;
+- your answer, once given.
+`open=true` keeps only the unanswered asks.
+
+Answer one with `POST /v1/owner/decisions/asks/answer`:
+
+```json
+{"seq": 3, "answer": {"kind": "choice", "value": "allow"}}
+```
+
+`kind` is `noul` (`value` true or false), `choice` (one of the question's
+options) or `score` (a number in its range). An abstention is not an answer.
+The decision waiting on the ask gets your answer. When your answer differs
+from the ladder's, the case is kept for the Coach, which tunes when the
+ladder asks you. Sending the same answer again changes nothing. A different
+answer to an answered ask is refused.
+
 ## Saved queries after a pack update
 
 When a new source of an installed pack is activated, the saved queries that read a predicate it

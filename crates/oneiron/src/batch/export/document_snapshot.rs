@@ -109,6 +109,7 @@ impl Vault {
             ExportSecretsNulledManifest::from_redacted(false),
         )?;
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
+        let _bodies = self.pin_all_result_bodies();
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
         // A run names no world, so a caller off this device gets no run's
