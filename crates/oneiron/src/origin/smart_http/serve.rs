@@ -374,6 +374,14 @@ fn serve_request(
             exchange.stderr
         )));
     }
+    #[cfg(test)]
+    if vault
+        .test_hooks()
+        .stop_push_before_landing
+        .swap(false, Ordering::SeqCst)
+    {
+        return Err(serve_failed("stopped before the landing"));
+    }
     let report = finish_serve(vault, request, &repo_dir, admission, exchange);
     // Held to here on purpose: the ref mutation, the quarantine migration and
     // the journaled advance are one window, and it closes here.
