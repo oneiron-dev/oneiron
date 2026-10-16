@@ -10,6 +10,8 @@ repository.workspace = true
 [features]
 default = []
 iroh = ["dep:iroh", "dep:futures-util", "dep:n0-future", "dep:n0-error"]
+# The sync client's mesh carrier (OF-535).
+sync = ["oneiron/sync"]
 
 [dependencies]
 oneiron = { path = "../oneiron" }

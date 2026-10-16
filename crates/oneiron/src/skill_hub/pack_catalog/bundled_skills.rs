@@ -6,7 +6,7 @@ use crate::{
     entity_id::EntityId,
     error::Result,
     skill::{SkillContentHash, SkillLifecycle},
-    skill_hub::{HubFile, HubPin, HubRef},
+    skill_hub::{HubFile, HubPackage, HubPin, HubRef},
     temporal::TimeRange,
 };
 use std::collections::BTreeMap;
@@ -22,6 +22,27 @@ pub(super) struct ImportedPackSkillSource {
     pub(super) hash: SkillContentHash,
 }
 
+/// Each `skills/<folder>/` of a pack as its own skill package, by folder.
+pub(super) fn bundled_skill_packages(source: &PackSource) -> Result<Vec<(String, HubPackage)>> {
+    let mut groups = BTreeMap::<String, Vec<HubFile>>::new();
+    for file in &source.files {
+        let Some(path) = file.path.strip_prefix("skills/") else {
+            continue;
+        };
+        let (name, relative) = path
+            .split_once('/')
+            .ok_or_else(|| invalid("pack skill must have a folder"))?;
+        groups
+            .entry(name.to_owned())
+            .or_default()
+            .push(HubFile::new(relative, file.content.clone()));
+    }
+    groups
+        .into_iter()
+        .map(|(folder, files)| Ok((folder, super::super::folder::package_from_files(files)?)))
+        .collect()
+}
+
 impl Vault {
     pub(super) fn import_pack_skills_in_txn(
         &self,
@@ -30,23 +51,9 @@ impl Vault {
         hub: &HubRef,
         at: u64,
     ) -> Result<(Vec<EntityId>, Vec<ImportedPackSkillSource>)> {
-        let mut groups = BTreeMap::<String, Vec<HubFile>>::new();
-        for file in &source.files {
-            let Some(path) = file.path.strip_prefix("skills/") else {
-                continue;
-            };
-            let (name, relative) = path
-                .split_once('/')
-                .ok_or_else(|| invalid("pack skill must have a folder"))?;
-            groups
-                .entry(name.to_owned())
-                .or_default()
-                .push(HubFile::new(relative, file.content.clone()));
-        }
         let mut ids = Vec::new();
         let mut skill_sources = Vec::new();
-        for (folder, files) in groups {
-            let package = super::super::folder::package_from_files(files)?;
+        for (folder, package) in bundled_skill_packages(source)? {
             let hash = package.content_hash()?;
             let skill_ref = pack_skill_hub_ref(hub, &folder, hash)?;
             let preferred_id = crate::codebase::entity_id_from_hash_material(

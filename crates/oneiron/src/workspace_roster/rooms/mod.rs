@@ -4,6 +4,7 @@ mod hosting;
 mod liveness;
 #[cfg(test)]
 mod tests;
+mod upkeep;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
@@ -13,13 +14,16 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
+pub(in crate::workspace_roster) use history::thread_turns_in;
 pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
+pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
@@ -117,6 +121,7 @@ pub struct RoomTurn {
 pub enum RoomTrunkItem {
     Origin(super::project::RoomOriginCard),
     Turn(RoomTurn),
+    Result(RoomTrunkHeader),
 }
 
 /// A delivered TASK's durable result, attached to its trunk on a room read.

@@ -57,6 +57,8 @@ side_tables! {
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
+    /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
+    SELF_HEAL_ATTEMPT_SEAL: VaultMeta b"self_heal:seal:v1:" Named;
     /// (diagnostic event id).
     SELF_HEAL_SIGNED_EVENT: VaultMeta b"self_heal:signed:v2:event:" Raw;
     /// A host-signed scheduled detector run receipt, keyed by its content digest. Key: bytes32
@@ -77,8 +79,8 @@ side_tables! {
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
     SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw;
-    /// Single-open-session pointer: id of the currently open SESSION entity, if any. Key: ().
-    SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open" Raw;
+    /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
+    SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason), keyed by
     /// SESSION entity id. Key: id16.
     SESSION_LIFECYCLE_RECORD: VaultMeta b"session_lifecycle:v0:record:" Named;
@@ -106,6 +108,8 @@ side_tables! {
     DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
     /// Owner-set continuous sieve policy. Key: ().
     DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
+    /// Owner-set relationship-stewardship rules. Key: ().
+    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson;
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
@@ -442,6 +446,12 @@ side_tables! {
     TEXT_BM25_FIELD_SCHEMA_HASH: VaultMeta b"text_bm25_field_schema_hash" Raw;
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw;
+    /// Current owner-approved training checkpoint per model role. Key: serialized role string.
+    TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named;
+    /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
+    TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named;
+    /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
+    TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named;
     /// One open, answered or superseded "may I reach your trusted contact?" ask, raised by a
     /// `RouteToHelp` the person's dial or the row's tier says to ask about first. Key: id16(ask).
     TRUSTED_CONTACT_ASK: VaultMeta b"trusted_contact.ask.v1:" Named;
