@@ -275,6 +275,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::LensDefaultRequest>(),
             ),
             (
+                "vault.disclosure.offer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::DisclosureOfferRequest,
+                >(),
+            ),
+            (
+                "vault.shares.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareCreateRequest,
+                >(),
+            ),
+            (
                 "vault.hooks.replay",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::HooksReplayRequest,
@@ -388,6 +400,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.rooms.messages",
                 crate::code_run::vault_read::request_schema::<RoomRequest>(),
+            ),
+            (
+                "vault.rooms.participants",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ParticipantsRequest,
+                >(),
             ),
             (
                 "vault.rooms.render",
@@ -1171,6 +1189,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.disclosure.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shares.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1315,6 +1347,17 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/after")?.clone(),
             );
             &["room_ref"]
+        }
+        "vault.rooms.participants" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
         }
         "vault.rooms.render" => {
             properties.insert(
@@ -1969,6 +2012,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.lenses.default" => {
             let _input: crate::lens::LensDefaultRequest = decode(value.clone())?;
         }
+        "vault.disclosure.offer" => {
+            let _input: crate::task_verb::sdk::DisclosureOfferRequest = decode(value.clone())?;
+        }
+        "vault.shares.create" => {
+            let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
+        }
         "vault.hooks.replay" => {
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
             input.limit()?;
@@ -2032,6 +2081,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.rooms.messages" => {
             let _input: RoomRequest = decode(value.clone())?;
+        }
+        "vault.rooms.participants" => {
+            let _input: crate::workspace_roster::ParticipantsRequest = decode(value.clone())?;
         }
         "vault.rooms.render" => {
             let _input: RoomRefRequest = decode(value.clone())?;
@@ -2292,7 +2344,13 @@ pub fn invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    match verb {
+    if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) {
+        return Err(
+            wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))
+        );
+    }
+    // The row's one verb-hook boundary (ARCH-0080 §3).
+    crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
         "report" => encode(report(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
@@ -2358,6 +2416,8 @@ pub fn invoke(
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
         "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
+        "vault.disclosure.offer" => encode(vault_disclosure_offer(memory, decode(value)?)?),
+        "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
@@ -2387,6 +2447,7 @@ pub fn invoke(
         "tasks.outcomes" => encode(tasks_outcomes(memory, decode(value)?)?),
         "vault.rooms.list" => encode(vault_rooms_list(memory, decode(value)?)?),
         "vault.rooms.messages" => encode(vault_rooms_messages(memory, decode(value)?)?),
+        "vault.rooms.participants" => encode(vault_rooms_participants(memory, decode(value)?)?),
         "vault.rooms.render" => encode(vault_rooms_render(memory, decode(value)?)?),
         "vault.rooms.find" => encode(vault_rooms_find(memory, decode(value)?)?),
         "vault.rooms.get" => encode(vault_rooms_get(memory, decode(value)?)?),
@@ -2469,11 +2530,8 @@ pub fn invoke(
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
-        _ => {
-            Err(wrong_root(verb)
-                .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
-        }
-    }
+        _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
+    })
 }
 pub fn invoke_browser(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -3030,6 +3088,18 @@ pub fn vault_lenses_default(
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
     memory.lenses_default(input)
 }
+pub fn vault_disclosure_offer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::DisclosureOfferRequest,
+) -> MemoryResult<crate::task_verb::sdk::DisclosureOffered> {
+    crate::task_verb::sdk::offer_contact_disclosure_as_caller(memory, input)
+}
+pub fn vault_shares_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareCreateRequest,
+) -> MemoryResult<crate::task_verb::sdk::ShareCreated> {
+    crate::task_verb::sdk::create_share_as_caller(memory, input)
+}
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::HooksReplayRequest,
@@ -3214,6 +3284,12 @@ pub fn vault_rooms_messages(
             .transpose()?,
         input.limit.unwrap_or(256),
     )
+}
+pub fn vault_rooms_participants(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ParticipantsRequest,
+) -> MemoryResult<crate::workspace_roster::ParticipantsPage> {
+    memory.rooms_participants(&input)
 }
 pub fn vault_rooms_render(memory: &Memory<'_>, input: RoomRefRequest) -> MemoryResult<Vec<String>> {
     memory.rooms_render_threads(

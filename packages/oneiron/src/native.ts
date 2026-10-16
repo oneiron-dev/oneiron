@@ -82,6 +82,8 @@ vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
+vaultDisclosureOffer(input: unknown): unknown
+vaultSharesCreate(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
@@ -103,6 +105,7 @@ tasksAnswer(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
+vaultRoomsParticipants(input: unknown): unknown
 vaultRoomsRender(input: unknown): unknown
 vaultRoomsFind(input: unknown): unknown
 vaultRoomsGet(input: unknown): unknown

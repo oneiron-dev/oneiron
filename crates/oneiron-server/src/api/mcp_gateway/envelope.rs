@@ -43,6 +43,38 @@ pub(crate) struct McpToolCallParams {
     pub(super) name: String,
     #[serde(default)]
     pub(super) arguments: Value,
+    /// The call's MCP metadata; `oneiron/invocation` names the logical verb
+    /// its verb hooks fire once for (ARCH-0080 §3).
+    #[serde(default, rename = "_meta")]
+    pub(super) meta: Option<serde_json::Map<String, Value>>,
+}
+
+/// The `_meta` key a `tools/call` names its invocation under: 32 hex digits.
+pub(crate) const MCP_INVOCATION_META: &str = "oneiron/invocation";
+
+impl McpToolCallParams {
+    /// The invocation the call names in `_meta`, if any.
+    fn invocation(&self) -> Result<Option<oneiron::runtime_hooks::InvocationId>, McpGatewayError> {
+        let Some(named) = self
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(MCP_INVOCATION_META))
+        else {
+            return Ok(None);
+        };
+        named
+            .as_str()
+            .and_then(oneiron::runtime_hooks::InvocationId::parse_hex)
+            .map(Some)
+            .ok_or_else(|| {
+                McpGatewayError::new(
+                    -32602,
+                    "tool_args_invalid",
+                    "_meta.oneiron/invocation is 32 lowercase hex digits",
+                )
+                .with_field("_meta")
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -75,6 +107,9 @@ pub(crate) struct McpGatewayError {
     /// `error.data.receipt_ref` (and `error.data.no_record` for the anonymous
     /// exception). Boxed for size, as `effective_scope` is.
     pub(super) call_receipt: Option<Box<crate::api::call_receipt::CallStamp>>,
+    /// A verb hook's stop (ARCH-0080 §3), surfaced as `error.data.hook`; a
+    /// code-mode door hands it back to the run as the typed stop.
+    pub(super) hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
 }
 
 impl McpGatewayError {
@@ -90,6 +125,7 @@ impl McpGatewayError {
             byte_bound: None,
             wrong_root: None,
             call_receipt: None,
+            hook: None,
         }
     }
 
@@ -141,6 +177,9 @@ pub(crate) struct McpCallContext {
     /// Where this request's writes land (`write_facet::landing_facet`),
     /// judged once from the session it names.
     pub(crate) landing: Result<Option<oneiron::EntityId>, crate::api::write_facet::LandingRefused>,
+    /// The logical verb this request runs, when it named one: its verb hooks
+    /// fire once for it, however many wrappers it crosses (ARCH-0080 §3).
+    pub(crate) invocation: Option<oneiron::runtime_hooks::InvocationId>,
 }
 
 impl std::ops::Deref for McpCallContext {
@@ -394,6 +433,10 @@ pub(crate) async fn handle_mcp_request(
             let anonymous = crate::api::call_receipt::in_anonymous_session(server, headers);
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
+                let actor = McpCallContext {
+                    invocation: params.invocation()?,
+                    ..actor.clone()
+                };
                 let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                 ensure_mcp_actor_matches(&args, &actor)?;
                 mcp_admit_scoped_call(server, &args, &actor)?;

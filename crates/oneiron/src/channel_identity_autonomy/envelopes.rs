@@ -142,7 +142,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         reference: &EntityId,
     ) -> Result<ChannelIdentityActionEnvelope> {
-        self.autonomy_reader().autonomy_action_envelope(txn, reference)
+        self.autonomy_reader()
+            .autonomy_action_envelope(txn, reference)
     }
 
     pub(super) fn autonomy_identity_actor(
@@ -150,7 +151,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         identity: EntityId,
     ) -> Result<EntityId> {
-        self.autonomy_reader().autonomy_identity_actor(txn, identity)
+        self.autonomy_reader()
+            .autonomy_identity_actor(txn, identity)
     }
 
     pub(super) fn autonomy_reader(&self) -> AutonomyReader<'_> {
