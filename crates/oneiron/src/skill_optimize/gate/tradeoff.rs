@@ -449,6 +449,29 @@ pub fn skill_tradeoff_asks_for(vault: &Vault, person: &EntityId) -> Result<Vec<S
     Ok(asks)
 }
 
+/// Every bound ask still pending, whoever may answer it, for the scheduler
+/// that climbs them past their reminder ([`escalate_skill_tradeoff_ask`]).
+/// # Errors
+/// An unreadable ask, verdict or goal row, or storage errors.
+pub fn pending_skill_tradeoff_asks(vault: &Vault) -> Result<Vec<SkillTradeoffAsk>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rows: Vec<SkillTradeoffAsk> = Vec::new();
+    for row in vault.store.vault_meta.prefix_iter(&txn, ASK_PREFIX)? {
+        let (_, raw) = row?;
+        rows.push(rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex(LABEL))?);
+    }
+    let mut asks = Vec::new();
+    for ask in rows {
+        let Some(pending) = standing_verdict_in_txn(vault, &txn, &ask.question.proposal)? else {
+            continue;
+        };
+        if let Some((bound, _)) = bound_ask_in_txn(vault, &txn, &pending)? {
+            asks.push(bound);
+        }
+    }
+    Ok(asks)
+}
+
 /// Climb one rung: the pending ask now also reaches the next role up its
 /// chain, the last being the vault's owners ("it goes up by role, ending at
 /// the vault owner role"). The scheduler calls this when an ask has waited
