@@ -252,11 +252,12 @@ pub use crate::attempt_queue::{
 };
 pub use crate::autoreason_campaign::{
     AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
-    CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
+    CAMPAIGN_TASTE_DIAL, CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
     CampaignComparisonReport, CampaignCorpusFilter, CampaignCost, CampaignCriticTier,
     CampaignDatasetRef, CampaignError, CampaignEvaluationSplit, CampaignExecutableArm,
     CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin, CampaignResult,
-    CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment, CampaignTournamentConfig,
+    CampaignSmokeOutcome, CampaignSplitReport, CampaignTaste, CampaignTasteDecisions,
+    CampaignTasteWording, CampaignTournamentConfig,
     CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD, EXPERIMENT_VERDICT_KEEP,
     ExperimentVerdict, build_campaign_held_out_decision, build_campaign_split_report,
     compare_campaign, merge_campaign_arm_report,
