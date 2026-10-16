@@ -18749,18 +18749,20 @@
       "FeedbackCategory",
       "FeedbackConfigSnapshot",
       "FeedbackDagHop",
+      "FeedbackEncoding",
       "FeedbackHealerDiagnosis",
       "FeedbackHnswSnapshot",
       "FeedbackPlatform",
+      "FeedbackProposal",
       "FeedbackVerb"
      ],
      "path": "src/feedback/bundle.rs",
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
-      "const": 13,
-      "enum": 2,
-      "fn": 14,
-      "struct": 6
+      "const": 15,
+      "enum": 3,
+      "fn": 21,
+      "struct": 7
      }
     },
     {
@@ -18781,7 +18783,7 @@
       "const": 3,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 19,
+      "fn": 20,
       "struct": 4,
       "trait": 1
      }
@@ -18829,7 +18831,7 @@
      "purpose": "The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -18843,7 +18845,7 @@
      "path": "src/feedback/intake.rs",
      "purpose": "Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -53663,7 +53665,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/feedback_inbox.rs",
