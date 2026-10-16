@@ -199,7 +199,8 @@ impl Memory<'_> {
 
     /// One hydrate read: every view, or `NOT_FOUND` naming the first ref that
     /// is absent or withheld, under the read's receipt either way. An image
-    /// ASSET is served in its resolved form (OF-329).
+    /// ASSET is served in its resolved form (OF-329), and every text form
+    /// served is recorded as a served-form receipt before the views return.
     fn hydrated(
         &self,
         lane: &crate::claim::ScopedRead<'_>,
