@@ -81,25 +81,32 @@ pub struct OutboundBindingAuthority {
 }
 
 impl OutboundBindingAuthority {
-    /// Derives a device-local binding key from the vault's durable signing
-    /// secret. The intent ledger is device-local, so recovery sees the same
-    /// authority after restart without syncing secret material.
+    /// Derives a device-local binding key from the install's device key, whose
+    /// seed is in its keystore slot. The intent ledger is device-local, and the
+    /// slot is named by the store's id and the machine id, so recovery sees the
+    /// same authority after restart without syncing secret material.
     pub fn for_vault(vault: &Vault) -> Result<Self> {
-        let mut seed = None;
+        vault.prepare_install_signing()?;
+        // The seed's one copy here is wiped on drop (CodeRabbit on #1423).
+        let mut seed = zeroize::Zeroizing::new([0u8; 32]);
         vault.with_write_txn_grouped(|wtxn| {
             let identity = crate::identity::ensure_device_identity_in_txn(vault, wtxn)?;
-            seed = Some(identity.signing_key.to_bytes());
+            *seed = identity.signing_key.to_bytes();
             Ok(())
         })?;
-        Ok(Self::from_secret(seed.expect("identity closure ran on Ok")))
+        Ok(Self::derive(&seed))
     }
 
     /// Builds a session-scoped authority from 32 bytes of caller-managed
     /// cryptographic secret material.
     #[must_use]
     pub fn from_secret(secret: [u8; 32]) -> Self {
+        Self::derive(&zeroize::Zeroizing::new(secret))
+    }
+
+    fn derive(secret: &[u8; 32]) -> Self {
         Self {
-            key: blake3::derive_key("oneiron.outbound.authorization_binding.v2", &secret),
+            key: blake3::derive_key("oneiron.outbound.authorization_binding.v2", secret),
         }
     }
 
