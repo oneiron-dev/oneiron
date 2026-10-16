@@ -1,5 +1,11 @@
 //! Persistent resident bindings. Goal records are data, never prompt edits.
-use super::{AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+use super::{
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus,
+    AgentDispatchTarget, AgentDispatcher, DispatchAgent, decode_agent_dispatch_input,
+};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+};
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, Error, Result};
@@ -10,6 +16,7 @@ use crate::{
     WriteProvenance,
 };
 use rmpv::Value;
+use std::collections::HashSet;
 
 const PREDICATE: &str = "agent.resident";
 
@@ -195,6 +202,13 @@ impl AgentDispatcher<'_> {
             crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND,
             crate::receipt::MAX_RECEIPT_QUERY_SCAN,
         )?;
+        // Completion retires a wake's dedupe entry, so a message whose wake
+        // already ran is known by its key on the resident's run instead.
+        let woken: HashSet<String> = crate::attempt_queue::AttemptQueue::new(self.vault)
+            .list_run(&resident_run_id(agent))?
+            .into_iter()
+            .filter_map(|row| row.dedupe_key)
+            .collect();
         let mut outcomes = Vec::new();
         for row in rows {
             let payload = crate::surface_event::decode_surface_event_attempt_payload(&row.payload)?;
@@ -222,19 +236,23 @@ impl AgentDispatcher<'_> {
                     continue;
                 }
             }
+            let intent = blake3::hash(event.correlation_id.as_bytes()).to_hex();
+            let key = format!(
+                "resident:{}:{}:{}",
+                agent.to_hex(),
+                spec.inbox_identity_ref.to_hex(),
+                intent
+            );
+            if woken.contains(&format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")) {
+                continue;
+            }
             if outcomes.len() >= limit.min(64) {
                 break;
             }
-            let intent = blake3::hash(event.correlation_id.as_bytes()).to_hex();
             let outcome = self.dispatch(DispatchAgent {
                 target: AgentDispatchTarget::Custom(agent),
                 parent_attempt: None,
-                dedupe_key: Some(format!(
-                    "resident:{}:{}:{}",
-                    agent.to_hex(),
-                    spec.inbox_identity_ref.to_hex(),
-                    intent
-                )),
+                dedupe_key: Some(key),
                 run_id: Some(format!("resident:{}", agent.to_hex())),
                 now,
             })?;
@@ -244,6 +262,125 @@ impl AgentDispatcher<'_> {
         }
         Ok(outcomes)
     }
+}
+
+impl Vault {
+    /// The binding a host wakes and runs `agent` under: a settled, valid
+    /// resident binding, or none. A held binding binds no wake.
+    pub fn settled_resident_agent(&self, agent: EntityId) -> Result<Option<ResidentAgentSpec>> {
+        let binding = {
+            let txn = self.store.env.read_txn()?;
+            self.resident_binding_for_effect_in_txn(&txn, agent)?
+        };
+        let Some((_, spec)) = binding else {
+            return Ok(None);
+        };
+        validate(self, &spec)?;
+        Ok(Some(spec))
+    }
+}
+
+impl AgentDispatcher<'_> {
+    /// The resident run pump's view: each ready run of one of `residents`,
+    /// oldest first, with the resident it runs for. It reads only; the claim
+    /// checks the row again.
+    pub fn ready_resident_runs(
+        &self,
+        residents: &[EntityId],
+        now: u64,
+    ) -> Result<Vec<(AttemptId, EntityId)>> {
+        let rows = AttemptQueue::new(self.vault).list_kind_bounded(
+            crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
+            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
+        )?;
+        let mut ready = Vec::new();
+        for row in rows {
+            if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+                || row
+                    .scheduled_at
+                    .or(row.backoff_until)
+                    .is_some_and(|at| at > now)
+            {
+                continue;
+            }
+            // A row this view cannot decode is no resident run; its own
+            // worker reports it.
+            let Ok(Some((agent, _))) = resident_run_input(&row) else {
+                continue;
+            };
+            if residents.contains(&agent) {
+                ready.push((row.id, agent));
+            }
+        }
+        Ok(ready)
+    }
+
+    /// Claims one resident run by id, the way a workflow host claims its
+    /// leaf: never by kind, as the generic `dreamer` queue holds other jobs.
+    /// `None` when the row is no longer a ready run of a settled resident,
+    /// or another worker holds it.
+    pub fn claim_resident_run(
+        &self,
+        id: AttemptId,
+        lease_owner: &str,
+        now: u64,
+    ) -> Result<Option<(AgentDispatchStatus, ResidentAgentSpec)>> {
+        let queue = AttemptQueue::new(self.vault);
+        let mut txn = self.vault.store.env.write_txn()?;
+        let Some(row) = queue.get_in_write_txn(&txn, id)? else {
+            return Ok(None);
+        };
+        let Some((agent, input)) = resident_run_input(&row)? else {
+            return Ok(None);
+        };
+        let Some((_, resident)) = self.vault.resident_binding_for_effect_in_txn(&txn, agent)?
+        else {
+            return Ok(None);
+        };
+        self.dispatchable_definition_in_txn(&txn, &input.target)?;
+        let ClaimOutcome::Claimed(attempt) = crate::ports::JobQueue::port_job_claim_id(
+            self.vault,
+            &mut txn,
+            id,
+            ClaimAttempt {
+                lease_owner: lease_owner.to_owned(),
+                now,
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        txn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(Some((AgentDispatchStatus { attempt, input }, resident)))
+    }
+}
+
+/// The run id every inbox wake of `agent` carries.
+fn resident_run_id(agent: EntityId) -> String {
+    format!("resident:{}", agent.to_hex())
+}
+
+/// A run a resident's host executes: a top-level dispatch of the resident,
+/// either a wake from its inbox or a TASK assigned to it. Workflow leaves and
+/// spawned children carry a parent attempt and are other hosts' work.
+fn resident_run_input(record: &AttemptRecord) -> Result<Option<(EntityId, AgentDispatchInput)>> {
+    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+        return Ok(None);
+    }
+    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)?;
+    if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE || payload.parent_attempt.is_some() {
+        return Ok(None);
+    }
+    let input = decode_agent_dispatch_input(&payload.input)?;
+    let AgentDispatchTarget::Custom(agent) = &input.target else {
+        return Ok(None);
+    };
+    let agent = *agent;
+    if record.task_ref.is_none() && record.run_id.as_deref() != Some(&resident_run_id(agent)) {
+        return Ok(None);
+    }
+    Ok(Some((agent, input)))
 }
 
 fn validate(vault: &Vault, spec: &ResidentAgentSpec) -> Result<()> {
