@@ -14114,7 +14114,7 @@
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -18200,7 +18200,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/failure_ladder/tests/drill.rs",
@@ -18501,6 +18501,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ActExecution",
       "PendingActStarted",
       "PendingAuthorityAct",
       "SharedActPolicy",
@@ -18509,10 +18510,10 @@
      "path": "src/federation/pending_act.rs",
      "purpose": "Row-driven shared-vault objection windows",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 9,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -24337,7 +24338,7 @@
      "path": "src/memory/entity_delete.rs",
      "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -24356,7 +24357,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },

@@ -1148,7 +1148,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/erase/provenance.rs` | src | s | 3 crate-vis | — | — |
 | `src/deletion/erase/redirect_shells.rs` | src | s | 2 crate-vis | — | — |
 | `src/deletion/erase/replay.rs` | src | m | 5 crate-vis | — | — |
-| `src/deletion/gate.rs` | src | s | 12 crate-vis | — | — |
+| `src/deletion/gate.rs` | src | s | 16 crate-vis | — | — |
 | `src/deletion/identity_event_stamps.rs` | src | s | 2 crate-vis | — | Erase independent author-attribution carriers without changing decisions |
 | `src/deletion/mod.rs` | src | s | 6 re-export · 19 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/publish.rs` | src | L | 3 crate-vis | — | — |
@@ -1476,7 +1476,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/tests.rs` | test | L | — | — | ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry… |
 | `src/failure_ladder/tests/coach_wake.rs` | test | s | — | — | The default policy's Auto escalation wakes the Coach (owner ruling 2026-10-16), not a reserved slot that… |
 | `src/failure_ladder/tests/custom_review.rs` | test | s | — | — | Custom-agent retrospective grouping uses only committed terminal dispatches |
-| `src/failure_ladder/tests/drill.rs` | test | s | — | — | Retrospective owner drill-in binds the caller, group, trace and receipt |
+| `src/failure_ladder/tests/drill.rs` | test | m | — | — | Retrospective owner drill-in binds the caller, group, trace and receipt |
 | `src/failure_ladder/tests/failure_integrity.rs` | test | s | — | — | — |
 | `src/failure_ladder/transitions.rs` | src | s | 8 crate-vis | — | Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once) |
 | `src/failure_signals.rs` | src | m | 5 struct · 4 enum · 9 fn · 1 re-export · 2 crate-vis | AgentKind, AgentSurface, ExportVersionedComponent, FailureClassV1, FailureSignalDimensions, FailureSignalInput, FailureTaxonomy, Tier1FailureCount +1 | Content-free, versioned tier-1 agent failure counts |
@@ -1499,7 +1499,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/mod.rs` | src | s | 2 mod · 13 re-export · 16 crate-vis | — | Federation grant record substrate |
 | `src/federation/org_admin.rs` | src | s | 1 struct · 2 enum · 8 fn | OrgAdminError, OrgAdminPolicy, OrgAdminPower | Closed organization-administration powers |
 | `src/federation/peer_authority.rs` | src | s | 4 fn · 2 const · 2 crate-vis | — | Peer authority-log admission (FED-03) and roster refolding |
-| `src/federation/pending_act.rs` | src | m | 3 struct · 1 enum · 9 fn · 4 crate-vis | PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence | Row-driven shared-vault objection windows |
+| `src/federation/pending_act.rs` | src | m | 4 struct · 1 enum · 9 fn · 7 crate-vis | ActExecution, PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence | Row-driven shared-vault objection windows |
 | `src/federation/pending_act/tests.rs` | test | L | — | — | — |
 | `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 18 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
 | `src/federation/record_scope/export.rs` | src | s | 1 fn | — | The scoped export door |
@@ -1966,8 +1966,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/conversation_list/tests.rs` | test | L | — | — | The conversation list is what its reader may read of the vault (ARCH-0006a, DEC-0005): only the… |
 | `src/memory/credential_key.rs` | src | s | 1 fn · 4 crate-vis | — | The read key a verified credential reads under |
 | `src/memory/dreamer.rs` | src | s | 3 struct · 3 fn | ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView | Consolidation enqueue, dreamer attempt status, and claim seeding |
-| `src/memory/entity_delete.rs` | src | s | 3 fn · 3 crate-vis | — | Owner-bound preview and one-call unshare-before-delete confirmation |
-| `src/memory/entity_erase.rs` | src | m | 2 struct · 3 enum · 1 fn · 1 crate-vis | EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome | Owner erase that can also take every record in this vault holding the same bytes |
+| `src/memory/entity_delete.rs` | src | s | 3 fn · 4 crate-vis | — | Owner-bound preview and one-call unshare-before-delete confirmation |
+| `src/memory/entity_erase.rs` | src | m | 2 struct · 3 enum · 2 fn · 1 crate-vis | EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome | Owner erase that can also take every record in this vault holding the same bytes |
 | `src/memory/export.rs` | src | s | 3 struct · 4 fn | ExportOptions, ExportReceipt, MemoryExport | Full-vault memory export through the existing five-format pack writers |
 | `src/memory/expression_preference.rs` | src | s | 3 struct · 3 fn | ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView | Typed `companion.expression.*` doors on the [`Memory`] surface |
 | `src/memory/extraction/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Host-served extraction beside witness, followed by a separately authorized save of its tags |
