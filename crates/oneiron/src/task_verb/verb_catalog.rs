@@ -96,6 +96,10 @@ pub enum AgentVerb {
     SelfBrowserWaitFor,
     SelfBrowserExpect,
     SelfBrowserScreenshot,
+    SelfBrowserView,
+    SelfBrowserCrop,
+    SelfBrowserZoom,
+    SelfBrowserBatch,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -218,6 +222,10 @@ impl AgentVerb {
         Self::SelfBrowserWaitFor,
         Self::SelfBrowserExpect,
         Self::SelfBrowserScreenshot,
+        Self::SelfBrowserView,
+        Self::SelfBrowserCrop,
+        Self::SelfBrowserZoom,
+        Self::SelfBrowserBatch,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -343,6 +351,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
             Self::SelfBrowserExpect => "self.browser.expect",
             Self::SelfBrowserScreenshot => "self.browser.screenshot",
+            Self::SelfBrowserView => "self.browser.view",
+            Self::SelfBrowserCrop => "self.browser.crop",
+            Self::SelfBrowserZoom => "self.browser.zoom",
+            Self::SelfBrowserBatch => "self.browser.batch",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -493,6 +505,10 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -759,6 +775,10 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -828,6 +848,7 @@ impl AgentVerb {
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
+                | Self::SelfBrowserBatch
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -953,6 +974,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -1076,6 +1101,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],

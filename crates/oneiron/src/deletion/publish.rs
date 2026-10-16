@@ -447,8 +447,7 @@ impl Vault {
                 .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
                     if value.reason.is_hard() {
-                        self.store
-                            .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+                        self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
                         self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
                         Ok(())

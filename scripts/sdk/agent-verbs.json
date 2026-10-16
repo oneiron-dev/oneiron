@@ -1637,6 +1637,46 @@
       "section": false
     },
     {
+      "name": "self.browser.view",
+      "input": "oneiron_browser::ViewInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.view(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.crop",
+      "input": "oneiron_browser::CropInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.crop(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.zoom",
+      "input": "oneiron_browser::ZoomInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.zoom(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.batch",
+      "input": "oneiron_browser::BatchInput",
+      "output": "oneiron_browser::BatchOutput",
+      "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
