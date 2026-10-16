@@ -39,6 +39,19 @@ pub fn whole_vault_export_excludes_entity(vault: &Vault, id: &EntityId) -> Resul
     vault.store.off_record_sessions.contains_entity(id)
 }
 
+/// THE EGRESS DOOR FOR RUN RESULT BODIES (OF-190 B++): why an export
+/// withholds `output`'s body, if it does. A body the secret scan marked, or
+/// one carrying taint refs, is nulled whatever their state, as tainted
+/// exhaust is below. Off-record results never reach this door: their rows
+/// live in the session's room and their bodies in its spill directory.
+pub(crate) fn whole_vault_export_withholds_result(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    output: &crate::code_run::CodeRunRawOutput,
+) -> Result<Option<&'static str>> {
+    vault.code_run_result_withheld_in_txn(rtxn, output)
+}
+
 /// Whether any artifact in `artifacts` carries secret taint refs.
 ///
 /// STATE-INDEPENDENT on purpose: `TaintedLive` exhaust is nulled exactly as

@@ -6,10 +6,9 @@ use super::claims::{
     PREDICATE_CALENDAR_PASSPORT,
 };
 use super::hygiene::{CalendarInviteHygieneContext, hydrate_calendar_invite_hygiene};
-use super::mime::{ics_blob_content_hash, read_checked_invite_ics};
+use super::mime::read_checked_invite_ics_in_txn;
 use super::passport::{
-    admitted_passport_for_in_txn, encode_passport_value, event_ref_for_indexed_uid,
-    resolve_admitted_event_by_uid,
+    admitted_passport_for_in_txn, encode_passport_value, resolve_invite_event_in_txn,
 };
 use super::payload::{CalendarInviteMethod, CalendarInvitePayload};
 use crate::Vault;
@@ -50,6 +49,7 @@ pub struct CalendarInviteAdmission {
     hygiene: CalendarInviteHygieneContext,
     organizer: String,
     recipient: String,
+    page_grant: Option<EntityId>,
 }
 
 impl CalendarInviteAdmission {
@@ -69,6 +69,10 @@ impl CalendarInviteAdmission {
     #[must_use]
     pub const fn hygiene(&self) -> &CalendarInviteHygieneContext {
         &self.hygiene
+    }
+
+    pub(crate) const fn page_grant(&self) -> Option<EntityId> {
+        self.page_grant
     }
 
     /// Whether this admission moves durable passport state at all.
@@ -181,32 +185,42 @@ pub fn admit_calendar_invite(
     payload: &CalendarInvitePayload,
     now: u64,
 ) -> Result<CalendarInviteAdmission, CalendarError> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    admit_calendar_invite_in_txn(vault, &txn, actor, payload, now)
+}
+
+/// Calendar admission against the caller's publication snapshot. No nested
+/// transaction or index repair may escape the outbound writer.
+pub(crate) fn admit_calendar_invite_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    payload: &CalendarInvitePayload,
+    now: u64,
+) -> Result<CalendarInviteAdmission, CalendarError> {
     payload.validate_shape()?;
 
     // --- emit/state validation -----------------------------------------
-    let event_ref = resolve_invite_event(vault, &payload.uid)?
+    let event_ref = resolve_invite_event_in_txn(vault, txn, &payload.uid)?
         .ok_or_else(|| refused("this invite UID names no EVENT in the vault"))?;
     // The bytes that go out must be the invite the payload names: its UID
     // picked the EVENT, its METHOD and SEQUENCE drive the passport move.
-    let (_, ics) = read_checked_invite_ics(vault, payload)?;
-    let content_hash = ics_blob_content_hash(vault, &payload.ics_blob_ref)?;
+    let (bytes, ics) = read_checked_invite_ics_in_txn(vault, txn, payload)?;
+    let content_hash = *blake3::hash(&bytes).as_bytes();
     // The same admitted head the commit re-reads: a pending proposal never
     // sets the SEQUENCE an invite must advance.
-    let live = {
-        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        admitted_passport_for_in_txn(
-            vault,
-            &rtxn,
-            &event_ref,
-            CALENDAR_INVITE_PASSPORT_SYSTEM,
-            &payload.uid,
-        )?
-    }
+    let live = admitted_passport_for_in_txn(
+        vault,
+        txn,
+        &event_ref,
+        CALENDAR_INVITE_PASSPORT_SYSTEM,
+        &payload.uid,
+    )?
     .map(|(_, value)| value);
     let change = classify_invite_state(payload, live.as_ref(), content_hash)?;
 
     // --- vault-only hygiene --------------------------------------------
-    let hygiene = hydrate_calendar_invite_hygiene(vault, actor, event_ref, payload)?;
+    let hygiene = hydrate_calendar_invite_hygiene(vault, txn, actor, event_ref, payload)?;
     hygiene.evaluate()?;
 
     let next = CalendarPassportValue {
@@ -227,6 +241,13 @@ pub fn admit_calendar_invite(
         hygiene,
         organizer: ics.organizer,
         recipient: payload.recipient.clone(),
+        page_grant: super::hygiene::booking_page_grant_for_invite_in_txn(
+            vault,
+            txn,
+            actor,
+            event_ref,
+            &payload.recipient,
+        )?,
     })
 }
 
@@ -266,21 +287,6 @@ fn classify_invite_state(
         "SEQUENCE {} does not advance the live outbound passport at {}",
         payload.sequence, live.last_sequence
     )))
-}
-
-/// Resolves the EVENT one invite UID names.
-///
-/// Admitted passport claims are synced truth and are consulted first, so a
-/// pending proposal carrying the UID never picks the EVENT. On the first
-/// confirm no admitted passport carries the UID yet, so the CAL-02 UID index —
-/// which the minting side (booking confirm / ingest) already writes through
-/// [`super::passport::index_passport_uid`] — is the fallback. Nothing new is
-/// indexed here.
-fn resolve_invite_event(vault: &Vault, uid: &str) -> Result<Option<EntityId>, CalendarError> {
-    if let Some(event_ref) = resolve_admitted_event_by_uid(vault, uid)? {
-        return Ok(Some(event_ref));
-    }
-    event_ref_for_indexed_uid(vault, uid)
 }
 
 pub(crate) fn refused(reason: impl Into<String>) -> CalendarError {
