@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 use crate::provenance::birth::{RowBirth, stamp_replicated_row_birth_in_txn};
 
 /// The window map that carries row births.
-pub const ROW_BIRTHS_MAP: &str = "row_births";
+pub(crate) const ROW_BIRTHS_MAP: &str = "row_births";
 
 fn births(doc: &LoroDoc) -> LoroMap {
     doc.get_map(ROW_BIRTHS_MAP)
@@ -62,10 +62,10 @@ pub(in crate::sync) fn mirror_local_birth(vault: &Vault, doc: &LoroDoc, id: &Ent
 /// Copies the births `src` carries for `owners` into `dst`. Selector, guest
 /// and federation rebuilds call it with the owners they finally kept, never
 /// with candidates, so a birth can never bring a denied row into scope.
-pub(crate) fn copy_births<'a>(
+pub(crate) fn copy_births(
     src: &LoroDoc,
     dst: &LoroDoc,
-    owners: impl IntoIterator<Item = &'a EntityId>,
+    owners: &[EntityId],
 ) -> Result<()> {
     let from = births(src);
     let to = births(dst);
