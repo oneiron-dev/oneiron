@@ -905,11 +905,8 @@
       "call": "{ let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?; memory.skill_save_with_source(id, &record, files, input.expected_version.as_deref(), crate::unix_seconds_now())? }",
       "scope": "Write",
       "mcp_fields": {
-        "id": "id",
-        "files": "files",
-        "expected_version": "expected_version"
+        "spec": "$"
       },
-      "mcp_required_fields": ["files"],
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -920,11 +917,8 @@
       "call": "{ let (parent, id) = crate::skill::helper::fork_target(&input)?; memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())? }",
       "scope": "Write",
       "mcp_fields": {
-        "parent": "parent",
-        "id": "id",
-        "skill_id": "skill_id"
+        "spec": "$"
       },
-      "mcp_required_fields": ["parent", "skill_id"],
       "mcp_scope": "unrestricted",
       "section": false
     },

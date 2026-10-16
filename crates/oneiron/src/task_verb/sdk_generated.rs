@@ -605,28 +605,18 @@ pub fn mcp_arguments_schema_from_input(
             &["spec", "room_ref"]
         }
         "self.skills.save" => {
-            properties.insert("id".to_owned(), schema.pointer("/properties/id")?.clone());
-            properties.insert(
-                "files".to_owned(),
-                schema.pointer("/properties/files")?.clone(),
-            );
-            properties.insert(
-                "expected_version".to_owned(),
-                schema.pointer("/properties/expected_version")?.clone(),
-            );
-            &["files"]
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "self.skills.fork" => {
-            properties.insert(
-                "parent".to_owned(),
-                schema.pointer("/properties/parent")?.clone(),
-            );
-            properties.insert("id".to_owned(), schema.pointer("/properties/id")?.clone());
-            properties.insert(
-                "skill_id".to_owned(),
-                schema.pointer("/properties/skill_id")?.clone(),
-            );
-            &["parent", "skill_id"]
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "self.skills.callables" => &[],
         _ => return None,
