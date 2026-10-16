@@ -254,9 +254,8 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    // Its NOTEs already passed the selection that made `source`, and so did
-    // the births of the rows it kept.
-    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
+    // Its NOTEs already passed the selection that made `source`. No birth
+    // goes to a guest: a birth is vault refs, and those never travel (OF-491).
     crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
@@ -337,9 +336,19 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
+/// Whether an export carries the births of the rows it ships (Rule A).
+/// A birth is all vault refs (input rows, actor, trigger, input hash), and
+/// vault refs never travel (OF-491): births stay with the owner's machines,
+/// and a copy for another vault carries none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Births {
+    Carry,
+    Omit,
+}
+
 /// `withhold` names the worlds kept off the machine the export serves. Every
 /// export door withholds; promotion authority asks only what the grant
-/// covers.
+/// covers. `births` says whether the shipped rows' births go with them.
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -347,6 +356,7 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     position: &Position,
     withhold: Withhold<'_>,
+    births: Births,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -743,8 +753,11 @@ pub(super) fn filter_window_doc(
         }
     });
 
-    // Rule A: a birth crosses only beside an owner this filter shipped.
-    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
+    // Rule A: a birth crosses only beside an owner this filter shipped, and
+    // only to the owner's machines.
+    if births == Births::Carry {
+        crate::sync::row_birth::copy_births_for_entities(source, &out)?;
+    }
     crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)

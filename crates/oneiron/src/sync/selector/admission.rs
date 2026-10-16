@@ -296,10 +296,9 @@ fn admit_window_update(
         &admitted.get_map("edges"),
     )?;
 
+    // No birth lands from another vault: a birth is the sender's vault refs,
+    // and those never travel (OF-491). A row admitted here has no birth.
     crate::sync::note::copy_judged(vault, &remote, &admitted)?;
-    // Rule A: the sender's birth envelope crosses whole, beside each row this
-    // admission kept.
-    crate::sync::row_birth::copy_births_for_entities(&remote, &admitted)?;
     let births = match &lane {
         Some(lane) => pending_births(
             vault,

@@ -19,7 +19,9 @@ use crate::federation::{
 use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
-use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
+use super::authorize::{
+    Births, authorize_selector_export, filter_window_doc, strip_guest_share_metadata,
+};
 
 /// Current selector payload schema version.
 pub const SYNC_SELECTOR_SCHEMA_VERSION: u64 = 2;
@@ -297,6 +299,8 @@ pub fn filtered_window_doc(
 
 /// Destination-aware selector export. The transport supplies a proven machine,
 /// never the selector's actor id; the proof is rechecked in the export snapshot.
+/// Rows' births go only to a machine of this vault's that proved itself; any
+/// other peer is another vault's, and gets none (OF-491).
 pub fn filtered_window_doc_for_peer(
     vault: &Vault,
     source: &LoroDoc,
@@ -305,13 +309,24 @@ pub fn filtered_window_doc_for_peer(
     selector: &SyncSelector,
     peer: crate::authority::PeerMachine,
 ) -> Result<LoroDoc> {
-    filtered_window_doc_for(
+    let births = match peer {
+        crate::authority::PeerMachine::Proven { .. } => Births::Carry,
+        crate::authority::PeerMachine::Unknown => Births::Omit,
+    };
+    let position = authorize_selector_export(
+        vault,
+        grant_scope,
+        selector,
+        vault.store.clock.now_recorded_at(),
+    )?;
+    filter_window_doc(
         vault,
         source,
         key,
-        grant_scope,
         selector,
+        &position,
         Withhold::Peer(peer),
+        births,
     )
 }
 
@@ -332,7 +347,15 @@ pub fn filtered_window_doc_for(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(vault, source, key, selector, &position, withhold)
+    filter_window_doc(
+        vault,
+        source,
+        key,
+        selector,
+        &position,
+        withhold,
+        Births::Carry,
+    )
 }
 
 /// What the selector's grant alone covers, before destination policy
@@ -350,7 +373,15 @@ pub(in crate::sync) fn granted_window_doc(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(vault, source, key, selector, &position, Withhold::Nothing)
+    filter_window_doc(
+        vault,
+        source,
+        key,
+        selector,
+        &position,
+        Withhold::Nothing,
+        Births::Carry,
+    )
 }
 
 /// Builds and signs a guest-share envelope from selector-filtered window bytes.
@@ -387,7 +418,15 @@ pub fn guest_share_envelope_body(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    let filtered = filter_window_doc(vault, source, key, selector, &position, Withhold::Unknown)?;
+    let filtered = filter_window_doc(
+        vault,
+        source,
+        key,
+        selector,
+        &position,
+        Withhold::Unknown,
+        Births::Omit,
+    )?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())
