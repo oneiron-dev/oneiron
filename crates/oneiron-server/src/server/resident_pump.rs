@@ -24,7 +24,7 @@ use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, HealerSlot, ResidentAgentSpec, agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
-use oneiron::code_run::HostSelfDispatcher;
+use oneiron::code_run::{HostSelfDispatcher, bind_wait_trap};
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, ParkDreamerAttempt};
 use oneiron::engine_executor::{
@@ -36,6 +36,9 @@ use oneiron::failure_ladder::{
     HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
 };
 use oneiron::llm::seat::{SeatKind, SeatTask};
+use oneiron::llm::{
+    DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
+};
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use tokio::sync::broadcast;
@@ -44,8 +47,9 @@ use super::SyncServer;
 use crate::mcp::McpCodeModeProvider;
 
 const LEASE_OWNER: &str = "oneiron-server-residents";
-/// The park a run waiting on a durable signal holds its lease under; a
-/// restart is not that signal, so recovery keeps the lease.
+/// The park a run waiting on a durable signal holds its lease under, owned
+/// by the trap its wait's reply wakes; a restart is not that signal, so
+/// recovery keeps the lease.
 const WAITING_PARK_REASON: &str = "resident_run_waiting";
 /// How often the pump looks again with no signal: a run's backoff or
 /// schedule ends without one.
@@ -388,15 +392,7 @@ fn settle(
         Ok(outcome) => match outcome.status {
             EngineExecutorStatus::Complete => return complete(vault, status, &outcome, now),
             // The run waits on a durable signal; its lease waits with it.
-            EngineExecutorStatus::Waiting(_) => {
-                DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
-                    attempt_id: attempt.id,
-                    reason: WAITING_PARK_REASON.to_owned(),
-                    park_owner: LEASE_OWNER.to_owned(),
-                    now,
-                })?;
-                return Ok(());
-            }
+            EngineExecutorStatus::Waiting(_) => return park_on_wait(vault, status, &outcome, now),
             EngineExecutorStatus::HardStepLimitReached => "resident_run_step_limit",
             EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
                 "resident_run_unfinished"
@@ -488,6 +484,48 @@ fn complete(
         now,
     })?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
+    Ok(())
+}
+
+/// Parks a Waiting run's attempt on a C9 trap its wait's reply wakes: the
+/// trap opens and waits, the attempt parks under the trap's owner, and only
+/// then is the trap bound to the wait, so a wake always finds the park. The
+/// woken attempt is ready again, and the next pass enters the run, which
+/// goes on from the reply.
+fn park_on_wait(
+    vault: &Vault,
+    status: &AgentDispatchStatus,
+    outcome: &EngineExecutorOutcome,
+    now: u64,
+) -> oneiron::Result<()> {
+    let attempt = &status.attempt;
+    let parked = outcome
+        .parked_wait()
+        .ok_or(oneiron::Error::InvariantViolation("a waiting run parked on no wait"))?;
+    let now_ms = now.saturating_mul(1000);
+    let trap = open_trap(
+        vault,
+        &DurableStepContext {
+            vault,
+            attempt_id: attempt.id,
+            run_id: attempt.run_id.clone(),
+            envelope_actor: agent_dispatch_actor(&status.input)?,
+            subject: parked.wait.wait_id,
+            deadline: None,
+            now_ms,
+        },
+        trap_for_durable_wait(&parked.wait, parked.step_hash),
+        parked.step_hash,
+        "code-run wait",
+    )?;
+    register_wait(vault, &trap, now_ms)?;
+    DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
+        attempt_id: attempt.id,
+        reason: WAITING_PARK_REASON.to_owned(),
+        park_owner: trap_park_owner(&trap.trap_claim_id),
+        now,
+    })?;
+    bind_wait_trap(vault, &parked.key, &trap, now_ms)?;
     Ok(())
 }
 

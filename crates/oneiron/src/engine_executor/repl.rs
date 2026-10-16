@@ -6,16 +6,18 @@ use super::host::{
     RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
 };
 use super::record::{
-    LoadedReplayRecord, PromptBinding, StepResultDigests, completed_step_count,
-    load_terminal_status, previous_state_hash, record_config_marker, record_terminal_output,
-    step_state_hash, validate_executor_config_marker,
+    LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
+    completed_step_count, load_terminal_status, parked_wait_at, previous_state_hash,
+    record_config_marker, record_terminal_output, step_state_hash,
+    validate_executor_config_marker, wait_key,
 };
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES,
-    checkpoint_label, clean_for_context, fallback_speech_marker, implicit_speak_output_path,
-    load_context_output, load_observation_window, load_utf8_output, observation_output_path,
-    observation_ref, publish_output, record_reply_evidence, record_text_output,
-    recoverable_chunk_path, script_output_path, validate_runtime_outputs,
+    RESULT_REPLY_INLINE_BYTES, checkpoint_label, clean_for_context, fallback_speech_marker,
+    implicit_speak_output_path, load_context_output, load_observation_window, load_utf8_output,
+    observation_output_path, observation_ref, publish_output, record_reply_evidence,
+    record_text_output, recoverable_chunk_path, resumed_output_path, resumed_output_wait,
+    script_output_path, validate_runtime_outputs, write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -24,7 +26,8 @@ use super::types::{
 use super::wire::{HealedExecutorReply, heal_executor_reply};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
-    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint, SelfDurableWait,
+    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
+    SelfDurableWait, WaitKey,
 };
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
 use crate::off_record::ExecutorUtterance;
@@ -96,12 +99,38 @@ impl EngineNativeExecutor<'_> {
                 crate::code_run::ExecutorStorage::Canonical(_)
             ));
         }
-        if let Some(status) = loaded.terminal_status {
-            self.recover_checkpointed_implicit_speak(&loaded.record, &status, config)?;
-            return Ok(self.outcome(status, 0, loaded.record));
+        let LoadedReplayRecord {
+            mut record,
+            generation: mut expected_generation,
+            terminal_status,
+            prompt,
+        } = loaded;
+        if let Some(status) = terminal_status {
+            // A run parked on a wait goes on, at the step after the parked
+            // one, once the wait's reply is delivered.
+            let resumed = match &status {
+                EngineExecutorStatus::Waiting(wait) => match self.park(&record, wait)? {
+                    Some(key) => {
+                        // The resumed run asks the model again, so it does so
+                        // under the teaching it committed to.
+                        if prompt == PromptBinding::Drifted {
+                            return Err(Error::InvalidConfig(
+                                "engine executor config changed for existing run".to_owned(),
+                            )
+                            .into());
+                        }
+                        self.resume_delivered_wait(&mut record, wait, &key, expected_generation)?
+                    }
+                    None => None,
+                },
+                _ => None,
+            };
+            let Some(generation) = resumed else {
+                self.recover_checkpointed_implicit_speak(&record, &status, config)?;
+                return Ok(self.outcome(status, 0, record));
+            };
+            expected_generation = Some(generation);
         }
-        let mut record = loaded.record;
-        let mut expected_generation = loaded.generation;
         let mut steps_run = 0_u32;
 
         loop {
@@ -423,10 +452,88 @@ impl EngineNativeExecutor<'_> {
             }
 
             if let Some(status) = terminal_status {
+                // A reply that landed while the step ran resumes the run
+                // here, with no round trip through its host.
+                if let EngineExecutorStatus::Waiting(wait) = &status
+                    && let Some(key) = self.park(&record, wait)?
+                    && let Some(generation) = self.resume_delivered_wait(
+                        &mut record,
+                        wait,
+                        &key,
+                        Some(next_generation),
+                    )?
+                {
+                    expected_generation = Some(generation);
+                    continue;
+                }
                 return Ok(self.outcome(status, steps_run, record));
             }
             expected_generation = Some(next_generation);
         }
+    }
+
+    /// Registers the run as parked on `wait`, the wait its last step
+    /// committed, and answers the wait's key once its reply is delivered.
+    /// Every entry of a Waiting run parks again, idempotently, so a park that
+    /// a crash after the commit skipped is not lost.
+    fn park(
+        &self,
+        record: &CodeRunReplayRecord,
+        wait: &SelfDurableWait,
+    ) -> EngineExecutorResult<Option<WaitKey>> {
+        let key = wait_key(record, wait);
+        Ok(self.storage.park_wait(&key)?.then_some(key))
+    }
+
+    /// Publishes the reply delivered to `key` as the result the parked
+    /// step's call came back with, bound as `wait<s>`, and commits it. The
+    /// parked step's bridge rows stay as recorded and nothing is dispatched
+    /// again: the run goes on at the next step, whose context carries the
+    /// reply. `None` when no reply is delivered.
+    fn resume_delivered_wait(
+        &mut self,
+        record: &mut CodeRunReplayRecord,
+        wait: &SelfDurableWait,
+        key: &WaitKey,
+        expected: Option<CodeRunReplayGeneration>,
+    ) -> EngineExecutorResult<Option<CodeRunReplayGeneration>> {
+        let Some(delivery) = self.storage.wait_delivery(key)? else {
+            return Ok(None);
+        };
+        let seq = completed_step_count(record)?
+            .checked_sub(1)
+            .ok_or(Error::CorruptedIndex("executor replay wait without a step"))?;
+        let reply: serde_json::Value = serde_json::from_str(&delivery.reply)
+            .map_err(|_| Error::CorruptedIndex("code-run wait delivery"))?;
+        let mut sink = self.storage.code_run_output_sink()?;
+        write_json(
+            &mut sink,
+            &json!({
+                "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
+                "wait_id": wait.wait_id.to_hex(),
+                "effect": wait.effect.as_str(),
+                "generation": key.generation,
+                "reply": reply,
+            }),
+        )?;
+        let output = publish_output(
+            &self.storage,
+            record,
+            resumed_output_path(seq, wait.wait_id),
+            sink,
+        )?;
+        let name = format!("wait{seq}");
+        match record.bindings.iter_mut().find(|held| held.name == name) {
+            Some(held) => held.handle = output.handle,
+            None => record
+                .bindings
+                .push(CodeRunResultBinding::new(name, output.handle)),
+        }
+        let generation = self
+            .storage
+            .put_code_run_replay_record_if_generation_with_heal(record, expected, None)?;
+        self.storage.clear_wait(key)?;
+        Ok(Some(generation))
     }
 
     /// Selects the IMPLICIT speak payload BEFORE the terminal checkpoint
@@ -664,6 +771,11 @@ impl EngineNativeExecutor<'_> {
                 expected_generation,
                 healed.then_some(&config.model),
             )?;
+        // The run parks on the step's wait; a reply already delivered
+        // resumes it at its next entry.
+        if let Some(EngineExecutorStatus::Waiting(wait)) = &terminal_status {
+            self.park(record, wait)?;
+        }
         Ok(terminal_status)
     }
 
@@ -709,6 +821,7 @@ impl EngineNativeExecutor<'_> {
                 record,
                 generation,
                 terminal_status,
+                prompt: prompt_binding,
             });
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
@@ -723,6 +836,7 @@ impl EngineNativeExecutor<'_> {
             record,
             generation: Some(generation),
             terminal_status: None,
+            prompt: PromptBinding::Unchanged,
         })
     }
 
@@ -862,6 +976,12 @@ impl EngineNativeExecutor<'_> {
         if !epochs.is_empty() {
             self.admit_compaction_read()?;
         }
+        // The replies parked calls resumed with, by the step that parked.
+        let resumed: BTreeMap<u64, &CodeRunRawOutput> = record
+            .outputs
+            .iter()
+            .filter_map(|output| resumed_output_wait(&output.path).map(|(seq, _)| (seq, output)))
+            .collect();
         let mut swapped = false;
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
@@ -902,6 +1022,9 @@ impl EngineNativeExecutor<'_> {
                     text: turn.user_console(seq as u64),
                 }],
             });
+            if let Some(output) = resumed.get(&(seq as u64)) {
+                messages.push(self.resumed_reply_message(record, seq as u64, output)?);
+            }
         }
         messages.extend(self.fold_tail(&epochs, record, views.len())?);
 
@@ -961,6 +1084,46 @@ impl EngineNativeExecutor<'_> {
             seat.bind(&mut request);
         }
         Ok(request)
+    }
+}
+
+impl EngineNativeExecutor<'_> {
+    /// What follows a parked step's turn once its wait was answered: the
+    /// reply inline within one reply's bound, else its card under `wait<s>`.
+    /// A body that is not clean reaches the model as its card, which withholds
+    /// it.
+    fn resumed_reply_message(
+        &self,
+        record: &CodeRunReplayRecord,
+        seq: u64,
+        output: &CodeRunRawOutput,
+    ) -> EngineExecutorResult<LlmMessage> {
+        let wait = parked_wait_at(&self.storage, record, seq)?
+            .ok_or(Error::CorruptedIndex("executor resumed reply without a wait"))?;
+        let head = format!(
+            "The call parked at step {seq} ({}, wait {}) answered",
+            wait.effect.as_str(),
+            wait.wait_id.to_hex()
+        );
+        let text = if output.raw_len <= RESULT_REPLY_INLINE_BYTES as u64
+            && clean_for_context(&self.storage, output)?
+        {
+            let body: serde_json::Value =
+                serde_json::from_str(&load_utf8_output(&self.storage, record, &output.path)?)
+                    .map_err(|_| Error::CorruptedIndex("executor resumed reply"))?;
+            format!("{head}:\n{}", serde_json::to_string(&body["reply"])?)
+        } else {
+            let name = format!("wait{seq}");
+            let card = crate::code_run::result_card(&self.storage, output, Some(name.as_str()))?;
+            format!(
+                "{head}; the reply is the result {name}:\n{}",
+                serde_json::to_string(&card)?
+            )
+        };
+        Ok(LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text { text }],
+        })
     }
 }
 
