@@ -26809,19 +26809,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OriginAuthority",
       "OriginAuthorityLease",
+      "OriginHostAuthority",
       "OriginResidence"
      ],
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
       "crate-vis": 10,
-      "enum": 1,
-      "fn": 4,
+      "enum": 2,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -27161,7 +27162,7 @@
      "purpose": "One-request orchestration: coordinator lock, reconcile, threaded exchange, finish",
      "surface": {
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 1,
       "trait": 1
      }
@@ -27178,7 +27179,7 @@
      "purpose": "The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -54262,13 +54263,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_origin.rs",
+     "purpose": "`/v1/owner/origin-authority`: the owner's origin cutover (ARCH-0068 RA7)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -58636,7 +58647,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 208,
+     "files": 209,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58876,7 +58887,7 @@
    },
    "over_bar": 14,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 374,
+   "source_files": 375,
    "test_files": 182
   },
   "oneiron-spawn": {
