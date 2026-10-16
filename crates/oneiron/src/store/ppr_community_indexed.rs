@@ -9,6 +9,7 @@ use heed::RoTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::ppr::read_graph_version;
 use crate::ppr_community::{
     CommunityCacheMeta, CommunityId, CommunityMembership, CommunityQueryView,
@@ -100,7 +101,7 @@ impl Store {
                 // A current snapshot covers every canonical live entity. A
                 // graph-only ID may be absent; a missing live node is torn even
                 // when its orphaned singleton members row is not discoverable.
-                if let Some(raw) = self.entities.get(txn, id.as_bytes())?
+                if let Some(raw) = self.port_entity_raw(txn, &id)?
                     && self.ppr_community_live_entity_in_txn(txn, &id, &raw)?
                 {
                     return Err(corrupt());

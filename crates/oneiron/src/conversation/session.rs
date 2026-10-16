@@ -1,5 +1,7 @@
 //! Session mode persists; active participant presence belongs only to this process.
-//! People and agent personas are present; engine upkeep never is.
+//! People and agent personas are present; engine upkeep never is. Presence
+//! keeps arrival order, earliest first: room hosting settles a tie by who
+//! came first, never by id.
 use super::*;
 use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::{
@@ -18,6 +20,7 @@ pub enum SessionMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPresence {
     pub mode: SessionMode,
+    /// Who is here now, earliest arrival first.
     pub active_participant_ids: Vec<EntityId>,
 }
 impl Vault {
@@ -121,6 +124,8 @@ impl Vault {
     }
     /// Replaces ephemeral presence. It never changes the room ledger, and a
     /// restart starts empty instead of mistaking old presence for membership.
+    /// Arrival order is kept: a participant still here keeps its place, and
+    /// newcomers follow in the order `ids` names them.
     pub fn set_presence(
         &self,
         session: EntityId,
@@ -130,7 +135,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         authorize(self, &txn, actor)?;
         require_kind(self, &txn, session, ENTITY_TYPE_SESSION)?;
-        let ids: BTreeSet<_> = ids.iter().copied().collect();
+        let mut named = BTreeSet::new();
+        let ids: Vec<EntityId> = ids.iter().copied().filter(|id| named.insert(*id)).collect();
         if ids.len() > 10_000 {
             return Err(Error::IndexOverflow("session presence"));
         }
@@ -150,9 +156,18 @@ impl Vault {
         }
         if ids.is_empty() {
             presence.remove(&session);
-        } else {
-            presence.insert(session, ids.into_iter().collect());
+            return Ok(());
         }
+        let mut arrived: Vec<EntityId> = presence
+            .get(&session)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|id| named.contains(id))
+            .collect();
+        let stayed: BTreeSet<EntityId> = arrived.iter().copied().collect();
+        arrived.extend(ids.into_iter().filter(|id| !stayed.contains(id)));
+        presence.insert(session, arrived);
         Ok(())
     }
 }
