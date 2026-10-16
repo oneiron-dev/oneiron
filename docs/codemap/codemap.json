@@ -12323,7 +12323,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -18744,7 +18744,7 @@
      "path": "src/edit_roundtrip/pptx/identities.rs",
      "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -29579,6 +29579,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorReply",
+      "ConnectorReplyDispatch"
+     ],
+     "path": "src/outbound/connector_reply.rs",
+     "purpose": "A standing connector's reply leg (OF-218)",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29818,7 +29832,7 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -39504,6 +39518,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorWakeBridge",
+      "SurfaceConnectorPayload"
+     ],
+     "path": "src/surface_event/connector_bridge.rs",
+     "purpose": "Surface events as standing-connector wake sources (OF-218)",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -39563,7 +39592,7 @@
      "path": "src/surface_event/mod.rs",
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -47412,7 +47441,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47818,7 +47847,7 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)"
     },
     "surface_event": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48016,7 +48045,7 @@
    },
    "over_bar": 86,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2895,
+   "source_files": 2897,
    "test_files": 903
   },
   "oneiron-android": {
@@ -51958,7 +51987,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 7,
-      "fn": 4,
+      "fn": 5,
       "re-export": 3,
       "struct": 15
      }

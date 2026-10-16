@@ -213,6 +213,54 @@ pub struct Geometry {
     pub parent_transform: Value<Affine>,
 }
 
+impl Geometry {
+    /// The verified slide-space top-left of the shape's frame, in EMU: its own
+    /// rotation and flips about its centre, then every enclosing group, the
+    /// least x and y of the four corners (ARCH-0077 shape anchor). `None` when
+    /// any input is unresolved or the point leaves the coordinate range; never
+    /// a guess.
+    pub fn slide_space_top_left(&self) -> Option<(i64, i64)> {
+        const RANGE: f64 = 27_273_042_316_900.0;
+        if [
+            self.offset.state,
+            self.extent.state,
+            self.rotation.state,
+            self.flip_h.state,
+            self.flip_v.state,
+            self.parent_transform.state,
+        ]
+        .iter()
+        .any(|state| matches!(state, State::Unresolved(_)))
+        {
+            return None;
+        }
+        let (off, ext) = (self.offset.value?, self.extent.value?);
+        let matrix = self.parent_transform.value?;
+        if ext.0 < 0 || ext.1 < 0 {
+            return None;
+        }
+        let rot = self.rotation.value.unwrap_or(0) as f64;
+        let sign = |flip: Option<bool>| if flip == Some(true) { -1.0 } else { 1.0 };
+        let (fx, fy) = (sign(self.flip_h.value), sign(self.flip_v.value));
+        let (sin, cos) = (rot / 60_000.0).to_radians().sin_cos();
+        let (hx, hy) = (ext.0 as f64 / 2.0, ext.1 as f64 / 2.0);
+        let centre = (off.0 as f64 + hx, off.1 as f64 + hy);
+        let (x, y) = [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+            .into_iter()
+            .map(|(u, v)| {
+                let (x, y) = (u * hx * fx, v * hy * fy);
+                matrix.apply(centre.0 + cos * x - sin * y, centre.1 + sin * x + cos * y)
+            })
+            .fold((f64::INFINITY, f64::INFINITY), |(mx, my), (x, y)| {
+                (mx.min(x), my.min(y))
+            });
+        if !(x.is_finite() && y.is_finite()) || x.abs() > RANGE || y.abs() > RANGE {
+            return None;
+        }
+        Some((x.round() as i64, y.round() as i64))
+    }
+}
+
 /// `(x, y) -> (a·x + c·y + e, b·x + d·y + f)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Affine {
