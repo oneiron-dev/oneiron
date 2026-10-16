@@ -10,7 +10,9 @@ use crate::code_run::{
 use crate::code_sandbox::{
     SandboxCredentialCall, SandboxCredentialHandle, SandboxReadFile, SandboxVirtualPath,
 };
-use crate::engine_executor::{JsCodeModeOutput, JsCodeModeStepOutcome, SelfDispatchResponse};
+use crate::engine_executor::{
+    JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef, SelfDispatchResponse,
+};
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
 use serde::Deserialize;
@@ -27,6 +29,12 @@ struct JsonValidation {
 struct VerbCall {
     verb: String,
     input: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Store {
+    #[serde(default)]
+    name: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -235,12 +243,56 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             Ok(json!({"bytes":bytes}).to_string())
         }
         _ => {
+            if name == "self.verbs.call"
+                && let Some(call) = result_call(input)?
+            {
+                return Ok(state.host.result_call(call)?.to_string());
+            }
             if let Some(refusal) = wrong_root_call(name, input) {
                 return Ok(json!({ "error": refusal }).to_string());
             }
             let call = self_call(name, input, state.determinism.frozen_unix_ms / 1000)?;
             response(state.host.dispatch_self(call)?)
         }
+    }
+}
+
+/// A verb-table call the run answers from its own results: `store`, and a
+/// `describe` of a result rather than of a task. `None` for any other call.
+fn result_call(input: &str) -> Result<Option<JsResultCall>> {
+    let Ok(args) = serde_json::from_str::<VerbCall>(input) else {
+        return Ok(None);
+    };
+    Ok(match args.verb.as_str() {
+        "store" => Some(JsResultCall::Store {
+            name: decode::<Store>(args.input)?.name,
+        }),
+        "describe" => result_ref(args.input).map(JsResultCall::Describe),
+        _ => None,
+    })
+}
+
+/// The result a `describe` input names, when it names one: a string (a bound
+/// name, or a handle, whose colon no name has), a result's card by its
+/// `handle`, or `{name}` with none of a task describe's fields.
+fn result_ref(input: Value) -> Option<JsResultRef> {
+    const TASK_FIELDS: [&str; 5] = ["task_ref", "self", "session_id", "key", "frame_epoch"];
+    match input {
+        Value::String(text) if text.contains(':') => Some(JsResultRef::Handle(text)),
+        Value::String(text) => Some(JsResultRef::Name(text)),
+        Value::Object(mut fields) => {
+            if let Some(Value::String(handle)) = fields.remove("handle") {
+                return Some(JsResultRef::Handle(handle));
+            }
+            if TASK_FIELDS.iter().any(|field| fields.contains_key(*field)) {
+                return None;
+            }
+            match fields.remove("name") {
+                Some(Value::String(name)) => Some(JsResultRef::Name(name)),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 

@@ -218,6 +218,19 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(admitted)
     }
 
+    /// Asks the bound door whether a result the run retained, produced from
+    /// `rows`, stays on this device for its caller now. A run whose host
+    /// binds no door withholds nothing.
+    pub(crate) fn withholds_retained(
+        &self,
+        rows: Option<&[EntityId]>,
+    ) -> std::result::Result<bool, AgentVerbRefusal> {
+        match &self.agent_verbs {
+            Some(door) => door.withholds_retained(rows),
+            None => Ok(false),
+        }
+    }
+
     /// Binds a host-authenticated owner proof to one agent action dispatch.
     /// The guest payload has no field from which it could construct this.
     pub(crate) fn with_authenticated_owner(

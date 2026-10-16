@@ -4,7 +4,7 @@
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
 use super::store::{
-    COMPACTION_OBSERVATION_WINDOW_BYTES, load_observation_window, load_utf8_output,
+    COMPACTION_OBSERVATION_WINDOW_BYTES, load_context_output, load_observation_window,
     observation_output_path, script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
@@ -167,7 +167,7 @@ impl EngineNativeExecutor<'_> {
                 super::compaction::step_message_id(run_id, seq),
                 turn_id,
                 seq,
-                load_utf8_output(&self.storage, record, &script_output_path(seq))?,
+                load_context_output(&self.storage, record, &script_output_path(seq))?,
                 load_observation_window(
                     &self.storage,
                     record,

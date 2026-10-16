@@ -311,6 +311,7 @@ struct Bridge<'a> {
 enum StreamTarget {
     Console,
     Finish { start: bool },
+    Store { start: bool },
     File(String),
 }
 
@@ -319,6 +320,7 @@ impl StreamTarget {
         match self {
             Self::Console => JsCodeModeStream::Console,
             Self::Finish { start } => JsCodeModeStream::Finish { start: *start },
+            Self::Store { start } => JsCodeModeStream::Store { start: *start },
             Self::File(path) => JsCodeModeStream::File(path),
         }
     }
@@ -350,6 +352,9 @@ impl HeldOutput {
         match target {
             StreamTarget::Console => self.console.extend_from_slice(&frame),
             StreamTarget::Finish { .. } => self.finish.extend_from_slice(&frame),
+            // A stored value is a result of the run: a host with no store
+            // has nowhere to keep it.
+            StreamTarget::Store { .. } => return Err(failure("store needs a result store")),
             StreamTarget::File(path) => match self.files.iter_mut().find(|(held, _)| *held == path)
             {
                 Some((_, bytes)) => bytes.extend_from_slice(&frame),

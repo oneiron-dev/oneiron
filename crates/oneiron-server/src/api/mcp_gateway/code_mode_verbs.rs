@@ -195,6 +195,27 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .map(|reader| Some(reader.at(self.actor.locality())))
             .ok_or_else(unauthenticated)
     }
+
+    /// A result the run retained leaves this device again only while every
+    /// row it was served from may leave now. Off this device, a result with
+    /// no row set stays.
+    fn withholds_retained(
+        &self,
+        rows: Option<&[oneiron::EntityId]>,
+    ) -> Result<bool, AgentVerbRefusal> {
+        let locality = self.actor.locality();
+        if locality == oneiron::claim::CallerLocality::OnDevice {
+            return Ok(false);
+        }
+        let Some(rows) = rows else {
+            return Ok(true);
+        };
+        crate::device_local::withholds_retained(&self.server.vault, locality, rows, &[]).map_err(
+            |_| AgentVerbRefusal {
+                code: "engine_error".to_owned(),
+            },
+        )
+    }
 }
 
 async fn execute_code_mode_verb(
