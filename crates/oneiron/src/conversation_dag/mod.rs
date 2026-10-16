@@ -1,7 +1,9 @@
 //! Conversation DAG topology, local HEAD state and exact scope resolution.
 //!
-//! Parent/SpawnedBy/RepliesTo are structural edges. HEAD and canonical marks
-//! are device-local sidecars, not replicated authority. Every topology walk
+//! Parent/SpawnedBy/RepliesTo are structural edges. A thread chain runs on
+//! Parent; RepliesTo is the semantic reply target, so a thread reply may
+//! answer or quote a trunk message. HEAD and canonical marks are
+//! device-local sidecars, not replicated authority. Every topology walk
 //! fails closed at the shared ancestor cap.
 
 mod admission;
@@ -25,6 +27,8 @@ pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
 mod branch_scope;
 mod participation;
 mod policy;
+mod quote;
+mod quote_strips;
 mod redacted;
 mod reply;
 pub(crate) mod retained_path;
@@ -39,6 +43,9 @@ pub(crate) use graph::{
     parent as retained_parent, record_has_dag_topology, require_type,
 };
 pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
+pub use quote_strips::{
+    QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
+};
 pub use reply::{ReplyStrip, Thread, ThreadMeta};
 pub(crate) use reply::{
     invalidate_thread_meta, invalidate_thread_meta_for_turn_put,
@@ -47,8 +54,8 @@ pub(crate) use reply::{
 pub(crate) use scopes::resolve_in_txn;
 pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{
-    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath,
-    ScopeSelector,
+    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, QuoteSpan, ResolvedScope,
+    ScopePath, ScopeSelector,
 };
 pub(crate) use writes::append_in_txn;
 

@@ -4,6 +4,7 @@
 
 mod blend_tuning;
 mod end_outcome;
+mod policy;
 mod retention;
 #[cfg(target_os = "linux")]
 pub(in crate::store) use retention::RetrievalTelemetryLease;
