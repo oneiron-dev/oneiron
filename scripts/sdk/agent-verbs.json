@@ -708,6 +708,96 @@
       "section": false
     },
     {
+      "name": "browser.open",
+      "input": "oneiron_browser::OpenInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.open(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.observe",
+      "input": "oneiron_browser::ObserveInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.observe(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.find",
+      "input": "oneiron_browser::FindInput",
+      "output": "oneiron_browser::FindOutput",
+      "call": "driver.find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.click",
+      "input": "oneiron_browser::ClickInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.type",
+      "input": "oneiron_browser::TypeInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.type_text(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.select",
+      "input": "oneiron_browser::SelectInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.select(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.wait_for",
+      "input": "oneiron_browser::WaitForInput",
+      "output": "oneiron_browser::WaitForOutput",
+      "call": "driver.wait_for(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.expect",
+      "input": "oneiron_browser::ExpectInput",
+      "output": "oneiron_browser::ExpectOutput",
+      "call": "driver.expect(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "browser.screenshot",
+      "input": "oneiron_browser::ScreenshotInput",
+      "output": "oneiron_browser::ScreenshotOutput",
+      "call": "driver.screenshot(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "commit",
       "uniffi": {
         "args": {

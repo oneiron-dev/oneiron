@@ -155,10 +155,15 @@ pub enum McpSurfaceConstructionError {
 /// The ONE source of tool-first names: the manifest and native read table.
 ///
 /// There is deliberately no server-owned name array beside this. Adding a verb
-/// row upstream adds a tool here with no curation decision to make.
+/// row upstream adds a tool here with no curation decision to make. A browser
+/// row is no tool: the run's own browser answers it, so code mode is its door.
 #[must_use]
 pub fn exported_verb_rows() -> Vec<&'static str> {
-    let mut rows: Vec<_> = AgentVerb::ALL.iter().map(|verb| verb.as_str()).collect();
+    let mut rows: Vec<_> = AgentVerb::ALL
+        .iter()
+        .filter(|verb| verb.is_mcp())
+        .map(|verb| verb.as_str())
+        .collect();
     rows.extend_from_slice(&MEMORY_VERBS);
     rows
 }
