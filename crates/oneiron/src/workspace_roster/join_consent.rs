@@ -170,6 +170,10 @@ pub enum MembershipConsent {
         person: EntityId,
         guest_grant: EntityId,
     },
+    /// The workspace house mind, the org given a pen: institutional standing,
+    /// read from the stored roster preset and valid only in its own
+    /// workspace vault.
+    HouseAgent { org: EntityId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +244,9 @@ pub enum JoinRefusal {
     },
     /// The subject is not a live PERSON or AGENT_DEF.
     UnknownSubject,
+    /// The subject is a workspace house mind outside its own workspace vault,
+    /// where it holds no standing.
+    ForeignHouseAgent { org: EntityId },
     /// The room is not a live room, or the branch is not one of its threads.
     UnknownRoom,
     /// The named spend scope does not exist.
@@ -548,6 +555,11 @@ fn spend_in_txn(
 enum Standing {
     /// Not a live PERSON or AGENT_DEF.
     Unknown,
+    /// A workspace house mind, in its own workspace vault or outside it.
+    House {
+        org: EntityId,
+        own: bool,
+    },
     /// The vault's own agent, with no live owner to stand through.
     Ownerless,
     Own(EntityId),
@@ -579,6 +591,9 @@ fn standing_of_in_txn(
             ) {
                 return Ok(Standing::Unknown);
             }
+            if let Some((org, own)) = house_org_in_txn(vault, txn, agent, at)? {
+                return Ok(Standing::House { org, own });
+            }
             match agent_person_in_txn(vault, txn, agent, at)? {
                 Some(person) => person,
                 // The vault's own agent stands through a live owner: the one
@@ -602,6 +617,43 @@ fn standing_of_in_txn(
             None => Standing::Own(person),
         },
     )
+}
+
+/// The ORG `agent` stands for when it is a workspace house mind: a stored
+/// roster preset names it as the house pen and its subject anchor names that
+/// preset's ORG. `own` when the preset's workspace is this shared vault.
+fn house_org_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    at: u64,
+) -> Result<Option<(EntityId, bool)>> {
+    let presets = super::records::PRESET.scan(&vault.store, txn)?;
+    if !presets
+        .iter()
+        .any(|(_, preset)| preset.house_actor_ref == agent)
+    {
+        return Ok(None);
+    }
+    let Some(anchor) = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
+        .filter(|anchor| anchor.subject_kind == crate::subject_model::SubjectKind::Org)
+    else {
+        return Ok(None);
+    };
+    let here = vault
+        .shared_vault_creation_in_txn(txn)?
+        .map(|creation| creation.vault_id);
+    let mut found = None;
+    for (_, preset) in presets {
+        if preset.house_actor_ref != agent || preset.org_ref != anchor.subject_ref {
+            continue;
+        }
+        let own = here == Some(preset.workspace_vault_id);
+        if own || found.is_none() {
+            found = Some((preset.org_ref, own));
+        }
+    }
+    Ok(found)
 }
 
 enum PersonStanding {
@@ -649,6 +701,15 @@ fn membership_in_txn(
     };
     let consent = match standing_of_in_txn(vault, txn, subject, principal, at)? {
         Standing::Unknown => return Ok(Loaded::refused(need, JoinRefusal::UnknownSubject)),
+        // Institutional standing: no admin is asked for it, and outside its
+        // own vault the house mind has none.
+        Standing::House { org, own: true } => Some(MembershipConsent::HouseAgent { org }),
+        Standing::House { org, own: false } => {
+            return Ok(Loaded::refused(
+                need,
+                JoinRefusal::ForeignHouseAgent { org },
+            ));
+        }
         Standing::Ownerless => None,
         Standing::Own(person) => {
             person_standing_in_txn(vault, txn, person)?.map(|standing| match standing {
