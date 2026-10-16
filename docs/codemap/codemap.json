@@ -2052,7 +2052,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 14,
       "struct": 4
      }
@@ -2994,6 +2994,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/base_apply/project_history.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/base_apply/replay.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/base_apply/validation.rs",
      "purpose": "—",
      "surface": {
@@ -3084,7 +3104,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2
      }
     },
@@ -3634,7 +3654,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/put_apply/apply/mod.rs",
@@ -3720,7 +3740,7 @@
      "path": "src/batch/put_apply/put_staging.rs",
      "purpose": "Body/index/edge row staging helpers shared by the put and update paths",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -37102,6 +37122,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/project_history.rs",
+     "purpose": "Project history beside the PROJECT carriers a window document holds (PR 3 decision 9)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -39952,8 +39982,28 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 5
+      "crate-vis": 8,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/branch.rs",
+     "purpose": "The fork rule (Astra #1434 F1)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/capture.rs",
+     "purpose": "Capture and admission of project revisions (section 2 of the PR 3 contract)",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -39984,10 +40034,56 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/workspace_roster/project/doors.rs",
+     "purpose": "The read surface of signed project history and its two settling doors: the board's resolution of a board…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/workspace_roster/project/edges.rs",
      "purpose": "Shared project-hub edge admission and final graph invariant",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectDisposition",
+      "ProjectEffective",
+      "ProjectFrontier",
+      "ProjectRank",
+      "ProjectWitness"
+     ],
+     "path": "src/workspace_roster/project/fold.rs",
+     "purpose": "The fold over a project's held revisions (decisions 5-7)",
+     "surface": {
+      "crate-vis": 55,
+      "enum": 2,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectForkEvidence",
+      "ProjectForkOutcome"
+     ],
+     "path": "src/workspace_roster/project/fork_evidence.rs",
+     "purpose": "Evidence of forks in a project's signed history (decision 10), mirroring the handoff equivocation records…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -40064,6 +40160,43 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ProjectCycleQuestion",
+      "ProjectHistoryOverBudget",
+      "ProjectHistoryPolicy"
+     ],
+     "path": "src/workspace_roster/project/history_policy.rs",
+     "purpose": "The per-project history budget (decision 9, ruling F2 (a))",
+     "surface": {
+      "const": 2,
+      "crate-vis": 15,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/joint/mod.rs",
+     "purpose": "One decision for projects whose parents name each other (Astra #1434b; Engine rulings (a) and (E)…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/joint/serve.rs",
+     "purpose": "The served side of a component's decision: each member's frontier, checked under its parents' served views…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "LeaderChat"
      ],
      "path": "src/workspace_roster/project/leader_chat.rs",
@@ -40109,10 +40242,10 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 35,
+      "crate-vis": 41,
       "enum": 2,
       "fn": 16,
-      "re-export": 6,
+      "re-export": 11,
       "struct": 7
      }
     },
@@ -40147,18 +40280,52 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/read/component.rs",
+     "purpose": "A project's facts on its own and the component of \"names as parent\" it belongs to: what `joint.rs` decides…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "ProjectQuarantine",
       "ProjectVerdict"
      ],
-     "path": "src/workspace_roster/project/read.rs",
+     "path": "src/workspace_roster/project/read/mod.rs",
      "purpose": "The one read door for PROJECT rows",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 36,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/refresh.rs",
+     "purpose": "The batch-end refresh of each touched project (sections 2 and 6 of the PR 3 contract)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectResolution",
+      "ProjectSeal"
+     ],
+     "path": "src/workspace_roster/project/resolution.rs",
+     "purpose": "Signed envelopes over a project's history (decision 6, ruling F2): a board resolution settles a fork among…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -40170,13 +40337,30 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectRevision",
+      "ProjectRevisionHash",
+      "ProjectRevisionProof"
+     ],
+     "path": "src/workspace_roster/project/revision.rs",
+     "purpose": "Immutable, content-addressed project revisions (decision 8)",
+     "surface": {
+      "crate-vis": 26,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -40186,7 +40370,125 @@
      "path": "src/workspace_roster/project/tests/authority.rs",
      "purpose": "Leader and board authority over PROJECT rows: live doors refuse a bad proof, replay stores it, and the read…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/cycle_model.rs",
+     "purpose": "The reference for parent cycles (Astra #1434b; Engine rulings (a) and (E)), written from the definition and…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history.rs",
+     "purpose": "Signed project history (PR 3 checks 1, 2, 4 and 13): sibling branches over one anchor fold by rank on every…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_bounds_fall.rs",
+     "purpose": "The parent-bounds fall (Engine ruling on #1434, after the oracle's seeds 3, 12 and 61): a revision that…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_budget.rs",
+     "purpose": "A project past its history budget (PR 3 check 7): it serves the frontier its last within-budget fold…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_cycles.rs",
+     "purpose": "The parent-cycle oracle (Astra #1434b): on small random multi-project graphs, every door serves what the…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_cycles_closure.rs",
+     "purpose": "Everything a component's decision rests on is read inside it (Sol and Astra on #1434, rounds 15 to 17): a…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_cycles_guards.rs",
+     "purpose": "What may tie projects into one decision, and what a decision may cost (Sol and Astra on #1434, round 14): a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_cycles_kept.rs",
+     "purpose": "A component keeps what its decision rests on (Astra #1434c): a combined record keeps every world's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_cycles_named.rs",
+     "purpose": "The named parent-cycle checks (Astra #1434b and the Engine's rulings on it): Astra's fixture, the second…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_doors.rs",
+     "purpose": "Signed project history at the doors (PR 3 checks 5, 9 and 11): the live door builds on the folded head, a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_refresh_order.rs",
+     "purpose": "The batch end persists what a fresh read decides across components (Sol r18 F2, Astra r18 F1): a parent it…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_resolution.rs",
+     "purpose": "A board fork and its resolution (PR 3 check 6): board holders tie, one of them signs a resolution naming the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/workspace_roster/project/tests/history_transport.rs",
+     "purpose": "Signed project history across transport and lifecycle (PR 3 checks 3, 8 and 10): a window carries every…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -40205,6 +40507,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/validity.rs",
+     "purpose": "Whether one held revision is valid on its own lineage, and the board's resolutions at one node (decisions 5…",
+     "surface": {
+      "crate-vis": 24
      }
     },
     {
@@ -41464,9 +41776,9 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 99,
+     "files": 101,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -42605,7 +42917,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42738,7 +43050,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 37,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42759,10 +43071,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 42,
+   "over_bar": 43,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2576,
-   "test_files": 866
+   "source_files": 2592,
+   "test_files": 879
   },
   "oneiron-android": {
    "files": [
@@ -45195,7 +45507,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 35,
+      "const": 36,
       "crate-vis": 1
      }
     },
@@ -45311,7 +45623,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RecordError"
