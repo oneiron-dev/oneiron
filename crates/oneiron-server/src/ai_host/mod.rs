@@ -706,6 +706,11 @@ fn start_workflows(
 }
 
 impl AiHandle {
+    /// The model seats this host built: inert ones when `[models]` is unset.
+    pub(crate) fn models(&self) -> &Arc<ModelRuntime> {
+        &self.runtime
+    }
+
     /// The router the raw `/v1/llm` routes call, with its own meter.
     pub(crate) fn decision_read(&self) -> Option<crate::models::DecisionReadDoor> {
         self.runtime.decision_read().cloned()
