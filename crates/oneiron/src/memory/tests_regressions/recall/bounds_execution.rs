@@ -65,7 +65,7 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
     use crate::store::Store;
 
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x5E);
+    let actor = put_owner(&vault);
     let center = put_person(&vault, 0x5F);
     let facade = facade_for(&vault, actor);
 
@@ -109,7 +109,7 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
 fn recall_sparse_reports_completed_vector_execution_in_both_paths() {
     use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x71);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let facet = EntityId::now();
     vault

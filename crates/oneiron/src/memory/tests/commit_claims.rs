@@ -101,7 +101,7 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
 #[test]
 fn claim_upsert_supersedes_prior_single_cardinality() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x71);
+    let actor = put_owner(&vault);
     let subject = put_person(&vault, 0x72);
     let facade = facade_for(&vault, actor);
 
@@ -328,7 +328,7 @@ fn a_correction_on_an_unregistered_predicate_takes_its_grant() {
 #[test]
 fn commit_batch_gating_is_per_element() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x91);
+    let actor = put_owner(&vault);
     let subject = put_person(&vault, 0x92);
     let facade = facade_for(&vault, actor);
 
@@ -394,7 +394,7 @@ fn commit_batch_gating_is_per_element() {
 #[test]
 fn put_structural_carries_text_index_fields_and_edges() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xC1);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     let asset = facade
@@ -577,7 +577,7 @@ fn put_structural_mints_but_never_overwrites_typed_entities() {
 #[test]
 fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xD3);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     let neighbor = facade
@@ -793,7 +793,7 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
 #[test]
 fn claim_retract_preserves_readable_history() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x13);
+    let actor = put_owner(&vault);
     let subject = put_person(&vault, 0x14);
     let facade = facade_for(&vault, actor);
 
@@ -1129,7 +1129,7 @@ fn signed_machine_keyed_create_replace_and_delete() {
 #[test]
 fn put_structural_refuses_to_mint_a_same_as_link() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xC7);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     let other = facade
@@ -1252,7 +1252,8 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
         );
         assert!(vault.record_scope(&habit_id).unwrap().is_some());
     }
-    let habit_body = member_facade
+    // The owner reads the member's habit; a member reads by grant (H149).
+    let habit_body = facade_for(&vault, owner)
         .get_entity(&habit.id_hex)
         .unwrap()
         .value
