@@ -37,6 +37,7 @@ use crate::owner::{
     pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod concern_routes;
 mod conflict_routes;
 mod cooperative_deletion_routes;
 mod decision_ask_routes;
@@ -90,6 +91,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(diary_routes::routes())
         .merge(history_routes::routes())
         .merge(inbox_routes::routes())
+        .merge(concern_routes::routes())
         .merge(proactivity_routes::routes())
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
