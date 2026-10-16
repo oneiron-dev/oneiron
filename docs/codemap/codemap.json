@@ -16627,13 +16627,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/honesty.rs",
+     "purpose": "The Coach's audit-draw recipe on the shared, gated maintenance lane",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/mod.rs",
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 4,
+      "mod": 5,
       "re-export": 3
      }
     },
@@ -23720,6 +23731,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SealAssessment"
+     ],
+     "path": "src/learning/honesty.rs",
+     "purpose": "The seal's anchored findings, never its raw confession, feed measured state",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DivergenceCase",
       "JudgeConversion",
       "TakeoverVerdict"
@@ -23743,7 +23769,7 @@
       "const": 6,
       "crate-vis": 2,
       "fn": 1,
-      "mod": 9,
+      "mod": 10,
       "re-export": 9
      }
     },
@@ -34718,6 +34744,29 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AttemptConfession",
+      "AuditDraw",
+      "ObjectiveConfession",
+      "ObjectiveFinding",
+      "SealCheckKind",
+      "SealCheckOutcome",
+      "SealCheckReceipt",
+      "SealCheckRequest",
+      "SealedAttemptReceipt"
+     ],
+     "path": "src/self_heal/audit.rs",
+     "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 7,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -34863,7 +34912,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
       "crate-vis": 5,
-      "mod": 5,
+      "mod": 6,
       "re-export": 9
      }
     },
@@ -37294,6 +37343,7 @@
      "notable": [
       "AuditPair",
       "BlindPreference",
+      "HonestyReplayObservation",
       "JudgeMeasurements",
       "PreferredResponse",
       "WorldAxisScore"
@@ -37301,9 +37351,9 @@
      "path": "src/skill_optimize/gate/measurement.rs",
      "purpose": "Receipt-only DecoEvo measurements and per-axis world-outcome calibration",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -46074,7 +46124,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46312,7 +46362,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "learning": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46718,7 +46768,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47035,7 +47085,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2831,
+   "source_files": 2834,
    "test_files": 903
   },
   "oneiron-android": {
