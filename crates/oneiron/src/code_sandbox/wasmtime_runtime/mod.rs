@@ -8,6 +8,7 @@
 #[cfg(test)]
 mod tests;
 mod typed;
+mod isolated;
 mod wire;
 
 /// Types generated from the canonical guest/SDK WIT.
@@ -40,6 +41,7 @@ pub struct ComponentBudget {
     pub wall_time: Duration,
     pub host_calls: u32,
     pub message_bytes: usize,
+    pub foreign_budget: super::microvm::ExecutionBudget,
 }
 
 impl Default for ComponentBudget {
@@ -52,6 +54,7 @@ impl Default for ComponentBudget {
             wall_time: Duration::from_secs(5),
             host_calls: 256,
             message_bytes: 1024 * 1024,
+            foreign_budget: super::microvm::ExecutionBudget::new(30, 512, 64),
         }
     }
 }
@@ -61,6 +64,8 @@ impl Default for ComponentBudget {
 pub struct WasmtimeComponentRuntime {
     engine: Engine,
     component: Component,
+    component_bytes: std::sync::Arc<[u8]>,
+    foreign_egress: Option<std::sync::Arc<dyn oneiron_container::EgressRelay>>,
     budget: ComponentBudget,
     adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
 }
@@ -77,6 +82,8 @@ impl WasmtimeComponentRuntime {
             || budget.wall_time.is_zero()
             || budget.host_calls == 0
             || budget.message_bytes == 0
+            || !budget.foreign_budget.is_bounded()
+            || budget.foreign_budget.pids > 4096
         {
             return Err(failure("component budget must bound every resource"));
         }
@@ -91,6 +98,8 @@ impl WasmtimeComponentRuntime {
         Ok(Self {
             engine,
             component,
+            component_bytes: std::sync::Arc::from(bytes),
+            foreign_egress: None,
             budget,
             adapter: None,
         })
@@ -103,9 +112,17 @@ impl WasmtimeComponentRuntime {
         Self {
             engine: self.engine.clone(),
             component: self.component.clone(),
+            component_bytes: std::sync::Arc::clone(&self.component_bytes),
+            foreign_egress: self.foreign_egress.clone(),
             budget: self.budget,
             adapter: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_foreign_egress(mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Self {
+        self.foreign_egress = Some(relay);
+        self
     }
 
     /// Binds host-owned virtual file and handle-only credential services.
@@ -257,15 +274,19 @@ fn drive_host(
 }
 
 impl JsCodeModeRuntime for WasmtimeComponentRuntime {
+    fn bind_foreign_egress(&mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Result<()> {
+        self.foreign_egress = Some(relay); Ok(())
+    }
+
     fn run_step(
         &mut self,
         step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
     ) -> Result<JsCodeModeStepOutcome> {
-        if step.boundary.tier() != SandboxGuestTier::FirstPartyDreamer {
-            return Err(failure("foreign components require the microVM lane"));
+        match super::microvm::select_backend_for_tier(step.boundary.tier())? {
+            Some(backend) => isolated::run(self, step, backend),
+            None => self.execute(step, host),
         }
-        self.execute(step, host)
     }
 }
 

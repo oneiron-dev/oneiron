@@ -13,9 +13,10 @@ use crate::{
     TypeInput, WaitForInput, WaitForOutput,
 };
 use oneiron_container::{
-    ContainerRuntime, GuestLimits, GuestSeccomp, GuestSession, GuestSpec, ImageRef, SessionManifest,
+    GuestLimits, SessionLease, SessionManifest, SessionTransport, EgressRelay,
 };
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Words in a control's name that mark an effect a person presses for.
@@ -47,9 +48,6 @@ const PRESS_PHRASES: &[&[&str]] = &[
     &["reserve"],
 ];
 
-/// The guest user the browser image declares.
-const GUEST_USER: (u32, u32) = (10001, 10001);
-
 /// How the host starts browser guests. Its bounds are the host's manifest rows.
 #[derive(Clone, Debug)]
 pub struct BrowserGuest {
@@ -64,40 +62,31 @@ pub struct BrowserGuest {
 
 pub struct BrowserSession {
     driver: CdpDriver,
-    guest: GuestSession,
+    guest: Box<dyn SessionLease>,
+    manifest: SessionManifest,
 }
 
 impl BrowserSession {
-    /// Starts a fresh guest with a fresh profile and attaches to its page.
-    pub fn start(config: &BrowserGuest) -> Result<Self, BrowserError> {
-        let unavailable = |e: oneiron_container::Error| BrowserError::Unavailable(e.to_string());
-        let runtime = ContainerRuntime::new(config.runtime.clone()).map_err(unavailable)?;
-        let spec = GuestSpec {
-            image: ImageRef::pinned(&config.image).map_err(unavailable)?,
-            user: GUEST_USER,
-            limits: config.limits,
-            seccomp: GuestSeccomp::GuestSandbox,
-            read_only_mounts: config
-                .fixture
-                .iter()
-                .map(|dir| (dir.clone(), PathBuf::from("/srv/fixture")))
-                .collect(),
-        };
-        let mut guest = runtime.start(&spec).map_err(unavailable)?;
-        let (stdin, stdout) = guest.take_stdio().ok_or(BrowserError::GuestLost)?;
-        match CdpDriver::attach(Pipe::new(stdout, stdin), config.wait_cap) {
-            Ok(driver) => Ok(Self { driver, guest }),
-            Err(error) => Err(BrowserError::Unavailable(format!(
-                "{error}; guest said: {}",
-                guest.stderr_tail()
-            ))),
+    /// The engine selects and proves a backend before attaching the browser.
+    /// A lower driver crate must never silently select a weaker backend.
+    pub fn attach(config: &BrowserGuest, transport: SessionTransport, relay: Arc<dyn EgressRelay>) -> Result<Self, BrowserError> {
+        if transport.manifest.fence_unproven || transport.manifest.fence_proof.is_none() {
+            return Err(BrowserError::Unavailable("browser session fence unproven".to_owned()));
         }
+        let SessionTransport { reader, writer, manifest, lease } = transport;
+        let driver = CdpDriver::attach(Pipe::with_egress(reader, writer, Some(relay)), config.wait_cap)?;
+        Ok(Self { driver, guest: lease, manifest })
+    }
+
+    /// A browser may only be started through the engine's tier selector.
+    pub fn start(_config: &BrowserGuest) -> Result<Self, BrowserError> {
+        Err(BrowserError::Unavailable("engine-selected sandbox and egress proxy required".into()))
     }
 
     /// What the guest's container proved, for the run's receipt.
     #[must_use]
     pub fn manifest(&self) -> &SessionManifest {
-        self.guest.manifest()
+        &self.manifest
     }
 
     /// The PNG bytes of a screenshot this session took, while it holds them.
@@ -106,7 +95,11 @@ impl BrowserSession {
         self.driver.image(image)
     }
 
+    #[must_use]
+    pub fn abandoned(&self) -> bool { self.guest.abandoned() }
+
     fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
+        if self.guest.abandoned() { return Err(BrowserError::Abandoned); }
         if self.guest.is_running() {
             Ok(&mut self.driver)
         } else {
