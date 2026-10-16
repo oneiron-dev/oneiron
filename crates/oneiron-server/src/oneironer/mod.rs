@@ -10,11 +10,14 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
 use oneiron::tagging::{TaggingOutcome, TaggingTrace};
+use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
 
 pub(crate) mod endpoint;
+mod local;
 
 #[cfg(test)]
 mod tests;
@@ -23,14 +26,42 @@ mod tests;
 #[cfg(test)]
 const TRACE_LOG_CAPACITY: usize = 1024;
 
-/// A configured slot this build cannot serve yet. Typed, so `serve` and
-/// `init` refuse it by name instead of starting a slot that tags nothing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub(crate) enum TaggerNotBuilt {
-    #[error(
-        "oneironer.provider = \"local\" is not built yet; run a tagger server on this machine and set provider = \"endpoint\""
-    )]
-    LocalProvider,
+/// Native and HTTP providers share the marker, worker and persistence path.
+pub(crate) enum ProviderTagger {
+    Endpoint(endpoint::HttpTagger),
+    Local(Box<local::LocalTagger>),
+}
+
+impl ProviderTagger {
+    pub(crate) fn probe(&self) -> Result<endpoint::ProbeOutcome, endpoint::ProbeError> {
+        match self {
+            Self::Endpoint(tagger) => tagger.probe(),
+            Self::Local(tagger) => Ok(endpoint::ProbeOutcome::Ready(tagger.card())),
+        }
+    }
+}
+
+impl ExtractionEncoder for ProviderTagger {
+    fn model_id(&self) -> &ModelId {
+        match self {
+            Self::Endpoint(tagger) => tagger.model_id(),
+            Self::Local(tagger) => tagger.model_id(),
+        }
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        match self {
+            Self::Endpoint(tagger) => tagger.locality(),
+            Self::Local(tagger) => tagger.locality(),
+        }
+    }
+
+    fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
+        match self {
+            Self::Endpoint(tagger) => tagger.infer(input),
+            Self::Local(tagger) => tagger.infer(input),
+        }
+    }
 }
 
 /// One trace as a test observes it.
@@ -45,7 +76,7 @@ pub(crate) struct LoggedTrace {
 /// The slot on the server: what is configured and the tagger.
 pub(crate) struct TaggerSlot {
     config: OneironerConfig,
-    tagger: Arc<endpoint::HttpTagger>,
+    tagger: Arc<ProviderTagger>,
     card: Mutex<Option<endpoint::ModelCard>>,
     /// The test door onto the traces the worker emitted, bounded.
     #[cfg(test)]
@@ -57,7 +88,7 @@ impl TaggerSlot {
         &self.config
     }
 
-    pub(crate) fn tagger(&self) -> &Arc<endpoint::HttpTagger> {
+    pub(crate) fn tagger(&self) -> &Arc<ProviderTagger> {
         &self.tagger
     }
 
@@ -110,17 +141,23 @@ impl TaggerSlot {
 /// Builds the slot for a resolved section, probing the tagger before the
 /// listener binds.
 ///
-/// `None` and an absent section build nothing. The local provider is refused,
-/// typed. A reachable tagger that is not the configured one stops `serve`; an
-/// unreachable one is logged and the worker probes again.
+/// `None` and an absent section build nothing. Native artifacts are verified
+/// and loaded before the listener binds. A reachable endpoint that is not
+/// the configured tagger stops `serve`; an unreachable one is probed again.
 pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Option<TaggerSlot>> {
     let Some(config) = config.filter(|config| config.is_active()) else {
         return Ok(None);
     };
-    if config.provider == OneironerProvider::Local {
-        return Err(TaggerNotBuilt::LocalProvider.into());
-    }
-    let tagger = endpoint::HttpTagger::from_config(config)?;
+    config.validate()?;
+    let tagger = match config.provider {
+        OneironerProvider::Local => {
+            ProviderTagger::Local(Box::new(local::LocalTagger::load(config)?))
+        }
+        OneironerProvider::Endpoint => {
+            ProviderTagger::Endpoint(endpoint::HttpTagger::from_config(config)?)
+        }
+        OneironerProvider::None => return Ok(None),
+    };
     let slot = TaggerSlot {
         config: config.clone(),
         tagger: Arc::new(tagger),
@@ -134,7 +171,7 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
             // compare it to, it could be anything the tagger has read, so the
             // log says only whether one was pinned.
             tracing::info!(
-                url = slot.tagger.base(),
+                provider = config.provider.as_str(),
                 label_count = card.label_count,
                 links = card.returns.links,
                 stack_pinned = config.stack_sha16.is_some(),
@@ -153,7 +190,7 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     Ok(Some(slot))
 }
 
-/// [`build_slot`] on a blocking thread: the probe is a blocking HTTP call.
+/// [`build_slot`] off the async runtime: native loading and HTTP are blocking.
 pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
