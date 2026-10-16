@@ -36,7 +36,7 @@ pub(crate) use room::scope_worlds;
 pub use room::{
     RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
 };
-pub(crate) use room_verbs::{room_ceiling_in, room_clearance_in, room_roster_in};
+pub(crate) use room_verbs::{room_ceiling_in, room_clearance_in, room_reader_in, room_roster_in};
 pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;
 mod history;
@@ -50,10 +50,12 @@ pub use self_brief::{
     BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
     SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
 };
+mod hook_pins;
 mod memories;
 mod memories_frame;
 mod memories_projection;
 mod memory_pins;
+pub use hook_pins::HookPin;
 mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;

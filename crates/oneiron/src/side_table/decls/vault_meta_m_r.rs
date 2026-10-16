@@ -259,6 +259,9 @@ side_tables! {
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
     /// never synced or imported. Key: ().
     PACK_BYTE_MAP_LOCAL_HEAD: VaultMeta b"pack_byte_map:local_head:v1" Raw;
+    /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
+    /// on. Key: id16 (PERSON).
+    PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
@@ -506,6 +509,11 @@ side_tables! {
     /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
     /// subject hex "/" branch hex or "-").
     ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
+    /// One participation fact (OF-529): who took part in a room or one of its threads, how and since
+    /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
+    /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
+    /// or task id, or an offer id's digest).
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;

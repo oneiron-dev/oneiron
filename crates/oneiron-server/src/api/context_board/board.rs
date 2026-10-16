@@ -154,6 +154,8 @@ pub(super) struct BoardParts {
     pub(super) authority: oneiron::pipeline::ResolvedWorldAuthority,
     pub(super) scope: String,
     pub(super) sections: Vec<BoardSection>,
+    /// The caller's `you:` forks line, rendered under the legend.
+    pub(super) you: Option<String>,
     pub(super) worlds: Vec<String>,
     pub(super) tasks: Vec<String>,
     pub(super) room: Option<Vec<String>>,
@@ -161,6 +163,8 @@ pub(super) struct BoardParts {
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
     pub(super) named: Vec<EntityId>,
+    /// The hook blocks whose task rows TASKS tagged.
+    pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
 }
 
 /// Assembles every section the board renders for this caller.
@@ -173,6 +177,7 @@ pub(super) fn board_parts(
     hits: &[CapabilityHit],
     reads: &SessionReadSet,
     people: &PeopleView<'_>,
+    hook_pins: &[oneiron::context_board::HookPin],
 ) -> Result<BoardParts, ApiError> {
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
@@ -229,9 +234,9 @@ pub(super) fn board_parts(
     }
 
     // TASKS: each task's `who` and `fits:` by handle, the caller's live
-    // children on the task they realize, then the `you:` line and the
-    // project view as its first detail rows.
-    let (tasks, you) = match &memory {
+    // children on the task they realize, and the project view as its first
+    // detail row. The `you:` line rides the frame, under the legend.
+    let (mut tasks, you) = match &memory {
         Some(memory) => {
             let mut rows = readable_task_rows(auth, read, memory)?;
             let (children, forks) = match targets.actor() {
@@ -255,6 +260,7 @@ pub(super) fn board_parts(
             None,
         ),
     };
+    let hook_blocks = tasks.tag_hook_pins(hook_pins);
     named.extend(
         tasks
             .rows
@@ -280,7 +286,7 @@ pub(super) fn board_parts(
             },
             (None, None) => None,
         };
-    let mut lead: Vec<String> = you.into_iter().collect();
+    let mut lead = Vec::new();
     if let Some((project, row)) = project {
         named.push(project);
         lead.push(row);
@@ -343,11 +349,13 @@ pub(super) fn board_parts(
         authority,
         scope,
         sections,
+        you,
         worlds: worlds.detail_rows().to_vec(),
         tasks: tasks_section.detail_rows().to_vec(),
         room: room_section.map(|room| room.pinned_rows().to_vec()),
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
+        hook_blocks,
     })
 }
 
@@ -393,11 +401,22 @@ pub(super) async fn board_people(
 ) -> Result<(oneiron::context_board::People, BTreeSet<EntityId>), ApiError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
-    let people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        });
+    let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })
     .map_err(|error| core_engine_error("board people failed", error))?;
+    // Each `about` is the stored line of the highest band the reader reads.
+    let applied = read
+        .read_receipt(None, 0)
+        .map_err(|error| core_engine_error("board people failed", error))?
+        .applied;
+    let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
+    people
+        .set_about(&mut |person| server.vault.person_about(person, ceiling))
+        .map_err(|error| core_engine_error("board people failed", error))?;
     let run_key = auth
         .principal_ref()
         .filter(|_| auth.actor_class() == Some("agent"))

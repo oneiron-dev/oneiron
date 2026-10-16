@@ -49,8 +49,9 @@ fn max_rounds() -> u32 {
 
 /// Refreshes every touched project, with every project its parents tie it
 /// to, after each queued project it reads; then each project whose frozen
-/// descendants waited on a project whose view changed, and each project
-/// whose decision read a project that changed after it.
+/// descendants waited on a project whose view changed, each project whose
+/// decision read a project that changed after it, and each held child of a
+/// touched or changed project.
 pub(crate) fn refresh_project_frontiers(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -65,8 +66,14 @@ pub(crate) fn refresh_project_frontiers(
     };
     let mut schedule = Schedule {
         queue: touched.clone(),
+        children: held_children(store, txn, kind)?,
         ..Schedule::default()
     };
+    // A held re-parent waiting on a touched project's head, mint or lineage
+    // is decided again with the same signed bytes (ruling (d)).
+    for project in touched {
+        schedule.wake_children(*project, &[]);
+    }
     // The projects to refresh before the queue's own order.
     let mut ahead = std::collections::VecDeque::new();
     loop {
@@ -112,6 +119,9 @@ struct Schedule {
     /// The projects waiting, since the last refresh, on a queued project
     /// they read; none is waited on in turn.
     deferred: BTreeSet<EntityId>,
+    /// Each project's held children: the projects with a held state that
+    /// names it as a parent or witnesses one of its heads (ruling (d)).
+    children: BTreeMap<EntityId, BTreeSet<EntityId>>,
 }
 
 impl Schedule {
@@ -130,6 +140,50 @@ impl Schedule {
             }
         }
     }
+
+    /// `project` was touched or changed: each held child of it outside
+    /// `members` is decided again.
+    fn wake_children(&mut self, project: EntityId, members: &[EntityId]) {
+        if let Some(children) = self.children.get(&project) {
+            self.queue.extend(
+                (children.iter())
+                    .filter(|child| !members.contains(child))
+                    .copied(),
+            );
+        }
+    }
+}
+
+/// Every project's held children, read from held history at the refresh's
+/// start: the parents and witnessed parents each project's held states name,
+/// whatever those states' verdicts (ruling (d)). No table keeps it, so a
+/// restart needs no repair.
+fn held_children(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
+    let mut children: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
+    for row in store.type_index.prefix_iter(txn, &[kind])? {
+        let (key, _) = row?;
+        let child = EntityId::from_bytes(
+            key[1..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("project type index"))?,
+        )?;
+        for held in held_in_txn(store, txn, child, kind)?.rows.values() {
+            let Some(authority) = held.revision.authority() else {
+                continue;
+            };
+            let named = (authority.parents.iter())
+                .filter_map(|parent| EntityId::from_hex(parent).ok())
+                .chain(authority.parent_heads.iter().map(|witness| witness.project));
+            for parent in named.filter(|parent| *parent != child) {
+                children.entry(parent).or_default().insert(child);
+            }
+        }
+    }
+    Ok(children)
 }
 
 /// A REVISIONS row: (project, hash) to (companion id, origin).
@@ -278,6 +332,7 @@ fn refresh_component(
             schedule.queue.insert(key.1.0);
         }
         schedule.changed(member, &members);
+        schedule.wake_children(member, &members);
     }
     Ok(None)
 }

@@ -204,6 +204,15 @@ declare function query(r: ResultRef, q: string | QuerySelection): Promise<QueryR
 /** Cuts a result into range refs to read or hand on one at a time, copying
  * nothing: `for await (const c of chunks(r, {lines: 2000})) ...`. */
 declare function chunks(r: ResultRef, by: ChunkBy): ResultChunks;
+/** Whether this run may read a result now, by the checks every read of it
+ * makes (its served rows, then its taint), without reading it: no preview,
+ * no bytes. A read made after still makes them. */
+declare function can(input: { read: ResultRef }): Promise<CanReadReply>;
+/** `can({read})`'s answer: the result's ref, size, kind and taint, or why
+ * not, with the detail a read of it would refuse with. */
+type CanReadReply =
+  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null } }
+  | { can: false; reason: "unknown_handle" | "withheld_rows" | "tainted" | "denied"; [detail: string]: unknown };
 /** Foreign tier only. Proposals are data; they never commit host writes. */
 declare const propose: {
   file(path: `/mnt/outputs/${string}` | `/mnt/workspace/${string}`, bytes: Uint8Array | number[]): void;

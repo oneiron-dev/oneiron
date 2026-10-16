@@ -31,6 +31,10 @@ pub const DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE: &str = "dreamer.edit_distance.
 /// caller named the scope, and the Dreamer writes the body (ARCH-0006a).
 /// A payload discriminator on the Micro consolidation queue.
 pub const DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE: &str = "dreamer.scope_summary";
+/// `DreamerAttemptPayload.attempt_type` for one person's PEOPLE `about`
+/// lines (ARCH-0067): one line per sensitivity band, from that band's facts.
+/// A payload discriminator on the Micro consolidation queue.
+pub const DREAMER_PERSON_ABOUT_ATTEMPT_TYPE: &str = "dreamer.person_about";
 /// Documented OPT-IN turn-body key naming the WORLD entity this turn's
 /// content belongs to (16-byte MessagePack binary; ILD D4 opt-in precedent).
 pub const TURN_BODY_WORLD_REF_KEY: &str = "world_ref";

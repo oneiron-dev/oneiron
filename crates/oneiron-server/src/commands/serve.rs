@@ -66,6 +66,8 @@ pub(super) async fn serve_with_config(
     let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(&config);
+    #[cfg(unix)]
+    let folder_rescans = super::history_import::notes::folder::FolderRescans::from_config(&config);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
@@ -212,19 +214,36 @@ pub(super) async fn serve_with_config(
     workers.push(sync_server.spawn_board_publisher());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server));
+    // Due standing questions are answered through the ladder (OF-506).
+    workers.push(crate::decision_graph::spawn(&sync_server));
+    // Uncertain identities are decided, or asked of the person (OF-123).
+    workers.push(crate::ai_host::identity::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
+    // Approved sends leave through the connector executor (OF-187).
+    workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
-    workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(&sync_server)));
+    workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(
+        &sync_server,
+    )));
+    workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(
+        &sync_server,
+    )));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
+    // Attached folders rescan after the import queue starts (OF-554).
+    #[cfg(unix)]
+    workers.extend(folder_rescans.map(|rescans| rescans.spawn(Arc::clone(&sync_server))));
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, mut stopped) = tokio::sync::watch::channel(false);
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
         workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
+    }
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
     }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
