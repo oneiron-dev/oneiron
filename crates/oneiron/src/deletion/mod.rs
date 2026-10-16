@@ -8,6 +8,7 @@ mod derived_rows;
 mod erase;
 mod gate;
 mod identity_event_stamps;
+mod legal_hold;
 mod publish;
 mod receipt;
 mod rendezvous;
@@ -19,6 +20,7 @@ pub(crate) mod topology_delete_intent;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use coop_delivery::courtesy_retained_pacts_in;
 pub use coop_delivery::{
     COOP_DELETION_DELIVERY_ATTEMPT_KIND, COOP_DELETION_GIVE_UP_SECS, COOP_DELETION_PEER_PATH,
     COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDelivery,
@@ -42,6 +44,12 @@ pub use coop_request::{
 };
 pub use delete::{
     DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview, HeldBytes, LfsChunkImpact,
+};
+pub use legal_hold::{
+    ERASE_COMPLETION_PENDING, HostOrderHold, LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS,
+    LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind,
+    LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance, LegalHoldReason,
+    LegalHoldTarget, LegalHoldUseLimit, LiftAndEraseOutcome, LiftAndEraseStatus,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{

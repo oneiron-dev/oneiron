@@ -74,6 +74,9 @@ pub(super) struct WorkflowIntent {
     /// A root workflow's spend scope.
     #[serde(default)]
     pub spend: Option<super::SpendScopeId>,
+    /// The room its leaves work in (OF-531).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<crate::workspace_roster::RoomWork>,
 }
 
 #[derive(Serialize, Deserialize)]

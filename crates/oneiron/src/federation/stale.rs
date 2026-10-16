@@ -376,6 +376,19 @@ fn terminal_pacts(fold: &AuthorityFold) -> Vec<([u8; 32], FederationStaleReason,
         .collect()
 }
 
+/// Whether `pact_id` registered `world`. Retrieval's retained courtesy-copy
+/// check reads it (Docs Q09).
+pub(crate) fn world_registered_to_pact_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    pact_id: &[u8; 32],
+    world: EntityId,
+) -> Result<bool> {
+    Ok(FEDERATION_WORLD
+        .get(store, txn, &federation_world_key(pact_id, world))?
+        .is_some())
+}
+
 /// The worlds registered to one pact.
 fn registered_worlds(
     store: &Store,

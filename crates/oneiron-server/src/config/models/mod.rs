@@ -551,6 +551,12 @@ fn validate_ladders(
                     rung.model.provider
                 )
             })?;
+            if provider.kind.speech_only() {
+                anyhow::bail!(
+                    "models.roles.{key}: {} is on a speech provider, which serves [models.media.speech] only",
+                    rung.model
+                );
+            }
             let tagger_role = *role == ModelRole::ExtractionEncoder;
             if tagger_role != (provider.kind == ProviderKind::Oneironer) {
                 anyhow::bail!(

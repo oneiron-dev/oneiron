@@ -214,6 +214,9 @@ pub(super) async fn serve_with_config(
     workers.push(crate::wire_health::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
+    // Documents whose signing finished are sealed as a task (OF-415).
+    #[cfg(unix)]
+    workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(&sync_server)));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Open sockets may never close by themselves, so the drain is bounded.
@@ -228,12 +231,12 @@ pub(super) async fn serve_with_config(
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
-    let mesh_vault = Arc::clone(&sync_server.vault);
+    let mesh_server = Arc::clone(&sync_server);
     let app = build_app(sync_server).layer(cors_layer);
     // The paired-machine mesh listener (OF-535): off unless the host names
     // its bind address.
     let mesh = crate::handler::mesh::start(
-        mesh_vault,
+        mesh_server,
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
         config.limits.connections().header_read_timeout,
