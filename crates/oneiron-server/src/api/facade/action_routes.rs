@@ -178,10 +178,7 @@ impl FacadeRowDoor {
     }
 
     /// The row's reply: its JSON on success, else its refusal's own code.
-    async fn answer(
-        rows: Router,
-        request: Request,
-    ) -> Result<serde_json::Value, AgentVerbRefusal> {
+    async fn answer(rows: Router, request: Request) -> Result<serde_json::Value, AgentVerbRefusal> {
         let refused = || AgentVerbRefusal {
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };

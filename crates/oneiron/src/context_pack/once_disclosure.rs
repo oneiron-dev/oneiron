@@ -67,11 +67,7 @@ impl Vault {
                 if !delivers(offer) || spent.contains_key(&offer.contact_ref) {
                     continue;
                 }
-                crate::consent::spend_approve_once_in_txn(
-                    &self.store,
-                    wtxn,
-                    &once.authorization,
-                )?;
+                crate::consent::spend_approve_once_in_txn(&self.store, wtxn, &once.authorization)?;
                 tracing::info!(
                     proposal_ref = %once.proposal_ref,
                     channel = %offer.channel,

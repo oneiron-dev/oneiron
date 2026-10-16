@@ -76,8 +76,7 @@ mod tests;
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
     ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutMode,
-    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope,
-    FanoutMeterRow,
+    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
 };
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,

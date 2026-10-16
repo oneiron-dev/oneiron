@@ -389,9 +389,9 @@ fn frozen_entity(
     nullable: bool,
 ) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
     match value {
-        Some(serde_json::Value::String(value)) => {
-            Ok(Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?))
-        }
+        Some(serde_json::Value::String(value)) => Ok(Some(
+            EntityId::from_hex(value).map_err(|_| invalid_replay())?,
+        )),
         Some(serde_json::Value::Null) if nullable => Ok(None),
         None if !nullable => Ok(None),
         _ => Err(invalid_replay()),

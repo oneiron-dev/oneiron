@@ -328,8 +328,12 @@ impl Vault {
         now: u64,
     ) -> Result<crate::skill_optimize::TrainingOffer> {
         self.require_coach_attempt(attempt, COACH_TRAINING_OFFER_FACET)?;
-        let offer =
-            crate::skill_optimize::record_training_offer(self, attempt.status.attempt.id, draft, now)?;
+        let offer = crate::skill_optimize::record_training_offer(
+            self,
+            attempt.status.attempt.id,
+            draft,
+            now,
+        )?;
         self.with_write_txn_grouped(|txn| {
             let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
             notify_offer_in_txn(self, txn, &owners, &offer)

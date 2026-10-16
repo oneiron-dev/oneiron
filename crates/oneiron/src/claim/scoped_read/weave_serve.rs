@@ -7,10 +7,10 @@ use super::{
     ClaimReadStatus, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader,
     WeaveDigestSchedule, WeaveItem, WeaveReader, WeaveReport, WeaveSectionKind, WeaveSectionSpec,
 };
+use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
-use crate::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// One section a weave report asks for, in the reader's own recipe.
@@ -193,7 +193,11 @@ impl WeaveScheduleView {
             reader: WeaveReaderRef::from_reader(row.reader),
             cadence: row.cadence,
             next_due_at: row.next_due_at,
-            sections: row.recipe.iter().map(WeaveSectionInput::from_spec).collect(),
+            sections: row
+                .recipe
+                .iter()
+                .map(WeaveSectionInput::from_spec)
+                .collect(),
         }
     }
 }
@@ -210,7 +214,9 @@ impl Memory<'_> {
             (None, EdgeActorClass::Human) => WeaveReader::Person(self.actor()),
             (None, EdgeActorClass::Agent) => WeaveReader::Agent(self.actor()),
             (None, EdgeActorClass::System) => {
-                return Err(MemoryError::bad_request("a system actor reads no weave lens"));
+                return Err(MemoryError::bad_request(
+                    "a system actor reads no weave lens",
+                ));
             }
         })
     }
