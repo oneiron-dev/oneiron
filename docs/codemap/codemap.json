@@ -1487,7 +1487,7 @@
      "purpose": "Write-once executor identity for a skill-bearing attempt's terminal receipt",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -8893,7 +8893,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -9858,7 +9858,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -10005,13 +10005,16 @@
       "MemoryEdgeInput",
       "MemorySearchInput",
       "MemorySupersedeInput",
-      "MemoryTimeRange"
+      "MemoryTimeRange",
+      "TaskRefuseDomain",
+      "TaskRefuseInput"
      ],
      "path": "src/code_run/run_verbs.rs",
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "struct": 5
+      "enum": 1,
+      "struct": 6
      }
     },
     {
@@ -10159,6 +10162,8 @@
       "SelfMemoryWriteResult",
       "SelfSpeechCall",
       "SelfSpeechResult",
+      "SelfTaskRefusalResult",
+      "SelfTaskRefuseCall",
       "SelfWakePolicyWriteCall"
      ],
      "path": "src/code_run/types.rs",
@@ -10166,8 +10171,8 @@
      "surface": {
       "const": 2,
       "enum": 6,
-      "fn": 17,
-      "struct": 24,
+      "fn": 19,
+      "struct": 26,
       "trait": 2
      }
     },
@@ -14684,7 +14689,7 @@
      "path": "src/deletion/derived_rows.rs",
      "purpose": "Rows a record feeds outside the generic index set, torn with the record",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -15382,9 +15387,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -15450,7 +15455,7 @@
      "path": "src/dreamer_consolidation/persistence.rs",
      "purpose": "Persistent contradiction markers and prior-head context for consolidation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -15614,6 +15619,27 @@
      "surface": {
       "enum": 1,
       "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConflictSettleDecisions",
+      "ConflictSettleReceipt",
+      "ConflictSettlement",
+      "OpenConflict",
+      "ParkedConflictPass",
+      "SettledConflict"
+     ],
+     "path": "src/dreamer_consolidation/settle.rs",
+     "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
       "struct": 5
      }
     },
@@ -23399,7 +23425,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 9,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 3
@@ -24015,7 +24041,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 184,
+      "mod": 185,
       "re-export": 72
      }
     },
@@ -24433,7 +24459,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 10,
+      "const": 12,
       "fn": 1,
       "struct": 1
      }
@@ -24484,7 +24510,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 8,
+      "fn": 10,
       "struct": 9,
       "trait": 3
      }
@@ -24511,13 +24537,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionImage"
+     ],
+     "path": "src/llm/decision/media.rs",
+     "purpose": "Images a typed decision reads",
+     "surface": {
+      "const": 4,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -24768,6 +24808,7 @@
       "DecisionTime",
       "EvidenceVersion",
       "HumanAskReason",
+      "ImageBox",
       "PairedReading",
       "PersonChangedAnswer",
       "ProviderPin",
@@ -24781,8 +24822,8 @@
      "surface": {
       "crate-vis": 4,
       "enum": 8,
-      "fn": 6,
-      "struct": 10
+      "fn": 8,
+      "struct": 11
      }
     },
     {
@@ -25804,6 +25845,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/conflict_settle.rs",
+     "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25834,7 +25885,7 @@
      "purpose": "The read key a verified credential reads under",
      "surface": {
       "crate-vis": 5,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -26162,6 +26213,16 @@
      "surface": {
       "crate-vis": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/owner_door.rs",
+     "purpose": "The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -31754,6 +31815,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "IMessageTapback",
+      "IMessageTapbackInput",
+      "IMessageTapbackOperation",
+      "ReactionChannelCapability"
+     ],
+     "path": "src/reaction/channel_adapters.rs",
+     "purpose": "Channel-specific reaction forms",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/reaction/erase.rs",
      "purpose": "Reactions follow the room deletion doors: deleting a conversation record deletes the reaction claims about…",
@@ -31782,8 +31862,8 @@
      "path": "src/reaction/mod.rs",
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 8
      }
     },
     {
@@ -31802,6 +31882,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReactionMeaning",
+      "ReactionOutcome",
+      "ReactionOutcomeEvidence"
+     ],
+     "path": "src/reaction/outcomes.rs",
+     "purpose": "Interpreted reaction evidence for landing and commitment outcome bindings",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -31813,7 +31911,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -32017,7 +32115,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -32089,8 +32187,27 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 16,
-      "re-export": 9
+      "crate-vis": 17,
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContributionCheck",
+      "CreditOptions",
+      "PackAttributionFields",
+      "PackLearningContext",
+      "SkillContribution",
+      "UsedProvenanceEdge"
+     ],
+     "path": "src/receipt/pack_attribution.rs",
+     "purpose": "Frozen execution and actual-use facts on an attempt's pack receipt",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 6
      }
     },
     {
@@ -32226,6 +32343,22 @@
      "path": "src/recovery/canonical_tests.rs",
      "purpose": "Caller-visible canonical carry-list, bounded ladder and forward-rebuild laws",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactKind",
+      "CheckpointKey"
+     ],
+     "path": "src/recovery/checkpoint/artifact.rs",
+     "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
     },
     {
      "bucket": "L",
@@ -32478,8 +32611,8 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 12,
-      "re-export": 1,
+      "fn": 14,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -35140,12 +35273,40 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LateCreditReceipt",
+      "LateCreditShare"
+     ],
+     "path": "src/skill_attribution/late_credit.rs",
+     "purpose": "Late credit over the run's recorded, actually-used derived-from edges",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 6,
-      "re-export": 8
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnchoredPackOutcome"
+     ],
+     "path": "src/skill_attribution/pack_learning.rs",
+     "purpose": "The manifest-to-learning bridge",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -35185,7 +35346,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AttributionSweepReport",
@@ -40369,19 +40530,78 @@
      "surface": {
       "enum": 1,
       "fn": 6,
-      "re-export": 1,
+      "re-export": 4,
       "struct": 19
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorEntry",
+      "ConnectorListRequest",
+      "ConnectorNameRequest",
+      "ConnectorView",
+      "OutboundScheduleRequest"
+     ],
+     "path": "src/task_verb/sdk_connector.rs",
+     "purpose": "The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens…",
+     "surface": {
+      "fn": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 55
+      "fn": 69
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AiAnswer",
+      "AiCallRequest",
+      "AiOptions",
+      "AiOptionsRequest",
+      "AiPart",
+      "AiVideoCancelled",
+      "AiVideoJob",
+      "AiVideoJobRequest",
+      "AiVideoTicket",
+      "PackFileInput",
+      "PackPutOutcome",
+      "PackPutReceipt",
+      "PackPutRequest"
+     ],
+     "path": "src/task_verb/sdk_host.rs",
+     "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and the…",
+     "surface": {
+      "enum": 3,
+      "fn": 6,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DiaryEntryReceipt",
+      "DiaryEntryRequest",
+      "SteerReceipt",
+      "SteerRequest"
+     ],
+     "path": "src/task_verb/sdk_self.rs",
+     "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
+     "surface": {
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -41128,6 +41348,25 @@
       "enum": 1,
       "fn": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TypedBodyCommit",
+      "TypedBodyFork",
+      "TypedBodyHead",
+      "TypedBodyWriter",
+      "TypedForkState"
+     ],
+     "path": "src/typed_body.rs",
+     "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 11,
+      "struct": 4
      }
     },
     {
@@ -43162,7 +43401,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 3,
       "re-export": 13,
       "struct": 2
@@ -43318,15 +43557,16 @@
      "kind": "src",
      "notable": [
       "VaultKeyStatus",
+      "VaultKeyUnlock",
       "VaultKeyWrapInfo",
       "VaultKeyWrapKind"
      ],
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 13,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -44681,7 +44921,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45010,7 +45250,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45031,7 +45271,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 119,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45220,21 +45460,21 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
-     "files": 15,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -45402,7 +45642,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 14,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45507,9 +45747,9 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 81,
+     "files": 84,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
@@ -45575,6 +45815,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "—"
+    },
+    "typed_body": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
      "files": 29,
@@ -45649,7 +45896,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2742,
+   "source_files": 2756,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52072,7 +52319,7 @@
   "oneiron-llm-systemone": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SystemOneSeat"
@@ -52909,7 +53156,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 37
+      "fn": 51
      }
     },
     {
@@ -53752,13 +53999,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 38
+      "fn": 52
      }
     },
     {
@@ -53932,7 +54179,7 @@
     "agent_verbs": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "—"
     },
@@ -53972,7 +54219,7 @@
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
    "source_files": 11,
    "test_files": 8
@@ -55743,7 +55990,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 22
      }
     },
     {
@@ -56019,7 +56266,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -56030,6 +56277,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/host_doors.rs",
+     "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -56385,7 +56642,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/tasks_response.rs",
@@ -56560,6 +56817,16 @@
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/conflict_routes.rs",
+     "purpose": "`/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -57335,7 +57602,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/auth/slips.rs",
@@ -60454,6 +60721,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/media_embedding.rs",
+     "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -60470,7 +60747,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 3
      }
     },
@@ -61121,9 +61398,9 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 218,
+     "files": 220,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "HTTP query routes for web dashboard access"
     },
@@ -61317,7 +61594,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -61361,7 +61638,7 @@
    },
    "over_bar": 18,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 398,
+   "source_files": 401,
    "test_files": 182
   },
   "oneiron-spawn": {

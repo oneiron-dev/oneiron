@@ -1,6 +1,24 @@
+declare const ai: {
+  embed(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  image(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  options(input: { inputs?: string[]; operation?: string | null }): Promise<unknown>;
+  speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }) => Promise<unknown>) & {
+    cancel(input: { job: string }): Promise<unknown>;
+    poll(input: { job: string }): Promise<unknown>;
+  };
+};
 declare function ask(input: object): Promise<unknown>;
 declare function can(input: { ask: object }): Promise<unknown>;
 declare function cancel(input: { task_ref: string }): Promise<unknown>;
+declare const connector: {
+  list(input: { query?: string | null }): Promise<unknown>;
+  outbound: {
+    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
+  };
+  status(input: { name: string }): Promise<unknown>;
+};
 declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare namespace self {
@@ -23,12 +41,17 @@ declare namespace self {
   };
   const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
+  const memory: {
+    diary(input: { content: string; kind?: string | null }): Promise<unknown>;
+  };
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
+declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
+  refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { task_ref: string }): Promise<unknown>;
 };
 declare const vault: {
@@ -58,6 +81,9 @@ declare const vault: {
     namespaces(input: { limit?: number; max_depth?: number | null; offset?: number; prefix?: string[]; suffix?: string[] }): Promise<unknown>;
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
+  };
+  packs: {
+    put(input: { files: object[] }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { limit?: number | null }) => Promise<unknown>) & {

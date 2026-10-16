@@ -1,8 +1,8 @@
 //! The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`.
 
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionRung, ProviderPin, RemoteDecisionSeat, SeatAnswer,
-    SeatFuture, SeatRequest,
+    AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
+    RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRequest,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmUsage, RetryableLlmError};
 use serde::Deserialize;
@@ -10,6 +10,10 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const MAX_RESPONSE_BYTES: usize = 65_536;
+/// The wire's largest image side; a longer image is sent downscaled.
+const MAX_IMAGE_EDGE: u32 = 1_568;
+/// The wire's opt-in for images and Box questions, sent with every request that has one.
+const IMAGES_HEADER: &str = "TypeSafe-Danger-Zone-Images";
 
 /// Authenticated, exact-revision HTTP adapter. The host chooses the endpoint,
 /// credentials, and version; no model or question text is compiled into policy.
@@ -90,18 +94,44 @@ impl RemoteDecisionSeat for SystemOneSeat {
                     ("choice", Some(json!(map)))
                 }
                 AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
+                AnswerContract::Box => ("box", None),
             };
             let mut question = json!({"type":kind,"instructions":request.question.text});
             if let Some(criteria) = criteria {
                 question["criteria"] = criteria;
             }
-            let body =
-                json!({"model":model,"state":request.state,"questions":{"decision":question}});
-            let response = self
+            // Each image is an asset; its state field holds the asset's reference, which
+            // the question names in backticks.
+            let mut state = request.state.clone();
+            let mut assets = serde_json::Map::new();
+            for (index, image) in request.images.iter().enumerate() {
+                let fitted = image.fitted(MAX_IMAGE_EDGE)?;
+                let reference = format!("oneiron-image-{index}-{}", image.name);
+                state[image.name.as_str()] = json!(reference);
+                assets.insert(
+                    reference,
+                    json!({
+                        "type": "image",
+                        "format": image.format(),
+                        "data_base64": DecisionImage::base64(&fitted),
+                    }),
+                );
+            }
+            let images = !assets.is_empty() || kind == "box";
+            let mut body =
+                json!({"model":model,"state":state,"questions":{"decision":question}});
+            if !assets.is_empty() {
+                body["assets"] = Value::Object(assets);
+            }
+            let mut post = self
                 .client
                 .post(&self.endpoint)
                 .timeout(time_left)
-                .bearer_auth(&self.bearer)
+                .bearer_auth(&self.bearer);
+            if images {
+                post = post.header(IMAGES_HEADER, "true");
+            }
+            let response = post
                 .json(&body)
                 .send()
                 .await
@@ -248,6 +278,24 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
                 .and_then(Value::as_f64)
                 .ok_or_else(invalid)?;
             (DecisionAnswer::Score(mapped), p)
+        }
+        (AnswerContract::Box, "box") => {
+            // The wire always answers a box; a seat that reports the target absent
+            // answers null.
+            let found = match value.get("box").ok_or_else(invalid)? {
+                Value::Null => None,
+                edges => Some(
+                    serde_json::from_value::<ImageBox>(edges.clone()).map_err(|_| invalid())?,
+                ),
+            };
+            if found.is_some_and(|found| !found.is_valid()) {
+                return Err(invalid());
+            }
+            let p = value
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .ok_or_else(invalid)?;
+            (DecisionAnswer::Box(found), p)
         }
         _ => return Err(invalid()),
     };
