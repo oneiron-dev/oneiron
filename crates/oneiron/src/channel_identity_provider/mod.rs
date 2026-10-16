@@ -15,6 +15,7 @@ pub mod mailbox_cursor;
 mod shared_validate;
 mod slack_adapter;
 mod slack_validate;
+pub mod stalwart;
 #[cfg(test)]
 mod tests;
 
