@@ -14392,7 +14392,6 @@
      "kind": "src",
      "notable": [
       "CriticLens",
-      "CriticReliability",
       "CritiqueArtifact",
       "CritiqueArtifactStore",
       "CritiqueProvenance",
@@ -14400,20 +14399,18 @@
       "CritiqueTriage",
       "CritiqueTriageScores",
       "CritiqueVerdict",
-      "LensCatalog",
-      "ReliabilityOutcomeEvent",
-      "ReliabilityOutcomeSource"
+      "LensCatalog"
      ],
      "path": "src/critic.rs",
      "purpose": "Multi-critic review node primitives",
      "surface": {
-      "const": 5,
+      "const": 3,
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 22,
+      "enum": 2,
+      "fn": 14,
       "mod": 1,
-      "re-export": 1,
-      "struct": 9
+      "re-export": 3,
+      "struct": 7
      }
     },
     {
@@ -14433,8 +14430,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CriticReliability",
+      "ReliabilityOutcomeSource"
+     ],
+     "path": "src/critic/reliability.rs",
+     "purpose": "Read-only critic weights from the shared measured-state projector",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CriticReviewInput",
       "ReviewArtifactKind",
+      "ReviewCritic",
       "ReviewRequest",
       "ReviewResult"
      ],
@@ -14444,8 +14458,23 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 1,
-      "re-export": 2,
-      "struct": 3
+      "re-export": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CriticPrediction",
+      "ReviewDissent"
+     ],
+     "path": "src/critic/review/dissent.rs",
+     "purpose": "Testable overruled predictions: attributed opinions and bound standing questions, never critique claims",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -14453,19 +14482,20 @@
      "kind": "src",
      "notable": [],
      "path": "src/critic/review/outcomes.rs",
-     "purpose": "Anchored outcomes, Beta updates and repeat-finding reads",
+     "purpose": "Anchored review outcomes feed the shared measured-state projector",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -15273,7 +15303,7 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -15364,7 +15394,7 @@
      "path": "src/dreamer_consolidation/neighbourhood.rs",
      "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -15383,6 +15413,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/open_conflict.rs",
      "purpose": "A judge outage is an open question, persisted through the shared write gate",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/parallel.rs",
+     "purpose": "Read-only neighbourhood fan-out, followed by one parent-owned merge",
      "surface": {
       "crate-vis": 1
      }
@@ -15476,6 +15516,16 @@
      "purpose": "Actor- and branch-filtered graph/vector inputs for mechanical selection",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/slices.rs",
+     "purpose": "Read-only extraction children attenuated from one prepared branch",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -15781,6 +15831,16 @@
       "crate-vis": 14,
       "fn": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/watermark/codec.rs",
+     "purpose": "Codec for the exact consolidation cursor position",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -44579,7 +44639,7 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -44621,7 +44681,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 52,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45589,7 +45649,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2737,
+   "source_files": 2742,
    "test_files": 903
   },
   "oneiron-android": {

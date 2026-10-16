@@ -357,6 +357,7 @@ pub(crate) fn project_cell_in_txn(
 ///
 /// Storage errors; the first failing cell aborts the sweep.
 pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
+    crate::critic::review::project_all_review_dissent(vault, now)?;
     let digests: Vec<[u8; 32]> = {
         let rtxn = vault.store.env.read_txn()?;
         CELL.scan_keys(&vault.store, &rtxn, &[])?

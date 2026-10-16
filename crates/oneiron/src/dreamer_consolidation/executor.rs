@@ -6,8 +6,8 @@ mod merge_resolution;
 use merge_resolution::{MergeResolution, decode_merge_resolution};
 
 use super::evidence::{ExtractedCandidate, VerifiedCandidate, VerifiedEvidenceSet};
-use super::resources::{BranchResources, FallbackOutputPin};
-use super::roles::{DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
+use super::resources::BranchResources;
+use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
@@ -32,8 +32,7 @@ use crate::error::Result;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepEffectBinding, StepOutcome,
-    TierPrecedence, call_as_step, call_as_step_checked,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
@@ -76,7 +75,7 @@ pub struct ConsolidationExecutor<'a> {
 /// done) and no `ContradictionLeftStanding` gap is written from a merge that
 /// never decided. On resume the memoized steps replay and the attempt re-runs to a
 /// real decision (#485-1, #485-2).
-enum PartitionRun {
+pub(super) enum PartitionRun {
     Completed {
         candidates: Vec<VerifiedCandidate>,
     },
@@ -95,167 +94,13 @@ enum PartitionRun {
 }
 
 impl ConsolidationExecutor<'_> {
-    async fn run_partition_attempt(
-        &mut self,
-        payload_input: &Value,
-        resources: &BranchResources<'_>,
-        ctx: &WakeAttemptContext<'_>,
-        attempt_id: crate::attempt_queue::AttemptId,
-        run_id: Option<String>,
-        charges: &mut StepChargeTally,
-    ) -> DurableStepResult<PartitionRun> {
-        let run_id_ref = run_id.as_ref();
-        let (partition, turn_ids, _watermark) = decode_partition_payload(payload_input)?;
-
-        resources.require_output(resources.scope())?;
-        resources.require_signals(resources.scope())?;
-        let transcript = resources.transcript(resources.scope(), &turn_ids)?;
-        // What this attempt lists stays what it listed first, so a replay
-        // meets its memoized answer.
-        super::neighbourhood::pin(ctx.vault, attempt_id, resources.known())?;
-
-        let step_ctx = DurableStepContext {
-            vault: ctx.vault,
-            attempt_id,
-            run_id: run_id_ref.cloned(),
-            envelope_actor: self.actor,
-            subject: partition.conversation_ref,
-            deadline: Some(ctx.deadline),
-            now_ms: ctx.now_ms,
-        };
-        let rules = failure_rules::load(ctx.vault)?;
-        let call = self.role(DREAMER_EXTRACTION_ROLE);
-        let mut request =
-            Self::extraction_request(&call, &partition, &transcript, &resources.request_scope())?;
-        if let Some(rules) = &rules {
-            rules.bind(Stage::Extraction, &mut request);
-        }
-        let mut request = ctx
-            .vault
-            .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)?
-            .into_request();
-        // The level is for the model and route the call goes out on.
-        super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
-        let step_hash = request.canonical_hash()?;
-        let outcome = call_as_step_checked(
-            &step_ctx,
-            call.backend,
-            self.guard,
-            request,
-            &extraction::check_extraction_reply,
-        )
-        .await;
-        let (response, failure_policy) = match outcome {
-            Ok(StepOutcome::Finished {
-                response,
-                failure_policy,
-                ..
-            }) => {
-                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
-                (response, failure_policy)
-            }
-            Ok(StepOutcome::Trapped { .. }) => return Ok(PartitionRun::Trapped),
-            Err(crate::llm::DurableStepError::SpentFinalizeRefused { usage }) => {
-                charges.record_usage(&usage);
-                return Ok(PartitionRun::Checkpoint);
-            }
-            // A reply that broke the contract is paid and not memoized: the
-            // attempt parks with its spend and asks again on resume.
-            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
-                charges.record_usage(&usage);
-                if ctx.deadline.in_finalize_window() {
-                    return Ok(PartitionRun::Checkpoint);
-                }
-                return Ok(PartitionRun::Refused {
-                    reason: format!("extraction reply refused: {}", errors.join("; ")),
-                });
-            }
-            Err(error) => return Err(error),
-        };
-        if ctx.deadline.expired() {
-            return Ok(PartitionRun::Checkpoint);
-        }
-        // H398: the rules in force NOW judge the reply, not the copy bound to
-        // the request; a claim retracted while the call ran takes its rules
-        // with it.
-        let rules = failure_rules::load(ctx.vault)?;
-        // Both resident policies restrict a fallback: the step-level failure
-        // class must permit consolidation AND the Dreamer stage rule must
-        // accept the deterministic response. Neither is a Gate bypass.
-        let accepted = failure_policy.is_none_or(|decision| {
-            decision.consolidation_with_stage(
-                rules
-                    .as_ref()
-                    .map(|rules| rules.accepts(Stage::Extraction, &response)),
-            )
-        });
-        if accepted && failure_policy.is_some() {
-            resources.bind_fallback(FallbackOutputPin::new(
-                StepEffectBinding {
-                    attempt_id,
-                    step_hash,
-                },
-                &response,
-            )?)?;
-        }
-        let candidates = if accepted {
-            Self::decode_candidates(
-                &partition,
-                &response,
-                resources,
-                resources.scope(),
-                attempt_id,
-                ctx.now_ms,
-            )?
-        } else {
-            Vec::new()
-        };
-        resources.require_output(resources.scope())?;
-        if ctx.deadline.expired() {
-            return Ok(PartitionRun::Checkpoint);
-        }
-        #[cfg(test)]
-        if accepted {
-            ctx.vault
-                .test_hooks()
-                .run_before_dreamer_person_mint(ctx.vault);
-        }
-        let mint = if accepted {
-            super::extracted_people::mint_extracted_people(
-                ctx.vault,
-                &response,
-                &turn_ids,
-                resources.scope(),
-                ctx.now_ms,
-                Some(ctx.deadline),
-                Some(&resources.write_fence()),
-            )
-        } else {
-            Ok(())
-        };
-        if let Err(error) = mint {
-            if ctx.deadline.expired() {
-                return Ok(PartitionRun::Checkpoint);
-            }
-            return Err(error.into());
-        }
-        self.resolve_conflicts(
-            candidates,
-            resources,
-            ctx,
-            attempt_id_for_steps(attempt_id, run_id_ref),
-            charges,
-        )
-        .await
-    }
-
     /// Scoped LLM merge over conflicting sets — ONLY conflicting sets. One
     /// `call_as_step` per set with the pinned outcome vocabulary:
     /// `merge` (one merged value) | `supersede` (single prior head — with no
     /// prior in scope it degrades to merge) | `accumulate` (multi-value
     /// predicates keep all) | `escalate` (drop the set to the gap queue as
     /// `ContradictionLeftStanding`; contradictions never land silently).
-    async fn resolve_conflicts(
+    pub(super) async fn resolve_conflicts(
         &mut self,
         candidates: Vec<ExtractedCandidate>,
         resources: &BranchResources<'_>,
@@ -494,7 +339,7 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// Where `role`'s calls go in this executor.
-    fn role(&self, role: crate::llm::manifest::ModelRole) -> RoleCall<'_> {
+    pub(super) fn role(&self, role: crate::llm::manifest::ModelRole) -> RoleCall<'_> {
         RoleCall::resolve(
             &self.roles,
             role,
@@ -710,13 +555,6 @@ fn contradiction_gap(
         },
         combined,
     ))
-}
-
-fn attempt_id_for_steps(
-    attempt_id: crate::attempt_queue::AttemptId,
-    run_id: Option<&String>,
-) -> (crate::attempt_queue::AttemptId, Option<String>) {
-    (attempt_id, run_id.cloned())
 }
 
 impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
@@ -943,9 +781,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             }
             // The step layer already parked the trapped attempt; Park it for resume
             // WITHOUT accepting candidates or completing it (#485-1, #485-2).
-            Ok(PartitionRun::Trapped) => Ok(DreamerAttemptExecution::Park {
-                reason: "durable step trapped for resume".to_owned(),
-            }),
+            Ok(PartitionRun::Trapped) => Ok(charges.park("durable step trapped for resume")),
             Err(crate::llm::DurableStepError::DeadlineHardCut) => {
                 Ok(DreamerAttemptExecution::Park {
                     reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
