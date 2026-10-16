@@ -255,7 +255,7 @@ impl EngineNativeExecutor<'_> {
         host.extend(newest.map(|row| row.summary_id()));
         let (sources, request_id) = match &self.storage {
             crate::code_run::ExecutorStorage::Canonical(vault) => {
-                let rtxn = vault.store.env.read_txn()?;
+                let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
                 (
                     super::compaction::served_sources(&vault.store, &rtxn, calls, host)?,
                     vault.store.clock.entity_id()?,
