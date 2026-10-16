@@ -4,7 +4,7 @@
 //! a document, a sheet, a deck or an image; bodies and fidelity rules stay per
 //! kind. This module names the kinds and reads the contract's common views.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::edit_roundtrip::OfficeFormat;
@@ -18,7 +18,7 @@ use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
 use super::versions::BlobArtifactVersion;
 
 /// One kind of the artifact family. A kind is a body plus its fidelity rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
     /// docx and friends.
@@ -67,13 +67,13 @@ impl ArtifactKind {
 }
 
 /// One version as the family contract shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactVersionView {
     pub version: u64,
     pub content_hash: String,
     pub parent_version: Option<u64>,
     pub fork_of_version: Option<u64>,
-    pub provenance: &'static str,
+    pub provenance: String,
     pub run_ref: Option<String>,
     pub created_at: u64,
     pub export_name: String,
@@ -89,7 +89,7 @@ impl From<&BlobArtifactVersion> for ArtifactVersionView {
             content_hash: hash_hex(&version.content_hash),
             parent_version: version.parent_version,
             fork_of_version: version.fork_of_version,
-            provenance: version.provenance.as_str(),
+            provenance: version.provenance.as_str().to_owned(),
             run_ref: version.provenance.run_ref().map(str::to_owned),
             created_at: version.created_at,
             export_name: version.export_name.clone(),
@@ -102,7 +102,7 @@ impl From<&BlobArtifactVersion> for ArtifactVersionView {
 
 /// One blob artifact as the family contract shows it: its kind, its body's
 /// name and type, its head, and its whole version tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactView {
     pub artifact_id: EntityId,
     pub kind: ArtifactKind,

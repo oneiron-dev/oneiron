@@ -488,6 +488,213 @@
       }
     },
     {
+      "name": "vault.artifacts.view",
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Option<crate::blob_artifact::ArtifactView>",
+      "call": "memory.artifacts_view(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// One artifact's kind, head and versions, each with its made_by and born-from.\n",
+          "ts": "/** One artifact's kind, head and versions, each with its made_by and born-from. */",
+          "py": "One artifact's kind, head and versions, each with its made_by and born-from."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.export",
+      "input": "crate::blob_artifact::ArtifactExportRequest",
+      "output": "Option<crate::blob_artifact::ArtifactExportFile>",
+      "call": "memory.artifacts_export(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// One version's export file (base64), with its pinned name and media type.\n",
+          "ts": "/** One version's export file (base64), with its pinned name and media type. */",
+          "py": "One version's export file (base64), with its pinned name and media type."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.born_from",
+      "input": "crate::blob_artifact::BornFromRequest",
+      "output": "crate::blob_artifact::BornFromView",
+      "call": "memory.artifacts_born_from(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The artifacts and versions a task, ask, run, skill or agent run produced.\n",
+          "ts": "/** The artifacts and versions a task, ask, run, skill or agent run produced. */",
+          "py": "The artifacts and versions a task, ask, run, skill or agent run produced."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.proposals",
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Vec<crate::edit_settle::PendingProposalView>",
+      "call": "memory.artifacts_proposals(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The proposals waiting beside one artifact for Keep or Discard.\n",
+          "ts": "/** The proposals waiting beside one artifact for Keep or Discard. */",
+          "py": "The proposals waiting beside one artifact for Keep or Discard."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.propose_deck",
+      "input": "crate::blob_artifact::DeckProposeRequest",
+      "output": "crate::blob_artifact::DeckProposeOutcome",
+      "call": "memory.artifacts_propose_deck(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Runs one native deck transaction over the head and holds the proposal for Keep.\n",
+          "ts": "/** Runs one native deck transaction over the head and holds the proposal for Keep. */",
+          "py": "Runs one native deck transaction over the head and holds the proposal for Keep."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.propose_output",
+      "input": "crate::blob_artifact::NativeOutputRequest",
+      "output": "crate::edit_settle::PendingProposalView",
+      "call": "memory.artifacts_propose_output(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Offers one native organ result as the artifact's next version, held for Keep.\n",
+          "ts": "/** Offers one native organ result as the artifact's next version, held for Keep. */",
+          "py": "Offers one native organ result as the artifact's next version, held for Keep."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.keep",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::KeptProposal",
+      "call": "memory.artifacts_keep(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Keeps one waiting proposal as a new version, once, with its receipt.\n",
+          "ts": "/** Keeps one waiting proposal as a new version, once, with its receipt. */",
+          "py": "Keeps one waiting proposal as a new version, once, with its receipt."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.discard",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::DiscardedProposal",
+      "call": "memory.artifacts_discard(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Discards one waiting proposal, once, with its receipt.\n",
+          "ts": "/** Discards one waiting proposal, once, with its receipt. */",
+          "py": "Discards one waiting proposal, once, with its receipt."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.undo",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::UndoneKeep",
+      "call": "memory.artifacts_undo(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Undoes one Keep with a new version; the settle stays consumed.\n",
+          "ts": "/** Undoes one Keep with a new version; the settle stays consumed. */",
+          "py": "Undoes one Keep with a new version; the settle stays consumed."
+        }
+      }
+    },
+    {
       "name": "can",
       "input": "crate::task_verb::sdk::TaskCanAskRequest",
       "output": "crate::task_verb::TaskAskPreflight",
