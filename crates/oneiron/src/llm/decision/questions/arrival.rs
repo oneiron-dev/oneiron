@@ -182,6 +182,12 @@ fn project(
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if !crate::claim::claim_consolidatable(&body)
             || !crate::claim::claim_evidence_admissible(&body)
+            || !crate::gate::claim_consolidation_eligible_in_txn(
+                store,
+                txn,
+                id,
+                crate::gate::ConsolidationReader::ArrivalFact,
+            )?
         {
             continue;
         }
@@ -284,6 +290,12 @@ pub(super) fn evaluate_fact(
         || !record.definition.units.contains(&answer.unit)
         || !crate::claim::claim_consolidatable(body)
         || !crate::claim::claim_evidence_admissible(body)
+        || !crate::gate::claim_consolidation_eligible_in_txn(
+            store,
+            txn,
+            &fact.id,
+            crate::gate::ConsolidationReader::ArrivalFact,
+        )?
     {
         return Ok(None);
     }
@@ -353,6 +365,14 @@ pub(super) fn evaluate_fact(
         || prediction.predicate != "judgment.answer"
         || prediction.subject != ClaimSubject::Entity(answer.unit)
         || prediction.value != expected
+        // The answer is a claim input too: matching its recorded value is not
+        // its owner's Clear.
+        || !crate::gate::claim_consolidation_eligible_in_txn(
+            store,
+            txn,
+            &answer.claim,
+            crate::gate::ConsolidationReader::AnswerPrediction,
+        )?
     {
         return Ok(None);
     }

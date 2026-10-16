@@ -407,7 +407,7 @@ pub(super) fn materialize_edges_from_delta(
                     // heed read error) aborts the batch. An `x:` row for our
                     // own defect would be permanent false evidence against the
                     // peer.
-                    match crate::batch::validate_facet_of_edge(
+                    match crate::batch::validate_replayed_facet_of_edge(
                         &vault.store,
                         &*wtxn,
                         src,

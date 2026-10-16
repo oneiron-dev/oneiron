@@ -184,88 +184,7 @@ fn pending_critical_confirms_sweep_bounded_pages_and_demotes_every_expired_claim
     Ok(())
 }
 
-pub(super) fn critical_confirm_owner_entry(
-    pending: &PendingGateConsentRecord,
-    disposition: crate::authority::CriticalWriteConfirmDisposition,
-    seed: u8,
-) -> (
-    crate::authority::AuthorityLogEntry,
-    crate::authority::AuthorityLogEntry,
-) {
-    use crate::authority::{
-        AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-        AuthorityTier, CriticalWriteConfirmAction, CriticalWriteConfirmMethod, DeviceAuthority,
-        ROLE_ADMIN, ROLE_OWNER,
-    };
-    use ed25519_dalek::{Signer, SigningKey};
-
-    let signing = SigningKey::from_bytes(&[seed; 32]);
-    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
-    let sign = |mut entry: AuthorityLogEntry| {
-        let transcript =
-            crate::authority::authority_transcript(&entry).expect("authority transcript");
-        entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
-        entry
-    };
-    let genesis = sign(AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: None,
-        seq: 0,
-        parent_hashes: Vec::new(),
-        op: AuthorityOp::Genesis {
-            device: DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [7; 32],
-                attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: AuthorityTier::Software,
-                roles: ROLE_OWNER | ROLE_ADMIN,
-            },
-            genesis_nonce: [seed.wrapping_add(1); 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
-        },
-        signer: AuthoritySignature {
-            suite: key.suite(),
-            public_key: key.clone(),
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: 1,
-    });
-    let binding = critical_write_confirm_binding(pending).expect("critical pending binding");
-    let confirmation = sign(AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(crate::authority::genesis_vault_id(&genesis).expect("vault id")),
-        seq: 1,
-        parent_hashes: vec![
-            crate::authority::authority_entry_hash(&genesis).expect("genesis hash"),
-        ],
-        op: AuthorityOp::CriticalWriteConfirm(CriticalWriteConfirmAction {
-            schema_version: crate::authority::CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION,
-            confirm_id: binding.confirm_id,
-            gate_decision_id: binding.gate_decision_id.as_bytes(),
-            claim_id: binding.claim_id,
-            effect_digest: binding.effect_digest,
-            read_frontier_hash: binding.read_frontier_hash,
-            nonce: binding.nonce,
-            expires_at: binding.expires_at,
-            disposition,
-            method: CriticalWriteConfirmMethod::TokenReauth,
-        }),
-        signer: AuthoritySignature {
-            suite: key.suite(),
-            public_key: key,
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: 2,
-    });
-    (genesis, confirmation)
-}
+pub(super) use crate::test_util::critical_confirm_owner_entry;
 
 pub(super) fn put_critical_auto_claim(
     vault: &crate::Vault,
@@ -287,6 +206,58 @@ pub(super) fn put_critical_auto_claim(
             .pending_gate_consent_in_txn(wtxn, &claim)?
             .ok_or(Error::EntityNotFound)
     })
+}
+
+/// Security pack 2, F14 H244 (narrowed): a critical write commits `Auto` with
+/// its owner confirmation attached and stays retrieval-visible, but nothing
+/// consolidates it until the owner clears it (ARCH-0026 §G3). After expiry it
+/// follows the sweep, which demotes it.
+#[test]
+fn an_unconfirmed_critical_claim_is_read_but_never_consolidated() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x8c);
+    let pending = put_critical_auto_claim(&vault, claim)?;
+    let body = stored_claim_body(&vault, &claim)?;
+    assert_eq!(body.approval, ClaimApprovalStatus::Auto);
+    assert!(
+        crate::claim::claim_surfaceable(&body),
+        "retrieval still sees it"
+    );
+    assert!(
+        vault.consolidate_claim_vad_now(&claim, 10).is_err(),
+        "FAILBEFORE H244 narrowed: an unconfirmed critical claim was consolidated"
+    );
+
+    // The owner clears it, and only then does it consolidate.
+    let binding = critical_write_confirm_binding(&pending)?;
+    let (genesis, clear) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Clear,
+        0x8c,
+    );
+    vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (clear, test_time(2), 2)])?;
+    assert_eq!(
+        vault.settle_critical_write_confirm(binding.confirm_id)?,
+        CriticalWriteConfirmResolution::Cleared
+    );
+    vault.consolidate_claim_vad_now(&claim, 11)?;
+
+    // One its owner never answers times out: the sweep demotes it, and it is
+    // still never consolidated.
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x8d);
+    let pending = put_critical_auto_claim(&vault, claim)?;
+    vault.expire_critical_write_confirms_at(
+        pending
+            .created_at
+            .saturating_add(CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS),
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &claim)?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(vault.consolidate_claim_vad_now(&claim, 12).is_err());
+    Ok(())
 }
 
 #[test]
@@ -356,10 +327,12 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
     )?;
     doc.commit();
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
-    assert!(
-        vault
-            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
-            .is_none(),
+    let reopened = vault
+        .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+        .expect("the owner's item for the changed revision");
+    assert_ne!(
+        critical_write_confirm_binding(&reopened)?.confirm_id,
+        binding.confirm_id,
         "changed replay must atomically invalidate the persisted attachment"
     );
     assert_eq!(
@@ -394,6 +367,11 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
         vault.get_claim(&claim)?.expect("changed claim").approval,
         ClaimApprovalStatus::Proposed
     );
+    assert_eq!(
+        vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
+        Some(reopened),
+        "a stale Clear leaves the owner's item for the changed revision"
+    );
     Ok(())
 }
 
@@ -419,10 +397,14 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
             &replacement_data,
         )
         .commit()?;
-    assert!(
-        vault
-            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
-            .is_none(),
+    assert_ne!(
+        critical_write_confirm_binding(
+            &vault
+                .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+                .expect("the owner's item for the replicated revision"),
+        )?
+        .confirm_id,
+        binding.confirm_id,
         "the replicated door must invalidate in its overwrite transaction"
     );
     assert!(

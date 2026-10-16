@@ -407,3 +407,172 @@ fn verified_effect_chokepoint_rejects_deleted_owner_even_on_frozen_pick_retry() 
         assert_eq!(sink.calls.len(), count);
     }
 }
+
+#[test]
+fn a_held_status_head_still_competes_and_never_confirms_an_affected_booking() {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    page(&vault, PAGE, OWNER);
+    let contested = book(&vault, PAGE, NOW + 3_600).calendar.event_ref;
+    let unconfirmed = book(&vault, PAGE, NOW + 5_400).calendar.event_ref;
+    // A Cancel takes held facts as they stand; any other action does not.
+    let req = logged_update(&vault);
+    assert_eq!(
+        enumerate_affected_bookings(&vault, &req, NOW)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let value = rmp_serde::to_vec_named(&BookingStatusValue {
+        status: BookingStatus::Cancelled,
+        recorded_at: NOW,
+    })
+    .unwrap();
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(value)).unwrap();
+    let cancel = EntityId::now();
+    vault
+        .put_claim(
+            &cancel,
+            &ClaimBody::new(
+                BOOKING_STATUS_PREDICATE,
+                ClaimSubject::Entity(contested),
+                value,
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+            .unwrap(),
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+        )
+        .unwrap();
+    crate::test_util::hold_claim_for_critical_confirm(&vault, cancel, 0x81);
+    let confirmed = status_head(&vault, unconfirmed);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, confirmed, 0x82);
+
+    let mut refusals = Vec::new();
+    assert!(
+        enumerate_with_refusals(&vault, &req, NOW, &mut refusals)
+            .unwrap()
+            .is_empty()
+    );
+    // The held cancellation still competes with the settled Confirmed head;
+    // the held Confirmed head is skipped, never enumerated.
+    let refused: Vec<_> = refusals.iter().map(|(event, _)| *event).collect();
+    assert_eq!(refused, vec![contested]);
+}
+
+#[test]
+fn a_lone_held_confirmed_status_still_lets_the_booking_be_cancelled() {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    page(&vault, PAGE, OWNER);
+    let receipt = book(&vault, PAGE, NOW + 3_600);
+    let event = receipt.calendar.event_ref;
+    let confirmed = status_head(&vault, event);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, confirmed, 0x83);
+    assert!(crate::booking::lifecycle::confirmed_start_for_reminder(&vault, &event).is_err());
+
+    let slot = TimeRange {
+        start: NOW + 3_600,
+        end: NOW + 5_400,
+    };
+    let cancelled = run(
+        &vault,
+        BookingVerbRequest::Cancel(CancelSpec {
+            token: receipt.cancel_token,
+            idempotency_key: None,
+        }),
+        slot,
+    );
+    assert!(matches!(cancelled, BookingVerbReceipt::Cancelled(_)));
+    assert_eq!(live_status(&vault, event), Some(BookingStatus::Cancelled));
+    assert_eq!(
+        crate::booking::lifecycle::confirmed_start_for_reminder(&vault, &event).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn an_emergency_cancel_reaches_a_lone_held_confirmed_booking_and_an_update_does_not() {
+    let (_dir, vault, receipt, plan) = executable(EmergencyActionPolicy::Cancel);
+    let event = receipt.calendar.event_ref;
+    let update = logged_update(&vault);
+    let affected = |request: &EmergencyRescheduleRequest| {
+        enumerate_affected_bookings(&vault, request, NOW)
+            .unwrap()
+            .iter()
+            .map(|booking| booking.calendar.event_ref)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(affected(&update), vec![event]);
+
+    let held = status_head(&vault, event);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, held, 0x84);
+    assert!(affected(&update).is_empty());
+    assert_eq!(affected(&plan.request), vec![event]);
+    crate::booking::lifecycle::commit_emergency_item(
+        &vault,
+        &plan,
+        &calendars(),
+        &consumer(&vault, NOW),
+    )
+    .unwrap();
+    assert_eq!(live_status(&vault, event), Some(BookingStatus::Cancelled));
+    // Closing the held head is not the owner's answer: its tray row goes, as a
+    // retraction's does, and it stays held until the owner answers.
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert!(
+        vault
+            .store
+            .pending_gate_consent_in_txn(&rtxn, &held)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &held).unwrap()
+    );
+}
+
+/// The booking's one live status head.
+fn status_head(vault: &Vault, event: EntityId) -> EntityId {
+    vault
+        .claims_for_subject(&event)
+        .unwrap()
+        .into_iter()
+        .find(|claim| {
+            vault
+                .get_claim(claim)
+                .unwrap()
+                .is_some_and(|body| body.predicate == BOOKING_STATUS_PREDICATE)
+        })
+        .unwrap()
+}
+
+fn live_status(vault: &Vault, event: EntityId) -> Option<BookingStatus> {
+    super::super::enumeration::live_fact::<BookingStatusValue>(
+        vault,
+        event,
+        BOOKING_STATUS_PREDICATE,
+    )
+    .unwrap()
+    .map(|(value, _)| value.status)
+}
+
+/// A logged owner instruction that asks for an update, not a cancel.
+fn logged_update(vault: &Vault) -> EmergencyRescheduleRequest {
+    let mut req = request();
+    req.action_policy = EmergencyActionPolicy::RequestUpdate;
+    req.authority = append_owner_instruction(
+        vault,
+        req.owner_ref,
+        req.affected_window,
+        &req.reason,
+        req.action_policy,
+        NOW,
+    )
+    .unwrap();
+    req
+}

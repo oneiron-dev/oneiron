@@ -596,6 +596,21 @@ pub(crate) fn skill_scan_verdicts_for_content_hash_in_store(
     rtxn: &heed::RoTxn<'_>,
     content_hash: SkillContentHash,
 ) -> Result<Vec<ClaimBody>> {
+    Ok(
+        skill_scan_verdict_heads_for_content_hash_in_store(store, rtxn, content_hash)?
+            .into_iter()
+            .map(|(_, body)| body)
+            .collect(),
+    )
+}
+
+/// [`skill_scan_verdicts_for_content_hash_in_store`] with each verdict's claim
+/// id, for a reader that asks whether the verdict may be consolidated.
+pub(crate) fn skill_scan_verdict_heads_for_content_hash_in_store(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    content_hash: SkillContentHash,
+) -> Result<Vec<(EntityId, ClaimBody)>> {
     let hash_hex = content_hash.to_hex();
     let anchor = skill_content_anchor_entity_id(content_hash)?;
 
@@ -630,7 +645,7 @@ pub(crate) fn skill_scan_verdicts_for_content_hash_in_store(
             && body.lifecycle == ClaimLifecycleStatus::Active
             && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
         {
-            rows.push(body);
+            rows.push((claim_id, body));
         }
     }
     Ok(rows)

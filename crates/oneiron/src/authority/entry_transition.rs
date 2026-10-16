@@ -17,12 +17,26 @@ pub(in crate::authority) enum EntryFold {
     Invalid(AuthorityFoldIssue),
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The rows this thread's folds transition, in order, while a test
+    /// watches (Some).
+    pub(super) static TRANSITIONED_FOR_TEST: std::cell::RefCell<Option<Vec<AuthorityEntryHash>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 pub(super) fn fold_entry_state(
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     context: FoldContext<'_>,
 ) -> EntryFold {
+    #[cfg(test)]
+    TRANSITIONED_FOR_TEST.with(|rows| {
+        if let Some(rows) = rows.borrow_mut().as_mut() {
+            rows.push(hash);
+        }
+    });
     if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }

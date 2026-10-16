@@ -259,6 +259,7 @@ fn load_public_booking_page_in_txn(
         || validate_public_booking_page_claim(&body).is_err()
         || body.valid_from.is_none_or(|start| now < start)
         || body.valid_to.is_none_or(|end| now >= end)
+        || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &id)?
     {
         return Ok(None);
     }
