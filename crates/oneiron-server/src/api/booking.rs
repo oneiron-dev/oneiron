@@ -470,7 +470,6 @@ pub(crate) async fn execute_booking_operation(
             break (now, disposition);
         }
     };
-    drop(turn);
     if let Some(response) = admission_short_circuit(&request, disposition)? {
         tracing::debug!(
             transport = transport.transport.as_str(),
