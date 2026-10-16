@@ -2,7 +2,7 @@
 use super::memories::{MemoriesSection, MemoryRow, MemorySource, MemoryTier};
 use super::memories_projection::{finish_projection, foreign_row, memory_asset_ref, memory_slot};
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
-use crate::{EntityId, Result};
+use crate::Result;
 impl MemoriesSection {
     /// Pins are engine-issued short references already selected by the caller.
     /// Each read still resolves the actor ceiling and returns its mandatory receipt.
@@ -24,7 +24,7 @@ impl MemoriesSection {
         disclosure: Option<&crate::disclosure::DisclosureContext>,
     ) -> Result<Vec<ScopedReadReceipt>> {
         let mut receipts = Vec::with_capacity(references.len());
-        let mut pins = std::collections::BTreeSet::<EntityId>::new();
+        let mut pins = std::collections::BTreeSet::<String>::new();
         for reference in references {
             let (short_id, hash) =
                 reference
@@ -39,93 +39,125 @@ impl MemoriesSection {
             }
             let hash = u8::from_str_radix(hash, 16)
                 .map_err(|_| crate::Error::InvalidConfig("invalid memory pin hash".into()))?;
-            // The revision is taken in the read's own snapshot, so a board
-            // history records the text this pin served, not a later edit.
-            let hydrated =
-                reader.read_projected(&[PointRead::short(short_id, hash)], None, |txn, rows| {
-                    let row = rows.into_iter().next().flatten();
-                    let revision = match &row {
-                        Some(row) => crate::vault::entity_revision::revision_for_mode_in_txn(
-                            &reader.vault().store,
-                            txn,
-                            &row.id,
-                            crate::vault::ReadMode::Live,
-                        )?,
-                        None => None,
-                    };
-                    Ok::<_, crate::Error>((row, revision))
-                })?;
-            let mut receipt = hydrated.receipt;
-            let (hydrated, source_revision) = hydrated.value;
-            let Some(hydrated) = hydrated else {
-                receipts.push(receipt);
-                continue;
-            };
-            let Some(body) = hydrated.body else {
-                receipts.push(receipt);
-                continue;
-            };
-            if !pins.insert(hydrated.id) {
-                receipts.push(receipt);
-                continue;
-            }
-            let claim = if hydrated.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                Some(decode_claim_body(&body, true)?)
-            } else {
-                None
-            };
-            if let Some(disclosure) = disclosure {
-                let txn = reader.vault().store.env.read_txn()?;
-                if !disclosure.admits(
-                    &reader.vault().store,
-                    &txn,
-                    &hydrated.id,
-                    hydrated.entity_type,
-                    claim.as_ref(),
-                )? {
-                    receipt.add_suppressed(1);
-                    receipts.push(receipt);
-                    continue;
-                }
-            }
+            let (receipt, row) = pinned_row(
+                reader,
+                PointRead::short(short_id, hash),
+                Some((short_id, hash)),
+                disclosure,
+            )?;
             receipts.push(receipt);
-            let mut row = MemoryRow {
-                row_index: 0,
-                slot: memory_slot(hydrated.entity_type),
-                source: MemorySource::Result,
-                id: hydrated.id.to_hex(),
-                short_id: short_id.to_owned(),
-                content_hash: format!("{hash:02x}"),
-                entity_type: hydrated.entity_type,
-                asset_ref: memory_asset_ref(hydrated.entity_type, short_id, hash),
-                score: 0.0,
-                claim_source: claim.as_ref().and_then(|c| c.source),
-                world: claim.as_ref().and_then(|c| c.world).map(|id| id.to_hex()),
-                tier: MemoryTier::Pinned,
-                snippet: None,
-                source_revision,
-            };
-            if !foreign_row(&row)
-                && let Some(claim) = claim
-            {
-                // The MessagePack is read with the claim's other parts, and
-                // before and after the projection drops a float's width.
-                let value = if crate::batch::export::claim_reads_as_secret(&claim) {
-                    serde_json::Value::String("[redacted]".to_owned())
-                } else {
-                    crate::batch::export::served_messagepack_json(claim.value)
-                };
-                row.snippet = Some(value.to_string());
+            if let Some(row) = row.filter(|row| pins.insert(row.id.clone())) {
+                self.rows.retain(|old| old.id != row.id);
+                self.rows.push(row);
             }
-            self.rows.retain(|old| old.id != row.id);
-            self.rows.push(row);
         }
+        self.refinish();
+        Ok(receipts)
+    }
+
+    /// Re-runs the projection's ordering and budget over the current rows.
+    pub(super) fn refinish(&mut self) {
         *self = finish_projection(
             std::mem::take(&mut self.rows),
             self.budget,
             self.companion.clone(),
             self.disclosure.clone(),
         );
-        Ok(receipts)
     }
+}
+
+/// One pin's PINNED row, read under `reader`'s ceiling and `disclosure`'s
+/// clamp, or `None` when either withholds it. `short` is the engine-issued
+/// reference the pin named; an id pin takes the row's own. The receipt is
+/// returned either way.
+pub(super) fn pinned_row(
+    reader: &ScopedRead<'_>,
+    read: PointRead<'_>,
+    short: Option<(&str, u8)>,
+    disclosure: Option<&crate::disclosure::DisclosureContext>,
+) -> Result<(ScopedReadReceipt, Option<MemoryRow>)> {
+    // The revision is taken in the read's own snapshot, so a board history
+    // records the text this pin served, not a later edit.
+    let hydrated = reader.read_projected(&[read], None, |txn, rows| {
+        let row = rows.into_iter().next().flatten();
+        let Some(found) = &row else {
+            return Ok::<_, crate::Error>((None, None, None));
+        };
+        let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+            &reader.vault().store,
+            txn,
+            &found.id,
+            crate::vault::ReadMode::Live,
+        )?;
+        let short_id = match short {
+            Some((short_id, _)) => Some(short_id.to_owned()),
+            None => reader
+                .vault()
+                .store
+                .short_ids_reverse
+                .get(txn, found.id.as_bytes())?
+                .map(|raw| {
+                    crate::batch::parse_short_id_value(&raw).map(|(short_id, _)| short_id.to_owned())
+                })
+                .transpose()?,
+        };
+        Ok((row, revision, short_id))
+    })?;
+    let mut receipt = hydrated.receipt;
+    let (hydrated, source_revision, short_id) = hydrated.value;
+    let (Some(hydrated), Some(short_id)) = (hydrated, short_id) else {
+        return Ok((receipt, None));
+    };
+    let Some(body) = &hydrated.body else {
+        return Ok((receipt, None));
+    };
+    let hash = short.map_or(hydrated.content_hash, |(_, hash)| hash);
+    let claim = if hydrated.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        Some(decode_claim_body(body, true)?)
+    } else {
+        None
+    };
+    if let Some(disclosure) = disclosure {
+        let txn = reader.vault().store.env.read_txn()?;
+        if !disclosure.admits(
+            &reader.vault().store,
+            &txn,
+            &hydrated.id,
+            hydrated.entity_type,
+            claim.as_ref(),
+        )? {
+            receipt.add_suppressed(1);
+            return Ok((receipt, None));
+        }
+    }
+    let mut row = MemoryRow {
+        row_index: 0,
+        slot: memory_slot(hydrated.entity_type),
+        source: MemorySource::Result,
+        id: hydrated.id.to_hex(),
+        content_hash: format!("{hash:02x}"),
+        entity_type: hydrated.entity_type,
+        asset_ref: memory_asset_ref(hydrated.entity_type, &short_id, hash),
+        short_id,
+        score: 0.0,
+        claim_source: claim.as_ref().and_then(|c| c.source),
+        world: claim.as_ref().and_then(|c| c.world).map(|id| id.to_hex()),
+        tier: MemoryTier::Pinned,
+        snippet: None,
+        hook: None,
+        source_revision,
+    };
+    if !foreign_row(&row)
+        && let Some(claim) = claim
+    {
+        // The MessagePack is read with the claim's other parts, and
+        // before and after the projection drops a float's width.
+        let value = if crate::batch::export::claim_reads_as_secret(&claim) {
+            serde_json::Value::String("[redacted]".to_owned())
+        } else {
+            crate::batch::export::served_messagepack_json(claim.value)
+        };
+        row.snippet = Some(value.to_string());
+    }
+    Ok((receipt, Some(row)))
 }

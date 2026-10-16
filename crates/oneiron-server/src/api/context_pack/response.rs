@@ -381,6 +381,11 @@ pub(crate) async fn run_context_pack_builder(
                             core_engine_error("manifest pin disclosure failed", error)
                         })?,
                 );
+                pin_narrowing.extend(
+                    section
+                        .include_hook_pins(scoped_read, &request.hook_pins, disclosure.as_ref())
+                        .map_err(|error| core_engine_error("hook pin read failed", error))?,
+                );
             }
             let (cursor, observed) = advance_memories_cursor(
                 server,
