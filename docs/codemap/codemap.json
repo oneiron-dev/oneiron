@@ -5577,7 +5577,7 @@
      "path": "src/booking/lifecycle/confirmation_state.rs",
      "purpose": "The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -6478,7 +6478,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarInviteAdmission",
@@ -6488,7 +6488,7 @@
      "purpose": "UID-once/SEQUENCE admission and outbound passport state moves",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -6519,7 +6519,7 @@
      "path": "src/calendar/invite/mime.rs",
      "purpose": "iMIP MIME rendering and blob reads",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -6531,7 +6531,7 @@
      "path": "src/calendar/invite/mod.rs",
      "purpose": "Outbound iMIP invite adapter (CAL-04, ONE-1786)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -6546,10 +6546,20 @@
      "purpose": "Frozen five-field invite payload contract and its decoder",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/invite/publication.rs",
+     "purpose": "Calendar admission at the outbound publication writer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -6658,7 +6668,7 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7
      }
@@ -23024,6 +23034,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DefaultVaultInput",
+      "DefaultVaultItem"
+     ],
+     "path": "src/lens/default_vault.rs",
+     "purpose": "Renderer-neutral default vault composition over already-admitted projections",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GeneratedUiCard"
      ],
      "path": "src/lens/generated_ui/genui_card.rs",
@@ -23332,7 +23356,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -28045,7 +28069,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -28376,7 +28400,7 @@
      "path": "src/outbound_chokepoint/admission.rs",
      "purpose": "New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -40238,6 +40262,7 @@
      "purpose": "Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5)",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 21,
       "struct": 4
@@ -43551,7 +43576,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44167,7 +44192,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44841,7 +44866,7 @@
    },
    "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2690,
+   "source_files": 2692,
    "test_files": 903
   },
   "oneiron-android": {

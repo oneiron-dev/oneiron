@@ -492,7 +492,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/invite_grant/tests/mod.rs` | test | L | — | — | Lane tests for the booking page's standing invite grant |
 | `src/booking/invite_grant/types.rs` | src | s | 3 struct · 1 crate-vis | BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest | Caller-facing shapes for the booking page's standing invite grant |
 | `src/booking/lifecycle/claim.rs` | src | m | 1 struct · 6 fn · 11 crate-vis | BookingConfirmationContext | Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and… |
-| `src/booking/lifecycle/confirmation_state.rs` | src | s | 3 crate-vis | — | The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's… |
+| `src/booking/lifecycle/confirmation_state.rs` | src | s | 4 crate-vis | — | The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's… |
 | `src/booking/lifecycle/door.rs` | src | m | 2 struct · 1 enum · 5 fn | BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest | The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run… |
 | `src/booking/lifecycle/emergency.rs` | src | m | 5 crate-vis | — | BK-09's emergency-reschedule transitions: the home-node guard, the durable pick row, and the commit that… |
 | `src/booking/lifecycle/hold_source.rs` | src | s | 1 struct · 2 fn | VaultActiveHoldSource | The vault-backed [`ActiveHoldSource`] the solver asks for live holds, with the self-exclusion a confirm needs |
@@ -563,11 +563,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/ingest/mod.rs` | src | s | 3 re-export · 7 crate-vis | — | ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784) |
 | `src/calendar/ingest/poll.rs` | src | m | 4 struct · 1 enum · 7 fn · 1 const | IcsFeedCursorSnapshot, IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsPollRunState | ICS feed poll queue, cursor store, and poll runner |
 | `src/calendar/ingest/property_claims.rs` | src | s | 3 crate-vis | — | Shared ICS-poll and connector property admission through their existing gates |
-| `src/calendar/invite/admission.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 const · 3 crate-vis | CalendarInviteAdmission, CalendarInviteStateChange | UID-once/SEQUENCE admission and outbound passport state moves |
+| `src/calendar/invite/admission.rs` | src | m | 1 struct · 1 enum · 5 fn · 1 const · 5 crate-vis | CalendarInviteAdmission, CalendarInviteStateChange | UID-once/SEQUENCE admission and outbound passport state moves |
 | `src/calendar/invite/hygiene.rs` | src | m | 1 struct · 1 enum · 6 fn · 8 crate-vis | CalendarInviteConsentBasis, CalendarInviteHygieneContext | Vault-hydrated consent evidence and sending-identity reads |
-| `src/calendar/invite/mime.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | CalendarInviteMimePart | iMIP MIME rendering and blob reads |
-| `src/calendar/invite/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | Outbound iMIP invite adapter (CAL-04, ONE-1786) |
-| `src/calendar/invite/payload.rs` | src | s | 1 struct · 1 enum · 3 fn · 5 const · 1 crate-vis | CalendarInviteMethod, CalendarInvitePayload | Frozen five-field invite payload contract and its decoder |
+| `src/calendar/invite/mime.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | CalendarInviteMimePart | iMIP MIME rendering and blob reads |
+| `src/calendar/invite/mod.rs` | src | s | 4 re-export · 5 crate-vis | — | Outbound iMIP invite adapter (CAL-04, ONE-1786) |
+| `src/calendar/invite/payload.rs` | src | s | 1 struct · 1 enum · 3 fn · 5 const · 2 crate-vis | CalendarInviteMethod, CalendarInvitePayload | Frozen five-field invite payload contract and its decoder |
+| `src/calendar/invite/publication.rs` | src | s | 1 crate-vis | — | Calendar admission at the outbound publication writer |
 | `src/calendar/invite/tests/faceted_sender.rs` | test | s | — | — | — |
 | `src/calendar/invite/tests/mod.rs` | test | m | — | — | — |
 | `src/calendar/invite/tests/pending_passport.rs` | test | s | — | — | A pending `calendar.passport` never picks the EVENT an invite binds to |
@@ -576,7 +577,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/origin/tests.rs` | test | m | — | — | — |
 | `src/calendar/outcome.rs` | src | m | 6 struct · 5 enum · 17 fn · 3 const · 1 crate-vis | CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue +3 | CAL-07 event outcome: evidence ladder, outcome head, post-end check-in |
 | `src/calendar/outcome/conditional.rs` | src | s | 2 crate-vis | — | — |
-| `src/calendar/passport.rs` | src | m | 1 enum · 7 fn · 7 crate-vis | PassportDecision | UID-first passport index and feed diff (CAL-02, ONE-1784) |
+| `src/calendar/passport.rs` | src | m | 1 enum · 7 fn · 8 crate-vis | PassportDecision | UID-first passport index and feed diff (CAL-02, ONE-1784) |
 | `src/calendar/prep/home_node.rs` | src | s | 1 struct · 2 fn | PrepHomeNodeJob | Closed-vault due execution of prep jobs |
 | `src/calendar/prep/lens.rs` | src | s | 1 struct · 2 fn | PrepLensCopy | Pure pack-to-lens rendering |
 | `src/calendar/prep/mod.rs` | src | s | 4 re-export | — | CAL-06 prep pack: the render-time context pack a meeting earns at T-45 |
@@ -1866,6 +1867,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/atom/atom_node.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LensNode | LensNode depth-bounded tree type with allocation-guarded Deserialize seeds |
 | `src/lens/atom/atom_scalars.rs` | src | s | 2 struct · 4 fn · 4 const · 1 crate-vis | FiniteF64, LensText | Scalar newtypes LensText/FiniteF64 with TryFrom/serde impls, and kit-version/kind-list consts |
 | `src/lens/atom/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | The closed [`LensAtom`] vocabulary: the atom enum, its leaf payload structs, [`LensNode`] with its… |
+| `src/lens/default_vault.rs` | src | s | 2 struct · 1 fn | DefaultVaultInput, DefaultVaultItem | Renderer-neutral default vault composition over already-admitted projections |
 | `src/lens/generated_ui/genui_card.rs` | src | s | 1 struct · 12 fn | GeneratedUiCard | Authored-tree [`GeneratedUiCard`] assembly, surface lowering, and validated wire decoding |
 | `src/lens/generated_ui/genui_catalog.rs` | src | s | 2 struct · 3 enum · 7 fn · 1 const | GeneratedUiCatalog, GeneratedUiPrebuilt, GeneratedUiPrimitive, GeneratedUiSummaryCardPrebuilt, GeneratedUiSurfaceCapabilities | Closed primitive catalog, surface capability negotiation, and prebuilt card expansion |
 | `src/lens/generated_ui/genui_envelope.rs` | src | s | 2 struct · 1 enum · 11 fn · 3 const · 1 crate-vis | GeneratedLens, LensLoadAction, LensVersionStamp | Versioned [`GeneratedLens`] envelope: wire pair, load-action decision, allocation-guarded wire validation |
@@ -1885,7 +1887,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/mediation/mediation_scope.rs` | src | s | 4 fn | — | Ordinary world-id and repository membership clamps on every frame-bound read |
 | `src/lens/mediation/mod.rs` | src | s | 5 re-export | — | Host mediation — the lens security chokepoint |
 | `src/lens/mediation/surface_dispatch.rs` | src | s | 1 fn | — | Native SurfaceEvent adapter into the existing frame-validated write plan |
-| `src/lens/mod.rs` | src | s | 10 re-export | — | Closed generated-lens atom vocabulary |
+| `src/lens/mod.rs` | src | s | 11 re-export | — | Closed generated-lens atom vocabulary |
 | `src/lens/mount.rs` | src | s | 1 enum · 2 fn | LensMount | Pack-aware lens mount decision, evaluated against the live vault on each render |
 | `src/lens/self_ui.rs` | src | m | 8 struct · 2 enum · 1 fn · 5 crate-vis | ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption, SelfUiValue, SliderControl +2 | The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value… |
 | `src/lens/tests/atom_fuzz.rs` | test | s | — | — | Corpus-driven, sustained mutation fuzzing of the atom wire and escaped renderer |
@@ -2268,7 +2270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/dispatch_pipeline/frozen_payload.rs` | src | s | 1 crate-vis | — | Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes |
 | `src/outbound/dispatch_pipeline/govern.rs` | src | s | 1 crate-vis | — | Gate input assembled from the canonical outbound request |
 | `src/outbound/dispatch_pipeline/mod.rs` | src | s | 1 re-export · 10 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
-| `src/outbound/dispatch_pipeline/pipeline.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | OutboundDispatchPipeline | O2 dispatch: shared request preparation, ledger replay, execution and receipts |
+| `src/outbound/dispatch_pipeline/pipeline.rs` | src | s | 1 struct · 1 fn · 5 crate-vis | OutboundDispatchPipeline | O2 dispatch: shared request preparation, ledger replay, execution and receipts |
 | `src/outbound/dispatch_pipeline/policy_risk.rs` | src | s | 2 crate-vis | — | Pending gate-outcome name and gate-vs-manifest policy-risk resolution |
 | `src/outbound/dispatch_pipeline/request_binding.rs` | src | m | 8 crate-vis | — | One normalized outbound request and the single ledger replay validator |
 | `src/outbound/dispatch_pipeline/retry_after.rs` | src | s | 3 crate-vis | — | Provider cool-down receipt/execution field names and whole-seconds parser |
@@ -2300,7 +2302,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/tests/space_posting.rs` | test | s | — | — | Owner presentation must ride the ordinary gate, frozen payload and recovery |
 | `src/outbound/tests/step_failure.rs` | test | m | — | — | A stored durable failure must be eligible before its outbound effect is prepared |
 | `src/outbound/window_door.rs` | src | s | 7 crate-vis | — | — |
-| `src/outbound_chokepoint/admission.rs` | src | m | 5 crate-vis | — | New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert |
+| `src/outbound_chokepoint/admission.rs` | src | m | 6 crate-vis | — | New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert |
 | `src/outbound_chokepoint/dedupe.rs` | src | s | 6 crate-vis | — | OF-327 mechanical semantic cooldown under the effect admission writer lock |
 | `src/outbound_chokepoint/fanout.rs` | src | m | 1 enum · 23 crate-vis | FanoutApprovalMode | Pre-execution fan-out admission |
 | `src/outbound_chokepoint/fanout/history.rs` | src | s | 3 crate-vis | — | Admission against the live consult graph, without charging its old edges again |
@@ -3312,7 +3314,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tests/vad_annotations.rs` | test | m | — | — | VAD edge values and turn/message VAD annotation claims incl. delete interplay |
 | `src/tests/vectors_hnsw.rs` | test | s | — | — | Vector writes, HNSW search/recall, validation and sync-protocol error taxonomy |
 | `src/tests_bug.rs` | src | m | — | — | — |
-| `src/thread_lens.rs` | src | m | 4 struct · 1 enum · 21 fn · 2 const | ThreadLensEntry, ThreadLensInstrument, ThreadLensSendBox, ThreadLensSendProgress, ThreadLensStepState | Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5) |
+| `src/thread_lens.rs` | src | m | 4 struct · 1 enum · 21 fn · 2 const · 1 crate-vis | ThreadLensEntry, ThreadLensInstrument, ThreadLensSendBox, ThreadLensSendProgress, ThreadLensStepState | Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5) |
 | `src/thread_lens/tests.rs` | test | s | — | — | H131: the send card a person approves shows what its action dispatches |
 | `src/thread_passport.rs` | src | m | 5 struct · 1 enum · 13 fn · 9 const · 3 crate-vis | CanonicalMessageId, StickyMaskDecision, ThreadMask, ThreadPassport, ThreadPassportInput, ThreadPassportResolution | Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02) |
 | `src/thread_passport/codec.rs` | src | s | 14 crate-vis | — | — |
