@@ -1,0 +1,28 @@
+[package]
+name = "oneiron-browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Browser verbs for code mode, and the CDP driver behind them"
+publish = false
+
+[lib]
+doctest = false
+
+[features]
+# The CDP driver and the container guest it runs in. Without it the crate is
+# the verb shapes and the driver trait only, which is all the engine needs.
+driver = ["dep:base64", "dep:blake3", "dep:oneiron-container"]
+
+[dependencies]
+base64 = { version = "0.22", optional = true }
+blake3 = { workspace = true, optional = true }
+oneiron-container = { path = "../oneiron-container", optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true
