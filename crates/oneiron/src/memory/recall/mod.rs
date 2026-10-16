@@ -337,6 +337,10 @@ pub struct RetrievalMeta {
     /// model whose scores ordered the top block, or why it was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rerank: Option<RerankReport>,
+    /// The request's `limit` was past the ceiling (1,000 rows) and was
+    /// served at it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub limit_clamped: bool,
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
@@ -982,6 +986,7 @@ impl Memory<'_> {
                 deep_pending,
                 temporal_hints,
                 rerank: None,
+                limit_clamped: false,
             },
             items,
             pack_version: MEMORY_PACK_VERSION,

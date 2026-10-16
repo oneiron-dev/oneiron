@@ -1691,8 +1691,9 @@ fn the_semantic_door_refuses_with_503_when_no_embedder_is_configured() {
     assert_eq!(body["code"], json!("EMBEDDER_UNAVAILABLE"));
 }
 
-/// A query is a question. Eight kilobytes of it is a document, and the door says
-/// which field and which cap rather than truncating it silently.
+/// A query is a question. Past `[limits].retrieval_query_bytes` (here set to
+/// eight kilobytes) it is a document, and the door says which field and which
+/// bound rather than truncating it silently.
 #[test]
 fn the_semantic_door_refuses_oversized_text_with_413() {
     use axum::body::{Body, to_bytes};
@@ -1707,6 +1708,10 @@ fn the_semantic_door_refuses_oversized_text_with_413() {
             vault,
             crate::config::SyncServerConfig {
                 allow_unauthenticated: true,
+                limits: crate::config::LimitsConfig {
+                    retrieval_query_bytes: 8 * 1024,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         )
@@ -1740,6 +1745,7 @@ fn the_semantic_door_refuses_oversized_text_with_413() {
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(body["code"], json!("PAYLOAD_TOO_LARGE"));
     assert_eq!(body["details"]["field"], json!("text"));
+    assert_eq!(body["details"]["maxBytes"], json!(8 * 1024));
 }
 
 /// The worker recovers on its own: a provider that fails its first pass and then

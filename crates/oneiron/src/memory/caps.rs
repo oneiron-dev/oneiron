@@ -70,6 +70,14 @@ pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// reading one byte past it.
 pub const MAX_REMOTE_EXPORT_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
+/// A ranked retrieval's row count served at [`MAX_SEARCH_LIMIT`]: the
+/// effective limit, and whether the caller's was lowered to it. An
+/// over-large limit is served and says so, never refused (rule 5).
+#[must_use]
+pub fn clamp_search_limit(limit: usize) -> (usize, bool) {
+    (limit.min(MAX_SEARCH_LIMIT), limit > MAX_SEARCH_LIMIT)
+}
+
 /// Rejects an over-long query before it reaches retrieval.
 pub fn check_query(query: &str) -> Result<(), MemoryError> {
     if query.len() > MAX_QUERY_BYTES {
@@ -136,6 +144,18 @@ pub fn check_limit(limit: usize) -> Result<(), MemoryError> {
         return Err(MemoryError::bad_request_with(
             format!("limit must be between 1 and {MAX_SEARCH_LIMIT}"),
             &["Request a smaller page and paginate."],
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects a zero row count on a door that serves an over-large one at
+/// [`MAX_SEARCH_LIMIT`] ([`clamp_search_limit`]).
+pub fn check_limit_nonzero(limit: usize) -> Result<(), MemoryError> {
+    if limit == 0 {
+        return Err(MemoryError::bad_request_with(
+            "limit must be at least 1",
+            &["Request at least one row; past 1000 rows the limit is served at 1000."],
         ));
     }
     Ok(())
