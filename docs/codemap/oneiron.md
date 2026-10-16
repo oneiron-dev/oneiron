@@ -1459,11 +1459,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/wire.rs` | src | m | 6 crate-vis | — | Reply normalization: fence/exec stripping, console-block scanning, and the structural gate |
 | `src/entity_doc/citation_floor.rs` | src | s | 6 crate-vis | — | Citation floors: a derived record that quotes an entity document keeps the history it quoted |
 | `src/entity_doc/document.rs` | src | s | 3 struct · 9 fn · 8 crate-vis | Birth, EntityDoc, TextChange | The common actor-stamped Loro document primitive |
-| `src/entity_doc/forks.rs` | src | m | 4 struct · 3 enum · 7 fn · 13 crate-vis | DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt | Durable divergences, entity-bound grant admission and atomic fork-set settlement |
+| `src/entity_doc/forks.rs` | src | m | 4 struct · 3 enum · 7 fn · 16 crate-vis | DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt | Durable divergences, entity-bound grant admission and atomic fork-set settlement |
 | `src/entity_doc/message_stream.rs` | src | s | 3 crate-vis | — | MESSAGE terminal commits join the common EntityDoc storage transaction |
 | `src/entity_doc/mod.rs` | src | s | 6 re-export · 7 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `src/entity_doc/pins.rs` | src | m | 2 struct · 1 enum · 9 fn · 3 crate-vis | CitationPin, CursorResolution, PurgeReceipt | Causal citation floors, retained quotes and the owner's shallow-purge door |
-| `src/entity_doc/recovery.rs` | src | s | 2 crate-vis | — | Value-only canonical recovery for generic EntityDoc owners |
+| `src/entity_doc/recovery.rs` | src | m | 3 crate-vis | — | Canonical recovery for generic EntityDoc owners: the current value, and the causal state its forks, pins… |
 | `src/entity_doc/registry.rs` | src | s | 1 struct · 5 fn · 5 crate-vis | RegistryStatus | Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth |
 | `src/entity_doc/side_keys.rs` | src | s | 1 crate-vis | — | Colon-joined composite key shapes shared by several entity-document side-table rows |
 | `src/entity_doc/storage.rs` | src | m | 1 enum · 1 fn · 17 crate-vis | TextField | Transactional entity-document storage and row-pointer migration |
@@ -2530,7 +2530,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |
 | `src/receipt/tests.rs` | test | XL | — | — | — |
 | `src/recovery.rs` | src | m | 2 struct · 2 enum · 7 fn · 3 const · 1 mod · 6 re-export · 4 crate-vis | QuarantinedArtifact, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
-| `src/recovery/canonical.rs` | src | L | 8 struct · 6 fn · 2 const · 17 crate-vis | CanonicalBaseEdge, CanonicalContainerManifest, CanonicalEntity, CanonicalEntityDocument, CanonicalSchemaManifest, CanonicalShellWorld, CanonicalSnapshot, CanonicalTombstone | CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction |
+| `src/recovery/canonical.rs` | src | L | 14 struct · 2 enum · 8 fn · 2 const · 18 crate-vis | CanonicalBaseEdge, CanonicalContainerManifest, CanonicalDocumentFork, CanonicalDocumentPin, CanonicalDocumentPurge, CanonicalDocumentReceipt, CanonicalDocumentVersion, CanonicalEntity +8 | CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction |
 | `src/recovery/canonical_tests.rs` | test | XL | — | — | Caller-visible canonical carry-list, bounded ladder and forward-rebuild laws |
 | `src/recovery/checkpoint/authority_plane.rs` | src | L | 2 crate-vis | — | A historical restore gives content as it stood, never authority as it stood |
 | `src/recovery/checkpoint/authority_plane/tests.rs` | test | L | — | — | — |
