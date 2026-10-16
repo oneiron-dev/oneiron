@@ -17,6 +17,7 @@ mod declaration;
 mod gate;
 mod host;
 mod job_maximum;
+mod media;
 mod permit;
 mod receipt;
 mod settle;
@@ -34,6 +35,7 @@ pub use job_maximum::{
     AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused,
     MaximumShown, MaximumStop, ResumeOffer, ResumeRefused, StopRefused,
 };
+pub use media::MediaGate;
 pub use permit::RunPermit;
 pub use receipt::{
     CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink, TeacherReport,

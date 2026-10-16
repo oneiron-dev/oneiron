@@ -4,38 +4,41 @@
 /// tool, route or binding carries them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunVerb {
-    Search,
-    PutClaim,
-    SupersedeClaim,
-    PutEdge,
+    VaultSearch,
+    VaultClaimsPut,
+    VaultClaimsSupersede,
+    VaultEdgesPut,
 }
 impl RunVerb {
     pub const ALL: &[Self] = &[
-        Self::Search,
-        Self::PutClaim,
-        Self::SupersedeClaim,
-        Self::PutEdge,
+        Self::VaultSearch,
+        Self::VaultClaimsPut,
+        Self::VaultClaimsSupersede,
+        Self::VaultEdgesPut,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
     }
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Search => "search",
-            Self::PutClaim => "put_claim",
-            Self::SupersedeClaim => "supersede_claim",
-            Self::PutEdge => "put_edge",
+            Self::VaultSearch => "vault.search",
+            Self::VaultClaimsPut => "vault.claims.put",
+            Self::VaultClaimsSupersede => "vault.claims.supersede",
+            Self::VaultEdgesPut => "vault.edges.put",
         }
     }
     pub const fn writes(self) -> bool {
-        matches!(self, Self::PutClaim | Self::SupersedeClaim | Self::PutEdge)
+        matches!(
+            self,
+            Self::VaultClaimsPut | Self::VaultClaimsSupersede | Self::VaultEdgesPut
+        )
     }
     pub const fn effect(self) -> crate::code_run::SelfEffect {
         match self {
-            Self::Search => crate::code_run::SelfEffect::MemorySearch,
-            Self::PutClaim => crate::code_run::SelfEffect::MemoryPutClaim,
-            Self::SupersedeClaim => crate::code_run::SelfEffect::MemorySupersedeClaim,
-            Self::PutEdge => crate::code_run::SelfEffect::MemoryPutEdge,
+            Self::VaultSearch => crate::code_run::SelfEffect::MemorySearch,
+            Self::VaultClaimsPut => crate::code_run::SelfEffect::MemoryPutClaim,
+            Self::VaultClaimsSupersede => crate::code_run::SelfEffect::MemorySupersedeClaim,
+            Self::VaultEdgesPut => crate::code_run::SelfEffect::MemoryPutEdge,
         }
     }
 }

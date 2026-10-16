@@ -59,7 +59,11 @@ impl Vault {
         requested: &SharedVaultWrite,
     ) -> Result<()> {
         let fold = self.verify_write_actor_in_txn(txn, writer)?;
-        if vault_id == 0 || matches!(requested, SharedVaultWrite::PersonalVault) {
+        // A deleted shared vault takes no further write of any kind.
+        if vault_id == 0
+            || matches!(requested, SharedVaultWrite::PersonalVault)
+            || self.shared_vault_deletion_in_txn(txn)?.is_some()
+        {
             return Err(denied());
         }
         for entry in self

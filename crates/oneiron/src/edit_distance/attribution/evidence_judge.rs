@@ -15,10 +15,9 @@ use crate::edit_distance::delta::amendment_delta;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
-    AttributionJudge, AttributionJudgment, AttributionLane, EditHunk, RuleAttributionJudge,
-    UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
-    ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor,
-    withdraw_edit_proposal_in_txn,
+    AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, UnclearAttribution,
+    delete_unclear_in_txn, draw_proposal_sequence_in_txn, ground_attempt_receipt,
+    mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor, withdraw_edit_proposal_in_txn,
 };
 
 // ---------------------------------------------------------------------------
@@ -137,22 +136,22 @@ pub(in crate::edit_distance) fn amendment_evidence_in_txn(
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn judge_amendment(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentJudgment>> {
-    judge_amendment_with(vault, receipt_id, &RuleAttributionJudge)
+    judge_amendment_with(vault, receipt_id, None)
 }
 
-/// [`judge_amendment`] with an explicit tier — the seam the model judge and the
-/// audit harness both use. The amendment is judged as one region:
+/// [`judge_amendment`] through the host's decisions — the seam the model tier
+/// uses; `None` is the rule tier. The amendment is judged as one region:
 /// [`judge_amendment_hunks`] with no hunks.
 ///
 /// # Errors
 ///
-/// Storage errors, and whatever `judge` returns.
+/// Storage errors, and whatever the decision path returns.
 pub fn judge_amendment_with(
     vault: &Vault,
     receipt_id: &str,
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
 ) -> Result<Option<AmendmentJudgment>> {
-    judge_amendment_hunks(vault, receipt_id, judge, &[])
+    judge_amendment_hunks(vault, receipt_id, decisions, &[])
 }
 
 /// Judges the amendment recorded against `receipt_id` hunk by hunk
@@ -186,11 +185,11 @@ pub fn judge_amendment_with(
 ///
 /// # Errors
 ///
-/// Storage errors, and whatever `judge` returns.
+/// Storage errors, and whatever the decision path returns.
 pub fn judge_amendment_hunks(
     vault: &Vault,
     receipt_id: &str,
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
     hunks: &[EditHunk<'_>],
 ) -> Result<Option<AmendmentJudgment>> {
     let Some(evidence) = amendment_evidence(vault, receipt_id)? else {
@@ -202,7 +201,7 @@ pub fn judge_amendment_hunks(
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
     let floor = unclear_floor(vault)?;
-    let Some(split) = classify_amendment(&evidence, judge, hunks, floor)? else {
+    let Some(split) = classify_amendment(&evidence, decisions, hunks, floor)? else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
     let shares: Vec<AmendmentShare> = split
