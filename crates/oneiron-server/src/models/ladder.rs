@@ -1,20 +1,26 @@
 //! One role's ladder under a run: the engine sees a single seat model; each
 //! rung a call reaches is admitted on its own one-use permit and sent through
 //! the run's gate for that rung's offer, and a rung that fails hands the call
-//! to the next.
+//! to the next. An offer refused for a quota or a limit rests until its reset
+//! and the same request goes to the next offer; a request error ends the call.
 use std::sync::Arc;
+use std::time::Duration;
 
-use futures_util::StreamExt;
-use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunPermit};
+use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
+    RetryableLlmError,
 };
+use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
+use super::cooldown::{OfferCooldowns, Rest, leaves_device};
 use super::driven::Driven;
+use super::forward::{Ended, forward};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
+use super::walk::{Passed, Walk, ends_call, failure_kind};
 
 /// One rung: a provider's offer for one model, and the instruction prepended
 /// to every call it serves.
@@ -51,68 +57,29 @@ impl LadderRung {
     }
 
     /// The receipt of an answer this rung gave after `failed` rungs before
-    /// it were tried and failed.
-    fn stamp(&self, failed: usize, raw_provider: serde_json::Value) -> serde_json::Value {
+    /// it were tried and failed, and the rungs `passed_over` before it.
+    fn stamp(&self, failed: usize, passed_over: JsonValue, raw_provider: JsonValue) -> JsonValue {
         served_receipt(
             &self.provider,
             &self.wire_model,
             self.position,
             failed,
+            passed_over,
             raw_provider,
         )
     }
 }
 
-/// A rung that fails hands the call on, unless the run refused it: the next
-/// rung's admission meets the same line.
-/// The closed class of a rung failure. An unsupported capability's reason is
-/// a provider's own words, so the log carries the class and not the error.
-fn failure_kind(error: &LlmError) -> &'static str {
-    use oneiron::RetryableLlmError;
-    use oneiron::llm::BudgetDenied;
-    match error {
-        LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => "rate_limited",
-        LlmError::Retryable(RetryableLlmError::ServerError) => "server_error",
-        LlmError::Retryable(RetryableLlmError::Timeout) => "timeout",
-        LlmError::Retryable(RetryableLlmError::StreamCut) => "stream_cut",
-        LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
-        LlmError::Fatal(FatalLlmError::Auth) => "auth",
-        LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
-        LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
-        LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
-        LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
-        LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
-        LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
-    }
-}
-
-fn falls_through(error: &LlmError) -> bool {
-    !matches!(error, LlmError::BudgetDenied(_))
-}
-
-/// Settles a rung that did not answer. One that started keeps its
-/// reservation as spend; one admitted and never sent never started its
-/// lease, so its reservation is released and it pays nothing. A settlement
-/// the meter refuses is on the run's `Settled` row.
-fn settle_failed(permit: RunPermit) {
+/// Settles a rung that did not answer, and says whether it went out. One
+/// that started keeps its reservation as spend; one admitted and never sent
+/// never started its lease, so its reservation is released and it pays
+/// nothing. A settlement the meter refuses is on the run's `Settled` row.
+fn settle_failed(permit: RunPermit) -> bool {
+    let sent = permit.dispatched();
     if let Err(denied) = permit.settle(CallOutcome::Failed) {
         tracing::error!(%denied, "a failed rung's settlement was refused");
     }
-}
-
-/// What one rung's stream came to.
-enum Ended {
-    Done {
-        message: LlmMessage,
-        usage: LlmUsage,
-        finish_reason: oneiron::llm::FinishReason,
-    },
-    Failed {
-        error: LlmError,
-        spoken: bool,
-    },
-    /// The caller stopped reading, or the stream ended with no terminal.
-    Gone,
+    sent
 }
 
 /// How a model is reached: a seat's ladder, one rung of it alone, or a
@@ -124,37 +91,61 @@ pub struct OfferLadder {
     /// An answer carries the ladder's served receipt (a seat, or a rung of
     /// one), or the provider's usage as it came (a model called by its id).
     receipt: bool,
+    /// The one model a caller or a manifest named: its one rung is that
+    /// pick, never a fallback.
+    picked: bool,
+    /// Where an offer refused for a limit rests until its reset.
+    rests: Arc<OfferCooldowns>,
 }
 
 impl OfferLadder {
-    pub(super) fn seat(name: ModelId, rungs: Vec<LadderRung>) -> Self {
+    pub(super) fn seat(name: ModelId, rungs: Vec<LadderRung>, rests: Arc<OfferCooldowns>) -> Self {
         Self {
             name,
             rungs,
             receipt: true,
+            picked: false,
+            rests,
+        }
+    }
+
+    /// One rung of a seat, served alone where a manifest pins its model.
+    pub(super) fn pinned(rung: LadderRung, rests: Arc<OfferCooldowns>) -> Self {
+        Self {
+            name: rung.model.clone(),
+            rungs: vec![rung],
+            receipt: true,
+            picked: true,
+            rests,
         }
     }
 
     /// A configured model called by its own engine id.
-    pub(super) fn bare(rung: LadderRung) -> Self {
+    pub(super) fn bare(rung: LadderRung, rests: Arc<OfferCooldowns>) -> Self {
         Self {
             name: rung.model.clone(),
             rungs: vec![rung],
             receipt: false,
+            picked: true,
+            rests,
         }
     }
 
-    /// A host-injected backend serving `request`'s model as one offer.
+    /// A host-injected backend serving `request`'s model as one offer. The
+    /// host keeps its own backend's health; nothing rests here.
     pub(crate) fn injected(offer: ServedOffer) -> Self {
         let model = offer.binding.model.clone();
-        Self::bare(LadderRung {
-            provider: offer.binding.route.adapter().to_owned(),
-            position: 0,
-            wire_model: model.as_str().to_owned(),
-            model,
-            prompt: None,
-            offer,
-        })
+        Self::bare(
+            LadderRung {
+                provider: offer.binding.route.adapter().to_owned(),
+                position: 0,
+                wire_model: model.as_str().to_owned(),
+                model,
+                prompt: None,
+                offer,
+            },
+            OfferCooldowns::unkept(),
+        )
     }
 
     /// The id callers name.
@@ -163,7 +154,9 @@ impl OfferLadder {
         &self.name
     }
 
-    /// How many provider calls a call that fails makes: one per rung.
+    /// How many provider calls a call that fails makes on one pass of its
+    /// chain: one per rung. A call that waits for a cooling chain makes one
+    /// more pass.
     #[must_use]
     pub fn rungs(&self) -> usize {
         self.rungs.len()
@@ -219,12 +212,184 @@ impl OfferLadder {
     /// The usage an answer of the rung at `index` reports, with this ladder's
     /// receipt. Stamped after its permit settled: the permit already charged
     /// each failed rung on its own.
-    fn answered(&self, index: usize, mut usage: LlmUsage) -> LlmUsage {
+    fn answered(&self, index: usize, walk: &Walk, mut usage: LlmUsage) -> LlmUsage {
         if self.receipt {
             let raw = std::mem::take(&mut usage.raw_provider);
-            usage.raw_provider = self.rungs[index].stamp(index, raw);
+            usage.raw_provider =
+                self.rungs[index].stamp(walk.went_out(), walk.passed_over(&self.rungs), raw);
         }
         usage
+    }
+
+    /// Whether a fallback to the rung at `index` would take `request` off
+    /// the device while its world stays on it. A seat's configured first
+    /// rung, and the one model a caller or a manifest named, are the owner's
+    /// own pick, never a fallback; a later rung is one even when no rung
+    /// before it could be built.
+    fn kept_on_device(&self, index: usize, request: &LlmRequest) -> bool {
+        let rung = &self.rungs[index];
+        !self.picked
+            && rung.position > 0
+            && leaves_device(&rung.offer.binding)
+            && !self.rests.world_may_leave(request)
+    }
+
+    /// Whether the call passes the rung at `index` without sending it: a
+    /// fallback to it would take the work off the device and the call's
+    /// world stays on it, or its offer rests from an earlier refusal. The
+    /// device comes first, so a rung the call may not use is never one it
+    /// waits for.
+    fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
+        if self.kept_on_device(index, call.request) {
+            self.hold(call, index, walk);
+            return true;
+        }
+        let rung = &self.rungs[index];
+        let Some(until) = self.rests.resting(&rung.offer.binding, &rung.wire_model) else {
+            return false;
+        };
+        walk.note(index, Passed::Resting { until });
+        true
+    }
+
+    /// Keeps the call's work from the rung at `index`, a fallback that would
+    /// take it off the device. A held call is never silent: the first time
+    /// this call is held from that rung, the run's receipts get a `Denied`
+    /// row for it.
+    fn hold(&self, call: Call<'_>, index: usize, walk: &mut Walk) {
+        let first = !walk.held_from(index);
+        walk.note(index, Passed::KeptOnDevice);
+        if !first {
+            return;
+        }
+        let rung = &self.rungs[index];
+        call.run.refuse(
+            Some(call.selector.unwrap_or(self.name.as_str())),
+            rung.model.as_str(),
+            RunDenied::KeptOnDevice,
+        );
+        tracing::info!(
+            rung = rung.position,
+            reason = "world_stays_on_device",
+            "a fallback would take the work off the device; passed over"
+        );
+    }
+
+    /// The first rung in order that this pass of the call has not `sent`
+    /// and can use now. Each is asked again every time, so a rung whose rest
+    /// ended while a later one was sent is the next one used.
+    fn next_rung(&self, call: Call<'_>, sent: &[bool], walk: &mut Walk) -> Option<usize> {
+        (0..self.rungs.len()).find(|index| !sent[*index] && !self.passes_over(call, *index, walk))
+    }
+
+    /// Rests the offer at `index` when `error` is a limit refusal, until the
+    /// reset it names.
+    fn rest_if_limited(&self, index: usize, error: &LlmError) -> Option<Option<Rest>> {
+        let LlmError::Retryable(RetryableLlmError::RateLimited {
+            retry_after,
+            resets_at,
+        }) = error
+        else {
+            return None;
+        };
+        let rung = &self.rungs[index];
+        let rest = self.rests.rest(
+            &rung.offer.binding,
+            &rung.wire_model,
+            *retry_after,
+            resets_at,
+        );
+        tracing::warn!(
+            rung = rung.position,
+            kind = failure_kind(error),
+            reset = rest.map_or("unkept", |rest| rest.source.as_str()),
+            until = rest.map_or(0, |rest| rest.until),
+            "offer refused for a limit; it rests until its reset"
+        );
+        Some(rest)
+    }
+
+    /// Records the failure of the rung at `index`, `sent` or refused before
+    /// it went out. A limit refusal rests its offer and hands the call on, as
+    /// does an offer that is down; a request error or a run's refusal ends
+    /// the call with that error, unchanged.
+    fn failed(
+        &self,
+        index: usize,
+        error: LlmError,
+        sent: bool,
+        walk: &mut Walk,
+    ) -> Result<(), LlmError> {
+        if ends_call(&error) {
+            return Err(error);
+        }
+        let kind = failure_kind(&error);
+        let passed = match self.rest_if_limited(index, &error) {
+            Some(rest) => Passed::Refused { kind, rest, sent },
+            None => {
+                let rung = &self.rungs[index];
+                tracing::warn!(rung = rung.position, kind, "rung failed; trying the next");
+                Passed::Failed { kind, sent }
+            }
+        };
+        walk.passed.push((index, passed));
+        walk.last = Some(error);
+        Ok(())
+    }
+
+    /// When the call met only rests (each rung it could use rests, or
+    /// refused for a limit), the first offer back, when, and the wait until
+    /// then, if that is within the vault's longest wait. The rate law: a
+    /// cooling chain is not refused for rate; its call waits for the first
+    /// offer back. Each rung is judged again first, one already sent too, so
+    /// the wait goes only to an offer the call may use now.
+    fn waits_for(&self, call: Call<'_>, walk: &mut Walk) -> Option<Back> {
+        if !walk.limited() {
+            return None;
+        }
+        for index in 0..self.rungs.len() {
+            if self.kept_on_device(index, call.request) {
+                self.hold(call, index, walk);
+            }
+        }
+        let (index, at) = walk.back()?;
+        let wait = at.saturating_sub(self.rests.now()?);
+        (wait <= self.rests.max_wait_secs()).then(|| Back {
+            index,
+            at,
+            wait: Duration::from_secs(wait),
+        })
+    }
+
+    /// The call's end with no answer. A call kept from a rung that would
+    /// take its work off the device is kept on it, with the earliest time a
+    /// resting offer it may use is back, if one rests. Otherwise a last
+    /// failure that was a limit refusal, or a call that reached no rung
+    /// because each one it could use rests, refuses with that time, so a
+    /// caller can say when. Any other last failure is returned as it came.
+    fn unanswered(&self, walk: Walk) -> LlmError {
+        let back = walk
+            .back()
+            .zip(self.rests.now())
+            .map(|((_, back), now)| (Some(back.saturating_sub(now)), vec![back]));
+        if walk.kept() {
+            let (retry_after, resets_at) = back.unwrap_or_default();
+            return RetryableLlmError::KeptOnDevice {
+                retry_after,
+                resets_at,
+            }
+            .into();
+        }
+        match back.filter(|_| walk.limited()) {
+            Some((retry_after, resets_at)) => RetryableLlmError::RateLimited {
+                retry_after,
+                resets_at,
+            }
+            .into(),
+            None => walk
+                .last
+                .unwrap_or_else(|| FatalLlmError::InvalidRequest.into()),
+        }
     }
 
     /// One call under `run`, rung by rung. Each rung that is reached is
@@ -243,9 +408,10 @@ impl OfferLadder {
 
     /// [`Self::generate`], asking `may_send` before each rung is admitted,
     /// the first one's too, and again once it is admitted, since admission
-    /// can wait on the run's receipts. Once it says no, no rung is sent (an
-    /// admitted one settles unstarted, for nothing), and the call fails with
-    /// the last rung's error (an invalid request when none went out).
+    /// can wait on the run's receipts, and through a wait for an offer back.
+    /// Once it says no, no rung is sent (an admitted one settles unstarted,
+    /// for nothing), and the call fails with the last rung's error (an
+    /// invalid request when none went out).
     pub async fn generate_while(
         &self,
         run: &RunAdmission,
@@ -254,42 +420,88 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
     ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
-        let mut last = None;
-        for (index, rung) in self.rungs.iter().enumerate() {
-            if !may_send() {
-                break;
+        let call = Call {
+            run,
+            request: &request,
+            selector,
+        };
+        let mut walk = Walk::default();
+        // The chain, each rung at most once, then, when only rests stopped
+        // it, the chain once more after one wait for its first offer back.
+        for waited in [false, true] {
+            if waited {
+                let Some(back) = self.waits_for(call, &mut walk).filter(|_| may_send()) else {
+                    break;
+                };
+                self.rests.wait(back.wait, back.at, may_send).await;
             }
-            let (call, permit) = self.admit(run, rung, &request, selector, false)?;
-            if !may_send() {
-                // Unsent: only the gate starts a lease, so this pays nothing.
-                settle_failed(permit);
-                break;
-            }
-            let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-            match gate.generate(call, permit.lease()).await {
-                Ok(mut response) => {
-                    permit.settle(CallOutcome::Answered(&response.usage))?;
-                    response.usage = self.answered(index, response.usage);
-                    return Ok(response);
+            let mut sent = vec![false; self.rungs.len()];
+            loop {
+                if !may_send() {
+                    return Err(self.unanswered(walk));
                 }
-                Err(error) => {
-                    settle_failed(permit);
-                    if !falls_through(&error) {
-                        return Err(error);
-                    }
-                    tracing::warn!(seat = %self.name, rung = rung.position, provider = %rung.provider, kind = failure_kind(&error), "rung failed; trying the next");
-                    last = Some(error);
+                let Some(index) = self.next_rung(call, &sent, &mut walk) else {
+                    break;
+                };
+                sent[index] = true;
+                match self.send(call, index, may_send, &mut walk).await? {
+                    Sent::Answer(response) => return Ok(response),
+                    Sent::Failed | Sent::Held => {}
+                    Sent::Stopped => return Err(self.unanswered(walk)),
                 }
             }
         }
-        Err(last.unwrap_or_else(|| FatalLlmError::InvalidRequest.into()))
+        Err(self.unanswered(walk))
     }
 
-    /// One call under `run` as a stream. The first rung is admitted now, so a
-    /// call the run refuses is refused before anything starts. A rung whose
-    /// stream fails before its first event hands the call on; once a rung
-    /// has spoken, its stream is the answer, cut or whole. Dropping the
-    /// stream ends the call and settles its rung as failed.
+    /// Sends the call to the rung at `index`. A failure that ends the call
+    /// is the error.
+    async fn send(
+        &self,
+        call: Call<'_>,
+        index: usize,
+        may_send: &(dyn Fn() -> bool + Sync),
+        walk: &mut Walk,
+    ) -> LlmResult<Sent> {
+        let rung = &self.rungs[index];
+        let (bound, permit) = self.admit(call.run, rung, call.request, call.selector, false)?;
+        if !may_send() {
+            // Unsent: only the gate starts a lease, so this pays nothing.
+            settle_failed(permit);
+            return Ok(Sent::Stopped);
+        }
+        // Admission can wait on the run's receipts, and the world settings
+        // can change meanwhile: the world is judged again right before the
+        // rung is sent.
+        if self.kept_on_device(index, call.request) {
+            settle_failed(permit);
+            self.hold(call, index, walk);
+            return Ok(Sent::Held);
+        }
+        let gate = call
+            .run
+            .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        match gate.generate(bound, permit.lease()).await {
+            Ok(mut response) => {
+                permit.settle(CallOutcome::Answered(&response.usage))?;
+                response.usage = self.answered(index, walk, response.usage);
+                Ok(Sent::Answer(response))
+            }
+            Err(error) => {
+                let sent = settle_failed(permit);
+                self.failed(index, error, sent, walk)?;
+                Ok(Sent::Failed)
+            }
+        }
+    }
+
+    /// One call under `run` as a stream. The first rung the call can use is
+    /// admitted now, so a call the run refuses, or one whose every usable
+    /// offer rests past the longest wait, is refused before anything starts.
+    /// A rung whose stream fails before its first event hands the call on, a
+    /// quota error as that first event too; once a rung has spoken, its
+    /// stream is the answer, cut or whole. Dropping the stream ends the call
+    /// and settles its rung as failed.
     pub fn stream(
         self: &Arc<Self>,
         run: &RunAdmission,
@@ -297,12 +509,32 @@ impl OfferLadder {
         selector: Option<&str>,
     ) -> LlmResult<LlmStream<'static>> {
         self.admits(&request)?;
-        let first = self.admit(run, &self.rungs[0], &request, selector, true)?;
+        let call = Call {
+            run,
+            request: &request,
+            selector,
+        };
+        let mut walk = Walk::default();
+        let (start, wait) =
+            match (0..self.rungs.len()).find(|index| !self.passes_over(call, *index, &mut walk)) {
+                Some(start) => (start, None),
+                None => match self.waits_for(call, &mut walk) {
+                    Some(back) => (back.index, Some(back)),
+                    None => return Err(self.unanswered(walk)),
+                },
+            };
+        let first = self.admit(run, &self.rungs[start], &request, selector, true)?;
         let (ladder, run) = (Arc::clone(self), run.clone());
         let selector = selector.map(str::to_owned);
         Ok(LlmStream::new(Driven::new(move |events| async move {
+            let opening = Opening {
+                start,
+                first,
+                wait,
+                walk,
+            };
             ladder
-                .stream_rungs(&run, &request, selector.as_deref(), first, &events)
+                .stream_rungs(&run, &request, selector.as_deref(), opening, &events)
                 .await;
         })))
     }
@@ -312,91 +544,233 @@ impl OfferLadder {
         run: &RunAdmission,
         request: &LlmRequest,
         selector: Option<&str>,
-        first: (LlmRequest, RunPermit),
+        opening: Opening,
         events: &Sender<LlmResult<LlmStreamEvent>>,
     ) {
-        let mut admitted = Some(first);
-        let mut last = None;
-        for (index, rung) in self.rungs.iter().enumerate() {
-            let next = match admitted.take() {
-                Some(first) => Ok(first),
-                None => self.admit(run, rung, request, selector, true),
-            };
-            let (call, permit) = match next {
-                Ok(next) => next,
-                Err(error) => {
-                    let _ = events.send(Err(error)).await;
+        let Opening {
+            start,
+            first,
+            wait,
+            mut walk,
+        } = opening;
+        let call = Call {
+            run,
+            request,
+            selector,
+        };
+        let mut held = Some((start, first));
+        let mut wait = wait;
+        // A stream that opened with every usable offer resting admitted the
+        // first one back. When that admission saw the world kept on the
+        // device, the rung is settled unsent and every rung is judged again,
+        // so the one wait goes to an offer the call may use now, or none.
+        if let Some(back) = wait
+            && self.kept_on_device(back.index, request)
+        {
+            if let Some((_, (_, permit))) = held.take() {
+                settle_failed(permit);
+            }
+            let mut usable = false;
+            for index in 0..self.rungs.len() {
+                usable |= !self.passes_over(call, index, &mut walk);
+            }
+            wait = None;
+            if !usable {
+                let Some(back) = self.waits_for(call, &mut walk) else {
+                    let _ = events.send(Err(self.unanswered(walk))).await;
                     return;
-                }
-            };
-            let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-            let ended = match gate.stream(call, permit.lease()) {
-                Ok(stream) => forward(stream, events).await,
-                Err(error) => Ended::Failed {
-                    error,
-                    spoken: false,
-                },
-            };
-            match ended {
-                Ended::Done {
-                    message,
-                    usage,
-                    finish_reason,
-                } => {
-                    let done = match permit.settle(CallOutcome::Answered(&usage)) {
-                        Ok(_) => Ok(LlmStreamEvent::Done {
-                            message,
-                            usage: self.answered(index, usage),
-                            finish_reason,
-                        }),
-                        Err(denied) => Err(denied.into()),
-                    };
-                    let _ = events.send(done).await;
-                    return;
-                }
-                Ended::Failed { error, spoken } => {
-                    settle_failed(permit);
-                    if spoken || !falls_through(&error) {
-                        let _ = events.send(Err(error)).await;
-                        return;
-                    }
-                    tracing::warn!(seat = %self.name, rung = rung.position, kind = failure_kind(&error), "rung stream failed before its first event; trying the next");
-                    last = Some(error);
-                }
-                Ended::Gone => return,
+                };
+                wait = Some(back);
             }
         }
-        let error = last.unwrap_or_else(|| FatalLlmError::InvalidRequest.into());
-        let _ = events.send(Err(error)).await;
+        // The chain, then, when only rests stopped it, the chain once more
+        // after one wait for its first offer back. A stream that opened with
+        // every usable offer resting starts with that wait.
+        let back = match wait {
+            Some(back) => Some(back),
+            None => match self
+                .stream_pass(run, request, selector, &mut held, &mut walk, events)
+                .await
+            {
+                Flow::Ended => return,
+                Flow::On => self.waits_for(call, &mut walk),
+            },
+        };
+        if let Some(back) = back {
+            // Dropping the stream drops this wait: nothing else stops it.
+            self.rests.wait(back.wait, back.at, &|| true).await;
+            if let Flow::Ended = self
+                .stream_pass(run, request, selector, &mut held, &mut walk, events)
+                .await
+            {
+                return;
+            }
+        }
+        if let Some((_, (_, permit))) = held {
+            settle_failed(permit);
+        }
+        let _ = events.send(Err(self.unanswered(walk))).await;
     }
-}
 
-/// Hands one rung's events to the caller until its terminal or its failure.
-async fn forward(mut stream: LlmStream<'_>, events: &Sender<LlmResult<LlmStreamEvent>>) -> Ended {
-    let mut spoken = false;
-    loop {
-        match stream.next().await {
-            Some(Ok(LlmStreamEvent::Done {
+    /// One pass of a stream's chain: each rung the call can use, first in
+    /// order first and each at most once, until one ends the call. `held` is
+    /// the rung admitted before the stream started: the pass sends it when it
+    /// comes to it, and settles it unsent, for nothing, before it sends
+    /// another.
+    async fn stream_pass(
+        &self,
+        run: &RunAdmission,
+        request: &LlmRequest,
+        selector: Option<&str>,
+        held: &mut Option<(usize, (LlmRequest, RunPermit))>,
+        walk: &mut Walk,
+        events: &Sender<LlmResult<LlmStreamEvent>>,
+    ) -> Flow {
+        let call = Call {
+            run,
+            request,
+            selector,
+        };
+        let mut sent = vec![false; self.rungs.len()];
+        while let Some(index) = self.next_rung(call, &sent, walk) {
+            sent[index] = true;
+            let next = match held.take() {
+                Some((at, first)) if at == index => first,
+                other => {
+                    if let Some((_, (_, permit))) = other {
+                        settle_failed(permit);
+                    }
+                    match self.admit(run, &self.rungs[index], request, selector, true) {
+                        Ok(next) => next,
+                        Err(error) => {
+                            let _ = events.send(Err(error)).await;
+                            return Flow::Ended;
+                        }
+                    }
+                }
+            };
+            // The world is judged again right before the rung is sent: its
+            // admission, or the wait a held first rung sat through, may have
+            // outlasted the world settings it was judged by.
+            if self.kept_on_device(index, request) {
+                settle_failed(next.1);
+                self.hold(call, index, walk);
+                continue;
+            }
+            if let Flow::Ended = self.stream_rung(run, index, next, walk, events).await {
+                return Flow::Ended;
+            }
+        }
+        Flow::On
+    }
+
+    /// Streams the rung at `index` to the caller. The call is over once the
+    /// rung answers, fails after it has spoken, fails in a way that ends the
+    /// call, or the caller stops reading; a rung that fails before its first
+    /// event hands the call on.
+    async fn stream_rung(
+        &self,
+        run: &RunAdmission,
+        index: usize,
+        (call, permit): (LlmRequest, RunPermit),
+        walk: &mut Walk,
+        events: &Sender<LlmResult<LlmStreamEvent>>,
+    ) -> Flow {
+        let rung = &self.rungs[index];
+        let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let ended = match gate.stream(call, permit.lease()) {
+            Ok(stream) => forward(stream, events).await,
+            Err(error) => Ended::Failed {
+                error,
+                spoken: false,
+            },
+        };
+        match ended {
+            Ended::Done {
                 message,
                 usage,
                 finish_reason,
-            })) => {
-                return Ended::Done {
-                    message,
-                    usage,
-                    finish_reason,
+            } => {
+                let done = match permit.settle(CallOutcome::Answered(&usage)) {
+                    Ok(_) => Ok(LlmStreamEvent::Done {
+                        message,
+                        usage: self.answered(index, walk, usage),
+                        finish_reason,
+                    }),
+                    Err(denied) => Err(denied.into()),
                 };
+                let _ = events.send(done).await;
+                Flow::Ended
             }
-            Some(Ok(event)) => {
-                spoken = true;
-                if events.send(Ok(event)).await.is_err() {
-                    return Ended::Gone;
+            Ended::Failed {
+                error,
+                spoken: true,
+            } => {
+                settle_failed(permit);
+                // Its stream was the answer; a limit it met still rests it.
+                self.rest_if_limited(index, &error);
+                let _ = events.send(Err(error)).await;
+                Flow::Ended
+            }
+            Ended::Failed {
+                error,
+                spoken: false,
+            } => {
+                let sent = settle_failed(permit);
+                match self.failed(index, error, sent, walk) {
+                    Ok(()) => Flow::On,
+                    Err(error) => {
+                        let _ = events.send(Err(error)).await;
+                        Flow::Ended
+                    }
                 }
             }
-            Some(Err(error)) => return Ended::Failed { error, spoken },
-            // An `LlmStream` that ends before its terminal yields `StreamCut`
-            // first, so this is a caller that stopped reading.
-            None => return Ended::Gone,
+            Ended::Gone => Flow::Ended,
         }
     }
+}
+
+/// One call on its way down the ladder: its run, its request, and what the
+/// caller named it by.
+#[derive(Clone, Copy)]
+struct Call<'a> {
+    run: &'a RunAdmission,
+    request: &'a LlmRequest,
+    selector: Option<&'a str>,
+}
+
+/// Where a stream opens: the first rung the call can use and its permit,
+/// the wait for it when every usable offer rested, and what the call met on
+/// the rungs before it.
+struct Opening {
+    start: usize,
+    first: (LlmRequest, RunPermit),
+    wait: Option<Back>,
+    walk: Walk,
+}
+
+/// A cooling chain's first offer back: its rung, when it is back, and the
+/// wait until then.
+#[derive(Clone, Copy)]
+struct Back {
+    index: usize,
+    at: u64,
+    wait: Duration,
+}
+
+/// What sending one rung came to.
+enum Sent {
+    Answer(LlmResponse),
+    /// It failed and the call goes on.
+    Failed,
+    /// It was kept from the work, unsent, and the call goes on.
+    Held,
+    /// `may_send` said no once it was admitted: the call stops.
+    Stopped,
+}
+
+/// Whether a streamed call goes on to the next rung.
+enum Flow {
+    On,
+    Ended,
 }

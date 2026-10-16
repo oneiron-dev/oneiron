@@ -51,6 +51,11 @@ fn failure(error: LlmError) -> Response {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
         }
         LlmError::Retryable(RetryableLlmError::Timeout) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
+        // A privacy hold, not a rate refusal: no offer the call may use on
+        // this device answered.
+        LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "kept_on_device")
+        }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
     (
@@ -148,6 +153,10 @@ fn admit(
             })
         })?;
     *request = authorized.into_request();
+    // The world a caller names does not vouch for the text it sends (Astra
+    // R4): a fallback judges the call as naming none, so the vault-wide
+    // floor holds it while any world stays on the device.
+    request.envelope.scope.world = None;
     raw.call(request, server.run_receipts())
         .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "invalid_request")))
 }

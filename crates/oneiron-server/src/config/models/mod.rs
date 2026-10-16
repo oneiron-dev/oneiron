@@ -12,7 +12,7 @@
 //! is swapped by editing one string and no vendor appears in code. Absent
 //! `[models]`, the server runs every model-free path and reports each seat
 //! as unconfigured.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use oneiron::llm::manifest::ModelRole;
@@ -130,6 +130,9 @@ struct CodeCheckFile {
 pub struct ModelsConfig {
     pub providers: BTreeMap<String, ProviderConfig>,
     pub roles: BTreeMap<ModelRole, Vec<Rung>>,
+    /// The roles whose work never leaves the device (`leave_device =
+    /// "never"`): no rung off it serves them, first or as a fallback.
+    pub stays_on_device: BTreeSet<ModelRole>,
     /// Owner opt-in for the Dreamer's extraction calls to leave the device.
     /// Off by default: personal-data extraction stays local unless the owner
     /// says otherwise (ARCH-0036 counter-arrow).
@@ -270,6 +273,7 @@ impl ModelsFile {
             .into_iter()
             .map(|(name, file)| Ok((name.clone(), file.resolve(&name)?)))
             .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+        let stays_on_device = levels::stays_on_device(&self.roles)?;
         let roles = levels::expand(
             Shorthand {
                 default: self.default,
@@ -378,6 +382,7 @@ impl ModelsFile {
         Ok(ModelsConfig {
             providers,
             roles,
+            stays_on_device,
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
             dreamer,

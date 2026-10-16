@@ -64,6 +64,13 @@ impl RunPermit {
         self.revision
     }
 
+    /// Whether the call went out: the run's gate started its lease. A call
+    /// its backend refused before sending never did.
+    #[must_use]
+    pub fn dispatched(&self) -> bool {
+        self.run.guard.dispatched(&self.lease) == Some(true)
+    }
+
     /// Settles the call. An answer pays its usage, or its reservation when it
     /// reports none, plus a reservation for each rung that failed before it.
     /// A call that started and then failed pays its reservation as unknown

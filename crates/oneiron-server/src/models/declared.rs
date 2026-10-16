@@ -52,6 +52,10 @@ impl DeclaredRun {
         };
         request.model = model;
         request.envelope.locality = locality;
+        // The world a host names does not vouch for the text it sends (Astra
+        // R4): a fallback judges the call as naming none, so the vault-wide
+        // floor holds it while any world stays on the device.
+        request.envelope.scope.world = None;
         ladder
             .generate(&self.admission, request, Some(selector))
             .await

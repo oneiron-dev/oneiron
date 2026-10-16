@@ -18,10 +18,29 @@ pub enum LlmError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
 pub enum RetryableLlmError {
+    /// A spent quota or a rate limit: a 429, or a 403 or 5xx whose body
+    /// reads as one ([`super::limit`]).
     #[error("rate limited")]
     RateLimited {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retry_after: Option<u64>,
+        /// Each time the refusal says its limit resets, as Unix seconds in
+        /// the order it says them. A caller keeps the first one still ahead
+        /// on its own clock: a past one is history, not a reset.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resets_at: Vec<u64>,
+    },
+    /// No offer the call may use on this device answered, and the next one
+    /// would have taken its work off the device while its world stays here
+    /// (world privacy, "Models": no silent fallback to a cloud model).
+    /// `resets_at` holds when the first resting offer the call may use is
+    /// back, when one rests.
+    #[error("kept on device")]
+    KeptOnDevice {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resets_at: Vec<u64>,
     },
     #[error("server error")]
     ServerError,

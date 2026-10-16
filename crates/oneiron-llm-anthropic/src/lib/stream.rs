@@ -186,7 +186,10 @@ impl AnthropicMessagesStreamAccumulator {
                 self.assembly
                     .finish(self.usage.clone(), self.finish_reason.clone())?,
             ),
-            Some("error") => return Err(classify_anthropic_status(500, &BTreeMap::new(), &event)),
+            Some("error") => {
+                let status = oneiron::llm::limit::stream_error_status(&event);
+                return Err(classify_anthropic_status(status, &BTreeMap::new(), &event));
+            }
             _ => {}
         }
         Ok(events)

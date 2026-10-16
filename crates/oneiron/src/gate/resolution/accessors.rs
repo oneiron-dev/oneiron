@@ -283,6 +283,55 @@ impl PolicyManifestResolution {
         )
     }
 
+    /// How long an offer a provider refused for a quota or a limit rests
+    /// when the refusal names no reset, the longest rest any refusal may ask,
+    /// and the longest a call waits for a cooling chain: the vault's rows,
+    /// else the shipped ones. A fail-closed manifest
+    /// reads the shipped rows, since a rest grants nothing.
+    pub(crate) fn provider_cooldown(&self) -> crate::gate::ProviderCooldownPolicy {
+        let (default_secs, max_secs, max_wait_secs) =
+            crate::gate::policy_values::shipped_default_provider_cooldown();
+        let scope = PolicyEvaluationScope::default();
+        let default_secs = match self
+            .resolved_policy_value(
+                PolicyValueKey::ProviderCooldownDefaultSeconds,
+                &scope,
+                PolicyValue::ProviderCooldownDefaultSeconds(default_secs),
+            )
+            .value
+        {
+            PolicyValue::ProviderCooldownDefaultSeconds(seconds) => seconds,
+            _ => unreachable!("typed policy key"),
+        };
+        let max_secs = match self
+            .resolved_policy_value(
+                PolicyValueKey::ProviderCooldownMaxSeconds,
+                &scope,
+                PolicyValue::ProviderCooldownMaxSeconds(max_secs),
+            )
+            .value
+        {
+            PolicyValue::ProviderCooldownMaxSeconds(seconds) => seconds,
+            _ => unreachable!("typed policy key"),
+        };
+        let max_wait_secs = match self
+            .resolved_policy_value(
+                PolicyValueKey::ProviderCooldownMaxWaitSeconds,
+                &scope,
+                PolicyValue::ProviderCooldownMaxWaitSeconds(max_wait_secs),
+            )
+            .value
+        {
+            PolicyValue::ProviderCooldownMaxWaitSeconds(seconds) => seconds,
+            _ => unreachable!("typed policy key"),
+        };
+        crate::gate::ProviderCooldownPolicy {
+            default_secs: default_secs.min(max_secs),
+            max_secs,
+            max_wait_secs,
+        }
+    }
+
     pub(crate) fn proposal_check_threshold_source(
         &self,
         scope: &PolicyEvaluationScope,

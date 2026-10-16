@@ -216,6 +216,32 @@ impl WaveHandoffPolicy {
     }
 }
 
+/// How long an offer a provider refused for a quota or a limit stays out of
+/// rotation (OF-305): `default_secs` when the refusal names no reset, and
+/// never longer than `max_secs`, whatever reset it names. A call whose every
+/// offer rests waits for the first one back when that is at most
+/// `max_wait_secs` away (the rate law: a cooling chain is not refused for
+/// rate); a longer rest refuses with its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderCooldownPolicy {
+    pub default_secs: u64,
+    pub max_secs: u64,
+    pub max_wait_secs: u64,
+}
+
+impl Default for ProviderCooldownPolicy {
+    /// The shipped rows.
+    fn default() -> Self {
+        let (default_secs, max_secs, max_wait_secs) =
+            super::policy_values::shipped_default_provider_cooldown();
+        Self {
+            default_secs: default_secs.min(max_secs),
+            max_secs,
+            max_wait_secs,
+        }
+    }
+}
+
 fn entries<'a>(value: &'a Value, fields: &[&str]) -> Option<&'a [(Value, Value)]> {
     let Value::Map(entries) = value else {
         return None;
@@ -253,6 +279,13 @@ impl Vault {
             policy_frontier: policy.read_frontier_hash()?,
             ..policy.linear_sync()
         })
+    }
+    /// The vault's provider cooldown rows in one fresh snapshot. Unlike the
+    /// schedules above, a fail-closed manifest reads the shipped rows: a
+    /// rest only keeps calls away from a provider that refused them.
+    pub fn provider_cooldown_policy(&self) -> Result<ProviderCooldownPolicy> {
+        let txn = self.store.env.read_txn()?;
+        Ok(resolve_policy_manifest(&self.store, &txn)?.provider_cooldown())
     }
     pub fn wave_handoff_policy(&self) -> Result<WaveHandoffPolicy> {
         let policy = operational_resolution(&self.store)?;

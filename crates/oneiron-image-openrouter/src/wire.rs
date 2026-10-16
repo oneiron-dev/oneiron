@@ -140,6 +140,7 @@ pub fn classify_image_status(
                 .iter()
                 .find(|(key, _)| key.eq_ignore_ascii_case("retry-after"))
                 .and_then(|(_, value)| value.parse::<u64>().ok()),
+            resets_at: Vec::new(),
         }
         .into(),
         500..=599 => RetryableLlmError::ServerError.into(),

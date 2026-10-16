@@ -209,6 +209,11 @@ side_tables! {
     /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
     /// Key: hex32.
     GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;
+    /// A model offer a provider refused for a quota or a limit, out of rotation until its reset
+    /// (OF-305): this deployment's routing state, never replicated, and runtime to a checkpoint,
+    /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire
+    /// model).
+    MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;

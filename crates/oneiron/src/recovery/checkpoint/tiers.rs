@@ -111,6 +111,8 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"m:last_sync",
                 b"m:maintenance_ingest_quota",
                 b"budget:",
+                // A provider's offer cooldowns belong to this deployment.
+                b"models:offer-cooldown:",
             ]
             .iter()
             .any(|p| key.starts_with(p))
