@@ -66,6 +66,8 @@ pub(super) async fn serve_with_config(
     let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(&config);
+    #[cfg(unix)]
+    let folder_rescans = super::history_import::notes::folder::FolderRescans::from_config(&config);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
@@ -220,6 +222,9 @@ pub(super) async fn serve_with_config(
     workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(&sync_server)));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
+    // Attached folders rescan after the import queue starts (OF-554).
+    #[cfg(unix)]
+    workers.extend(folder_rescans.map(|rescans| rescans.spawn(Arc::clone(&sync_server))));
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, mut stopped) = tokio::sync::watch::channel(false);
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
