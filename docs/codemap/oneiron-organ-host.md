@@ -17,7 +17,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error.rs` | src | s | 2 enum | HostError, Unavailable | What can go wrong on the engine side of an organ call |
 | `src/fetch.rs` | src | m | 1 struct · 1 crate-vis | GuardedFetch | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
 | `src/host.rs` | src | m | 3 struct · 12 fn | OrganHost, OrganOutcome, OrganOutput | The organ host: install, call, unload, revoke |
-| `src/lib.rs` | src | s | 1 mod · 8 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
+| `src/landing.rs` | src | s | 3 fn | — | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
+| `src/lib.rs` | src | s | 1 mod · 9 re-export | — | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
 | `src/process.rs` | src | L | 21 crate-vis | — | One live organ process: spawn, handshake, a reader thread, calls |
 | `src/receipt.rs` | src | s | 6 struct · 1 enum · 3 crate-vis | AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered | The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes |
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
