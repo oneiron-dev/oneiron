@@ -150,16 +150,7 @@ fn register_active_scoped_connector_key_with_budgets(
     vault
         .stage_connector_manifest(&key_id, manifest.clone(), "R1", &Suite, 11)
         .expect("qualify fixture");
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("owner person");
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault
         .authenticate_owner(
             owner,
@@ -1060,7 +1051,7 @@ fn result_scrub_destroys_all_provider_fields_and_debug_content() {
 }
 
 #[test]
-fn paid_pending_ignores_later_standing_grant_revocation_and_completes() {
+fn paid_pending_at_the_budget_limit_completes_without_a_second_debit() {
     let (_tmp, vault) = temp_vault();
     // Seed avoids the reserved system-agent-preset id band [0xA1;16]..=[0xA5;16]
     // (entity materialization rejects those as authority-bearing collisions).
@@ -1104,15 +1095,14 @@ fn paid_pending_ignores_later_standing_grant_revocation_and_completes() {
     // materializes as a synced connector-send TASK row.
     assert!(vault.connector_send_tasks().unwrap().is_empty());
 
-    vault
-        .revoke_standing_outbound_grant(&grant_id, 20)
-        .expect("revoke grant");
+    // The grant stays live: revoking it abandons the row instead (H163,
+    // revoked_grant_abandons_paid_pending_without_transport).
     let mut transport = RecordingResultSender::default();
     let recovered =
         recover_authorized_outbound_intents(&vault, &authority, &mut transport, 21, 30_000)
             .expect("authorized recovery");
-    // Discriminating: this already-paid row does not re-run standing-grant
-    // liveness or budget admission; it resumes the authenticated frozen call.
+    // Discriminating: this already-paid row does not re-run budget
+    // admission at used == limit; it resumes the authenticated frozen call.
     assert_eq!(recovered.effectful_sends, 1);
     assert_eq!(recovered.authorization_rejections, 0);
     assert_eq!(recovered.ledger.resent, 1);
@@ -1295,6 +1285,66 @@ fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
             .rows[0]
             .used,
         1
+    );
+}
+
+/// H163: revoking the standing grant is an immediate consent boundary. A
+/// paid Pending call frozen under it never reaches the wire on recovery,
+/// though its binding still authenticates; a live connector does not save it.
+#[test]
+fn revoked_grant_abandons_paid_pending_without_transport() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x9D);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .expect("mint scoped grant");
+    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut ambiguous = AmbiguousResultSender;
+    execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0x78; 16]).expect("attempt id"),
+        1,
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"grant revoked pending".to_vec(),
+        ),
+        11,
+        &mut ambiguous,
+    )
+    .expect("initial paid Pending");
+    vault
+        .revoke_standing_outbound_grant(&grant_id, 12)
+        .expect("revoke grant");
+
+    let mut transport = RecordingResultSender::default();
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 13, 30_000)
+            .expect("revoked-grant recovery");
+    assert_eq!(recovered.effectful_sends, 0);
+    assert_eq!(recovered.ledger.resent, 0);
+    assert!(transport.sent_payloads.is_empty());
+    let row = intent_ledger_records(&vault)
+        .expect("read abandoned row")
+        .into_iter()
+        .next()
+        .expect("row");
+    assert_eq!(row.state, IntentState::Abandoned);
+    assert_eq!(
+        row.recorded_outcome,
+        Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::BindingInvalid
+        ))
     );
 }
 
@@ -1509,16 +1559,7 @@ fn register_scoped_key(vault: &Vault, key_id: &EntityId, grant_id: &EntityId, se
     vault
         .stage_connector_manifest(key_id, manifest.clone(), "R1", &Suite, 11)
         .unwrap();
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault
         .authenticate_owner(
             owner,
@@ -1866,16 +1907,7 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
     vault
         .stage_connector_manifest(&key_id, changed.clone(), "R1", &Suite, 13)
         .unwrap();
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault
         .authenticate_owner(
             owner,

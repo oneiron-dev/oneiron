@@ -6,6 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::Store;
@@ -182,20 +183,43 @@ impl Store {
         Ok(records)
     }
 
-    /// The first `limit` pending gate consents, in the order their write
-    /// decisions entered the tray. The read stops after `limit` rows, so a
-    /// short list costs a short read, never the whole tray (F13); a caller
-    /// that needs every consent passes `usize::MAX`.
+    /// The first `limit` pending gate consents, oldest proposal first. A
+    /// deferred proposal enters the tray late with its first proposal's
+    /// time, so the read takes every row and raises a check past its
+    /// threshold (F13).
     pub(crate) fn pending_gate_consents_in_txn(
         &self,
         txn: &RoTxn<'_>,
         limit: usize,
     ) -> Result<Vec<PendingGateConsentRecord>> {
-        Ok(self
-            .pending_gate_consents_page_in_txn(txn, None, None, limit)?
-            .into_iter()
-            .map(|(_, record)| record)
-            .collect())
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut count = ScanCount::start(self, txn, EngineScan::PendingGateConsentRows, &[])?;
+        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+        for row in TRAY.iter_from(self, txn, &[])? {
+            count.row();
+            let (claim_id, record) = row?;
+            if record.claim_id != claim_id {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            records.push(record);
+        }
+        count.defer(self);
+
+        records.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| {
+                    left.decision_id
+                        .as_bytes()
+                        .cmp(&right.decision_id.as_bytes())
+                })
+                .then_with(|| left.claim_id.cmp(&right.claim_id))
+        });
+        records.truncate(limit);
+        Ok(records)
     }
 
     pub fn pending_gate_consent_groups(

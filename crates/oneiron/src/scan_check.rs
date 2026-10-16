@@ -92,11 +92,13 @@ pub enum EngineScan {
     BlendTuningRuns,
     /// One conversation's peers a Dreamer selection retry reads.
     DreamerRetryPeers,
+    /// The pending gate-consent tray a consent list walks.
+    PendingGateConsentRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -121,6 +123,7 @@ impl EngineScan {
         Self::OccurredRangeRows,
         Self::BlendTuningRuns,
         Self::DreamerRetryPeers,
+        Self::PendingGateConsentRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -159,6 +162,7 @@ impl EngineScan {
             Self::OccurredRangeRows => "occurred_range_rows",
             Self::BlendTuningRuns => "blend_tuning_runs",
             Self::DreamerRetryPeers => "dreamer_retry_peers",
+            Self::PendingGateConsentRows => "pending_gate_consent_rows",
         }
     }
 
@@ -188,6 +192,7 @@ impl EngineScan {
             Self::OccurredRangeRows => 56,
             Self::BlendTuningRuns => 57,
             Self::DreamerRetryPeers => 58,
+            Self::PendingGateConsentRows => 25,
         }]
     }
 }

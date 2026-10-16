@@ -441,6 +441,34 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                 }),
             ))
         }
+        EngineScan::PendingGateConsentRows => {
+            vault
+                .with_write_txn(|wtxn| {
+                    for index in 0..PAST {
+                        let decision = gate_decision(index);
+                        let pending = crate::store::PendingGateConsentRecord {
+                            version: crate::store::PENDING_GATE_CONSENT_VERSION,
+                            claim_id: decision.claim_id.expect("claim"),
+                            decision_id: decision.decision_id,
+                            created_at: decision.created_at,
+                            diff_handle: decision.diff_handle.clone(),
+                            read_frontier_hash: decision.read_frontier_hash,
+                            reason_codes: decision.reason_codes.clone(),
+                            dreamer_run_id: None,
+                        };
+                        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+                        vault
+                            .store
+                            .put_pending_gate_consent_in_txn(wtxn, &pending)?;
+                    }
+                    Ok(())
+                })
+                .expect("seed");
+            Some((
+                1,
+                Box::new(move || Ok(vault.pending_gate_consents(1)?.len())),
+            ))
+        }
         EngineScan::ScopedEdgeRows => {
             let center = scoped_people(vault);
             Some((

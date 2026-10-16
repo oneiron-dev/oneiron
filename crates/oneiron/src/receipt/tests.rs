@@ -1143,6 +1143,91 @@ fn brief_projection_chain_walks_nested_runs() {
     assert_eq!(projection.budget_debit_total, 5);
 }
 
+/// H107: a shared suffix never joins two namespaces. A run, a grant and an
+/// access grant that happen to share the brief's id stay out of the brief's
+/// audit view and budget, and an access grant stays out of an outbound grant's.
+#[test]
+fn receipt_projections_never_join_refs_across_namespaces() {
+    let receipts = vec![
+        projected_receipt(
+            "outbound:intent:own",
+            ReceiptKind::Outbound,
+            10,
+            "delivered_to_channel",
+            Some("brief:party"),
+            Some("intent:own"),
+            &[("grant_ref", "grant:party"), ("budget_debit", "2")],
+        ),
+        projected_receipt(
+            "outbound:intent:run-named-party",
+            ReceiptKind::Outbound,
+            11,
+            "delivered_to_channel",
+            Some("run:party"),
+            Some("intent:run-named-party"),
+            &[("budget_debit", "7")],
+        ),
+        projected_receipt(
+            "outbound:intent:grant-named-party",
+            ReceiptKind::Outbound,
+            12,
+            "delivered_to_channel",
+            None,
+            Some("intent:grant-named-party"),
+            &[("brief_ref", "grant:party"), ("budget_debit", "11")],
+        ),
+        projected_receipt(
+            "scoped_read:party:minted",
+            ReceiptKind::ScopedRead,
+            13,
+            "minted",
+            None,
+            Some("access_grant:party"),
+            &[],
+        ),
+    ];
+
+    let brief = project_receipts_by_brief("brief:party", receipts.clone());
+    let brief_ids: Vec<&str> = brief
+        .runs
+        .iter()
+        .flat_map(|run| {
+            run.intents
+                .iter()
+                .flat_map(|intent| intent.receipts.iter())
+                .chain(run.direct_receipts.iter())
+        })
+        .chain(brief.direct_receipts.iter())
+        .chain(brief.consent_grants.iter())
+        .chain(brief.bundles.iter())
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect();
+    assert!(brief_ids.contains(&"outbound:intent:own"));
+    assert!(!brief_ids.contains(&"outbound:intent:run-named-party"));
+    assert!(!brief_ids.contains(&"outbound:intent:grant-named-party"));
+    assert_eq!(brief.budget_debit_total, 2);
+
+    let grant = project_receipts_by_grant("grant:party", receipts.clone());
+    let grant_ids: Vec<&str> = grant
+        .receipts
+        .iter()
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect();
+    assert_eq!(grant_ids, vec!["outbound:intent:own"]);
+
+    // The legacy bare spellings still read their own namespace.
+    let filtered = finalize_receipt_query_records(
+        receipts,
+        &ReceiptQuery::new(10).with_job_ref("party"),
+        None,
+    );
+    let filtered_ids: Vec<&str> = filtered
+        .iter()
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect();
+    assert_eq!(filtered_ids, vec!["outbound:intent:own"]);
+}
+
 fn test_prompt_stamp() -> PromptRecompileStamp {
     PromptRecompileStamp {
         schema_version: crate::prompt::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION.to_owned(),
