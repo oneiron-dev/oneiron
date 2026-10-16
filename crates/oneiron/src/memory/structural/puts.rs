@@ -10,8 +10,8 @@ use crate::memory::support::{
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{
-    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -161,6 +161,17 @@ impl Memory<'_> {
                 resolved_edges.push((kind, target, weight));
             }
         }
+        // A text written from ASSETs is born under their one facet, with its
+        // `DerivedFrom` edges (facet rule C); sources in two facets refuse it.
+        let (sources, resolved_edges): (Vec<_>, Vec<_>) = resolved_edges
+            .into_iter()
+            .partition(|(kind, _, _)| {
+                type_byte == ENTITY_TYPE_ASSET_TEXT && *kind == EdgeKind::DerivedFrom
+            });
+        let sources: Vec<_> = sources
+            .into_iter()
+            .map(|(_, source, weight)| (source, weight))
+            .collect();
         let text_fields: Vec<(String, String)> = input
             .text_fields
             .as_deref()
@@ -188,10 +199,15 @@ impl Memory<'_> {
                 return Ok(true);
             }
             ensure_structural_create_in_txn(self.vault, content.read(), &id)?;
-            let mut batch = self
-                .vault
-                .batch_in()
-                .put(&id, type_byte, occurred, learned_at, &data);
+            let mut batch = if sources.is_empty() {
+                self.vault
+                    .batch_in()
+                    .put(&id, type_byte, occurred, learned_at, &data)
+            } else {
+                self.vault
+                    .batch_in()
+                    .asset_text_birth(&id, occurred, learned_at, &data, &sources)
+            };
             for (kind, target, weight) in &resolved_edges {
                 batch = batch.edge(&id, *kind, target, *weight);
             }

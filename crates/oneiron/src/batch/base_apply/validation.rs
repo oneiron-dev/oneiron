@@ -111,25 +111,33 @@ pub(super) fn validate_put_type(
 }
 
 /// The FACET a NOTE or ASSET put at `id` is born under: the batch mask, else
-/// the vault default. `None` when the put births nothing that carries a stamp —
-/// a put over a stored row, another kind, or a replicated put, whose origin's
-/// `FacetOf` edge arrives in the same window.
+/// the vault default. An ASSET_TEXT put with the `sources` it was written
+/// from is born under the one facet they were born under (facet rule C).
+/// `None` when the put births nothing that carries a stamp — a put over a
+/// stored row, another kind, a text bound to no source, or a replicated put,
+/// whose origin's `FacetOf` edge arrives in the same window.
 pub(super) fn birth_stamp_target(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     entity_type: u8,
     replicated: bool,
-    mask: Option<EntityId>,
+    (mask, sources): (Option<EntityId>, Option<&[EntityId]>),
 ) -> Result<Option<EntityId>> {
+    let sources = sources.filter(|_| entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT);
     if replicated
-        || !matches!(
-            entity_type,
-            crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
-        )
+        || !(sources.is_some()
+            || matches!(
+                entity_type,
+                crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET
+            ))
         || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some()
     {
         return Ok(None);
+    }
+    if let Some(sources) = sources {
+        return crate::federation::record_scope::asset_text::sources_birth_facet(store, txn, sources)
+            .map(Some);
     }
     match mask {
         Some(mask) => Ok(Some(mask)),

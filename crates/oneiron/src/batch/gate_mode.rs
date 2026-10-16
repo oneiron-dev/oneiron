@@ -19,6 +19,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// The caller's active mask: the FACET every NOTE and ASSET born in this
     /// batch is stamped with. `None` stamps the vault default.
     pub(super) birth_mask: Option<EntityId>,
+    /// Every source each ASSET_TEXT this batch births was written from: its
+    /// birth copies their one facet (`BatchBuilder::asset_text_birth`).
+    pub(super) text_births: HashMap<EntityId, Vec<EntityId>>,
     /// BM25 analyses of this batch's text ops, done before the write
     /// transaction opened; consumed per id in op order.
     pub(super) pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
@@ -41,6 +44,7 @@ impl ApplyOpsGateMode {
             claim_transitions: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
             birth_mask: None,
+            text_births: HashMap::new(),
             pre_analyzed_text: HashMap::new(),
             nsw_plans: HashMap::new(),
         }
@@ -56,6 +60,13 @@ impl ApplyOpsGateMode {
 
     pub(super) fn with_birth_mask(mut self, mask: Option<EntityId>) -> Self {
         self.birth_mask = mask;
+        self
+    }
+
+    /// Binds each ASSET_TEXT this batch births to every source it was
+    /// written from; a text put that births no row here copies nothing.
+    pub(crate) fn with_text_births(mut self, births: HashMap<EntityId, Vec<EntityId>>) -> Self {
+        self.text_births = births;
         self
     }
 

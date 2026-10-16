@@ -106,6 +106,7 @@ impl BatchBuilder<'_> {
         #[cfg(not(feature = "sync"))]
         let ops = std::mem::take(&mut self.ops);
         let (origin, birth_mask) = (self.origin, self.birth_mask);
+        let text_births = std::mem::take(&mut self.text_births);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         let stale_sweep = crate::federation::StaleSweepWatch::begin(vault);
@@ -150,6 +151,7 @@ impl BatchBuilder<'_> {
                     gate_mode: ApplyOpsGateMode::new(false, true)
                         .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
                         .with_birth_mask(birth_mask)
+                        .with_text_births(text_births)
                         .with_prepared(prepared),
                     origin,
                 },

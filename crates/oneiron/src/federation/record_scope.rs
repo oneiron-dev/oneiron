@@ -16,6 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub(crate) mod asset_text;
 mod export;
 #[cfg(test)]
 mod tests;
@@ -178,6 +179,12 @@ pub(crate) fn stamp_put(
             // A birth without its same-transaction FacetOf is not stamped.
             return Ok(());
         };
+        (default_stamp(kind, facet), facet)
+    } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+        // A text born from its sources sits under their facet; one born
+        // unplaced keeps its own (`asset_text`). A stamp added later is
+        // refused below as a restamp.
+        let facet = asset_text::text_facet(store, txn, id)?;
         (default_stamp(kind, facet), facet)
     } else {
         let facet = crate::claim::substrate_facet_id(id)?;
@@ -487,6 +494,8 @@ fn stored_scope(
         EntityId::from_bytes(stamp.birth_facet)
             .ok()
             .filter(|facet| stamp.scope.facets == singleton(ScopeId(*facet)))
+    } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+        Some(asset_text::text_facet(store, txn, id)?)
     } else {
         Some(crate::claim::substrate_facet_id(id)?)
     };
