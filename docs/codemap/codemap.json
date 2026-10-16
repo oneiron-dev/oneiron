@@ -3764,7 +3764,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SecretScanMode"
@@ -3772,7 +3772,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1
      }
     },
@@ -4506,7 +4506,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -6711,7 +6711,7 @@
      "path": "src/campaign/claims/store.rs",
      "purpose": "Store-aware claim reads: stage CAS, live-head scans, and DNC matching",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -10548,6 +10548,14 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/comm/consent_projection_tests.rs",
+     "purpose": "F06: an inbound STOP ends a projector pass as a durable, readable opt-out on every vault shape, and a STOP…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/comm/mod.rs",
@@ -10555,6 +10563,16 @@
      "surface": {
       "crate-vis": 6,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/opt_out_slots.rs",
+     "purpose": "One (party, channel) opt-out slot read across the party's redirect shells, and the pending human-clear gates…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -13605,7 +13623,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 4
      }
     },
@@ -14416,7 +14434,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 40,
       "enum": 1,
       "type": 1
      }
@@ -14436,7 +14454,7 @@
      "purpose": "Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 8,
       "struct": 4,
@@ -17265,7 +17283,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/slides_review/tests.rs",
@@ -20769,7 +20787,7 @@
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 4
      }
     },
@@ -22480,7 +22498,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 18,
-      "mod": 177,
+      "mod": 178,
       "re-export": 72
      }
     },
@@ -22860,7 +22878,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DecisionLadder",
@@ -22869,14 +22887,16 @@
       "HumanDecisionQueue",
       "HumanDecisionRequest",
       "ModelDecisionProvider",
+      "PairedAnswer",
       "ProviderDecision",
       "RuleDecisionProvider"
      ],
      "path": "src/llm/decision/ladder.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
-      "struct": 5,
+      "struct": 6,
       "trait": 3
      }
     },
@@ -22907,7 +22927,7 @@
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -23079,6 +23099,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DecisionReadCall",
+      "DecisionReadProvider"
+     ],
+     "path": "src/llm/decision/read.rs",
+     "purpose": "The escalation rung's decision read: the house model scores the question's labels and the paired \"does this…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DecisionSeat",
       "SeatAnswer",
       "SeatPhase",
@@ -23120,7 +23154,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/tests.rs",
@@ -23141,6 +23175,7 @@
       "DecisionRung",
       "EvidenceVersion",
       "HumanAskReason",
+      "PairedReading",
       "ProviderPin",
       "TypedDecision"
      ],
@@ -23150,7 +23185,7 @@
       "crate-vis": 1,
       "enum": 5,
       "fn": 6,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -23258,7 +23293,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 8,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -26244,7 +26279,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 10,
+      "mod": 9,
       "re-export": 1
      }
     },
@@ -26364,23 +26399,6 @@
       "enum": 1,
       "fn": 4,
       "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "OriginScan",
-      "OriginScanCheck"
-     ],
-     "path": "src/origin/scan_check.rs",
-     "purpose": "Origin scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
-     "surface": {
-      "const": 3,
-      "crate-vis": 4,
-      "enum": 1,
-      "fn": 4,
-      "struct": 1
      }
     },
     {
@@ -31677,6 +31695,23 @@
      "path": "src/saved_query/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EngineScan",
+      "ScanCheck"
+     ],
+     "path": "src/scan_check.rs",
+     "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
+     "surface": {
+      "const": 4,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -41965,7 +42000,7 @@
      "purpose": "—"
     },
     "comm": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42469,7 +42504,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42518,7 +42553,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 59,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42733,6 +42768,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
+    },
+    "scan_check": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
      "files": 6,
@@ -43071,10 +43113,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 43,
+   "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2592,
-   "test_files": 879
+   "source_files": 2594,
+   "test_files": 880
   },
   "oneiron-android": {
    "files": [
@@ -49686,12 +49728,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LabelReadModel",
+      "LabelReadRequest",
+      "LabelReadResponse",
+      "LabelReadout",
+      "LabelSet"
+     ],
+     "path": "src/llm/label_read.rs",
+     "purpose": "Label-read seam: a host model scores a closed label set instead of generating text",
+     "surface": {
+      "enum": 1,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 2,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -49815,7 +49875,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49824,7 +49884,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 31,
+   "source_files": 32,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -55869,7 +55929,6 @@
      "path": "src/mcp/endpoint_args.rs",
      "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
      "surface": {
-      "const": 1,
       "crate-vis": 3,
       "fn": 3,
       "struct": 7

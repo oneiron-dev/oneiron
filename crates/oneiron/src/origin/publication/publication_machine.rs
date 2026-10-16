@@ -10,7 +10,7 @@ use crate::git_wire::{
     GitOid, GitWire, GitWireCommitOutcome, GitWireRejection, GitWireRepo, lock_repository,
 };
 use crate::origin::lfs::LfsOid;
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::scan_check::{EngineScan, ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::origin_publication_id;
@@ -816,8 +816,12 @@ impl Vault {
         // its length (rule 5).
         let (owners, count) = {
             let rtxn = self.store.env.read_txn()?;
-            let mut count =
-                ScanCount::start(&self.store, &rtxn, OriginScan::KeepOwnerRows, Some(repo_id))?;
+            let mut count = ScanCount::start(
+                &self.store,
+                &rtxn,
+                EngineScan::KeepOwnerRows,
+                repo_id.as_bytes(),
+            )?;
             let mut owners = Vec::new();
             for row in KEEP_OWNER.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
                 count.row();

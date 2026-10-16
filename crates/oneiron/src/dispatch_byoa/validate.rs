@@ -14,8 +14,8 @@ use super::connector::{
 use super::error::{
     ByoaResult, ERR_ARGV_ENTRY, ERR_ARGV_TOO_LONG, ERR_BASE_URL, ERR_CHECKPOINT_FRONTIER,
     ERR_CREDENTIAL_HANDLES, ERR_EGRESS_PROFILE_REF, ERR_EXECUTION_BUDGET, ERR_EXHAUST_EMPTY,
-    ERR_EXHAUST_TOO_LARGE, ERR_MODEL_SLUG, ERR_PROGRAM, ERR_SERVER_REF, ERR_SLUG_MAP_EMPTY,
-    ERR_SLUG_MAP_TOO_LARGE, invalid,
+    ERR_EXHAUST_TAINT, ERR_EXHAUST_TOO_LARGE, ERR_MODEL_SLUG, ERR_PROGRAM, ERR_SERVER_REF,
+    ERR_SLUG_MAP_EMPTY, ERR_SLUG_MAP_TOO_LARGE, invalid,
 };
 use super::exhaust::ByoaExhaust;
 fn is_bounded_printable(value: &str, max_len: usize) -> bool {
@@ -174,5 +174,6 @@ pub(super) fn validate_exhaust(exhaust: &ByoaExhaust) -> ByoaResult<()> {
     if total > BYOA_MAX_EXHAUST_TOTAL_BYTES {
         return Err(invalid(ERR_EXHAUST_TOO_LARGE));
     }
-    Ok(())
+    crate::secret_rotation::validate_taint_refs(&exhaust.secret_taint_refs)
+        .map_err(|_| invalid(ERR_EXHAUST_TAINT))
 }
