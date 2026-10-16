@@ -279,8 +279,9 @@ pub(super) mod entity_serde {
 }
 
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
-/// This is never used by auto-upsert. Standalone unrooted vaults keep their
-/// existing human-owner posture; a declared/conflicted root is fail-closed.
+/// This is never used by auto-upsert. Only the vault owner overrides: the
+/// embedded owner on an unrooted vault, the bound owner on a rooted one; a
+/// conflicted root is fail-closed.
 pub(crate) fn explicit_claim_override_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -303,11 +304,8 @@ pub(crate) fn explicit_claim_override_in_txn(
             "memory.claim.retract",
         );
     }
-    let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    if fold.vault_root_is_conflicted()
-        || (fold.vault_id.is_some()
-            && !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human"))
-    {
+    // The owner check every owner verb takes, rooted or not (H149).
+    if super::support::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_err() {
         return Err(authority_denied(
             "explicit override requires active owner authority",
         ));

@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn recall_items_and_document_chat_keep_the_indexed_revision() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x6A);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let id = EntityId::from_bytes([0x6B; 16]).unwrap();
     let put = |content: &str| {
@@ -129,7 +129,7 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
 #[test]
 fn memory_view_short_ref_and_body_use_the_same_scoped_snapshot() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x7A);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let id = EntityId::from_bytes([0x7B; 16]).unwrap();
     let original = rmp_serde::to_vec_named(&serde_json::json!({"name": "before delete"})).unwrap();
