@@ -32,7 +32,10 @@ const MODEL_FNS: &[&str] = &[
     "call_openrouter",
 ];
 /// Methods that reach a model only inside one tree: BEAM's model session.
-const SCOPED_METHODS: &[(&str, &str)] = &[("invoke", "crates/oneiron-bench/src/beam/")];
+const SCOPED_METHODS: &[(&str, &str)] = &[
+    ("invoke", "crates/oneiron-bench/src/beam/"),
+    ("invoke_capped", "crates/oneiron-bench/src/beam/"),
+];
 
 const SEAM_SUFFIXES: &[&str] = &[
     "Judge",
@@ -245,9 +248,15 @@ const OUTSIDE: &[Pin] = &[
     ),
     pin(
         "crates/oneiron-bench/src/beam/model_scaffold.rs",
-        "invoke",
-        "session.invoke(pin, CallPurpose::AnswerGen, prompt, &input)",
+        "invoke_capped",
+        "session.invoke_capped(pin, CallPurpose::AnswerGen, prompt, &input)",
         "BEAM benchmark answer",
+    ),
+    pin(
+        "crates/oneiron-bench/src/beam/model_scaffold/context.rs",
+        "invoke_capped",
+        "session.invoke_capped(pin, CallPurpose::AnswerGen, prompt, &input)?;",
+        "BEAM trajectory-only arm: the reader's own working step",
     ),
     pin(
         "crates/oneiron-bench/src/beam/model_scaffold.rs",
