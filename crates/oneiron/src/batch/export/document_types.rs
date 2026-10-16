@@ -1,4 +1,4 @@
-//! Versioned six-part whole-vault interchange document.
+//! Versioned seven-part whole-vault interchange document.
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -101,7 +101,7 @@ impl WholeVaultExport {
     }
 }
 
-/// Exactly six sections. Entities occur once. Derived evidence is an index into
+/// Exactly seven sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,6 +114,52 @@ pub struct WholeVaultDocument {
     pub skills: Vec<ExportSkillBundle>,
     pub agent_packs: Vec<ExportAgentBundle>,
     pub derivation_envelopes: Vec<ExportDerivationEnvelope>,
+    pub run_results: ExportRunResults,
+}
+
+/// The code runs' results (OF-190 B++): each run's result manifests, and
+/// each body they name once. An off-record run's results never reach the
+/// base vault, so no export holds them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRunResults {
+    pub runs: Vec<ExportRun>,
+    pub bodies: Vec<ExportResultBody>,
+}
+
+/// One run's results, as its replay record names them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRun {
+    pub run_id: String,
+    pub outputs: Vec<ExportRunOutput>,
+}
+
+/// One result's manifest. Its preview and line index are derived from the
+/// body, so an import rebuilds them rather than reading them here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportRunOutput {
+    pub path: String,
+    /// The body's BLAKE3, lowercase hex: its key in `bodies`.
+    pub blake3: String,
+    pub bytes: u64,
+    pub kind: String,
+    pub lines: u64,
+    pub complete: bool,
+}
+
+/// One result body. Its text goes out through the release door's scan;
+/// `content` is `None` when the body is withheld, and `withheld` says why:
+/// the secret scan marked it, it carries taint refs, the release scan found
+/// a credential in it, or it is no UTF-8 text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportResultBody {
+    pub blake3: String,
+    pub bytes: u64,
+    pub content: Option<String>,
+    pub withheld: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -201,6 +247,10 @@ pub struct WholeVaultImportReceipt {
     pub omitted_entities: usize,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
+    /// Run results whose bodies came back, and those whose bodies the export
+    /// withheld (their manifests stay in the archive only).
+    pub imported_results: usize,
+    pub withheld_results: usize,
 }
 
 impl WholeVaultDocument {

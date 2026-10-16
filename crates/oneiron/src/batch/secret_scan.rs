@@ -334,6 +334,17 @@ impl PhraseStream {
         }
         Ok(())
     }
+
+    /// [`Self::feed`] for a reader that marks a hit rather than refusing
+    /// the write: the reason it would refuse with.
+    pub(crate) fn find(&mut self, text: &str) -> Option<&'static str> {
+        self.0.feed(text).then_some(REASON_MNEMONIC)
+    }
+
+    /// [`Self::finish`], the same way.
+    pub(crate) fn find_at_end(&mut self) -> Option<&'static str> {
+        self.0.finish().then_some(REASON_MNEMONIC)
+    }
 }
 
 /// The release doors' field rule, for a reader that finds fields the

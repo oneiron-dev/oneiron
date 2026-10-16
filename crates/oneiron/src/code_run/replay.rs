@@ -302,6 +302,10 @@ impl CodeRunStepCheckpoint {
     }
 }
 
+/// The preview text of a body the secret scan marked.
+pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str =
+    "[preview withheld: the secret scan found a secret in this result]";
+
 /// Compact preview stored in a replay record beside a raw output handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -397,10 +401,15 @@ impl CodeRunRawOutput {
             },
             lines: facts.lines,
             complete,
+            // A body the secret scan marked shows no preview: the view is
+            // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
-                text: facts.preview.clone(),
-                truncated: facts.preview_truncated,
+                text: match facts.secret {
+                    Some(_) => CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned(),
+                    None => facts.preview.clone(),
+                },
+                truncated: facts.preview_truncated || facts.secret.is_some(),
             },
         })
     }
