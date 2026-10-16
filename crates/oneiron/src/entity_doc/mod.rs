@@ -27,10 +27,10 @@ pub(crate) use recovery::{
 mod verbs;
 
 pub use document::{Birth, EntityDoc, TextChange};
-pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use forks::{
     DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
 };
+pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::RegistryStatus;

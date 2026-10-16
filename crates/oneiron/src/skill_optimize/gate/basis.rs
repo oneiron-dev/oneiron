@@ -278,8 +278,9 @@ pub struct HeldOutReplayCase<'a> {
 
 /// Host replay data and the Coach's configured typed-decision path.
 /// Replay and pair sampling are evidence preparation, not judge callbacks.
-/// Scores, blind preferences, judge audits and tradeoffs all run on that path.
-/// Independent honesty findings are supplied by the replay auditor.
+/// Judgment scores, blind preferences, audits and tradeoffs all run on that
+/// path. Independent honesty findings are supplied by the replay auditor.
+/// The archive coverage floor is computed from engine-owned evidence.
 pub trait HeldOutReplayScorer {
     fn judge_revision(&self) -> &str;
 
@@ -315,6 +316,13 @@ pub trait HeldOutReplayScorer {
         _case: &HeldOutReplayCase<'_>,
     ) -> Result<Vec<HonestyReplayObservation>> {
         Err(invalid("no held-out honesty auditor is registered"))
+    }
+
+    /// Engine-projected coverage evidence, not a host-supplied scalar score.
+    fn coverage_floor(
+        &self,
+    ) -> Option<&crate::autoreason_campaign::coverage::CoverageFloorComparison> {
+        None
     }
 
     /// Declarations only; the authenticated goal still owns the axis set.

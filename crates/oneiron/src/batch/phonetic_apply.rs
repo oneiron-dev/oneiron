@@ -6,9 +6,9 @@ use heed::RwTxn;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{ManifestDbs, Store};
+use crate::store::ManifestDbs;
 
-/// Caller-supplied phonetic indexing instructions retained for delete/reindex
+/// Published supplied and generated phonetic codes retained for delete/reindex
 /// reconciliation. Key: id16.
 const PHONETIC_SOURCE: SideTable<EntityId, Vec<String>, Named> =
     SideTable::new(&side_table::BATCH_PHONETIC_INDEX_SOURCE);
@@ -70,7 +70,7 @@ pub(crate) fn apply_phonetic(
         }
     }
 
-    // Retain the caller's indexing instructions, not posting-list/cache bytes.
+    // Retain published codes, not posting-list/cache bytes.
     let mut source = PHONETIC_SOURCE.get(store, wtxn, &id)?.unwrap_or_default();
     source.extend_from_slice(codes);
     source.sort();
@@ -89,19 +89,19 @@ pub(crate) fn apply_phonetic(
 }
 
 pub(crate) fn delete_from_phonetic_postings(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
     PHONETIC_SOURCE.delete(store, wtxn, id)?;
-    if let Some(raw) = store.phonetic_forward.get(wtxn, id.as_bytes())? {
+    if let Some(raw) = store.phonetic_forward().get(wtxn, id.as_bytes())? {
         match decode_phonetic_forward_codes(&raw) {
             Ok(codes) => match delete_from_known_phonetic_codes(store, wtxn, id, &codes) {
                 Ok(()) => {
                     if reconcile_phonetic_postings(store, wtxn, id)? {
                         log_phonetic_forward_fallback(id, "stale_forward_row");
                     }
-                    store.phonetic_forward.delete(wtxn, id.as_bytes())?;
+                    store.phonetic_forward().delete(wtxn, id.as_bytes())?;
                     return Ok(());
                 }
                 Err(Error::Store(StoreError::MissingPostingEntry)) => {
@@ -117,7 +117,7 @@ pub(crate) fn delete_from_phonetic_postings(
     }
 
     scan_and_strip_phonetic_postings(store, wtxn, id)?;
-    store.phonetic_forward.delete(wtxn, id.as_bytes())?;
+    store.phonetic_forward().delete(wtxn, id.as_bytes())?;
     Ok(())
 }
 
@@ -127,7 +127,7 @@ pub(crate) fn delete_from_phonetic_postings(
 /// the reconcile pass that runs after a forward-row-driven delete to catch
 /// stale references.
 pub(super) fn scan_and_strip_phonetic_postings(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
@@ -135,7 +135,7 @@ pub(super) fn scan_and_strip_phonetic_postings(
     let mut updates = Vec::new();
     let mut deletes = Vec::new();
 
-    for entry in store.phonetic_index.iter(wtxn)? {
+    for entry in store.phonetic_index().iter(wtxn)? {
         let (code, posting) = entry?;
         let Some(updated) = posting_without_entity(&posting, id)? else {
             continue;
@@ -150,11 +150,11 @@ pub(super) fn scan_and_strip_phonetic_postings(
     }
 
     for code in deletes {
-        store.phonetic_index.delete(wtxn, &code)?;
+        store.phonetic_index().delete(wtxn, &code)?;
     }
 
     for (code, posting) in updates {
-        store.phonetic_index.put(wtxn, &code, &posting)?;
+        store.phonetic_index().put(wtxn, &code, &posting)?;
     }
 
     Ok(repaired)
@@ -169,23 +169,25 @@ pub(super) fn log_phonetic_forward_fallback(id: &EntityId, reason: &'static str)
 }
 
 pub(super) fn delete_from_known_phonetic_codes(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     codes: &[String],
 ) -> Result<()> {
     for code in codes {
         let posting = store
-            .phonetic_index
+            .phonetic_index()
             .get(wtxn, code.as_bytes())?
             .ok_or(Error::Store(StoreError::MissingPostingEntry))?;
         let updated = posting_without_entity(&posting, id)?
             .ok_or(Error::Store(StoreError::MissingPostingEntry))?;
 
         if updated.is_empty() {
-            store.phonetic_index.delete(wtxn, code.as_bytes())?;
+            store.phonetic_index().delete(wtxn, code.as_bytes())?;
         } else {
-            store.phonetic_index.put(wtxn, code.as_bytes(), &updated)?;
+            store
+                .phonetic_index()
+                .put(wtxn, code.as_bytes(), &updated)?;
         }
     }
 
@@ -215,7 +217,7 @@ pub(super) fn posting_without_entity(posting: &[u8], id: &EntityId) -> Result<Op
 }
 
 pub(super) fn reconcile_phonetic_postings(
-    store: &Store,
+    store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {

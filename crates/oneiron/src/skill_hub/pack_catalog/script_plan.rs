@@ -1,13 +1,10 @@
 //! One qualified execution shape for both pack admission and foreign launch.
-#[cfg(any(test, feature = "microvm-firecracker"))]
 use std::collections::BTreeMap;
 
 use oneiron_sandbox_contract::{OutputReservation, ProgramBudget, WorkspacePath, WorkspaceShape};
-#[cfg(any(test, feature = "microvm-firecracker"))]
 use serde_json::Value;
 
 use super::{PackAdapter, PackRuntimeRecipe, PackSource, invalid};
-#[cfg(any(test, feature = "microvm-firecracker"))]
 use crate::code_sandbox::SandboxProposalWrite;
 use crate::{Result, skill_hub::HubFile};
 
@@ -79,7 +76,6 @@ impl ScriptExecutionPlan {
                 .qualify_source(self.files[self.script_index].content.len()),
         )
     }
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     pub(crate) fn files(&self) -> &[HubFile] {
         debug_assert_eq!(self.source_shape.file_count(), self.files.len());
         debug_assert_eq!(
@@ -88,7 +84,6 @@ impl ScriptExecutionPlan {
         );
         &self.files
     }
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     pub(crate) fn assemble_program(&self, grants: &BTreeMap<String, Value>) -> Result<String> {
         let script = std::str::from_utf8(&self.files[self.script_index].content)
             .map_err(|_| invalid("adapter script is not UTF-8"))?;
@@ -96,15 +91,12 @@ impl ScriptExecutionPlan {
         shape(self.program.assemble(script.len(), prelude.0.len()))?;
         Ok(format!("{}{script}", prelude.0))
     }
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     pub(crate) fn output_bytes(&self, write: &SandboxProposalWrite) -> Result<Vec<u8>> {
         self.output.bytes(write)
     }
 }
 
-#[cfg(any(test, feature = "microvm-firecracker"))]
 struct GrantPrelude(String);
-#[cfg(any(test, feature = "microvm-firecracker"))]
 impl GrantPrelude {
     fn encode(grants: &BTreeMap<String, Value>) -> Result<Self> {
         let json = serde_json::to_string(grants)
@@ -129,7 +121,6 @@ impl ScriptOutputContract {
             ))?,
         })
     }
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     fn bytes(&self, write: &SandboxProposalWrite) -> Result<Vec<u8>> {
         // Firecracker lowers every guest write against the exact source
         // snapshot. The only admitted output is a NEW, bounded file edit.

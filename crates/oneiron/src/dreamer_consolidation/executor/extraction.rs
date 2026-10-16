@@ -4,10 +4,51 @@ use super::*;
 use crate::llm::FinishReason;
 
 impl ConsolidationExecutor<'_> {
-    pub(super) fn extraction_request(
+    pub(in crate::dreamer_consolidation) fn extraction_request(
         call: &RoleCall<'_>,
         partition: &ConsolidationPartitionKey,
         transcript: &str,
+        scope: &crate::llm::Scope,
+    ) -> Result<LlmRequest> {
+        Self::request_over(
+            call,
+            None,
+            format!(
+                "conversation {}\n{transcript}",
+                bytes_to_hex_lower(partition.conversation_ref.as_bytes())
+            ),
+            scope,
+        )
+    }
+
+    /// The extraction request over one NOTE (OF-073): the same prompt and
+    /// reply contract, with the NOTE's markdown as the only source. Its
+    /// byte ranges count over that markdown, so the review can check each
+    /// one against the exact text it read.
+    pub(in crate::dreamer_consolidation) fn note_request(
+        call: &RoleCall<'_>,
+        note: EntityId,
+        markdown: &str,
+        scope: &crate::llm::Scope,
+    ) -> Result<LlmRequest> {
+        let id = bytes_to_hex_lower(note.as_bytes());
+        Self::request_over(
+            call,
+            Some(format!(
+                "The source is one note, not a conversation. Cite it as \
+                 {{\"source_id\": \"{id}\", \"byte_range\": [start, end]}}, a range of \
+                 UTF-8 bytes of the note's markdown, which starts on the line after its \
+                 header."
+            )),
+            format!("note {id}\n{markdown}"),
+            scope,
+        )
+    }
+
+    fn request_over(
+        call: &RoleCall<'_>,
+        source_rule: Option<String>,
+        source: String,
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
         let locality = call.inference.selected_locality().ok_or_else(|| {
@@ -24,13 +65,10 @@ impl ConsolidationExecutor<'_> {
             messages.push(text(LlmMessageRole::User, example.user));
             messages.push(text(LlmMessageRole::Assistant, example.assistant));
         }
-        messages.push(text(
-            LlmMessageRole::User,
-            format!(
-                "conversation {}\n{transcript}",
-                bytes_to_hex_lower(partition.conversation_ref.as_bytes())
-            ),
-        ));
+        if let Some(rule) = source_rule {
+            messages.push(text(LlmMessageRole::System, rule));
+        }
+        messages.push(text(LlmMessageRole::User, source));
         Ok(LlmRequest {
             model: call.model.clone(),
             envelope: CallEnvelope {
@@ -66,7 +104,7 @@ impl ConsolidationExecutor<'_> {
     /// breaking a rule such as the predicate grammar, or one in a reply
     /// stored before the step checked candidates) is not written, and is
     /// counted.
-    pub(super) fn decode_candidates(
+    pub(in crate::dreamer_consolidation) fn decode_candidates(
         partition: &ConsolidationPartitionKey,
         response: &LlmResponse,
         resources: &BranchResources<'_>,
@@ -140,7 +178,14 @@ fn decode_candidate(
             let held = named
                 .as_str()
                 .and_then(entity_id_from_hex)
-                .and_then(|id| resources.prior(id).ok());
+                .and_then(|id| resources.prior(id).ok())
+                .filter(|prior| {
+                    resources
+                        .source_version(&prior.claim_id)
+                        .is_ok_and(|version| {
+                            scope.allows_read(&version) && scope.allows_write(&version)
+                        })
+                });
             Some(held.ok_or_else(|| {
                 invalid_consolidation("extracted correction names a claim the branch does not hold")
             })?)
@@ -209,6 +254,13 @@ fn decode_candidate(
     let mut evidence_turn_refs: Vec<_> = locators.iter().map(|entry| entry.source_id()).collect();
     evidence_turn_refs.sort_unstable();
     evidence_turn_refs.dedup();
+    for id in &evidence_turn_refs {
+        if !scope.allows_read(&resources.source_version(id)?) {
+            return Err(invalid_consolidation(
+                "extracted evidence crossed its child slice",
+            ));
+        }
+    }
     // A claim drawn from two projects' turns has no one audience, and a
     // project-bound branch writes only its own project's.
     let project = resources
@@ -477,7 +529,7 @@ fn prior_topic(scope: Option<&Value>) -> Option<Value> {
         .find_map(|(key, value)| (key.as_str() == Some("topic_key")).then(|| value.clone()))
 }
 
-fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
+pub(in crate::dreamer_consolidation) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
     let hex = hex.trim();
     if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
@@ -551,7 +603,7 @@ pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
     disagreements
 }
 
-fn decode_model_locator(
+pub(in crate::dreamer_consolidation) fn decode_model_locator(
     value: &serde_json::Value,
 ) -> Result<super::super::evidence::EvidenceLocator> {
     let object = value

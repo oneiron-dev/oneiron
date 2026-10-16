@@ -118,14 +118,21 @@ impl DocumentRegistry {
         window: &super::WindowKey,
         scope: crate::FederationGrantScope,
         selector: &super::selector::SyncSelector,
+        withhold: super::window::Withhold<'_>,
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
         // The document's turn comes first: a wait past the row must not
         // outlast the grant and selection that admit the export, so both are
         // read after it.
         let document = self.open_for(id, selector.member_ref.as_bytes())?;
-        let selected =
-            super::selector::filtered_window_doc(&self.vault, ledger, window, scope, selector)?;
+        let selected = super::selector::filtered_window_doc_for(
+            &self.vault,
+            ledger,
+            window,
+            scope,
+            selector,
+            withhold,
+        )?;
         if !super::loro_support::map_contains_binary(&selected.get_map("entities"), &id.to_hex()) {
             return Err(Error::sync_protocol(
                 SyncProtocolValidation::DocumentAdmissionDenied,
@@ -639,6 +646,37 @@ pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
         let _accepting = vault.device_only_acceptance();
         let rtxn = vault.store.env.read_txn()?;
         text_withheld(vault, &rtxn, document.entity)
+    })()
+    .unwrap_or(true)
+}
+
+/// [`document_frame_withheld`] for the machine `peer` proved on the socket:
+/// its own world read settings judge the text, so a private world it may
+/// read reaches it and an unproved peer is an unknown destination.
+pub fn document_frame_withheld_for(
+    vault: &Vault,
+    peer: crate::authority::PeerMachine,
+    frame: &[u8],
+) -> bool {
+    if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
+        return false;
+    }
+    let Ok(document) = crate::sync::transport::decode_document(&frame[1..]) else {
+        return false;
+    };
+    if matches!(
+        document.kind,
+        document_sub_tags::REQUEST | document_sub_tags::ACK
+    ) {
+        return false;
+    }
+    (|| -> Result<bool> {
+        let _accepting = vault.device_only_acceptance();
+        Ok(!super::residence::rows_may_reach(
+            vault,
+            peer,
+            &[document.entity],
+        )?)
     })()
     .unwrap_or(true)
 }

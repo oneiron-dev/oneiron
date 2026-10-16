@@ -48,6 +48,9 @@ enum GuestFrame {
         from: String,
         to: String,
     },
+    StepResult {
+        result_json: String,
+    },
     Finish {
         status: i32,
     },
@@ -78,12 +81,12 @@ enum HostFrame<'a> {
     },
 }
 
-pub(super) struct GuestProgram<'a> {
+pub(in crate::code_sandbox) struct GuestProgram<'a> {
     pub component: &'a [u8],
     pub source: &'a str,
 }
 
-pub(super) fn exchange(
+pub(in crate::code_sandbox) fn exchange(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
     program: GuestProgram<'_>,
@@ -174,6 +177,7 @@ fn receive_proposals(
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
+    let mut result_json = None;
     // One effect per path: a deleted file or a rename endpoint is not
     // written again in the same run.
     let mut occupied = BTreeSet::new();
@@ -271,6 +275,17 @@ fn receive_proposals(
                     deadline,
                 )?;
             }
+            GuestFrame::StepResult {
+                result_json: result,
+            } => {
+                if result_json.is_some() || result.len() > oneiron_sandbox_contract::MAX_FILE_BYTES
+                {
+                    return Err(refused("duplicate or oversized guest step result"));
+                }
+                serde_json::from_str::<serde_json::Value>(&result)
+                    .map_err(|_| refused("invalid guest result JSON"))?;
+                result_json = Some(result);
+            }
             GuestFrame::Finish { status } => {
                 if status != 0 {
                     return Err(refused("guest run failed; proposals discarded"));
@@ -279,6 +294,7 @@ fn receive_proposals(
                     MicroVmExit {
                         status,
                         overlay_dirty: !writes.is_empty(),
+                        result_json,
                     },
                     writes.into_values().collect(),
                 ));
