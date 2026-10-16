@@ -17969,7 +17969,7 @@
      "path": "src/entity_doc/forks.rs",
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 3,
       "fn": 7,
       "struct": 4
@@ -18014,13 +18014,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/recovery.rs",
-     "purpose": "Value-only canonical recovery for generic EntityDoc owners",
+     "purpose": "Canonical recovery for generic EntityDoc owners: the current value, and the causal state its forks, pins…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -30786,9 +30786,17 @@
      "notable": [
       "CanonicalBaseEdge",
       "CanonicalContainerManifest",
+      "CanonicalDocumentFork",
+      "CanonicalDocumentPin",
+      "CanonicalDocumentPurge",
+      "CanonicalDocumentReceipt",
+      "CanonicalDocumentVersion",
       "CanonicalEntity",
       "CanonicalEntityDocument",
+      "CanonicalEntityDocumentHistory",
+      "CanonicalForkStatus",
       "CanonicalSchemaManifest",
+      "CanonicalSettleVerb",
       "CanonicalShellWorld",
       "CanonicalSnapshot",
       "CanonicalTombstone"
@@ -30797,9 +30805,10 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 17,
-      "fn": 6,
-      "struct": 8
+      "crate-vis": 18,
+      "enum": 2,
+      "fn": 8,
+      "struct": 14
      }
     },
     {
