@@ -133,7 +133,9 @@ pub fn record_judge_conversion(
         ));
     }
     if from_judge.len() > 256 || to_judge.len() > 256 {
-        return Err(Error::InvalidClaimBody("a judge revision is at most 256 bytes"));
+        return Err(Error::InvalidClaimBody(
+            "a judge revision is at most 256 bytes",
+        ));
     }
     let conversion = JudgeConversion {
         from_judge: from_judge.to_owned(),
@@ -227,13 +229,19 @@ pub fn judge_takeover_verdict(
     };
     let mut families: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
     for case in cases {
-        let entry = families.entry(case.source_family.as_str()).or_insert((0, 0));
+        let entry = families
+            .entry(case.source_family.as_str())
+            .or_insert((0, 0));
         entry.0 += 1;
         if case.diverged {
             entry.1 += 1;
         }
     }
-    if families.is_empty() || families.values().any(|(n, _)| *n < min_cases_per_family.max(1)) {
+    if families.is_empty()
+        || families
+            .values()
+            .any(|(n, _)| *n < min_cases_per_family.max(1))
+    {
         return TakeoverVerdict::Unknown;
     }
     let floor = noise.mean();

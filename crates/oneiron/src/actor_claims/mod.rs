@@ -75,7 +75,7 @@
 //! **The engine distills nothing.** Turning a sitting into a craft note is a
 //! generative act, so [`run_session_end_actor_distill`] takes a
 //! [`SessionActorDistiller`] — the same host-supplied-tier seam
-//! [`crate::skill_attribution::AttributionJudge`] uses, budgeted under
+//! [`crate::skill_attribution::AttributionDecisions`] uses, budgeted under
 //! [`actor_distill_call_purpose`]. This module constructs no LLM client. The
 //! TASK lane needs none, and writes no lesson for the same reason: a routing
 //! DECISION derives the failure-mode CLASS ([`LAPSE_FAILURE_MODE`]) and stops

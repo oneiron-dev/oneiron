@@ -156,9 +156,14 @@ impl<'a> EngineNativeExecutor<'a> {
     }
 
     /// Binds the host's compaction seat for this run (agent-runtime-v1 §d7):
-    /// the window compacts itself, and fills park with a typed reason.
+    /// the window compacts itself, and fills park with a typed reason. A run
+    /// bound to an off-record room compacts into the room's overlay, along
+    /// the route it captured at entry.
     #[must_use]
     pub fn with_compaction(mut self, seat: &'a mut super::compaction::RunCompaction) -> Self {
+        if let ExecutorStorage::Session(binding) = &self.storage {
+            seat.bind_room(binding.route.target());
+        }
         self.compaction = Some(seat);
         self
     }
@@ -203,12 +208,6 @@ impl<'a> EngineNativeExecutor<'a> {
         let run_id = self.output_run.ok_or(crate::Error::InvalidConfig(
             "executor output context has not assembled".into(),
         ))?;
-        if !matches!(self.storage, ExecutorStorage::Canonical(_)) {
-            return Err(crate::Error::InvalidConfig(
-                "native compaction requires canonical executor storage".into(),
-            )
-            .into());
-        }
         let record = self.storage.get_code_run_replay_record(&run_id)?.ok_or(
             crate::Error::CorruptedIndex("missing executor replay record"),
         )?;
@@ -225,11 +224,27 @@ impl<'a> EngineNativeExecutor<'a> {
         // The last committed step was not part of the preceding request's
         // history. Synchronize it BEFORE the mint, even across a soft yield.
         self.sync_output_context(&record)?;
-        let ExecutorStorage::Canonical(vault) = &self.storage else {
-            unreachable!("canonical storage checked before sync")
+        let plan = match &self.storage {
+            ExecutorStorage::Canonical(vault) => driver.integrate_with_coverage(
+                vault,
+                byline,
+                placement,
+                gated,
+                accumulated,
+                &span,
+            )?,
+            // A room's run lands through its own handle, on the route it
+            // captured at entry: the summary stays in the room's overlay and
+            // drops with it at close, and a closed or flipped room refuses.
+            ExecutorStorage::Session(binding) => driver.integrate_in_overlay(
+                &binding.session,
+                &binding.route,
+                byline,
+                gated,
+                accumulated,
+                &span,
+            )?,
         };
-        let plan =
-            driver.integrate_with_coverage(vault, byline, placement, gated, accumulated, &span)?;
         // This is only an in-memory cache; the next assembly re-derives it
         // from the typed row joined to the committed SUMMARY.
         let last = request

@@ -1,7 +1,9 @@
 //! Seat-birth model routing above the raw LLM call seam.
-//! A host supplies the typed judgment; the engine owns eligibility, reuse and pinning.
+//! A host's ladder answers the typed pick; the engine owns eligibility, reuse and pinning.
 use std::collections::BTreeSet;
 
+mod decisions;
+pub use decisions::{SeatDecisions, SeatNotes};
 mod policy;
 pub use policy::{SeatPolicy, SeatPrecedence};
 
@@ -78,7 +80,7 @@ impl ModelDescription {
         Ok(())
     }
 
-    /// Lines in the policy's evidence order. The judge sees every line and its
+    /// Lines in the policy's evidence order. The seat pick sees every line and its
     /// source; vendor copy cannot silently stand in for an owner's line.
     pub fn lines(&self, order: &[DescriptionSource]) -> Vec<DescriptionLine> {
         order
@@ -255,7 +257,7 @@ pub struct SeatTask {
     pub override_effort: Option<ReasoningEffort>,
 }
 
-/// The judge receives only models admitted by the engine's route, capability,
+/// The pick sees only models admitted by the engine's route, capability,
 /// context and description checks. Tiers and role defaults are not inputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatCandidate {
@@ -267,18 +269,6 @@ pub struct SeatCandidate {
     /// Composed policy default, or this model's first rung when none is authored.
     pub default_effort: ReasoningEffort,
     pub allowed_efforts: Vec<ReasoningEffort>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SeatJudgment {
-    pub model: ModelId,
-    /// None takes the cheap first rung for the chosen model.
-    pub effort: Option<ReasoningEffort>,
-    pub why: String,
-}
-
-pub trait SeatJudge: Send + Sync {
-    fn judge(&self, task: &SeatTask, candidates: &[SeatCandidate]) -> Result<SeatJudgment>;
 }
 
 /// Plain-language choice receipt; retained on the seat even if policies change.
@@ -356,7 +346,7 @@ impl SeatPool {
         &mut self,
         vault: &Vault,
         task: &SeatTask,
-        judge: &dyn SeatJudge,
+        decisions: &SeatDecisions,
     ) -> Result<ModelSeat> {
         if task.task.trim().is_empty()
             || task.facet.trim().is_empty()
@@ -475,22 +465,25 @@ impl SeatPool {
         {
             return Err(invalid("model or effort change requires an epoch fold"));
         }
-        let judgment = judge.judge(task, &candidates)?;
-        let candidate = candidates
-            .iter()
-            .find(|c| c.model == judgment.model)
-            .ok_or_else(|| invalid("seat judgment selected ineligible model"))?;
+        let (index, picked) = decisions.pick(task, &candidates)?;
+        let candidate = &candidates[index];
         let effort = policy.choose(
             composed,
-            task.override_effort.or(judgment.effort),
+            task.override_effort.or(picked),
             &candidate.allowed_efforts,
         )?;
-        if judgment.why.trim().is_empty()
-            || (effort != ReasoningEffort::None
-                && (!candidate.reasoning || candidate.wire == ModelWireFormat::Gemini))
+        if effort != ReasoningEffort::None
+            && (!candidate.reasoning || candidate.wire == ModelWireFormat::Gemini)
         {
-            return Err(invalid("invalid seat judgment or effort"));
+            return Err(invalid("invalid seat pick or effort"));
         }
+        let why = decisions
+            .notes
+            .why(task, &candidates, &candidate.model, effort)?;
+        if why.trim().is_empty() {
+            return Err(invalid("a seat pick needs its why"));
+        }
+        let model = candidate.model.clone();
         let id = self
             .next_id
             .checked_add(1)
@@ -501,13 +494,13 @@ impl SeatPool {
             kind: task.kind,
             warm_scope: task.warm_scope.clone(),
             facet: task.facet.clone(),
-            model: judgment.model.clone(),
+            model: model.clone(),
             locality: route,
             effort,
             receipt: SeatChoiceReceipt {
-                model: judgment.model,
+                model,
                 effort,
-                why: judgment.why,
+                why,
                 reused: false,
             },
             warm: true,
@@ -517,13 +510,13 @@ impl SeatPool {
     }
 
     /// A fold retires just the old prefix. The old seat remains inspectable and
-    /// pinned; a new judgment may choose a different revision for the new seat.
+    /// pinned; a new pick may choose a different revision for the new seat.
     pub fn fold_epoch(
         &mut self,
         vault: &Vault,
         old_id: u64,
         task: &SeatTask,
-        judge: &dyn SeatJudge,
+        decisions: &SeatDecisions,
     ) -> Result<ModelSeat> {
         let old = self
             .seats
@@ -537,7 +530,7 @@ impl SeatPool {
             return Err(invalid("epoch fold changes seat scope"));
         }
         self.seats[old].warm = false;
-        match self.birth(vault, task, judge) {
+        match self.birth(vault, task, decisions) {
             Ok(seat) => Ok(seat),
             Err(error) => {
                 self.seats[old].warm = true;
@@ -648,7 +641,7 @@ impl Vault {
         &self,
         run_id: crate::EntityId,
         task: &SeatTask,
-        judge: &dyn SeatJudge,
+        decisions: &SeatDecisions,
     ) -> Result<ModelSeat> {
         let mut pool = self
             .model_seats
@@ -660,7 +653,7 @@ impl Vault {
         if let Some(row) = prior {
             return pool.resume(task, &row);
         }
-        let seat = pool.birth(self, task, judge)?;
+        let seat = pool.birth(self, task, decisions)?;
         let row = StoredRunSeat::from_seat(task, &seat)?;
         let result = (|| {
             let mut txn = self.store.env.write_txn()?;

@@ -4,7 +4,7 @@ from oneiron import Oneiron
 
 memory = Oneiron.open()
 
-witnessed = memory.witness(
+witnessed = memory.vault.witness(
     {
         "conversation_ref": "11111111111111111111111111111111",
         "messages": [
@@ -18,7 +18,7 @@ witnessed = memory.witness(
     }
 )
 
-claimed = memory.claim_upsert(
+claimed = memory.vault.claims.upsert(
     {
         "id": "22222222222222222222222222222222",
         "predicate": "preference.travel.seat",
@@ -28,8 +28,8 @@ claimed = memory.claim_upsert(
         "source": "user_stated",
     }
 )
-recalled = memory.recall("window seat")
-receipts = memory.receipts()
+recalled = memory.vault.recall("window seat")
+receipts = memory.vault.receipts()
 
 print(
     json.dumps(
