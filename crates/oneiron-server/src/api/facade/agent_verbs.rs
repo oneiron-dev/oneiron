@@ -133,6 +133,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.writes.pending", post(vault_writes_pending))
         .route("/vault.hydrate", post(vault_hydrate))
         .route("/vault.get", post(vault_get))
+        .route("/vault.refs.resolve", post(vault_refs_resolve))
         .route("/vault.search.bm25", post(vault_search_bm25))
         .route("/vault.neighbors", post(vault_neighbors))
         .route("/vault.structural.put", post(vault_structural_put))
@@ -1955,6 +1956,26 @@ async fn vault_get(
         actor,
         class,
         "vault.get",
+        value,
+    )?))
+}
+async fn vault_refs_resolve(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.refs.resolve",
         value,
     )?))
 }

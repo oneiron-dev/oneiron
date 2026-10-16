@@ -359,6 +359,9 @@ class Oneiron:
         def get(self, input: dict[str, Any]) -> Any:
             return json.loads(_translate(lambda: self._client.vault_get(json.dumps(input, allow_nan=False))))
         @property
+        def refs(self) -> "Oneiron._VaultRefsVerbs":
+            return Oneiron._VaultRefsVerbs(self._client)
+        @property
         def search(self) -> "Oneiron._VaultSearchVerbs":
             return Oneiron._VaultSearchVerbs(self._client)
         def neighbors(self, input: dict[str, Any]) -> Any:
@@ -576,6 +579,11 @@ class Oneiron:
             self._client = client
         def pending(self, input: dict[str, Any]) -> Any:
             return json.loads(_translate(lambda: self._client.vault_writes_pending(json.dumps(input, allow_nan=False))))
+    class _VaultRefsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def resolve(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_refs_resolve(json.dumps(spec))))
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
