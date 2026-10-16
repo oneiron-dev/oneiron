@@ -13,6 +13,8 @@ use crate::entity_doc::PurgeReceipt;
 use crate::error::Result;
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::ports::{DocumentRowStore, DocumentSlot};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 use crate::side_table::HexId;
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
@@ -183,7 +185,8 @@ impl Memory<'_> {
                         now,
                         &body,
                     )
-                    .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0),
+                    .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0)
+                    .made_by(&id, brief_birth(actor, pins, now)),
             )?;
             content.update_note(id, |txn| {
                 super::operations::record_authorship(
@@ -390,6 +393,24 @@ impl Memory<'_> {
             })
         })
     }
+}
+
+/// A brief is made from the claims and NOTEs its pins cite, read as their
+/// quoted text. An agent's brief that cites nothing has no birth to name.
+fn brief_birth(actor: WriteActor, pins: &[NotePin], at: u64) -> Option<RowBirth> {
+    let cited: Vec<EntityId> = pins
+        .iter()
+        .flat_map(|pin| [pin.claim, pin.document])
+        .collect();
+    let quotes: Vec<&[u8]> = pins.iter().map(|pin| pin.quote_text.as_bytes()).collect();
+    RowBirth::written(
+        actor,
+        MadeByClass::of_writer(actor.actor_class()),
+        "note.author_brief",
+        &cited,
+        &quotes,
+        at,
+    )
 }
 
 pub(super) fn validate_pin_source(

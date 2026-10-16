@@ -9,6 +9,8 @@ use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, Entity
 use crate::claim::{ClaimBody, ClaimSource, ClaimSuccession, decode_claim_body, encode_claim_body};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::write_envelope::{
     MachineWriteSignature, SourceLineage, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
     WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY,
@@ -433,6 +435,20 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        // Rule A: the successor is born from its predecessor's exact body, in
+        // the class its source carries. The host's unbound act has no actor
+        // to name, so it stamps no birth.
+        let birth = match (writer.actor(), next.source) {
+            (Some(actor), Some(source)) => RowBirth::written(
+                actor,
+                MadeByClass::of_source(source),
+                writer.surface,
+                &[*predecessor],
+                &[&raw[ENTITY_METADATA_HEADER_LEN..]],
+                now,
+            ),
+            _ => None,
+        };
         let text_index_trusted = vault
             .text_index_trusted
             .load(std::sync::atomic::Ordering::Acquire);
@@ -448,7 +464,8 @@ impl ClaimMaterialization {
             // only once a critical demotion's owner clear has settled.
             ApplyOpsGateMode::new(false, matches!(succession, ClaimSuccession::Fork { .. }))
                 .with_claim_materializations(bindings)
-                .with_verified_claim_transitions(vec![transition]),
+                .with_verified_claim_transitions(vec![transition])
+                .with_births(birth.map(|birth| (*successor, birth)).into_iter().collect()),
         )?;
         match envelope {
             Some(envelope) if signed => {
