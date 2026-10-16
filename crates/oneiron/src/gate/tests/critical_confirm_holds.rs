@@ -267,12 +267,13 @@ fn a_cleared_claim_rejoins_the_wake_count_that_skipped_it() -> Result<()> {
 
 /// The doors that approve a held claim's item (Engine ruling Q5). Only an
 /// owner-tier proof revalidated in the answering transaction is the owner's
-/// answer; any other approval lands, and the owner is shown a fresh item.
+/// answer; an approval with no owner proof lands, and the owner is shown a
+/// fresh item. A non-owner's proof opens no owner door (#1498).
 #[derive(Clone, Copy, Debug)]
 enum ApprovalDoor {
     /// The vault owner approves the Dreamer run's bundle that lists the claim.
     OwnerBundle,
-    /// A person who is not the vault's owner approves that bundle.
+    /// A person who is not the vault's owner tries to approve that bundle.
     PersonBundle,
     /// The inbox approves the claim's review with no owner proof.
     Inbox,
@@ -325,19 +326,42 @@ fn only_an_owner_tier_approval_answers_the_obligation() -> Result<()> {
             ApprovalDoor::OwnerBundle | ApprovalDoor::PersonBundle => {
                 let reviewer = WriteActor::new(dreamer, EdgeActorClass::Agent);
                 let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+                if matches!(door, ApprovalDoor::PersonBundle) {
+                    let person = test_id(0x60);
+                    vault.put_entity(&person, ENTITY_TYPE_PERSON, test_time(1), 1, b"person")?;
+                    let proof = vault.authenticate_owner(
+                        person,
+                        &person.to_hex(),
+                        true,
+                        crate::store::GateDecisionId::now(),
+                    )?;
+                    let refused = vault.resolve_gate_consent_bundle(
+                        &proof,
+                        bundle.bundle_id,
+                        run,
+                        GateConsentBundleAction::Approve,
+                        9,
+                    );
+                    assert!(
+                        matches!(refused, Err(Error::Gate(_))),
+                        "{door:?}: a non-owner resolved the bundle"
+                    );
+                    assert!(
+                        vault
+                            .with_write_txn(|wtxn| {
+                                vault.store.owner_answer_obligation_in_txn(wtxn, &claim)
+                            })?
+                            .is_some()
+                            && !vault.claim_consolidation_eligible(
+                                &claim,
+                                crate::gate::ConsolidationReader::VadAnnotation,
+                            )?,
+                        "FAILBEFORE H244 narrowed: {door:?} answered for the owner"
+                    );
+                    continue;
+                }
                 // A personal vault's owner is its embedded PERSON.
-                let owner = match door {
-                    ApprovalDoor::OwnerBundle => {
-                        let id = crate::vault::embedded_owner_actor_id()?;
-                        vault.authenticate_owner(
-                            id,
-                            &id.to_hex(),
-                            true,
-                            crate::store::GateDecisionId::now(),
-                        )?
-                    }
-                    _ => consent_bundle_owner(&vault, test_id(0x60))?,
-                };
+                let owner = consent_bundle_owner(&vault)?;
                 approval_landed(
                     door,
                     vault
@@ -603,7 +627,7 @@ fn a_deleted_held_claim_keeps_no_hash_of_its_body() -> Result<()> {
         assert!(
             !value.windows(erased.len()).any(|window| window == erased),
             "FAILBEFORE H244 narrowed: {} keeps a hash of the erased body",
-            String::from_utf8_lossy(key)
+            String::from_utf8_lossy(&key)
         );
     }
     Ok(())
