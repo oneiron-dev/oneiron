@@ -45,8 +45,8 @@ const SEAM_SUFFIXES: &[&str] = &[
     "Critic",
     "Grader",
 ];
-const SEAM_TRAITS: &[&str] = &["ReviewNotes", "SlideReviewProvider"];
-const SEAM_STRUCTS: &[&str] = &["CampaignTasteJudgment"];
+const SEAM_TRAITS: &[&str] = &["ReviewNotes", "AttributionNotes", "SlideReviewProvider"];
+const SEAM_STRUCTS: &[&str] = &[];
 
 /// The one path every typed decision takes.
 const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
@@ -54,7 +54,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 20;
+const BYPASS_CEILING: usize = 18;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -159,12 +159,6 @@ const BYPASSES: &[Pin] = &[
         "fan-out ask: allow, deny or escalate to a person",
     ),
     pin(
-        "crates/oneiron/src/skill_attribution/judge.rs",
-        "trait AttributionJudge",
-        "pub trait AttributionJudge {",
-        "edit attribution: which lane each hunk belongs to, with a confidence (its model tier)",
-    ),
-    pin(
         "crates/oneiron/src/skill_optimize/gate/basis.rs",
         "trait HeldOutReplayScorer",
         "pub trait HeldOutReplayScorer {",
@@ -199,12 +193,6 @@ const BYPASSES: &[Pin] = &[
         "trait SlideReviewProvider",
         "pub trait SlideReviewProvider {",
         "slide review: a second typed ladder (band escalation and receipt) beside decide()",
-    ),
-    pin(
-        "crates/oneiron/src/autoreason_campaign/judge.rs",
-        "struct CampaignTasteJudgment",
-        "pub struct CampaignTasteJudgment {",
-        "campaign judge: a [0, 1] score supplied as data by a model outside the tree",
     ),
 ];
 
@@ -437,6 +425,12 @@ const OUTSIDE: &[Pin] = &[
         "trait ReviewNotes",
         "pub trait ReviewNotes {",
         "critic notes: evidence refs and a suggested edit beside a decided review (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/skill_attribution/judge.rs",
+        "trait AttributionNotes",
+        "pub trait AttributionNotes {",
+        "attribution notes: why a doubtful hunk is unclear, beside a decided attribution (generation)",
     ),
 ];
 

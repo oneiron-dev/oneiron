@@ -55,5 +55,26 @@ pub const CRITIC_REVIEW: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which label one changed hunk of an attribution takes (one region for an outcome with no
+/// edit). Keyed by lane and hunk position.
+pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
+    name: "skill_attribution.hunk",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// A campaign arm's taste over a blind input: a `[0, 1]` score and an audit-only usefulness
+/// reading. Keyed by field.
+pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
+    name: "autoreason_campaign.taste",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
-pub const FAMILIES: &[QuestionFamily] = &[TELEMETRY_ANOMALY, CRITIC_REVIEW];
+pub const FAMILIES: &[QuestionFamily] = &[
+    TELEMETRY_ANOMALY,
+    CRITIC_REVIEW,
+    ATTRIBUTION_HUNK,
+    CAMPAIGN_TASTE,
+];
