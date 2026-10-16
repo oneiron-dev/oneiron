@@ -25,6 +25,8 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultWeaveReport,
+    VaultWeaveDigest,
     VaultPacksPut,
     VaultLensesPropose,
     VaultLensesActivate,
@@ -140,6 +142,8 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultWeaveReport,
+        Self::VaultWeaveDigest,
         Self::VaultPacksPut,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
@@ -258,6 +262,8 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultWeaveReport => "vault.weave.report",
+            Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
@@ -372,6 +378,8 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultWeaveReport
+                | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
@@ -494,6 +502,8 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultWeaveReport
+                | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
@@ -651,6 +661,8 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultWeaveReport
+                | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
@@ -837,6 +849,8 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultWeaveReport => &["spec"],
+            Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
@@ -953,6 +967,8 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultWeaveReport => &["spec"],
+            Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],

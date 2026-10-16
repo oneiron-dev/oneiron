@@ -314,6 +314,9 @@ class Oneiron:
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
         @property
+        def weave(self) -> "Oneiron._VaultWeaveVerbs":
+            return Oneiron._VaultWeaveVerbs(self._client)
+        @property
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
         @property
@@ -415,6 +418,13 @@ class Oneiron:
         def namespaces(self, request: dict[str, Any]) -> list[list[str]]:
             """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
             return json.loads(_translate(lambda: self._client.vault_kv_namespaces(json.dumps(request, allow_nan=False))))
+    class _VaultWeaveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def report(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
+        def digest(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
