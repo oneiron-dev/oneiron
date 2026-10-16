@@ -124,6 +124,21 @@ impl OneironClient {
                     "vault.rooms.speak" => remote_agent_verb_output::<
                         oneiron::memory::WitnessReceipt,
                     >(client, verb, &input),
+                    "vault.projects.propose" => remote_agent_verb_output::<
+                        oneiron::genui::ProjectProposalCard,
+                    >(client, verb, &input),
+                    "vault.projects.proposals" => remote_agent_verb_output::<
+                        Vec<oneiron::workspace_roster::ProjectCardRecord>,
+                    >(client, verb, &input),
+                    "vault.projects.dismiss_card" => remote_agent_verb_output::<
+                        oneiron::task_verb::sdk::ProjectCardDismissal,
+                    >(client, verb, &input),
+                    "vault.projects.confirm" => remote_agent_verb_output::<
+                        oneiron::workspace_roster::ProjectMintReceipt,
+                    >(client, verb, &input),
+                    "vault.projects.goal.intake" => remote_agent_verb_output::<
+                        oneiron::workspace_roster::ProjectGoalInterviewContext,
+                    >(client, verb, &input),
                     _ => Err(crate::error::bad_request(
                         "unknown SDK agent verb",
                         &["Use a verb from the SDK catalog."],
@@ -557,5 +572,65 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.speak", value)
+    }
+    pub fn vault_projects_propose(
+        &self,
+        input: &oneiron::workspace_roster::ProjectProposalRequest,
+    ) -> Result<oneiron::genui::ProjectProposalCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.propose", value)
+    }
+    pub fn vault_projects_proposals(
+        &self,
+        input: &oneiron::task_verb::sdk::ProjectConversationRequest,
+    ) -> Result<Vec<oneiron::workspace_roster::ProjectCardRecord>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.proposals", value)
+    }
+    pub fn vault_projects_dismiss_card(
+        &self,
+        input: &oneiron::task_verb::sdk::ProjectCardRequest,
+    ) -> Result<oneiron::task_verb::sdk::ProjectCardDismissal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.dismiss_card", value)
+    }
+    pub fn vault_projects_confirm(
+        &self,
+        input: &oneiron::workspace_roster::ProjectCardConfirmRequest,
+    ) -> Result<oneiron::workspace_roster::ProjectMintReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.confirm", value)
+    }
+    pub fn vault_projects_goal_intake(
+        &self,
+        input: &oneiron::task_verb::sdk::ProjectRefRequest,
+    ) -> Result<oneiron::workspace_roster::ProjectGoalInterviewContext, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.goal.intake", value)
     }
 }

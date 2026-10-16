@@ -108,6 +108,14 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Does this conversation turn sound like a project (yes or no)? Asked by the house mind on a
+/// person's on-record turn; no key parts, so every conversation asks the one question.
+pub const PROJECT_PROPOSAL: QuestionFamily = QuestionFamily {
+    name: "conversation.project_proposal",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -119,4 +127,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    PROJECT_PROPOSAL,
 ];

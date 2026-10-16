@@ -14,12 +14,14 @@ use std::collections::BTreeSet;
 
 pub(crate) const PREDICATE: &str = "project.goal_intake";
 mod admission;
+mod context;
 mod interview;
 mod limits;
 pub(crate) use admission::{
     admitted_claim_of_project, guard_claim_put, guard_goal_delete, guard_pointer_put,
     precheck_delete as precheck_goal_delete, retire_for_delete as retire_goal_for_delete,
 };
+pub use context::ProjectGoalInterviewContext;
 pub use interview::GoalInterviewTurns;
 pub(crate) use limits::GoalLimits;
 

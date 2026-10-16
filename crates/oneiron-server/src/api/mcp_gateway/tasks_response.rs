@@ -661,6 +661,47 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.projects.propose" => a.spec.clone().ok_or_else(invalid),
+        "vault.projects.proposals" => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "conversation_ref".to_owned(),
+                json!(a.conversation_ref.as_ref().ok_or_else(invalid)?),
+            );
+            Ok(Value::Object(map))
+        }
+        "vault.projects.dismiss_card" => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "card_id".to_owned(),
+                json!(a.card_id.as_ref().ok_or_else(invalid)?),
+            );
+            Ok(Value::Object(map))
+        }
+        "vault.projects.confirm" => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "card_id".to_owned(),
+                json!(a.card_id.as_ref().ok_or_else(invalid)?),
+            );
+            map.insert(
+                "action_id".to_owned(),
+                json!(a.action_id.as_ref().ok_or_else(invalid)?),
+            );
+            map.insert(
+                "occurred_at".to_owned(),
+                json!(a.occurred_at.as_ref().ok_or_else(invalid)?),
+            );
+            Ok(Value::Object(map))
+        }
+        "vault.projects.goal.intake" => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "project_ref".to_owned(),
+                json!(a.project_ref.as_ref().ok_or_else(invalid)?),
+            );
+            Ok(Value::Object(map))
+        }
         _ => Err(invalid()),
     }
 }
@@ -827,6 +868,35 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
             if let Some(value) = input.get("conversation_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.projects.propose" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.projects.proposals" => {
+            if let Some(value) = input.get("conversation_ref") {
+                arguments.insert("conversation_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.projects.dismiss_card" => {
+            if let Some(value) = input.get("card_id") {
+                arguments.insert("card_id".to_owned(), value.clone());
+            }
+        }
+        "vault.projects.confirm" => {
+            if let Some(value) = input.get("card_id") {
+                arguments.insert("card_id".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("action_id") {
+                arguments.insert("action_id".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("occurred_at") {
+                arguments.insert("occurred_at".to_owned(), value.clone());
+            }
+        }
+        "vault.projects.goal.intake" => {
+            if let Some(value) = input.get("project_ref") {
+                arguments.insert("project_ref".to_owned(), value.clone());
             }
         }
         _ => return Err(invalid()),
@@ -1278,6 +1348,46 @@ async fn execute_agent_verb_listing(
             server
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.propose" => {
+            let input: oneiron::workspace_roster::ProjectProposalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_propose(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.proposals" => {
+            let input: oneiron::task_verb::sdk::ProjectConversationRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_proposals(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.dismiss_card" => {
+            let input: oneiron::task_verb::sdk::ProjectCardRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_dismiss_card(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.confirm" => {
+            let input: oneiron::workspace_roster::ProjectCardConfirmRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_confirm(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.goal.intake" => {
+            let input: oneiron::task_verb::sdk::ProjectRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_goal_intake(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

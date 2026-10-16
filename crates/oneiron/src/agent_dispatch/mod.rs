@@ -29,6 +29,7 @@ mod healer_repair;
 pub(crate) use healer_context::validate as validate_healer_case;
 mod kill;
 mod launch;
+mod project_proposal;
 mod resident;
 mod spend_calibration;
 mod spend_lease;
@@ -47,6 +48,8 @@ pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStep
 mod workflow_tests;
 
 pub use self::widen_record::ContextWidenProposal;
+
+pub use self::project_proposal::{ProjectDetection, ProjectDetectionRun};
 
 pub use self::launch::{
     LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,

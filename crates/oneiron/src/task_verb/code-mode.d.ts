@@ -48,6 +48,15 @@ declare const vault: {
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
   };
+  projects: {
+    confirm(input: { action_id: string; card_id: string; occurred_at: number }): Promise<unknown>;
+    dismiss_card(input: { card_id: string }): Promise<unknown>;
+    goal: {
+      intake(input: { project_ref: string }): Promise<unknown>;
+    };
+    proposals(input: { conversation_ref: string }): Promise<unknown>;
+    propose(input: { card_id: string; goal: object; picks: object; source_message_ref: string }): Promise<unknown>;
+  };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts(input: { limit?: number | null }): Promise<unknown>;
   rooms: {

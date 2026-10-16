@@ -412,6 +412,25 @@ impl Memory<'_> {
                     {
                         crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                         crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                        crate::workspace_roster::stage_project_detection_in_txn(
+                            self.vault,
+                            wtxn,
+                            plan.conversation_id,
+                            plan.turn_id,
+                            plan.messages
+                                .iter()
+                                .rev()
+                                .find(|planned| {
+                                    planned.message.author == WitnessAuthor::User
+                                        && planned.message.is_visible
+                                        && !planned.message.content.is_empty()
+                                })
+                                .map(|planned| planned.id),
+                            (self.actor_class == crate::edge::EdgeActorClass::Human
+                                && plan.imported.is_none())
+                            .then_some(self.actor),
+                            plan.learned_at,
+                        )?;
                     }
                     // Held tags settle the marker just committed, in this
                     // write, so no worker ever claims it. Their spans index

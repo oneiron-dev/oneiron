@@ -32,6 +32,11 @@ pub enum AgentVerb {
     VaultRoomsTrunk,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultProjectsPropose,
+    VaultProjectsProposals,
+    VaultProjectsDismissCard,
+    VaultProjectsConfirm,
+    VaultProjectsGoalIntake,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -75,6 +80,11 @@ impl AgentVerb {
         Self::VaultRoomsTrunk,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultProjectsPropose,
+        Self::VaultProjectsProposals,
+        Self::VaultProjectsDismissCard,
+        Self::VaultProjectsConfirm,
+        Self::VaultProjectsGoalIntake,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -121,6 +131,11 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => "vault.rooms.trunk",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultProjectsPropose => "vault.projects.propose",
+            Self::VaultProjectsProposals => "vault.projects.proposals",
+            Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
+            Self::VaultProjectsConfirm => "vault.projects.confirm",
+            Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -163,6 +178,11 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -213,6 +233,11 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
         )
     }
     pub const fn is_section(self) -> bool {
@@ -244,6 +269,7 @@ impl AgentVerb {
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
+                | Self::VaultProjectsProposals
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -282,6 +308,11 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -311,6 +342,9 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
@@ -356,6 +390,11 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsPropose => &["spec"],
+            Self::VaultProjectsProposals => &["conversation_ref"],
+            Self::VaultProjectsDismissCard => &["card_id"],
+            Self::VaultProjectsConfirm => &["card_id", "action_id", "occurred_at"],
+            Self::VaultProjectsGoalIntake => &["project_ref"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -400,6 +439,11 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsPropose => &["spec"],
+            Self::VaultProjectsProposals => &["conversation_ref"],
+            Self::VaultProjectsDismissCard => &["card_id"],
+            Self::VaultProjectsConfirm => &["card_id", "action_id", "occurred_at"],
+            Self::VaultProjectsGoalIntake => &["project_ref"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],

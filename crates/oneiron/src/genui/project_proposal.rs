@@ -14,7 +14,7 @@ use std::collections::HashSet;
 pub const PROJECT_PROPOSAL_MINT_ACTION_ID: &str = "mint_project";
 
 /// The agent supplies content and picks; the engine does not infer a project from text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGoalDraft {
     pub goal: String,
@@ -23,7 +23,7 @@ pub struct ProjectGoalDraft {
 }
 
 /// Agent-drafted roster, budget and skill choices; refs are resolved at the write gate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectProposalPicks {
     pub leader_agent_def_ref: String,
@@ -265,7 +265,9 @@ impl ProjectProposalCard {
 
     /// A confirmed card tap calls the same thread conversion verb as other
     /// clients; the host-held card supplies the message identity, not the tap,
-    /// and the owner-project signer signs the new project for the owner.
+    /// and the owner-project signer signs the new project for the owner. The
+    /// tap writes the same Grant and tap receipt as a standalone mint, and an
+    /// exact retry returns the project it recorded.
     pub fn convert_thread(
         &self,
         vault: &Vault,
@@ -275,8 +277,9 @@ impl ProjectProposalCard {
         project: EntityId,
         now: u64,
     ) -> Result<crate::workspace_roster::ProjectRecord> {
-        let intent = self.evaluate_action(vault, request, owner)?;
-        vault.convert_thread_with_card(&intent, owner, signer, project, now)
+        vault
+            .convert_thread_with_card(self, request, owner, signer, project, now, |_, _| Ok(()))
+            .map(|(record, _)| record)
     }
 
     #[must_use]
