@@ -692,3 +692,30 @@ The verbs, each the owner's and checked against the vault's inference policy:
   when it ends.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
+
+## 11. When a provider refuses for a limit
+
+A rung refused for a limit hands the call to the next rung of its ladder, and
+its offer (adapter, origin, key and model) rests in the vault, so a restart
+keeps it:
+
+- **A rate limit** (a 429 that names no long wait) rests for the wait it
+  names, or, naming none, for a backoff that doubles with each refusal in a
+  row from the vault's default rest, with jitter, up to the longest rest.
+- **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
+  wait of 15 minutes or more) is parked until the reset it names.
+- **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
+  "billing") is parked until the owner tops up or clears it.
+
+While only rests stop a call, it waits for the first offer back and tries the
+chain again, until its waits pass the vault's longest wait in all (a caller
+with its own deadline passes its own budget). A call whose every offer is
+parked on credit fails `quota_spent`; one that ran out of wait fails
+`rate_limited` with the earliest reset.
+
+A spent window or spent credit leaves the owner a question in
+`GET /v1/ai/status` (`quota_questions`: the provider, model, route, what was
+spent, the reset if any, and the choices). Answer it with
+`POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
+`top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
+`add_account` close the question and leave the offer parked until its reset.

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value as JsonValue;
 
-use super::RetryableLlmError;
+use super::{RetryableLlmError, SpentKind};
 
 /// The words a provider's error type, code, status or message uses for a
 /// spent quota or a rate limit. A bare "exhausted" is not one: a server out
@@ -23,23 +23,80 @@ const LIMIT_WORDS: [&str; 9] = [
     "cooldown",
 ];
 
+/// The words a provider uses for spent prepaid credit: the account must be
+/// topped up, and no window resets it.
+const CREDIT_WORDS: [&str; 9] = [
+    "insufficient_quota",
+    "insufficient quota",
+    "credit balance",
+    "insufficient_credits",
+    "insufficient credits",
+    "out of credits",
+    "billing",
+    "payment required",
+    "top up",
+];
+
+/// The words a provider uses for a spent usage window: a plan's daily,
+/// weekly or monthly allowance, back at its reset.
+const WINDOW_WORDS: [&str; 6] = [
+    "usage limit",
+    "usage_limit",
+    "weekly",
+    "daily limit",
+    "monthly",
+    "limit resets",
+];
+
+/// A wait this long or longer is a spent window, not a rate limit.
+const WINDOW_WAIT_SECS: u64 = 15 * 60;
+
 /// The most reset times one refusal contributes.
 const MAX_RESET_TIMES: usize = 4;
 
-/// Whether a provider's answer is a limit refusal: any 429, or a 403 or a
-/// 5xx whose body reads as a spent quota or a rate limit. A 400 or any other
-/// request error is never one, whatever its body says.
+/// Whether a provider's answer is a limit refusal: any 429 or 402, a 400
+/// whose body reads as spent credit, or a 403 or a 5xx whose body reads as a
+/// spent quota or a rate limit. Any other request error is never one,
+/// whatever its body says.
 #[must_use]
 pub fn is_limit_status(status: u16, body: &JsonValue) -> bool {
-    status == 429 || ((status == 403 || status >= 500) && reads_as_limit(body))
+    status == 429
+        || status == 402
+        || (status == 400 && reads_as(body, &CREDIT_WORDS))
+        || ((status == 403 || status >= 500) && reads_as_limit(body))
 }
 
-/// A limit refusal with the waits its answer names.
+/// A limit refusal with the waits its answer names, by its kind (OF-305): a
+/// 402 or an answer that reads as spent credit is credit, one that reads as
+/// a spent usage window or asks a long wait is a window, and any other is a
+/// rate limit.
 #[must_use]
-pub fn limit_refusal(headers: &BTreeMap<String, String>, body: &JsonValue) -> RetryableLlmError {
-    RetryableLlmError::RateLimited {
-        retry_after: retry_after_seconds(headers, body),
-        resets_at: reset_times(body),
+pub fn limit_refusal(
+    status: u16,
+    headers: &BTreeMap<String, String>,
+    body: &JsonValue,
+) -> RetryableLlmError {
+    let retry_after = retry_after_seconds(headers, body);
+    let resets_at = reset_times(body);
+    let kind = if status == 402 || reads_as(body, &CREDIT_WORDS) {
+        Some(SpentKind::Credit)
+    } else if reads_as(body, &WINDOW_WORDS)
+        || retry_after.is_some_and(|seconds| seconds >= WINDOW_WAIT_SECS)
+    {
+        Some(SpentKind::Window)
+    } else {
+        None
+    };
+    match kind {
+        Some(kind) => RetryableLlmError::QuotaSpent {
+            kind,
+            retry_after,
+            resets_at,
+        },
+        None => RetryableLlmError::RateLimited {
+            retry_after,
+            resets_at,
+        },
     }
 }
 
@@ -75,6 +132,12 @@ pub fn stream_error_status(body: &JsonValue) -> u16 {
 /// a bare string is its message.
 #[must_use]
 pub fn reads_as_limit(body: &JsonValue) -> bool {
+    reads_as(body, &LIMIT_WORDS)
+}
+
+/// Whether a provider's error body names one of `words`, in its error's
+/// type, code, status or message.
+fn reads_as(body: &JsonValue, words: &[&str]) -> bool {
     let error = body.get("error").unwrap_or(body);
     let texts: Vec<&str> = match error {
         JsonValue::String(message) => vec![message.as_str()],
@@ -86,7 +149,7 @@ pub fn reads_as_limit(body: &JsonValue) -> bool {
     };
     texts.into_iter().any(|text| {
         let text = text.to_ascii_lowercase();
-        LIMIT_WORDS.iter().any(|word| text.contains(word))
+        words.iter().any(|word| text.contains(word))
     })
 }
 
