@@ -501,6 +501,7 @@ fn mcp_agent_verb_input(
         )
     };
     match tool {
+        "report" => a.spec.clone().ok_or_else(invalid),
         "self.focus.refresh" => {
             let mut map = serde_json::Map::new();
             if let Some(value) = &a.frame_epoch {
@@ -736,6 +737,9 @@ pub(crate) fn mcp_agent_verb_arguments(
     };
     let mut arguments = serde_json::Map::new();
     match tool {
+        "report" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "self.focus.refresh" => {
             if let Some(value) = input.get("frame_epoch") {
                 arguments.insert("frame_epoch".to_owned(), value.clone());
@@ -1086,6 +1090,31 @@ async fn execute_agent_verb_listing(
         None => memory,
     };
     match tool {
+        "report" => {
+            oneiron::task_verb::sdk::validate_input("report", &input).map_err(mcp_facade_error)?;
+            let input: oneiron::feedback::ReportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let proof = actor
+                .auth
+                .as_ref()
+                .and_then(crate::auth::CoreAuth::verified_slip)
+                .cloned();
+            let (output, listed) = server
+                .report_off_runtime_listing(
+                    actor.actor_ref,
+                    actor.actor_class,
+                    proof,
+                    actor.locality(),
+                    None,
+                    input,
+                )
+                .await;
+            // Derived from these rows too, though it names none of them.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "self.focus.refresh" => {
             let input: oneiron::task_verb::sdk::BoardRefreshRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;

@@ -225,8 +225,11 @@ impl PlannerCard {
 
     /// Rows for one pattern, widest evidence first.
     pub fn rows_for(&self, pattern: CoordinationPattern) -> Vec<&PayoffRow> {
-        let mut rows: Vec<&PayoffRow> =
-            self.rows.iter().filter(|row| row.pattern == pattern).collect();
+        let mut rows: Vec<&PayoffRow> = self
+            .rows
+            .iter()
+            .filter(|row| row.pattern == pattern)
+            .collect();
         rows.sort_by_key(|row| std::cmp::Reverse(row.runs));
         rows
     }

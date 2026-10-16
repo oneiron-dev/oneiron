@@ -35,6 +35,9 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => match verb {
+                "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
+                    client, verb, &input,
+                ),
                 "self.memory.diary" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryEntryReceipt,
                 >(client, verb, &input),
@@ -264,6 +267,19 @@ impl OneironClient {
                 ))
             }
         }
+    }
+    pub fn report(
+        &self,
+        input: &oneiron::feedback::ReportRequest,
+    ) -> Result<oneiron::feedback::ReportReceipt, MemoryError> {
+        input.validate().map_err(MemoryError::from)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("report", value)
     }
     pub fn self_memory_diary(
         &self,

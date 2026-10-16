@@ -25,14 +25,14 @@ mod tiers;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
+pub use artifact::{ArtifactKind, CheckpointKey};
+pub use commitment::CheckpointSigner;
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-pub use artifact::{ArtifactKind, CheckpointKey};
-pub use commitment::CheckpointSigner;
 pub use tiers::{StorageTier, storage_tier};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -230,8 +230,7 @@ fn read_image<'k>(
     key: &'k CheckpointKey,
 ) -> Result<(CheckpointImage, String, artifact::SealedBodies<'k>)> {
     let opened = artifact::open_artifact(path, key)?;
-    let image: CheckpointImage =
-        rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
+    let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != 2
         || image.created_at != opened.created_at
         || image.bodies != opened.bodies.list()

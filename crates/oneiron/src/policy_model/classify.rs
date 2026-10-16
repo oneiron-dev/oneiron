@@ -137,6 +137,20 @@ impl Vault {
             ));
         };
         let evaluation = context.evaluate(&request.content);
+        if evaluation.acting_role() != Some(PolicyPatternRole::Decide)
+            && wants_model(config.owner_classifier_mode, evaluation.acting_role())
+            && let Some(decisions) = config.owner_decisions.as_deref()
+            && let Some(prompt) = context.prompt(request)
+        {
+            return decisions.classify(
+                request,
+                &prompt,
+                AnswerPlane::Owner,
+                binding,
+                config,
+                pass_audit(&evaluation),
+            );
+        }
         Ok(owner_pattern_only_verdict(
             &context,
             &evaluation,
@@ -380,6 +394,18 @@ impl Vault {
         let Some(prompt) = context.prompt(request) else {
             return Ok(skipped(PolicySkipReason::NoDocument, audit));
         };
+        if let Some(decisions) = config.owner_decisions.as_deref() {
+            return Ok(OwnerPlanePass {
+                verdict: decisions.classify(
+                    request,
+                    &prompt,
+                    AnswerPlane::Owner,
+                    binding,
+                    config,
+                    audit,
+                )?,
+            });
+        }
         let Some(safeguard) = safeguard else {
             return Ok(skipped(PolicySkipReason::NoBackend, audit));
         };
@@ -585,11 +611,18 @@ fn policy_model_context_for_policy(
         CompiledPatternRules::default()
     };
     let document = owner_policy_document(policy)?;
+    let rubric_rows = owner_rubric_rows(request, policy);
+    if rubric_rows
+        .iter()
+        .any(|row| row.action == PolicyClassifyDecision::Reword)
+    {
+        super::reword::validate_reword_notice(config)?;
+    }
     Ok(PolicyModelContext {
         binding: content_binding(request, policy, config)?,
         owner_policy_enabled,
         owner_policy_rows_dropped: policy.owner_policy_rows_dropped(),
-        rubric_rows: owner_rubric_rows(request, policy),
+        rubric_rows,
         patterns,
         document,
     })

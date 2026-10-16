@@ -332,6 +332,7 @@ pub(super) fn parse_hosted_category_label(label: &str) -> Option<&str> {
 const fn owner_row_decision(action: OwnerRowAction) -> PolicyClassifyDecision {
     match action {
         OwnerRowAction::Warn => PolicyClassifyDecision::Warn,
+        OwnerRowAction::Reword => PolicyClassifyDecision::Reword,
         OwnerRowAction::Block => PolicyClassifyDecision::Block,
         OwnerRowAction::RouteToHelp => PolicyClassifyDecision::RouteToHelp,
     }
