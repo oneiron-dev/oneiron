@@ -3,6 +3,7 @@
 use super::one_line_token;
 use crate::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
 use crate::run_tree::RunTreeNode;
+use std::collections::BTreeSet;
 
 /// AGENTS row lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +129,75 @@ fn collect_branch_presence(node: &RunTreeNode, out: &mut Vec<ChildAgentPresence>
     out.extend(ChildAgentPresence::from_run_tree_node(node));
     for child in &node.children {
         collect_branch_presence(child, out);
+    }
+}
+
+/// The live children `actor` spawned: every present agent under an attempt
+/// the queue dispatched AS `actor`, in tree order and once each. The actor's
+/// own attempts are the spawner, never its children. `run_id` narrows the
+/// read to one run's indexed attempts; without it the whole working set is
+/// read. A host read: the attempt queue has no caller-visibility filter, and
+/// the only rows it yields are the ones `actor` itself spawned.
+pub fn child_presence_for_actor(
+    vault: &crate::Vault,
+    actor: crate::EntityId,
+    run_id: Option<&str>,
+) -> crate::Result<Vec<ChildAgentPresence>> {
+    let queue = crate::AttemptQueue::new(vault);
+    let records = match run_id {
+        Some(run) => queue.list_run(run)?,
+        None => queue.list()?,
+    };
+    let own: BTreeSet<String> = records
+        .iter()
+        .filter(|record| dispatched_actor(record) == Some(actor))
+        .map(|record| crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()))
+        .collect();
+    if own.is_empty() {
+        return Ok(Vec::new());
+    }
+    let tree = crate::run_tree::render_run_tree(records)?;
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for root in &tree.roots {
+        collect_spawned(root, &own, &mut seen, &mut out);
+    }
+    Ok(out)
+}
+
+/// The AGENT_DEF actor an agent-dispatch attempt runs as; `None` for any
+/// other attempt, or one whose payload does not decode.
+fn dispatched_actor(record: &crate::attempt_queue::AttemptRecord) -> Option<crate::EntityId> {
+    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+        return None;
+    }
+    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).ok()?;
+    if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+        return None;
+    }
+    let input = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input).ok()?;
+    crate::agent_dispatch::agent_dispatch_actor(&input)
+        .ok()
+        .map(|actor| actor.entity_ref())
+}
+
+fn collect_spawned(
+    node: &RunTreeNode,
+    own: &BTreeSet<String>,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<ChildAgentPresence>,
+) {
+    if own.contains(&node.attempt_id) {
+        for child in &node.children {
+            for presence in ChildAgentPresence::from_run_tree_branch(child) {
+                if !own.contains(&presence.id) && seen.insert(presence.id.clone()) {
+                    out.push(presence);
+                }
+            }
+        }
+    }
+    for child in &node.children {
+        collect_spawned(child, own, seen, out);
     }
 }
 

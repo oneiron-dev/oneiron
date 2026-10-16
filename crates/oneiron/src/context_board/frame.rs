@@ -128,6 +128,21 @@ pub enum ShedRank {
     WorldsToCounts,
 }
 
+impl ShedRank {
+    /// Stable wire token for the rank, as a transport reports an applied shed.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PluginSections => "plugin_sections",
+            Self::CapabilityDiscovery => "capability_discovery",
+            Self::MemoriesSnippets => "memories_snippets",
+            Self::TasksToCounts => "tasks_to_counts",
+            Self::AgentsToCounts => "agents_to_counts",
+            Self::WorldsToCounts => "worlds_to_counts",
+        }
+    }
+}
+
 /// The canonical shed decision order. `PluginSections` is an outer first rank
 /// so plugins never outrank core state; it does not reorder the core four.
 pub const SHED_ORDER: [ShedRank; 6] = [
@@ -286,6 +301,14 @@ pub fn assemble_task_agent_sections(
             shed_rank: Some(ShedRank::TasksToCounts),
         },
     )?;
+    let agents_section = assemble_agents_section(agents)?;
+    Ok([tasks_section, agents_section])
+}
+
+/// The AGENTS section alone: child and peer rows as its detail view, cand
+/// rows as its discovery lane (shed at `CapabilityDiscovery`), and a count of
+/// the non-cand rows as its fallback.
+pub fn assemble_agents_section(agents: &AgentsSection) -> Result<BoardSection, BoardFrameError> {
     let mut agents_section = BoardSection::new(
         "AGENTS",
         Vec::new(),
@@ -324,7 +347,29 @@ pub fn assemble_task_agent_sections(
             });
         }
     }
-    Ok([tasks_section, agents_section])
+    Ok(agents_section)
+}
+
+/// The TASKS section with `lead` detail rows ahead of the task rows (a
+/// project view rides here) and the structural overflow footer after them.
+/// The count fallback counts the task rows the window rendered.
+pub fn assemble_tasks_section(
+    tasks: &TasksSection,
+    lead: Vec<String>,
+) -> Result<BoardSection, BoardFrameError> {
+    let mut detail = lead;
+    detail.extend(tasks.rows.iter().map(|row| row.line.clone()));
+    detail.extend(tasks.overflow.and_then(|overflow| overflow.line()));
+    BoardSection::new(
+        "TASKS",
+        Vec::new(),
+        detail,
+        vec![format!("count: {}", tasks.rows.len())],
+        SectionPolicy {
+            pinned: false,
+            shed_rank: Some(ShedRank::TasksToCounts),
+        },
+    )
 }
 
 /// The typed render input: header, mandatory legend, ordered sections.

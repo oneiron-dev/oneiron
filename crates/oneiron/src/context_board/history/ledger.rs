@@ -158,6 +158,11 @@ impl Vault {
     /// recorded in the same second as the owner's last one moves one second
     /// past it, so turn order stays strict.
     ///
+    /// `worlds` is the world authority the board resolved: its allowed,
+    /// default and active world ids become the selection's world tiers. A
+    /// world `caller` cannot read is no document it was shown, so it carries
+    /// no history; base reality is no entity and has no slot.
+    ///
     /// `owner` must be `caller`'s own actor, and the TURN must carry it as
     /// the author its door stamped, so a reader of someone else's turn cannot
     /// claim its board. Every selected document, of every type, must be
@@ -172,14 +177,29 @@ impl Vault {
         turn: EntityId,
         owner: EntityId,
         memories: Option<&crate::context_board::MemoriesSection>,
+        worlds: Option<&crate::pipeline::ResolvedWorldAuthority>,
         caller: &ScopedRead<'_>,
         accept: impl FnOnce(&BoardTurnReceipt) -> bool,
     ) -> Result<Option<BoardTurnReceipt>> {
         if EntityId::from_hex(caller.actor_key().actor_ref()).ok() != Some(owner) {
             return Err(BoardHistoryError::NotTurnAuthor(turn));
         }
-        let selection =
+        let mut selection =
             memories.map_or_else(BoardSelection::default, BoardSelection::from_memories);
+        if let Some(worlds) = worlds {
+            let readable = |set: &crate::pipeline::WorldAuthoritySet| {
+                let mut kept = std::collections::BTreeSet::new();
+                for id in set.worlds() {
+                    if caller.is_entity_readable(id)? {
+                        kept.insert(*id);
+                    }
+                }
+                Ok::<_, BoardHistoryError>(kept)
+            };
+            selection.allowed = readable(&worlds.allowed_set)?;
+            selection.default_on = readable(&worlds.default_subset)?;
+            selection.active = readable(&worlds.active_set)?;
+        }
         let served = memories.map_or_else(BTreeMap::new, |memories| {
             selection.served_revisions(memories)
         });

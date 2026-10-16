@@ -1,7 +1,12 @@
 //! WORLDS scope-map projection over the turn's resolved world authority.
 
 use super::{BoardFrameError, BoardSection, SectionPolicy, ShedRank, one_line_token};
-use crate::{EntityId, pipeline::ResolvedWorldAuthority};
+use crate::{
+    EntityId,
+    claim::ScopedRead,
+    pipeline::{ResolvedWorldAuthority, WorldAuthoritySet},
+    registry::ENTITY_TYPE_WORLD,
+};
 use std::collections::BTreeMap;
 
 /// Display metadata from the world registry, not a source of authority.
@@ -10,6 +15,73 @@ pub struct WorldPresence {
     pub id: EntityId,
     pub label: String,
     pub trust: String,
+}
+
+impl WorldPresence {
+    /// Display rows for the WORLD bodies `read` admits among `worlds`, in
+    /// order. A world the caller cannot read, or an id that names no WORLD,
+    /// yields no row, so it reaches neither the rows nor the counts. The
+    /// label is the body's own `label` or `name` leaf when it carries one,
+    /// else the id's short hex; trust is `foreign` for a received world's id
+    /// range and `own` otherwise. Display only: authority is the fold's.
+    pub fn read_admitted(
+        read: &ScopedRead<'_>,
+        worlds: &[EntityId],
+    ) -> crate::Result<Vec<WorldPresence>> {
+        let parts = read.get_entities_parts_with_receipt(worlds, None)?.value;
+        Ok(worlds
+            .iter()
+            .zip(parts)
+            .filter_map(|(id, parts)| {
+                let (entity_type, _, body) = parts?;
+                (entity_type == ENTITY_TYPE_WORLD).then(|| WorldPresence {
+                    id: *id,
+                    label: world_label(&body).unwrap_or_else(|| id.to_hex()[..8].to_owned()),
+                    trust: if crate::entity_id::is_foreign_world_id_range(*id) {
+                        "foreign"
+                    } else {
+                        "own"
+                    }
+                    .to_owned(),
+                })
+            })
+            .collect())
+    }
+}
+
+/// A WORLD body's display label: its `label` leaf, else its `name` leaf. A
+/// body that is not a map, or that reads whole as a secret, has none.
+fn world_label(body: &[u8]) -> Option<String> {
+    let value = rmpv::decode::read_value(&mut &body[..]).ok()?;
+    if crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, body) {
+        return None;
+    }
+    let rmpv::Value::Map(entries) = value else {
+        return None;
+    };
+    ["label", "name"].into_iter().find_map(|key| {
+        entries
+            .iter()
+            .find(|(entry, _)| entry.as_str() == Some(key))
+            .and_then(|(_, value)| value.as_str())
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// The board header's scope token for a resolved world set:
+/// `WorldSet(base,<hex>,…)`, so the scope a board names is the scope its
+/// planner resolved, never a caller string.
+#[must_use]
+pub fn world_set_scope(set: &WorldAuthoritySet) -> String {
+    let members: Vec<String> = set
+        .include_base()
+        .then(|| "base".to_owned())
+        .into_iter()
+        .chain(set.worlds().iter().map(EntityId::to_hex))
+        .collect();
+    format!("WorldSet({})", members.join(","))
 }
 
 /// Allowed worlds only. Exclusion happens before rows or counts are computed.
