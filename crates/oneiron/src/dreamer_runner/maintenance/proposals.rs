@@ -1,6 +1,8 @@
 //! The shared Generated/Proposed writer for deterministic maintenance findings.
 //! Each finding lands in the owner's run tray (`/v1/owner/runs`) under the
 //! attempt that wrote it, so one review approves or declines a night's batch.
+//! Every finding cites the records it was read from: GATE-12 refuses a
+//! Dreamer claim with no live evidence ref.
 use crate::attempt_queue::AttemptId;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{ClaimCandidate, ClaimSubject, EntityId, Result, TimeRange, Vault};
@@ -37,6 +39,10 @@ pub(super) fn run_tray_envelope(
         shared.approval(),
     ))
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one finding's facet, subject, claim and evidence"
+)]
 pub(super) fn emit(
     vault: &Vault,
     attempt: AttemptId,
@@ -44,20 +50,28 @@ pub(super) fn emit(
     subject: EntityId,
     predicate: &str,
     value: &serde_json::Value,
+    evidence: &[EntityId],
     now: u64,
 ) -> Result<EntityId> {
     let envelope = run_tray_envelope(vault, facet, attempt)?;
     vault.with_write_txn_grouped(|txn| {
-        emit_in_txn(vault, txn, subject, predicate, value, &envelope, now)
+        emit_in_txn(
+            vault, txn, subject, predicate, value, evidence, &envelope, now,
+        )
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one finding's subject, claim, evidence and write envelope"
+)]
 pub(super) fn emit_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     subject: EntityId,
     predicate: &str,
     value: &serde_json::Value,
+    evidence: &[EntityId],
     envelope: &crate::WriteEnvelope,
     now: u64,
 ) -> Result<EntityId> {
@@ -90,7 +104,14 @@ pub(super) fn emit_in_txn(
         ClaimSubject::Entity(subject),
         Value::from(String::from_utf8(bytes).map_err(|_| super::invalid())?),
         1.0,
-    );
+    )
+    .with_evidence(crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: evidence.to_vec(),
+            chain: Vec::new(),
+            source_meet: crate::ClaimSource::Generated,
+        },
+    ));
     let mut envelope = envelope.clone();
     vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
     vault
@@ -106,5 +127,6 @@ pub(super) fn emit_in_txn(
             now,
         )
         .apply_recording_gate_decisions(txn)?;
+    vault.record_finding_notification_in_txn(txn, id, subject, now)?;
     Ok(id)
 }

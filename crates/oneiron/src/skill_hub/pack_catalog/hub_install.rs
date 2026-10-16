@@ -7,8 +7,10 @@ use super::{
     PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource, invalid,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::skill_hub::ref_sync::{RefFetch, pinned_tracking};
 use crate::skill_hub::{
-    GitEndpointSkillHubAdapter, HttpEndpointSkillHubAdapter, HubPin, HubRef, SkillHubKind,
+    GitEndpointSkillHubAdapter, HttpEndpointSkillHubAdapter, HubPin, HubRef, MODEL_PACK_NAME,
+    SkillHubKind,
 };
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
@@ -91,5 +93,66 @@ impl Vault {
                 Err(invalid("a local folder installs through vault.packs.put"))
             }
         }
+    }
+
+    /// Owner door: sync an installed hub pack to its ref's policy (OF-213).
+    /// The ref's stored row picks the bytes, else the installed pin. A fetch
+    /// marks its revision seen; only an install marks it trusted. A source
+    /// whose dependencies carry advisories lands Candidate, and the installed
+    /// pack stays selected.
+    pub fn sync_pack_from_hub(
+        &self,
+        owner: &AuthenticatedOwner,
+        name: &str,
+    ) -> Result<PackInstallDisposition> {
+        if name == MODEL_PACK_NAME {
+            return self.sync_model_catalog(owner);
+        }
+        let installed = self
+            .installed_pack(name)?
+            .ok_or_else(|| invalid("no pack is installed under that name"))?;
+        let hub = EntityId::from_hex(&installed.hub_id)?;
+        let tracked = match self.hub_ref_sync(&hub, &installed.hub_ref)? {
+            Some(tracked) => tracked,
+            None => pinned_tracking(HubRef::new(
+                hub,
+                installed.hub_ref.clone(),
+                hub_pin(&installed.pin_type, &installed.pin_value)?,
+            )?)?,
+        };
+        let fallback = (installed.pin_type == "commit").then_some(installed.pin_value.as_str());
+        let publisher = self.admit_skill_publisher(owner, &installed.publisher, hub)?;
+        let at = self.now_recorded_at();
+        let occurred = TimeRange { start: at, end: at };
+        let (source_id, pinned, revision) = match self.hub_ref_fetch(&tracked, fallback)? {
+            RefFetch::Git(adapter, reference) => {
+                let (id, pinned) =
+                    self.fetch_pack_from_adapter(&adapter, &reference, &publisher, occurred, at)?;
+                (id, pinned, adapter.resolved_commit().to_owned())
+            }
+            RefFetch::Http(adapter, reference) => {
+                let (id, pinned) =
+                    self.fetch_pack_from_adapter(&adapter, &reference, &publisher, occurred, at)?;
+                let hash = self
+                    .get_pack_source(&id)?
+                    .ok_or_else(|| invalid("fetched pack is missing"))?
+                    .content_hash()
+                    .to_hex();
+                (id, pinned, hash)
+            }
+        };
+        self.mark_hub_ref(&tracked, &revision, false)?;
+        let source = self
+            .get_pack_source(&source_id)?
+            .ok_or_else(|| invalid("fetched pack is missing"))?;
+        if source.manifest().name != name {
+            return Err(invalid("the synced ref holds another pack"));
+        }
+        let ask = self.prepare_pack_install(source_id, &pinned, &publisher, &OwnerAskedFit)?;
+        let disposition = self.install_pack(&ask)?;
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.mark_hub_ref(&tracked, &revision, true)?;
+        }
+        Ok(disposition)
     }
 }

@@ -44,10 +44,38 @@ impl WindowManager {
         selector: &selector::SyncSelector,
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
+        self.export_document_in_window_with(
+            id,
+            window,
+            scope,
+            selector,
+            crate::sync::window::Withhold::Unknown,
+            remote_vv,
+        )
+    }
+
+    /// [`Self::export_document_in_window`] for the machine a residence read
+    /// serves: `withhold` names the worlds kept off it.
+    pub fn export_document_in_window_with(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        window: &WindowKey,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        withhold: crate::sync::window::Withhold<'_>,
+        remote_vv: &[u8],
+    ) -> Result<Vec<u8>> {
         selector::authorize_sync_selector(&self.vault, scope, selector)?;
         let source = self.open_window(window)?;
-        self.documents
-            .export_selected(id, &source.doc, window, scope, selector, remote_vv)
+        self.documents.export_selected(
+            id,
+            &source.doc,
+            window,
+            scope,
+            selector,
+            withhold,
+            remote_vv,
+        )
     }
 
     /// Grant-backed text-plane export. The entity's canonical ledger supplies
@@ -57,6 +85,44 @@ impl WindowManager {
         id: crate::EntityId,
         scope: crate::FederationGrantScope,
         selector: &selector::SyncSelector,
+        remote_vv: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.export_document_with(
+            id,
+            scope,
+            selector,
+            crate::sync::window::Withhold::Unknown,
+            remote_vv,
+        )
+    }
+
+    /// Text-plane export for the physical machine proven by the transport.
+    /// Actor grants still apply, independently of the world's machine policy.
+    pub fn export_document_for_peer(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        remote_vv: &[u8],
+        peer: crate::authority::PeerMachine,
+    ) -> Result<Vec<u8>> {
+        self.export_document_with(
+            id,
+            scope,
+            selector,
+            crate::sync::window::Withhold::Peer(peer),
+            remote_vv,
+        )
+    }
+
+    /// [`Self::export_document`] for the machine the socket proved:
+    /// `withhold` names the worlds kept off it.
+    pub fn export_document_with(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        withhold: crate::sync::window::Withhold<'_>,
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
         selector::authorize_sync_selector(&self.vault, scope, selector)?;
@@ -72,6 +138,6 @@ impl WindowManager {
         };
         let window = self.open_window(&key)?;
         self.documents
-            .export_selected(id, &window.doc, &key, scope, selector, remote_vv)
+            .export_selected(id, &window.doc, &key, scope, selector, withhold, remote_vv)
     }
 }

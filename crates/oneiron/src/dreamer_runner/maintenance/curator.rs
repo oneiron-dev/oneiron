@@ -261,6 +261,7 @@ pub(super) fn run(
                 id,
                 PROPOSAL_PREDICATE,
                 &value,
+                &[id],
                 now,
             )
         })

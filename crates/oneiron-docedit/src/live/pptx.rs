@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Model identity for slides, shapes and paragraphs. The root is `NodeId(0)`.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,8 +148,11 @@ impl LiveDeck {
                 placeholder: None,
             },
         );
-        let slide_parts: BTreeSet<&str> =
-            view.slides.iter().map(|slide| slide.part.as_str()).collect();
+        let slide_parts: BTreeSet<&str> = view
+            .slides
+            .iter()
+            .map(|slide| slide.part.as_str())
+            .collect();
         for slide in &view.slides {
             let slide_id = deck.mint();
             deck.nodes.insert(
@@ -490,11 +491,7 @@ impl LiveDeck {
                 }
                 let mut gone = self.descendants(*node);
                 gone.push(*node);
-                let parent = self
-                    .nodes
-                    .get(node)
-                    .ok_or(LiveError::UnknownNode)?
-                    .parent;
+                let parent = self.nodes.get(node).ok_or(LiveError::UnknownNode)?.parent;
                 if let Some(parent) = parent
                     && let Some(found) = self.nodes.get_mut(&parent)
                 {
@@ -511,11 +508,7 @@ impl LiveDeck {
                 new_parent,
                 index,
             } => {
-                let kind = self
-                    .nodes
-                    .get(node)
-                    .ok_or(LiveError::UnknownNode)?
-                    .kind;
+                let kind = self.nodes.get(node).ok_or(LiveError::UnknownNode)?.kind;
                 if self.descendants(*node).contains(new_parent) || new_parent == node {
                     return Err(LiveError::TreeShape("a node cannot contain itself"));
                 }
@@ -625,9 +618,7 @@ impl AttributionIndex {
         // mints below the deck's high-water mark, in log order.
         let creates = log
             .iter()
-            .filter(|stamped| {
-                matches!(stamped.op, DeckOp::AddSlide | DeckOp::AddNode { .. })
-            })
+            .filter(|stamped| matches!(stamped.op, DeckOp::AddSlide | DeckOp::AddNode { .. }))
             .count() as u64;
         let mut next_mint = deck.next_node.saturating_sub(creates);
         for stamped in log {
@@ -851,8 +842,8 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
         let Some(was) = base.nodes.get(id) else {
             continue;
         };
-        let moved = was.parent != node.parent
-            || sibling_index(base, *id) != sibling_index(proposal, *id);
+        let moved =
+            was.parent != node.parent || sibling_index(base, *id) != sibling_index(proposal, *id);
         if moved {
             out.moved.push(NodeMove {
                 node: *id,
@@ -890,8 +881,10 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
         } else if let Some(head_node) = head_node {
             let head_moved = was.parent != head_node.parent
                 || sibling_index(base, *id) != sibling_index(head, *id);
-            if moved && head_moved && (node.parent != head_node.parent
-                || sibling_index(proposal, *id) != sibling_index(head, *id))
+            if moved
+                && head_moved
+                && (node.parent != head_node.parent
+                    || sibling_index(proposal, *id) != sibling_index(head, *id))
             {
                 out.conflicts.push(Conflict::BothMoved { node: *id });
             }
@@ -899,7 +892,8 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
                 && ((moved && was.geometry != head_node.geometry)
                     || (head_moved && was.geometry != node.geometry))
             {
-                out.conflicts.push(Conflict::GeometryVsReparent { node: *id });
+                out.conflicts
+                    .push(Conflict::GeometryVsReparent { node: *id });
             }
             if base.texts.get(id) != head.texts.get(id)
                 && base.texts.get(id) != proposal.texts.get(id)
@@ -1054,7 +1048,9 @@ pub fn land(
         return Err(LiveError::Invalid("preflight conflicts are unresolved"));
     }
     if !scope.covers(fork) {
-        return Err(LiveError::Invalid("the approval scope does not cover this fork"));
+        return Err(LiveError::Invalid(
+            "the approval scope does not cover this fork",
+        ));
     }
     let reviewed_version = head.version;
     let mut affected: BTreeSet<NodeId> = BTreeSet::new();

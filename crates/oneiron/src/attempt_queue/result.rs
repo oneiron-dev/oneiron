@@ -173,6 +173,7 @@ impl AttemptQueue<'_> {
                     &record,
                     &input.lease_owner,
                 )?;
+                self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(AbandonOutcome::Abandoned(record))
             }
             state => Err(invalid_transition("abandon", state.as_str())),

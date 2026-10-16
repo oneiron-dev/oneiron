@@ -448,6 +448,16 @@ pub(crate) fn publish_room_revision(
             != raw_for_revision(store, txn, id, &live, None)?.get(ENTITY_METADATA_HEADER_LEN..);
     current.indexed = current.live;
     put_state(store, txn, id, &current)?;
+    let codes = super::phonetic::take_phonetic(
+        store,
+        txn,
+        id,
+        current.indexed,
+        live[0],
+        &live[ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    crate::batch::delete_from_phonetic_postings(store, txn, id)?;
+    crate::batch::apply_phonetic(store, txn, *id, &codes)?;
     Ok(changed)
 }
 
