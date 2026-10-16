@@ -11,7 +11,9 @@ use crate::store::{BodyDir, BodySink, SunkBody, read_body_range};
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
 use super::super::codec::validate_raw_output;
-use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
+use super::super::replay::{
+    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
+};
 use super::super::support::invalid_code_run_replay;
 
 /// The replay record of one run, keyed by run id.
@@ -67,25 +69,29 @@ impl RawValue for StoredBody {
     }
 }
 
-/// SECRET-04 (ONE-1922): the FORWARD taint sidecar of one raw-output row.
-///
-/// A sidecar keyed by the SAME handle, written in the SAME transaction, and
-/// absent for the overwhelmingly common untainted run.
+/// SECRET-04 (ONE-1922): the FORWARD taint sidecar of one result
+/// occurrence (Docs Q08), keyed by [`ResultOccurrence::mark_key`]: the
+/// occurrence under its body's handle. Written in the SAME transaction as
+/// the body row, and absent for the overwhelmingly common untainted run.
+/// Another occurrence of the same bytes neither reads nor clears it.
 pub(super) const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
 
-/// The secret scan's hit in one raw-output body, keyed by the same handle
-/// and written before or with its row: a secret no custody record holds, so
-/// no taint ref can name it. Absent for a body the scan found nothing in.
+/// The secret scan's hit in one result occurrence's body, keyed as its
+/// taint sidecar is and written before or with its row: a secret no custody
+/// record holds, so no taint ref can name it. Absent for a body the scan
+/// found nothing in.
 pub(super) const RAW_OUTPUT_SECRETS: SideTable<String, String, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_SECRET);
 
 /// A proposal to lift a secret the scan found in a run result into the
-/// vault. It holds no part of the secret: the body's handle, the detector's
-/// reason and a suggested custody name drawn from the handle alone.
+/// vault. It holds no part of the secret: the body's handle, the occurrence
+/// the scan marked, the detector's reason and a suggested custody name
+/// drawn from the handle alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeRunSecretLiftProposal {
     pub handle: String,
+    pub occurrence: ResultOccurrence,
     pub detector_reason: String,
     pub suggested_secret_name: String,
 }
@@ -214,9 +220,9 @@ impl Vault {
         Ok(finished.output)
     }
 
-    /// Writes the row of the body `finished` holds, its secret mark, and,
-    /// with an `owner`, `occurrence` as that owner's: the manifest of the
-    /// same bytes at the owner's path.
+    /// Writes the row of the body `finished` holds, the secret mark of
+    /// `owner`'s occurrence of it, and, with an `owner`, `occurrence` as that
+    /// owner's: the manifest of the same bytes at the owner's path.
     pub(crate) fn put_code_run_output_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -224,21 +230,39 @@ impl Vault {
         occurrence: &CodeRunRawOutput,
         owner: Option<EntityId>,
     ) -> Result<()> {
-        if occurrence.handle != finished.output.handle {
-            return Err(Error::InvariantViolation(
-                "code-run output occurrence names other bytes",
-            ));
-        }
-        RAW_OUTPUTS.put(&self.store, wtxn, &occurrence.handle, &finished.body)?;
-        if let Some(reason) = finished.secret {
-            self.mark_code_run_output_secret_in_txn(wtxn, occurrence, reason)?;
-        }
+        self.put_code_run_output_row_in_txn(
+            wtxn,
+            finished,
+            occurrence,
+            ResultOccurrence::of(owner, occurrence)?,
+        )?;
         if let Some(owner) = owner {
             crate::provenance::body::publish_body_in_txn(
                 &self.store,
                 wtxn,
                 &owned_body(owner, occurrence, &finished.body)?,
             )?;
+        }
+        Ok(())
+    }
+
+    /// Writes the row of the body `finished` holds and, when the secret scan
+    /// hit it, the mark of `at`, the occurrence `output` is.
+    fn put_code_run_output_row_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        finished: &FinishedOutput,
+        output: &CodeRunRawOutput,
+        at: ResultOccurrence,
+    ) -> Result<()> {
+        if output.handle != finished.output.handle {
+            return Err(Error::InvariantViolation(
+                "code-run output occurrence names other bytes",
+            ));
+        }
+        RAW_OUTPUTS.put(&self.store, wtxn, &output.handle, &finished.body)?;
+        if let Some(reason) = finished.secret {
+            self.mark_code_run_output_secret_in_txn(wtxn, output, at, reason)?;
         }
         Ok(())
     }
@@ -256,25 +280,34 @@ impl Vault {
     }
 
     /// Stores a complete body held whole under its content handle; `output`
-    /// must be its manifest.
-    pub fn put_code_run_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
-        self.put_code_run_raw_output_tainted(output, raw, &[])
+    /// must be its manifest, and `owner` the run that holds it, if one does.
+    pub fn put_code_run_raw_output(
+        &self,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+        raw: &[u8],
+    ) -> Result<()> {
+        self.put_code_run_raw_output_tainted(owner, output, raw, &[])
     }
 
     /// Stores a complete body ALONGSIDE the taint refs of the action that
-    /// produced them (SECRET-04, ONE-1922).
+    /// produced them (SECRET-04, ONE-1922), on the occurrence `owner` holds
+    /// (or the bytes' own, with none). No body descriptor is published.
     ///
     /// One write transaction carries the sidecar and the body row, so
     /// tainted exhaust can never survive a half-failed write wearing no
     /// mark. An empty ref list is exactly the untainted put (the sidecar is
-    /// cleared, not written empty).
+    /// cleared, not written empty); it clears this occurrence's sidecar only,
+    /// never another's of the same bytes.
     pub fn put_code_run_raw_output_tainted(
         &self,
+        owner: Option<EntityId>,
         output: &CodeRunRawOutput,
         raw: &[u8],
         taint_refs: &[SecretTaintRef],
     ) -> Result<()> {
         validate_taint_refs(taint_refs)?;
+        let at = ResultOccurrence::of(owner, output)?;
         let mut sink = self.code_run_output_sink()?;
         sink.write(raw)?;
         let finished = finish_output(output.path.clone(), sink, true, self.limit_watch())?;
@@ -283,26 +316,60 @@ impl Vault {
                 "raw output metadata does not match bytes",
             ));
         }
+        let key = at.mark_key(&output.handle);
         let mut wtxn = self.store.env.write_txn()?;
         if taint_refs.is_empty() {
-            RAW_OUTPUT_TAINTS.delete(&self.store, &mut wtxn, &output.handle)?;
+            RAW_OUTPUT_TAINTS.delete(&self.store, &mut wtxn, &key)?;
         } else {
-            RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &output.handle, &taint_refs.to_vec())?;
+            RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &key, &taint_refs.to_vec())?;
         }
-        self.put_code_run_output_in_txn(&mut wtxn, &finished, output, None)?;
+        self.put_code_run_output_row_in_txn(&mut wtxn, &finished, output, at)?;
         Ok(wtxn.commit()?)
     }
 
-    /// The taint refs stored beside one raw output (empty when the sidecar
-    /// row is absent — an untainted run).
+    /// The taint refs and secret-scan reason of the occurrence of `output`
+    /// that `owner` holds. With no owner the read names the bytes alone,
+    /// which hold no authority of their own, so it carries the marks of
+    /// every occurrence of them.
+    fn result_marks_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+    ) -> Result<(Vec<SecretTaintRef>, Option<String>)> {
+        if owner.is_some() {
+            let key = ResultOccurrence::of(owner, output)?.mark_key(&output.handle);
+            return Ok((
+                RAW_OUTPUT_TAINTS
+                    .get(&self.store, rtxn, &key)?
+                    .unwrap_or_default(),
+                RAW_OUTPUT_SECRETS.get(&self.store, rtxn, &key)?,
+            ));
+        }
+        let prefix = ResultOccurrence::marks_prefix(&output.handle);
+        let refs = RAW_OUTPUT_TAINTS
+            .scan_from(&self.store, rtxn, prefix.as_bytes())?
+            .into_iter()
+            .flat_map(|(_, refs)| refs)
+            .collect();
+        let secret = RAW_OUTPUT_SECRETS
+            .scan_from(&self.store, rtxn, prefix.as_bytes())?
+            .into_iter()
+            .next()
+            .map(|(_, reason)| reason);
+        Ok((refs, secret))
+    }
+
+    /// The taint refs stored beside the occurrence of one raw output that
+    /// `owner` holds (empty when the sidecar row is absent — an untainted
+    /// run).
     pub fn code_run_raw_output_taint_refs(
         &self,
+        owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<Vec<SecretTaintRef>> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(RAW_OUTPUT_TAINTS
-            .get(&self.store, &rtxn, &output.handle)?
-            .unwrap_or_default())
+        Ok(self.result_marks_in_txn(&rtxn, owner, output)?.0)
     }
 
     /// The READ-TIME taint state of one raw output (ARCH-0069 S7, amended).
@@ -316,27 +383,31 @@ impl Vault {
     ///
     /// A body the secret scan marked is `TaintedLive` for good: no custody
     /// record holds what it found, so nothing can rotate it away.
+    ///
+    /// The state is that of the occurrence `owner` holds (Docs Q08); with no
+    /// owner, of every occurrence of the bytes.
     pub fn code_run_raw_output_taint_state(
         &self,
+        owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<ArtifactTaintState> {
         let rtxn = self.store.env.read_txn()?;
-        if RAW_OUTPUT_SECRETS
-            .get(&self.store, &rtxn, &output.handle)?
-            .is_some()
-        {
+        let (refs, secret) = self.result_marks_in_txn(&rtxn, owner, output)?;
+        if secret.is_some() {
             return Ok(ArtifactTaintState::TaintedLive);
         }
-        let refs = RAW_OUTPUT_TAINTS
-            .get(&self.store, &rtxn, &output.handle)?
-            .unwrap_or_default();
         taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
     }
 
-    /// The reason the secret scan marked `output`'s body with, if it did.
-    pub fn code_run_raw_output_secret(&self, output: &CodeRunRawOutput) -> Result<Option<String>> {
+    /// The reason the secret scan marked the occurrence of `output` that
+    /// `owner` holds with, if it did.
+    pub fn code_run_raw_output_secret(
+        &self,
+        owner: Option<EntityId>,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<String>> {
         let rtxn = self.store.env.read_txn()?;
-        RAW_OUTPUT_SECRETS.get(&self.store, &rtxn, &output.handle)
+        Ok(self.result_marks_in_txn(&rtxn, owner, output)?.1)
     }
 
     /// Every run's result manifests in the base vault, from its replay
@@ -352,23 +423,21 @@ impl Vault {
             .collect())
     }
 
-    /// Why `output`'s body is withheld from a view leaving the vault: the
-    /// secret scan marked it, or it carries taint refs, live or stale alike.
+    /// Why the occurrence of `output` that `owner` holds is withheld from a
+    /// view leaving the vault: the secret scan marked it, or it carries
+    /// taint refs, live or stale alike. Another occurrence of the same
+    /// bytes neither withholds nor clears it.
     pub(crate) fn code_run_result_withheld_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
+        owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<Option<&'static str>> {
-        if RAW_OUTPUT_SECRETS
-            .get(&self.store, rtxn, &output.handle)?
-            .is_some()
-        {
+        let (refs, secret) = self.result_marks_in_txn(rtxn, owner, output)?;
+        if secret.is_some() {
             return Ok(Some("secret_scan"));
         }
-        if RAW_OUTPUT_TAINTS
-            .get(&self.store, rtxn, &output.handle)?
-            .is_some_and(|refs| !refs.is_empty())
-        {
+        if !refs.is_empty() {
             return Ok(Some("tainted"));
         }
         Ok(None)
@@ -388,38 +457,49 @@ impl Vault {
     }
 
     /// The value-free proposals to lift what the secret scan found in run
-    /// results into the vault (ARCH-0069 S5), one per marked body, for the
-    /// owner to take or dismiss. Each names the body by its handle only.
+    /// results into the vault (ARCH-0069 S5), one per marked occurrence, for
+    /// the owner to take or dismiss. Each names the body by its handle and
+    /// the occurrence the scan marked only.
     pub fn code_run_secret_lift_proposals(&self) -> Result<Vec<CodeRunSecretLiftProposal>> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(RAW_OUTPUT_SECRETS
+        RAW_OUTPUT_SECRETS
             .scan(&self.store, &rtxn)?
             .into_iter()
-            .map(|(handle, detector_reason)| CodeRunSecretLiftProposal {
-                suggested_secret_name: format!(
-                    "code_run.{}",
-                    handle
-                        .strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX)
-                        .unwrap_or(&handle)
-                        .get(..16)
-                        .unwrap_or_default()
-                ),
-                handle,
-                detector_reason,
+            .map(|(key, detector_reason)| {
+                let (handle, occurrence) = ResultOccurrence::parse_mark_key(&key)?;
+                Ok(CodeRunSecretLiftProposal {
+                    suggested_secret_name: format!(
+                        "code_run.{}",
+                        handle
+                            .strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX)
+                            .unwrap_or(handle)
+                            .get(..16)
+                            .unwrap_or_default()
+                    ),
+                    handle: handle.to_owned(),
+                    occurrence,
+                    detector_reason,
+                })
             })
-            .collect())
+            .collect()
     }
 
-    /// Marks `output`'s body with the secret scan's `reason`, which files
-    /// its lift proposal. The body stays whole: the mark redacts its views
-    /// and nulls it in an export.
+    /// Marks `at`, the occurrence `output` is, with the secret scan's
+    /// `reason`, which files its lift proposal. The body stays whole: the
+    /// mark redacts this occurrence's views and nulls it in an export.
     fn mark_code_run_output_secret_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         output: &CodeRunRawOutput,
+        at: ResultOccurrence,
         reason: &str,
     ) -> Result<()> {
-        RAW_OUTPUT_SECRETS.put(&self.store, wtxn, &output.handle, &reason.to_owned())
+        RAW_OUTPUT_SECRETS.put(
+            &self.store,
+            wtxn,
+            &at.mark_key(&output.handle),
+            &reason.to_owned(),
+        )
     }
 
     /// Test-only direct tally increment. Production executor commits use the
@@ -578,10 +658,7 @@ fn owned_body(
     };
     Ok(OwnedBody {
         owner,
-        occurrence: EntityId::derive(
-            b"oneiron:code-run-output-occurrence:v1",
-            &[owner.as_bytes().as_slice(), output.path.as_bytes()],
-        )?,
+        occurrence: ResultOccurrence::of(Some(owner), output)?.id(),
         state: if output.complete {
             BodyState::Complete { body }
         } else {

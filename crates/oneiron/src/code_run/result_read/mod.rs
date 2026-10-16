@@ -7,7 +7,9 @@
 //!
 //! Neither the executor's host nor the MCP door is known here. Both resolve
 //! the result in its run, check the reader's grant and the rows it was
-//! served from, and read it through [`ResultRead`], which checks its taint.
+//! served from, and read it through [`ResultRead`], which checks the taint
+//! of the run's occurrence of it (Docs Q08). `can({read: r})` asks the same
+//! checks for their verdict and reads no byte.
 
 mod chunks;
 mod query;
@@ -170,9 +172,10 @@ impl ReadBounds<'_> {
     }
 }
 
-/// A result read as every read of one is: resolved in its run, its taint
-/// read now, and its range inside its body. Its reader's grant and the rows
-/// it was served from are the caller's to check before it is made.
+/// A result read as every read of one is: resolved in its run, the taint of
+/// the run's occurrence of it read now, and its range inside its body. Its
+/// reader's grant and the rows it was served from are the caller's to check
+/// before it is made.
 pub(crate) struct ResultRead {
     output: CodeRunRawOutput,
     name: Option<String>,
@@ -182,10 +185,12 @@ pub(crate) struct ResultRead {
 }
 
 impl ResultRead {
-    /// `output` as `name` binds it, narrowed to `range`, its taint read
-    /// now. A range that is not inside the body is refused.
+    /// `output` as `name` binds it in run `owner`, narrowed to `range`, the
+    /// taint of the run's occurrence of it read now. A range that is not
+    /// inside the body is refused.
     pub(crate) fn new(
         storage: &ExecutorStorage<'_>,
+        owner: EntityId,
         output: CodeRunRawOutput,
         name: Option<String>,
         range: Option<(u64, u64)>,
@@ -197,7 +202,7 @@ impl ResultRead {
             refused["bytes"] = json!(output.raw_len);
             return Ok(Err(refused));
         }
-        let (state, secret) = storage.code_run_result_taint(&output)?;
+        let (state, secret) = storage.code_run_result_taint(Some(owner), &output)?;
         Ok(Ok(Self {
             output,
             name,
@@ -261,6 +266,32 @@ impl ResultRead {
         Ok(card)
     }
 
+    /// `can({read: r})`'s verdict on a read that passed every check before
+    /// its taint: `can` while the body is clean, with its ref, size, kind
+    /// and taint, else `tainted` with what a facet would say of it. No
+    /// preview and no byte of the body either way.
+    pub(crate) fn preflight(&self) -> Value {
+        if self.state.is_tainted() {
+            let mut verdict = self.withheld();
+            if let Some(fields) = verdict.as_object_mut() {
+                if let Some(detail) = fields.remove("reason") {
+                    fields.insert("detail".to_owned(), detail);
+                }
+                fields.insert("can".to_owned(), json!(false));
+                fields.insert("reason".to_owned(), json!("tainted"));
+            }
+            return verdict;
+        }
+        let (start, end) = self.range.unwrap_or((0, self.output.raw_len));
+        json!({
+            "can": true,
+            "ref": self.reference(),
+            "bytes": end - start,
+            "kind": kind_word(self.output.kind),
+            "taint": {"state": taint_word(self.state), "secret": self.secret},
+        })
+    }
+
     /// What any facet of a body that is not clean answers: its size and
     /// taint, none of its content.
     fn withheld(&self) -> Value {
@@ -312,13 +343,15 @@ impl ResultRead {
     }
 }
 
-/// A result's card, its taint read now (see [`ResultRead::card`]).
+/// A result's card in run `owner`, its taint read now (see
+/// [`ResultRead::card`]).
 pub(crate) fn card(
     storage: &ExecutorStorage<'_>,
+    owner: EntityId,
     output: &CodeRunRawOutput,
     name: Option<&str>,
 ) -> Result<Value> {
-    match ResultRead::new(storage, output.clone(), name.map(str::to_owned), None)? {
+    match ResultRead::new(storage, owner, output.clone(), name.map(str::to_owned), None)? {
         Ok(read) => read.card(storage),
         Err(_) => Err(Error::InvariantViolation("a whole result has no range")),
     }
@@ -370,6 +403,24 @@ pub(crate) fn unknown_handle(live: &[&CodeRunResultBinding]) -> Value {
 /// A result call's refusal, as the guest's thrown error carries it.
 pub(crate) fn refusal(code: &str) -> Value {
     json!({"denied": code, "reasonCodes": [code]})
+}
+
+/// `can({read: r})`'s verdict on a read refused before its taint, with the
+/// refusal's own detail: `unknown_handle` for a reference to no result of
+/// the run, `withheld_rows` when the rows its answers were served from stay
+/// where the reader is not, else `denied`.
+pub(crate) fn cannot(refused: Value) -> Value {
+    let Value::Object(mut fields) = refused else {
+        return json!({"can": false, "reason": "denied"});
+    };
+    let reason = match fields.get("denied").and_then(Value::as_str) {
+        Some("unknown_handle") => "unknown_handle",
+        Some("result_withheld") => "withheld_rows",
+        _ => "denied",
+    };
+    fields.insert("can".to_owned(), json!(false));
+    fields.insert("reason".to_owned(), json!(reason));
+    Value::Object(fields)
 }
 
 /// Whether `handle` names `output`: its handle as its card gives it, or its
@@ -618,7 +669,7 @@ impl Vault {
             }) else {
                 continue;
             };
-            let mut card = card(&storage, output, Some(binding.name.as_str()))?;
+            let mut card = card(&storage, record.run_id, output, Some(binding.name.as_str()))?;
             if let Some(fields) = card.as_object_mut() {
                 fields.remove("read");
             }
@@ -662,7 +713,7 @@ impl Vault {
             return Ok(refusal("result_withheld"));
         }
         let storage = ExecutorStorage::Canonical(self);
-        let read = match ResultRead::new(&storage, output, name, target.range)? {
+        let read = match ResultRead::new(&storage, run_id, output, name, target.range)? {
             Ok(read) => read,
             Err(refused) => return Ok(refused),
         };
