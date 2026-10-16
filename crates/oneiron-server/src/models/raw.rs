@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{
-    BudgetLine, KeyCustody, LeaseUnit, OfferBinding, OfferRoute, Payer, RunAdmission,
+    BudgetLine, HostAccount, KeyCustody, LeaseUnit, OfferBinding, OfferRoute, Payer, RunAdmission,
     RunDeclaration, RunDenied, RunReceiptSink,
 };
 use oneiron::{
@@ -23,6 +23,7 @@ const RAW_RUN: &str = "raw-inference";
 pub(crate) struct RawInference {
     models: RawModels,
     meter: BudgetGuard,
+    host: Option<Arc<HostAccount>>,
 }
 
 #[derive(Clone)]
@@ -35,10 +36,15 @@ enum RawModels {
 }
 
 impl RawInference {
-    pub(crate) fn configured(router: Arc<ModelRouter>, meter: BudgetGuard) -> Self {
+    pub(crate) fn configured(
+        router: Arc<ModelRouter>,
+        meter: BudgetGuard,
+        host: Option<Arc<HostAccount>>,
+    ) -> Self {
         Self {
             models: RawModels::Configured(router),
             meter,
+            host,
         }
     }
 
@@ -46,6 +52,7 @@ impl RawInference {
         Self {
             models: RawModels::Injected(backend),
             meter,
+            host: None,
         }
     }
 
@@ -70,7 +77,7 @@ impl RawInference {
         };
         Some((
             ladder,
-            undeclared_run(RAW_RUN, self.meter.clone(), receipts),
+            undeclared_run(RAW_RUN, self.meter.clone(), self.host.clone(), receipts),
         ))
     }
 

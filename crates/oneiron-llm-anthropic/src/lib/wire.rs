@@ -327,7 +327,11 @@ pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
     let output_tokens = u64_field(usage, "output_tokens");
     LlmUsage {
         input: LlmInputUsage {
-            total: input_tokens,
+            // The common input total includes cached tokens; the wire
+            // reports uncached input separately.
+            total: input_tokens
+                .saturating_add(cache_read)
+                .saturating_add(cache_write),
             cache_read,
             cache_write,
         },

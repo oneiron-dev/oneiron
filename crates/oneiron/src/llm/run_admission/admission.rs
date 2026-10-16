@@ -130,6 +130,7 @@ pub struct RunAdmission {
 }
 
 pub(super) struct RunInner {
+    instance: crate::EntityId,
     run: String,
     declaration: Mutex<Revisioned>,
     pub(super) guard: BudgetGuard,
@@ -195,6 +196,7 @@ impl RunAdmission {
         let run = run.into();
         Self {
             inner: Arc::new(RunInner {
+                instance: crate::EntityId::now(),
                 run,
                 declaration: Mutex::new(Revisioned {
                     revision: 1,
@@ -594,6 +596,10 @@ impl RunInner {
 
     pub(super) fn record(&self, revision: u32, event: RunEvent) {
         let receipt = RunReceipt {
+            instance: self.instance,
+            occurred_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs()),
             run: self.run.clone(),
             revision,
             event,
