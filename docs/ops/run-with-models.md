@@ -770,6 +770,46 @@ The verbs, each the owner's and checked against the vault's inference policy:
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
+### Voice on the media seats
+
+A speech call can name its voice: `"voice": {"kind": "stock", "name":
+"alloy"}` for a provider's own voice, or `"voice": {"kind": "bank",
+"voice_id": "...", "include_generated": false}` for a banked identity. A
+banked voice lives in the vault's reference bank. A provider sees only the id
+of the clone recorded for its target, and the target is the rung's provider
+name in `[models.providers]`. The call renders on the first rung of its
+ladder whose target holds a current clone, and on that rung alone. With no
+such rung the call answers `409 voice_not_provisioned`. If the voice is
+withdrawn or its clone re-recorded while the call renders, it answers `409
+voice_withdrawn` and the audio is not returned. A call that names a voice
+names no `voice` param, and only a speech call names one.
+
+The two-way voice cascade speaks and hears on these seats too. Bind voice
+tiers to rungs on the speech and transcribe seats:
+
+```toml
+[models.media.speech]
+rungs = ["openai:gpt-4o-mini-tts", "local:kokoro"]
+tiers = { "tts-live" = "local:kokoro", "tts-deferred" = "local:kokoro" }
+
+[models.media.transcribe]
+rungs = ["local:qwen3-asr", "openai:gpt-4o-transcribe"]
+tiers = { "asr-live" = "openai:gpt-4o-transcribe", "asr-batch" = "local:qwen3-asr" }
+```
+
+The vault's voice rows (`asr_live`, `asr_batch`, `tts_live`, `tts_batch`)
+name a tier and a locality. A lane runs on the one bound rung that matches
+both, picked before any work. No rung, or two rungs, refuses the lane, and
+no other rung is relabelled to fill it. The vault's inference policy admits
+the route. The cascade's TTS port (`MediaTtsAdapter`) sends each flushed
+sentence as one speech call that asks for a mono PCM16 WAV. Its ASR port
+(`MediaAsrAdapter`) sends each utterance the host cuts as one transcription
+call, in a WAV of the stream's rate. Each call goes on its own permit through
+the media gate and is charged its characters or seconds. A transcription
+whose provider reports no duration is charged the length of the WAV it was
+sent. These calls are buffered, so live partial transcripts wait for a
+streaming media lease.
+
 ### Lazy images and `ask_image`
 
 A read serves each generated image down a ladder. A reader whose request
