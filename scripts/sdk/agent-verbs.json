@@ -47,6 +47,15 @@
       "section": true
     },
     {
+      "name": "self.memory.diary",
+      "input": "DiaryEntryRequest",
+      "output": "DiaryEntryReceipt",
+      "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "cancel",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
@@ -80,6 +89,15 @@
           "py": "Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."
         }
       }
+    },
+    {
+      "name": "steer",
+      "input": "SteerRequest",
+      "output": "SteerReceipt",
+      "call": "crate::task_verb::sdk::steer_child(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
     },
     {
       "name": "describe",
@@ -782,6 +800,24 @@
       "section": false
     },
     {
+      "name": "connector.list",
+      "input": "ConnectorListRequest",
+      "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
+      "call": "crate::task_verb::sdk::connector_catalog(memory, input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "connector.status",
+      "input": "ConnectorNameRequest",
+      "output": "Option<crate::task_verb::sdk::ConnectorView>",
+      "call": "crate::task_verb::sdk::connector_description(memory, input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "self.browser.open",
       "input": "oneiron_browser::OpenInput",
       "output": "oneiron_browser::Observation",
@@ -1091,13 +1127,18 @@
     },
     {
       "name": "connector.outbound.schedule",
+      "input": "OutboundScheduleRequest",
+      "output": "crate::memory::OutboundIntentReceipt",
+      "call": "crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
       "uniffi": {
         "args": {
           "draft": "OutboundDraftInput"
         },
         "output": "OutboundIntentReceipt"
-      },
-      "context": "definition"
+      }
     },
     {
       "name": "vault.search",

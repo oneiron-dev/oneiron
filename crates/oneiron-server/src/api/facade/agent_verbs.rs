@@ -2,7 +2,9 @@
 use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/self.memory.diary", post(self_memory_diary))
         .route("/cancel", post(cancel))
+        .route("/steer", post(steer))
         .route("/describe", post(describe))
         .route("/tasks.create", post(tasks_create))
         .route("/tasks.update", post(tasks_update))
@@ -39,6 +41,32 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.video", post(ai_video))
         .route("/ai.video.poll", post(ai_video_poll))
         .route("/ai.video.cancel", post(ai_video_cancel))
+        .route("/connector.list", post(connector_list))
+        .route("/connector.status", post(connector_status))
+        .route(
+            "/connector.outbound.schedule",
+            post(connector_outbound_schedule),
+        )
+}
+async fn self_memory_diary(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.memory.diary",
+        value,
+    )?))
 }
 async fn cancel(
     auth: CoreAuth,
@@ -58,6 +86,20 @@ async fn cancel(
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_invoke(
         &server, &headers, &auth, actor, class, "cancel", value,
+    )?))
+}
+async fn steer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server, &headers, &auth, actor, class, "steer", value,
     )?))
 }
 async fn describe(
@@ -767,5 +809,65 @@ async fn ai_video_cancel(
     oneiron::task_verb::sdk::validate_input("ai.video.cancel", &value)?;
     Ok(Json(facade_output(
         super::host_doors::ai_video_cancel(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn connector_list(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "connector.list",
+        value,
+    )?))
+}
+async fn connector_status(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "connector.status",
+        value,
+    )?))
+}
+async fn connector_outbound_schedule(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "connector.outbound.schedule",
+        value,
     )?))
 }

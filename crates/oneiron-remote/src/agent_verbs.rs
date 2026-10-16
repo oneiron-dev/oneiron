@@ -36,7 +36,13 @@ impl OneironClient {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => {
                 match verb {
+                    "self.memory.diary" => remote_agent_verb_output::<
+                        oneiron::task_verb::sdk::DiaryEntryReceipt,
+                    >(client, verb, &input),
                     "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
+                        client, verb, &input,
+                    ),
+                    "steer" => remote_agent_verb_output::<oneiron::task_verb::sdk::SteerReceipt>(
                         client, verb, &input,
                     ),
                     "describe" => remote_agent_verb_output::<oneiron::task_verb::TaskDescription>(
@@ -155,6 +161,15 @@ impl OneironClient {
                     "ai.video.cancel" => remote_agent_verb_output::<
                         oneiron::task_verb::sdk::AiVideoCancelled,
                     >(client, verb, &input),
+                    "connector.list" => remote_agent_verb_output::<
+                        Vec<oneiron::task_verb::sdk::ConnectorEntry>,
+                    >(client, verb, &input),
+                    "connector.status" => remote_agent_verb_output::<
+                        Option<oneiron::task_verb::sdk::ConnectorView>,
+                    >(client, verb, &input),
+                    "connector.outbound.schedule" => remote_agent_verb_output::<
+                        oneiron::memory::OutboundIntentReceipt,
+                    >(client, verb, &input),
                     _ => Err(crate::error::bad_request(
                         "unknown SDK agent verb",
                         &["Use a verb from the SDK catalog."],
@@ -182,6 +197,18 @@ impl OneironClient {
             }
         }
     }
+    pub fn self_memory_diary(
+        &self,
+        input: &oneiron::task_verb::sdk::DiaryEntryRequest,
+    ) -> Result<DiaryEntryReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.diary", value)
+    }
     /// Cancels one task under the ladder's `auto` default. The receipt says
     /// what stopped and what became a proposal instead.
     pub fn cancel(
@@ -198,6 +225,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("cancel", value)
+    }
+    pub fn steer(
+        &self,
+        input: &oneiron::task_verb::sdk::SteerRequest,
+    ) -> Result<SteerReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("steer", value)
     }
     /// Describes one task's card, or the whole TASKS section when no task is
     /// named.
@@ -696,5 +735,41 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.video.cancel", value)
+    }
+    pub fn connector_list(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorListRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::ConnectorEntry>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("connector.list", value)
+    }
+    pub fn connector_status(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorNameRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::ConnectorView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("connector.status", value)
+    }
+    pub fn connector_outbound_schedule(
+        &self,
+        input: &oneiron::task_verb::sdk::OutboundScheduleRequest,
+    ) -> Result<oneiron::memory::OutboundIntentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("connector.outbound.schedule", value)
     }
 }

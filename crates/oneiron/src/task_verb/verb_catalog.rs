@@ -4,7 +4,9 @@ pub enum AgentVerb {
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
+    SelfMemoryDiary,
     Cancel,
+    Steer,
     Describe,
     TasksCreate,
     TasksUpdate,
@@ -41,6 +43,8 @@ pub enum AgentVerb {
     AiVideo,
     AiVideoPoll,
     AiVideoCancel,
+    ConnectorList,
+    ConnectorStatus,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -50,13 +54,16 @@ pub enum AgentVerb {
     SelfBrowserWaitFor,
     SelfBrowserExpect,
     SelfBrowserScreenshot,
+    ConnectorOutboundSchedule,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
+        Self::SelfMemoryDiary,
         Self::Cancel,
+        Self::Steer,
         Self::Describe,
         Self::TasksCreate,
         Self::TasksUpdate,
@@ -93,6 +100,8 @@ impl AgentVerb {
         Self::AiVideo,
         Self::AiVideoPoll,
         Self::AiVideoCancel,
+        Self::ConnectorList,
+        Self::ConnectorStatus,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -102,6 +111,7 @@ impl AgentVerb {
         Self::SelfBrowserWaitFor,
         Self::SelfBrowserExpect,
         Self::SelfBrowserScreenshot,
+        Self::ConnectorOutboundSchedule,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -111,7 +121,9 @@ impl AgentVerb {
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
+            Self::SelfMemoryDiary => "self.memory.diary",
             Self::Cancel => "cancel",
+            Self::Steer => "steer",
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
             Self::TasksUpdate => "tasks.update",
@@ -148,6 +160,8 @@ impl AgentVerb {
             Self::AiVideo => "ai.video",
             Self::AiVideoPoll => "ai.video.poll",
             Self::AiVideoCancel => "ai.video.cancel",
+            Self::ConnectorList => "connector.list",
+            Self::ConnectorStatus => "connector.status",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -157,12 +171,15 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
             Self::SelfBrowserExpect => "self.browser.expect",
             Self::SelfBrowserScreenshot => "self.browser.screenshot",
+            Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
         }
     }
     pub const fn is_facade(self) -> bool {
         matches!(
             self,
-            Self::Cancel
+            Self::SelfMemoryDiary
+                | Self::Cancel
+                | Self::Steer
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksUpdate
@@ -199,6 +216,9 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::ConnectorList
+                | Self::ConnectorStatus
+                | Self::ConnectorOutboundSchedule
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -221,7 +241,9 @@ impl AgentVerb {
             Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
+                | Self::SelfMemoryDiary
                 | Self::Cancel
+                | Self::Steer
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksUpdate
@@ -258,6 +280,9 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::ConnectorList
+                | Self::ConnectorStatus
+                | Self::ConnectorOutboundSchedule
         )
     }
     pub const fn is_section(self) -> bool {
@@ -289,6 +314,7 @@ impl AgentVerb {
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
+                | Self::ConnectorList
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -303,7 +329,9 @@ impl AgentVerb {
     pub const fn requires_unscoped(self) -> bool {
         matches!(
             self,
-            Self::VaultWitness
+            Self::SelfMemoryDiary
+                | Self::Steer
+                | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
@@ -336,6 +364,8 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::ConnectorList
+                | Self::ConnectorStatus
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -345,6 +375,7 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::ConnectorOutboundSchedule
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -353,7 +384,9 @@ impl AgentVerb {
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::Cancel
+            Self::SelfMemoryDiary
+                | Self::Cancel
+                | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksUpdate
                 | Self::VaultWitness
@@ -376,6 +409,7 @@ impl AgentVerb {
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
+                | Self::ConnectorOutboundSchedule
         )
     }
     pub const fn proposes(self) -> bool {
@@ -389,7 +423,9 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfMemoryDiary => &["spec"],
             Self::Cancel => &["task_ref"],
+            Self::Steer => &["spec"],
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
             Self::TasksCreate => &["spec", "label"],
             Self::TasksUpdate => &["task_ref"],
@@ -426,6 +462,8 @@ impl AgentVerb {
             Self::AiVideo => &["spec"],
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
+            Self::ConnectorList => &["spec"],
+            Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -435,6 +473,7 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::ConnectorOutboundSchedule => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -442,7 +481,9 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfMemoryDiary => &["spec"],
             Self::Cancel => &["task_ref"],
+            Self::Steer => &["spec"],
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksUpdate => &["task_ref"],
@@ -479,6 +520,8 @@ impl AgentVerb {
             Self::AiVideo => &["spec"],
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
+            Self::ConnectorList => &["spec"],
+            Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -488,6 +531,7 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::ConnectorOutboundSchedule => &["spec"],
         }
     }
 }

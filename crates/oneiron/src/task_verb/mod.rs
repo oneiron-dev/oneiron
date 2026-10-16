@@ -159,7 +159,9 @@ pub(crate) use symbol_lease::forget_symbols;
 
 mod recall_door;
 pub mod sdk;
+mod sdk_connector;
 mod sdk_host;
+mod sdk_self;
 
 #[cfg(test)]
 mod ask_outcome_tests;

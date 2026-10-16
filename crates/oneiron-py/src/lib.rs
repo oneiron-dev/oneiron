@@ -208,10 +208,24 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn self_memory_diary(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.memory.diary")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.memory.diary", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "cancel")?;
         let output = py
             .detach(|| self.inner.agent_verb("cancel", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn steer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "steer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("steer", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -499,6 +513,27 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "ai.video.cancel")?;
         let output = py
             .detach(|| self.inner.agent_verb("ai.video.cancel", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn connector_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "connector.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("connector.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn connector_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "connector.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("connector.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn connector_outbound_schedule(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "connector.outbound.schedule")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("connector.outbound.schedule", input))
             .map_err(raise)?;
         encode(&output)
     }

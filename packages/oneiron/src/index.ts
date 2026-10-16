@@ -127,8 +127,14 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  readonly self = {
+    memory: {
+      diary: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown),
+    },
+  }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
+  steer(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.steer(input) as unknown) }
   /** Describes one task's card, or the whole TASKS section when no task is named. */
   describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
   readonly tasks = {
@@ -206,6 +212,13 @@ export class Oneiron {
       poll: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoPoll(input) as unknown),
       cancel: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoCancel(input) as unknown),
     }),
+  }
+  readonly connector = {
+    list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorList(input) as unknown),
+    status: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorStatus(input) as unknown),
+    outbound: {
+      schedule: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorOutboundSchedule(input) as unknown),
+    },
   }
 
 // END GENERATED FACADE VERBS

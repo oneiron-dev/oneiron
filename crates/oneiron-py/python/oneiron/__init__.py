@@ -191,9 +191,14 @@ class Oneiron:
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
     # BEGIN GENERATED FACADE VERBS
+    @property
+    def self(self) -> "Oneiron._SelfVerbs":
+        return Oneiron._SelfVerbs(self._client)
     def cancel(self, task_ref: str) -> dict[str, Any]:
         """Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."""
         return json.loads(_translate(lambda: self._client.cancel(json.dumps({"task_ref": task_ref}))))
+    def steer(self, spec):
+        return json.loads(_translate(lambda: self._client.steer(json.dumps(spec))))
     def describe(self, task_ref: str | None = None) -> dict[str, Any]:
         """Describes one task's card, or the whole TASKS section when no task is named."""
         return json.loads(_translate(lambda: self._client.describe(json.dumps({"task_ref": task_ref}))))
@@ -221,6 +226,20 @@ class Oneiron:
     @property
     def ai(self) -> "Oneiron._AiVerbs":
         return Oneiron._AiVerbs(self._client)
+    @property
+    def connector(self) -> "Oneiron._ConnectorVerbs":
+        return Oneiron._ConnectorVerbs(self._client)
+    class _SelfVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def memory(self) -> "Oneiron._SelfMemoryVerbs":
+            return Oneiron._SelfMemoryVerbs(self._client)
+    class _SelfMemoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def diary(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -346,5 +365,20 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.ai_video_poll(json.dumps(spec))))
         def cancel(self, spec):
             return json.loads(_translate(lambda: self._client.ai_video_cancel(json.dumps(spec))))
+    class _ConnectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            return json.loads(_translate(lambda: self._client.connector_list(json.dumps(spec))))
+        def status(self, spec):
+            return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
+        @property
+        def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
+            return Oneiron._ConnectorOutboundVerbs(self._client)
+    class _ConnectorOutboundVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def schedule(self, spec):
+            return json.loads(_translate(lambda: self._client.connector_outbound_schedule(json.dumps(spec))))
 
 # END GENERATED FACADE VERBS

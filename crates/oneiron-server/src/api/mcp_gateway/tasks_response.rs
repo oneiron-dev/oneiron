@@ -524,6 +524,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
+        "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "cancel" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -532,6 +533,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
+        "steer" => a.spec.clone().ok_or_else(invalid),
         "describe" => {
             let mut map = serde_json::Map::new();
             if let Some(value) = &a.task_ref {
@@ -670,6 +672,9 @@ fn mcp_agent_verb_input(
         "ai.video" => a.spec.clone().ok_or_else(invalid),
         "ai.video.poll" => a.spec.clone().ok_or_else(invalid),
         "ai.video.cancel" => a.spec.clone().ok_or_else(invalid),
+        "connector.list" => a.spec.clone().ok_or_else(invalid),
+        "connector.status" => a.spec.clone().ok_or_else(invalid),
+        "connector.outbound.schedule" => a.spec.clone().ok_or_else(invalid),
         _ => Err(invalid()),
     }
 }
@@ -703,10 +708,16 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("scopes".to_owned(), value.clone());
             }
         }
+        "self.memory.diary" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "cancel" => {
             if let Some(value) = input.get("task_ref") {
                 arguments.insert("task_ref".to_owned(), value.clone());
             }
+        }
+        "steer" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "describe" => {
             if let Some(value) = input.get("task_ref") {
@@ -865,6 +876,15 @@ pub(crate) fn mcp_agent_verb_arguments(
         "ai.video.cancel" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "connector.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "connector.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "connector.outbound.schedule" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         _ => return Err(invalid()),
     }
     serde_json::from_value(Value::Object(arguments)).map_err(|_| invalid())
@@ -975,12 +995,28 @@ async fn execute_agent_verb_listing(
             })
             .await
         }
+        "self.memory.diary" => {
+            let input: oneiron::task_verb::sdk::DiaryEntryRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_memory_diary(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "cancel" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
             let output =
                 oneiron::task_verb::sdk::cancel(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "steer" => {
+            let input: oneiron::task_verb::sdk::SteerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::steer(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -1421,6 +1457,30 @@ async fn execute_agent_verb_listing(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::ai_video_cancel(server, auth, input)
                 .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.list" => {
+            let input: oneiron::task_verb::sdk::ConnectorListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::connector_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.status" => {
+            let input: oneiron::task_verb::sdk::ConnectorNameRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::connector_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.outbound.schedule" => {
+            let input: oneiron::task_verb::sdk::OutboundScheduleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::connector_outbound_schedule(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

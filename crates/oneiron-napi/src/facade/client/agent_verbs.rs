@@ -7,8 +7,18 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn self_memory_diary(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.diary", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("cancel", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn steer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("steer", input).map_err(facade_error)
     }
     #[napi]
     pub fn describe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
@@ -361,6 +371,27 @@ impl NativeClient {
     pub fn ai_video_cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.video.cancel", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_status(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_outbound_schedule(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.outbound.schedule", input)
             .map_err(facade_error)
     }
 }

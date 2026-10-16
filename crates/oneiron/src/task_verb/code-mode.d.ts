@@ -12,6 +12,13 @@ declare const ai: {
 declare function ask(input: object): Promise<unknown>;
 declare function can(input: { ask: object }): Promise<unknown>;
 declare function cancel(input: { task_ref: string }): Promise<unknown>;
+declare const connector: {
+  list(input: { query?: string | null }): Promise<unknown>;
+  outbound: {
+    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
+  };
+  status(input: { name: string }): Promise<unknown>;
+};
 declare function describe(input: { frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare namespace self {
@@ -31,7 +38,11 @@ declare namespace self {
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
+  const memory: {
+    diary(input: { content: string; kind?: string | null }): Promise<unknown>;
+  };
 }
+declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { label?: string | null; spec: unknown }): Promise<unknown>;

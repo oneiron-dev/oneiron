@@ -22,8 +22,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<BoardSubscriptionRequest>(),
             ),
             (
+                "self.memory.diary",
+                crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
+            ),
+            (
                 "cancel",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
+            ),
+            (
+                "steer",
+                crate::code_run::vault_read::request_schema::<SteerRequest>(),
             ),
             (
                 "describe",
@@ -176,6 +184,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
             ),
             (
+                "connector.list",
+                crate::code_run::vault_read::request_schema::<ConnectorListRequest>(),
+            ),
+            (
+                "connector.status",
+                crate::code_run::vault_read::request_schema::<ConnectorNameRequest>(),
+            ),
+            (
                 "self.browser.open",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
             ),
@@ -210,6 +226,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.browser.screenshot",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ScreenshotInput>(),
+            ),
+            (
+                "connector.outbound.schedule",
+                crate::code_run::vault_read::request_schema::<OutboundScheduleRequest>(),
             ),
             (
                 "vault.search",
@@ -262,12 +282,26 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["scopes"]
         }
+        "self.memory.diary" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "cancel" => {
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["task_ref"]
+        }
+        "steer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "describe" => {
             properties.insert(
@@ -556,6 +590,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "connector.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "connector.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "connector.outbound.schedule" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -573,8 +628,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.focus.unsubscribe" => {
             let _input: BoardSubscriptionRequest = decode(value.clone())?;
         }
+        "self.memory.diary" => {
+            let _input: DiaryEntryRequest = decode(value.clone())?;
+        }
         "cancel" => {
             let _input: TaskRequest = decode(value.clone())?;
+        }
+        "steer" => {
+            let _input: SteerRequest = decode(value.clone())?;
         }
         "describe" => {
             let _input: DescribeRequest = decode(value.clone())?;
@@ -699,6 +760,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.video.cancel" => {
             let _input: AiVideoJobRequest = decode(value.clone())?;
         }
+        "connector.list" => {
+            let _input: ConnectorListRequest = decode(value.clone())?;
+        }
+        "connector.status" => {
+            let _input: ConnectorNameRequest = decode(value.clone())?;
+        }
         "self.browser.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
         }
@@ -726,6 +793,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.screenshot" => {
             let _input: oneiron_browser::ScreenshotInput = decode(value.clone())?;
         }
+        "connector.outbound.schedule" => {
+            let _input: OutboundScheduleRequest = decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -739,7 +809,9 @@ pub fn invoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     match verb {
+        "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
+        "steer" => encode(steer(memory, decode(value)?)?),
         "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
@@ -776,6 +848,11 @@ pub fn invoke(
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
         "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
+        "connector.list" => encode(connector_list(memory, decode(value)?)?),
+        "connector.status" => encode(connector_status(memory, decode(value)?)?),
+        "connector.outbound.schedule" => {
+            encode(connector_outbound_schedule(memory, decode(value)?)?)
+        }
         _ => {
             Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
@@ -867,6 +944,12 @@ pub fn self_focus_unsubscribe<S: crate::board_verb::LiveBoardSource>(
         },
     )
 }
+pub fn self_memory_diary(
+    memory: &Memory<'_>,
+    input: DiaryEntryRequest,
+) -> MemoryResult<DiaryEntryReceipt> {
+    crate::task_verb::sdk::self_memory_diary_write(memory, input)
+}
 pub fn cancel(
     memory: &Memory<'_>,
     input: TaskRequest,
@@ -874,6 +957,9 @@ pub fn cancel(
     memory.cancel(crate::task_verb::TaskCancelTarget::Task(
         crate::EntityId::from_hex(&input.task_ref)?,
     ))
+}
+pub fn steer(memory: &Memory<'_>, input: SteerRequest) -> MemoryResult<SteerReceipt> {
+    crate::task_verb::sdk::steer_child(memory, input)
 }
 pub fn describe(
     memory: &Memory<'_>,
@@ -1140,6 +1226,18 @@ pub fn ai_video_cancel(
 ) -> MemoryResult<AiVideoCancelled> {
     crate::task_verb::sdk::host_only(memory, "ai.video.cancel", &input)
 }
+pub fn connector_list(
+    memory: &Memory<'_>,
+    input: ConnectorListRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::ConnectorEntry>> {
+    crate::task_verb::sdk::connector_catalog(memory, input)
+}
+pub fn connector_status(
+    memory: &Memory<'_>,
+    input: ConnectorNameRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::ConnectorView>> {
+    crate::task_verb::sdk::connector_description(memory, input)
+}
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
@@ -1193,4 +1291,10 @@ pub fn self_browser_screenshot(
     input: oneiron_browser::ScreenshotInput,
 ) -> Result<oneiron_browser::ScreenshotOutput, oneiron_browser::BrowserError> {
     driver.screenshot(input)
+}
+pub fn connector_outbound_schedule(
+    memory: &Memory<'_>,
+    input: OutboundScheduleRequest,
+) -> MemoryResult<crate::memory::OutboundIntentReceipt> {
+    crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)
 }
