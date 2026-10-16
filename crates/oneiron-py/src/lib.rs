@@ -437,6 +437,153 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn commit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "commit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("commit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn remember(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "remember")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("remember", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn claim_retract(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "claim_retract")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("claim_retract", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn forget(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "forget")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("forget", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn claim_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "claim_list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("claim_list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn claim_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "claim_history")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("claim_history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn safe_delete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "safe_delete")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("safe_delete", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn pending_writes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "pending_writes")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("pending_writes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn hydrate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "hydrate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("hydrate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn get_entity(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "get_entity")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("get_entity", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn query_bm25(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "query_bm25")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("query_bm25", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn neighbors(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "neighbors")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("neighbors", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn put_structural(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "put_structural")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("put_structural", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn put_habit_checkin(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "put_habit_checkin")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("put_habit_checkin", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn admit_imported_claim(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "admit_imported_claim")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("admit_imported_claim", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn put_blob_artifact(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "put_blob_artifact")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("put_blob_artifact", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn append_blob_version(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "append_blob_version")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("append_blob_version", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn read_blob_version(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "read_blob_version")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("read_blob_version", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn create_note(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "create_note")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("create_note", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn create_note_from_entity(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "create_note_from_entity")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("create_note_from_entity", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn edit_note(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "edit_note")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("edit_note", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
 
     // END GENERATED AGENT VERBS
 }

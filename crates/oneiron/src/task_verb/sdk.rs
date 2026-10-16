@@ -183,6 +183,10 @@ pub struct ReceiptsRequest {
     pub limit: Option<usize>,
 }
 
+#[path = "sdk_memory.rs"]
+mod memory_requests;
+pub use memory_requests::*;
+
 include!("verb_catalog.rs");
 include!("run_verb_catalog.rs");
 include!("sdk_generated.rs");

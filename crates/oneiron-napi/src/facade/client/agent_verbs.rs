@@ -305,4 +305,132 @@ impl NativeClient {
             .agent_verb("rooms.speak", input)
             .map_err(facade_error)
     }
+    #[napi]
+    pub fn commit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("commit", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn remember(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("remember", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn claim_retract(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("claim_retract", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn forget(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("forget", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn claim_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("claim_list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn claim_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("claim_history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn safe_delete(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("safe_delete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn pending_writes(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("pending_writes", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn hydrate(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("hydrate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn get_entity(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("get_entity", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn query_bm25(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("query_bm25", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn neighbors(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("neighbors", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn put_structural(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("put_structural", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn put_habit_checkin(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("put_habit_checkin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn admit_imported_claim(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("admit_imported_claim", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn put_blob_artifact(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("put_blob_artifact", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn append_blob_version(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("append_blob_version", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn read_blob_version(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("read_blob_version", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn create_note(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("create_note", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn create_note_from_entity(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("create_note_from_entity", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn edit_note(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("edit_note", input)
+            .map_err(facade_error)
+    }
 }

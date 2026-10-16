@@ -55,6 +55,27 @@ roomsGet(input: unknown): unknown
 roomsTrunk(input: unknown): unknown
 roomsClaim(input: unknown): unknown
 roomsSpeak(input: unknown): unknown
+commit(input: unknown): unknown
+remember(input: unknown): unknown
+claimRetract(input: unknown): unknown
+forget(input: unknown): unknown
+claimList(input: unknown): unknown
+claimHistory(input: unknown): unknown
+safeDelete(input: unknown): unknown
+pendingWrites(input: unknown): unknown
+hydrate(input: unknown): unknown
+getEntity(input: unknown): unknown
+queryBm25(input: unknown): unknown
+neighbors(input: unknown): unknown
+putStructural(input: unknown): unknown
+putHabitCheckin(input: unknown): unknown
+admitImportedClaim(input: unknown): unknown
+putBlobArtifact(input: unknown): unknown
+appendBlobVersion(input: unknown): unknown
+readBlobVersion(input: unknown): unknown
+createNote(input: unknown): unknown
+createNoteFromEntity(input: unknown): unknown
+editNote(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

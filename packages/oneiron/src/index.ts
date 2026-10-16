@@ -16,6 +16,7 @@
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient } from "./native.js"
 import { agentVerbs } from "./agent-verbs.js"
+import type * as Facade from "./facade-types.js"
 import type { TaskCancelReceipt, TaskDescription, TaskCanAskRequest, TaskAskPreflight, TaskAskHandle, TaskAskPersonEvidence } from "./agent-verbs.js"
 
 import { itemFromWire, keyedJson } from "./key-value.js"
@@ -175,6 +176,27 @@ export class Oneiron {
   can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
   /** Read-only ask routing or attributed partial answers. */
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
+  commit(input: Facade.CommitRequest): (Facade.CommitReceipt)[] { return this.#call(() => this.#client.commit(input) as (Facade.CommitReceipt)[]) }
+  remember(input: Facade.ClaimInput): Facade.CommitReceipt { return this.#call(() => this.#client.remember(input) as Facade.CommitReceipt) }
+  claimRetract(input: Facade.ClaimRefRequest): Facade.CommitReceipt { return this.#call(() => this.#client.claimRetract(input) as Facade.CommitReceipt) }
+  forget(input: Facade.ForgetRequest): (Facade.CommitReceipt)[] { return this.#call(() => this.#client.forget(input) as (Facade.CommitReceipt)[]) }
+  claimList(input: Facade.ClaimListFilter): {value: (Facade.ClaimView)[]; narrowing: unknown} { return this.#call(() => this.#client.claimList(input) as {value: (Facade.ClaimView)[]; narrowing: unknown}) }
+  claimHistory(input: Facade.ClaimRefRequest): {value: (Facade.ClaimView)[]; narrowing: unknown} { return this.#call(() => this.#client.claimHistory(input) as {value: (Facade.ClaimView)[]; narrowing: unknown}) }
+  safeDelete(input: Facade.SafeDeleteRequest): Facade.DeleteReceipt { return this.#call(() => this.#client.safeDelete(input) as Facade.DeleteReceipt) }
+  pendingWrites(input: Facade.ReceiptsRequest): (Facade.PendingWrite)[] { return this.#call(() => this.#client.pendingWrites(input) as (Facade.PendingWrite)[]) }
+  hydrate(input: Facade.HydrateRequest): {value: (Facade.EntityView)[]; narrowing: unknown} { return this.#call(() => this.#client.hydrate(input) as {value: (Facade.EntityView)[]; narrowing: unknown}) }
+  getEntity(input: Facade.EntityRequest): {value: Facade.EntityView | null; narrowing: unknown} { return this.#call(() => this.#client.getEntity(input) as {value: Facade.EntityView | null; narrowing: unknown}) }
+  queryBm25(input: Facade.QueryBm25Request): {value: (Facade.LexicalHit)[]; narrowing: unknown} { return this.#call(() => this.#client.queryBm25(input) as {value: (Facade.LexicalHit)[]; narrowing: unknown}) }
+  neighbors(input: Facade.NeighborsRequest): {value: (Facade.NeighborHit)[]; narrowing: unknown} { return this.#call(() => this.#client.neighbors(input) as {value: (Facade.NeighborHit)[]; narrowing: unknown}) }
+  putStructural(input: Facade.StructuralPutInput): Facade.EntityRefReceipt { return this.#call(() => this.#client.putStructural(input) as Facade.EntityRefReceipt) }
+  putHabitCheckin(input: Facade.HabitCheckinInput): Facade.EntityRefReceipt { return this.#call(() => this.#client.putHabitCheckin(input) as Facade.EntityRefReceipt) }
+  admitImportedClaim(input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt { return this.#call(() => this.#client.admitImportedClaim(input) as Facade.CommitReceipt) }
+  putBlobArtifact(input: Facade.BlobArtifactInput): Facade.EntityRefReceipt { return this.#call(() => this.#client.putBlobArtifact(input) as Facade.EntityRefReceipt) }
+  appendBlobVersion(input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView { return this.#call(() => this.#client.appendBlobVersion(input) as Facade.BlobVersionView) }
+  readBlobVersion(input: Facade.ReadBlobVersionRequest): Facade.BlobContent | null { return this.#call(() => this.#client.readBlobVersion(input) as Facade.BlobContent | null) }
+  createNote(input: Facade.CreateNoteRequest): Facade.EntityRefReceipt { return this.#call(() => this.#client.createNote(input) as Facade.EntityRefReceipt) }
+  createNoteFromEntity(input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt { return this.#call(() => this.#client.createNoteFromEntity(input) as Facade.EntityRefReceipt) }
+  editNote(input: Facade.EditNoteRequest): unknown { return this.#call(() => this.#client.editNote(input) as unknown) }
 
 // END GENERATED FACADE VERBS
 
@@ -190,5 +212,6 @@ export class Oneiron {
 
 export { OneironError }
 export type * from "./types.js"
+export type * as Facade from "./facade-types.js"
 
 export type { OutcomeBinding, CalibrationPair, TaskAssignee, ConsultPayloadRef, TaskAskOptionId, TaskAskTarget, TaskAskWho, TaskAskShort, TaskAskLadderPrediction, TaskAskQuestion, TaskAskElectorate, TaskAskNeed, TaskAskDecide, TaskAskDefault, TaskAskDisagree, TaskAskClass, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskCanAskRequest, TaskAskPreflight, TaskAskPreflightRecipient, TaskAskPersonKind, TaskAskPersonEvidence, TaskAskWord, TaskAskAnswer, TaskAskCoverage, TaskAskDecision, TaskAskFallback, TaskAskEffectAuthorization, TaskAskEvidence, TaskAskSettlement, TaskAskResult, TaskAskStatus, TaskAskWait, TaskCancelReceipt, TaskDescription } from "./agent-verbs.js"

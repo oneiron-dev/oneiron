@@ -8,14 +8,10 @@
 //! types ARE the engine DTOs — so this projection and the in-process N-API
 //! binding cannot drift into two dialects of the same verb.
 //!
-//! L1 ships the canonical quickstart, which is four calls: `witness` →
-//! `claim_upsert` → `recall` → `receipts`. The rest of the §HEAD-CONTRACT
-//! catalog is deliberately ABSENT rather than stubbed, except the five
-//! exact keyed-memory routes below and eight generated tasks/rooms routes.
-//! A `501` stub is still a
-//! registered row: it enters the route census, a client's catalog test counts
-//! it as shipped, and the only thing it proves is that somebody meant to write
-//! the verb. An absent route says the same thing without the false positive.
+//! The route projection is generated from `scripts/sdk/agent-verbs.json`.
+//! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
+//! all use the same inventory and engine DTOs as the native clients. Live
+//! subscriptions remain owned by the held socket rather than this router.
 //!
 //! ERRORS are the facade's own, not the server's closed
 //! [`crate::error::ErrorCode`] enum.

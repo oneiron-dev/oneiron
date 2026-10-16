@@ -249,6 +249,48 @@ class Oneiron:
     def peek(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         """Read-only ask routing or attributed partial answers."""
         return json.loads(_translate(lambda: self._client.peek(json.dumps(request, allow_nan=False))))
+    def commit(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.commit(json.dumps(input, allow_nan=False))))
+    def remember(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.remember(json.dumps(input, allow_nan=False))))
+    def claim_retract(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.claim_retract(json.dumps(input, allow_nan=False))))
+    def forget(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.forget(json.dumps(input, allow_nan=False))))
+    def claim_list(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.claim_list(json.dumps(input, allow_nan=False))))
+    def claim_history(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.claim_history(json.dumps(input, allow_nan=False))))
+    def safe_delete(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.safe_delete(json.dumps(input, allow_nan=False))))
+    def pending_writes(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.pending_writes(json.dumps(input, allow_nan=False))))
+    def hydrate(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.hydrate(json.dumps(input, allow_nan=False))))
+    def get_entity(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.get_entity(json.dumps(input, allow_nan=False))))
+    def query_bm25(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.query_bm25(json.dumps(input, allow_nan=False))))
+    def neighbors(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.neighbors(json.dumps(input, allow_nan=False))))
+    def put_structural(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.put_structural(json.dumps(input, allow_nan=False))))
+    def put_habit_checkin(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.put_habit_checkin(json.dumps(input, allow_nan=False))))
+    def admit_imported_claim(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.admit_imported_claim(json.dumps(input, allow_nan=False))))
+    def put_blob_artifact(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.put_blob_artifact(json.dumps(input, allow_nan=False))))
+    def append_blob_version(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.append_blob_version(json.dumps(input, allow_nan=False))))
+    def read_blob_version(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.read_blob_version(json.dumps(input, allow_nan=False))))
+    def create_note(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.create_note(json.dumps(input, allow_nan=False))))
+    def create_note_from_entity(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.create_note_from_entity(json.dumps(input, allow_nan=False))))
+    def edit_note(self, input: dict[str, Any]) -> Any:
+        return json.loads(_translate(lambda: self._client.edit_note(json.dumps(input, allow_nan=False))))
 
 # END GENERATED FACADE VERBS
 

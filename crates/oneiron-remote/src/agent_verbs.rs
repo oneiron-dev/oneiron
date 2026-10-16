@@ -122,6 +122,73 @@ impl OneironClient {
                     "rooms.speak" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                         client, verb, &input,
                     ),
+                    "commit" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
+                        client, verb, &input,
+                    ),
+                    "remember" => remote_agent_verb_output::<oneiron::memory::CommitReceipt>(
+                        client, verb, &input,
+                    ),
+                    "claim_retract" => remote_agent_verb_output::<oneiron::memory::CommitReceipt>(
+                        client, verb, &input,
+                    ),
+                    "forget" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
+                        client, verb, &input,
+                    ),
+                    "claim_list" => remote_agent_verb_output::<
+                        oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>,
+                    >(client, verb, &input),
+                    "claim_history" => remote_agent_verb_output::<
+                        oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>,
+                    >(client, verb, &input),
+                    "safe_delete" => remote_agent_verb_output::<oneiron::memory::DeleteReceipt>(
+                        client, verb, &input,
+                    ),
+                    "pending_writes" => remote_agent_verb_output::<
+                        Vec<oneiron::memory::PendingWrite>,
+                    >(client, verb, &input),
+                    "hydrate" => remote_agent_verb_output::<
+                        oneiron::claim::ScopedReadResult<Vec<oneiron::memory::EntityView>>,
+                    >(client, verb, &input),
+                    "get_entity" => remote_agent_verb_output::<
+                        oneiron::claim::ScopedReadResult<Option<oneiron::memory::EntityView>>,
+                    >(client, verb, &input),
+                    "query_bm25" => remote_agent_verb_output::<
+                        oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
+                    >(client, verb, &input),
+                    "neighbors" => remote_agent_verb_output::<
+                        oneiron::claim::ScopedReadResult<Vec<oneiron::memory::NeighborHit>>,
+                    >(client, verb, &input),
+                    "put_structural" => {
+                        remote_agent_verb_output::<oneiron::memory::EntityRefReceipt>(
+                            client, verb, &input,
+                        )
+                    }
+                    "put_habit_checkin" => remote_agent_verb_output::<
+                        oneiron::memory::EntityRefReceipt,
+                    >(client, verb, &input),
+                    "admit_imported_claim" => remote_agent_verb_output::<
+                        oneiron::memory::CommitReceipt,
+                    >(client, verb, &input),
+                    "put_blob_artifact" => remote_agent_verb_output::<
+                        oneiron::memory::EntityRefReceipt,
+                    >(client, verb, &input),
+                    "append_blob_version" => remote_agent_verb_output::<
+                        oneiron::memory::BlobVersionView,
+                    >(client, verb, &input),
+                    "read_blob_version" => remote_agent_verb_output::<
+                        Option<oneiron::task_verb::sdk::BlobContent>,
+                    >(client, verb, &input),
+                    "create_note" => remote_agent_verb_output::<oneiron::memory::EntityRefReceipt>(
+                        client, verb, &input,
+                    ),
+                    "create_note_from_entity" => remote_agent_verb_output::<
+                        oneiron::memory::EntityRefReceipt,
+                    >(client, verb, &input),
+                    "edit_note" => {
+                        remote_agent_verb_output::<oneiron::note::NoteProgramEditOutcome>(
+                            client, verb, &input,
+                        )
+                    }
                     _ => Err(crate::error::bad_request(
                         "unknown SDK agent verb",
                         &["Use a verb from the SDK catalog."],
@@ -555,5 +622,283 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("rooms.speak", value)
+    }
+    pub fn commit(
+        &self,
+        input: &oneiron::task_verb::sdk::CommitRequest,
+    ) -> Result<Vec<oneiron::memory::CommitReceipt>, MemoryError> {
+        oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
+        for claim in &input.claims {
+            oneiron::memory::caps::check_claim_input(claim)?;
+        }
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("commit", value)
+    }
+    pub fn remember(
+        &self,
+        input: &oneiron::memory::ClaimInput,
+    ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        oneiron::memory::caps::check_claim_input(input)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("remember", value)
+    }
+    pub fn claim_retract(
+        &self,
+        input: &oneiron::task_verb::sdk::ClaimRefRequest,
+    ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("claim_retract", value)
+    }
+    pub fn forget(
+        &self,
+        input: &oneiron::task_verb::sdk::ForgetRequest,
+    ) -> Result<Vec<oneiron::memory::CommitReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("forget", value)
+    }
+    pub fn claim_list(
+        &self,
+        input: &oneiron::memory::ClaimListFilter,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>, MemoryError>
+    {
+        oneiron::memory::caps::check_limit_nonzero(input.limit)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("claim_list", value)
+    }
+    pub fn claim_history(
+        &self,
+        input: &oneiron::task_verb::sdk::ClaimRefRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("claim_history", value)
+    }
+    pub fn safe_delete(
+        &self,
+        input: &oneiron::task_verb::sdk::SafeDeleteRequest,
+    ) -> Result<oneiron::memory::DeleteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("safe_delete", value)
+    }
+    pub fn pending_writes(
+        &self,
+        input: &oneiron::task_verb::sdk::ReceiptsRequest,
+    ) -> Result<Vec<oneiron::memory::PendingWrite>, MemoryError> {
+        oneiron::memory::caps::check_limit_nonzero(
+            input
+                .limit
+                .unwrap_or(oneiron::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT),
+        )?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("pending_writes", value)
+    }
+    pub fn hydrate(
+        &self,
+        input: &oneiron::task_verb::sdk::HydrateRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::EntityView>>, MemoryError>
+    {
+        oneiron::memory::caps::check_batch_len("refs", input.refs.len())?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("hydrate", value)
+    }
+    pub fn get_entity(
+        &self,
+        input: &oneiron::task_verb::sdk::EntityRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::memory::EntityView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("get_entity", value)
+    }
+    pub fn query_bm25(
+        &self,
+        input: &oneiron::task_verb::sdk::QueryBm25Request,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>, MemoryError>
+    {
+        oneiron::memory::caps::check_query(&input.query)?;
+        oneiron::memory::caps::check_limit_nonzero(input.limit)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("query_bm25", value)
+    }
+    pub fn neighbors(
+        &self,
+        input: &oneiron::task_verb::sdk::NeighborsRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::NeighborHit>>, MemoryError>
+    {
+        oneiron::memory::caps::check_limit_nonzero(input.opts.limit)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("neighbors", value)
+    }
+    pub fn put_structural(
+        &self,
+        input: &oneiron::memory::StructuralPutInput,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("put_structural", value)
+    }
+    pub fn put_habit_checkin(
+        &self,
+        input: &oneiron::memory::HabitCheckinInput,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("put_habit_checkin", value)
+    }
+    pub fn admit_imported_claim(
+        &self,
+        input: &oneiron::memory::AdmitImportedClaimInput,
+    ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("admit_imported_claim", value)
+    }
+    pub fn put_blob_artifact(
+        &self,
+        input: &oneiron::memory::BlobArtifactInput,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("put_blob_artifact", value)
+    }
+    pub fn append_blob_version(
+        &self,
+        input: &oneiron::task_verb::sdk::AppendBlobVersionRequest,
+    ) -> Result<oneiron::memory::BlobVersionView, MemoryError> {
+        if input.content_base64.len() > oneiron::memory::caps::MAX_BLOB_BASE64_LEN {
+            return Err(MemoryError::bad_request(
+                "blob base64 exceeds the content ceiling",
+            ));
+        }
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("append_blob_version", value)
+    }
+    pub fn read_blob_version(
+        &self,
+        input: &oneiron::task_verb::sdk::ReadBlobVersionRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::BlobContent>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("read_blob_version", value)
+    }
+    pub fn create_note(
+        &self,
+        input: &oneiron::task_verb::sdk::CreateNoteRequest,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("create_note", value)
+    }
+    pub fn create_note_from_entity(
+        &self,
+        input: &oneiron::task_verb::sdk::CreateNoteFromEntityRequest,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("create_note_from_entity", value)
+    }
+    pub fn edit_note(
+        &self,
+        input: &oneiron::task_verb::sdk::EditNoteRequest,
+    ) -> Result<oneiron::note::NoteProgramEditOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("edit_note", value)
     }
 }

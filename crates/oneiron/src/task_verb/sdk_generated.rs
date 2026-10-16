@@ -180,6 +180,91 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ScreenshotInput>(),
             ),
             (
+                "commit",
+                crate::code_run::vault_read::request_schema::<CommitRequest>(),
+            ),
+            (
+                "remember",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimInput>(),
+            ),
+            (
+                "claim_retract",
+                crate::code_run::vault_read::request_schema::<ClaimRefRequest>(),
+            ),
+            (
+                "forget",
+                crate::code_run::vault_read::request_schema::<ForgetRequest>(),
+            ),
+            (
+                "claim_list",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimListFilter>(),
+            ),
+            (
+                "claim_history",
+                crate::code_run::vault_read::request_schema::<ClaimRefRequest>(),
+            ),
+            (
+                "safe_delete",
+                crate::code_run::vault_read::request_schema::<SafeDeleteRequest>(),
+            ),
+            (
+                "pending_writes",
+                crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
+            ),
+            (
+                "hydrate",
+                crate::code_run::vault_read::request_schema::<HydrateRequest>(),
+            ),
+            (
+                "get_entity",
+                crate::code_run::vault_read::request_schema::<EntityRequest>(),
+            ),
+            (
+                "query_bm25",
+                crate::code_run::vault_read::request_schema::<QueryBm25Request>(),
+            ),
+            (
+                "neighbors",
+                crate::code_run::vault_read::request_schema::<NeighborsRequest>(),
+            ),
+            (
+                "put_structural",
+                crate::code_run::vault_read::request_schema::<crate::memory::StructuralPutInput>(),
+            ),
+            (
+                "put_habit_checkin",
+                crate::code_run::vault_read::request_schema::<crate::memory::HabitCheckinInput>(),
+            ),
+            (
+                "admit_imported_claim",
+                crate::code_run::vault_read::request_schema::<crate::memory::AdmitImportedClaimInput>(
+                ),
+            ),
+            (
+                "put_blob_artifact",
+                crate::code_run::vault_read::request_schema::<crate::memory::BlobArtifactInput>(),
+            ),
+            (
+                "append_blob_version",
+                crate::code_run::vault_read::request_schema::<AppendBlobVersionRequest>(),
+            ),
+            (
+                "read_blob_version",
+                crate::code_run::vault_read::request_schema::<ReadBlobVersionRequest>(),
+            ),
+            (
+                "create_note",
+                crate::code_run::vault_read::request_schema::<CreateNoteRequest>(),
+            ),
+            (
+                "create_note_from_entity",
+                crate::code_run::vault_read::request_schema::<CreateNoteFromEntityRequest>(),
+            ),
+            (
+                "edit_note",
+                crate::code_run::vault_read::request_schema::<EditNoteRequest>(),
+            ),
+            (
                 "search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -464,6 +549,153 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "commit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "remember" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "claim_retract" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "forget" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "claim_list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "claim_history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "safe_delete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "pending_writes" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "hydrate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "get_entity" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "query_bm25" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "neighbors" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "put_structural" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "put_habit_checkin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "admit_imported_claim" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "put_blob_artifact" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "append_blob_version" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "read_blob_version" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "create_note" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "create_note_from_entity" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "edit_note" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -610,6 +842,89 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "browser.screenshot" => {
             let _input: oneiron_browser::ScreenshotInput = decode(value.clone())?;
         }
+        "commit" => {
+            let input: CommitRequest = decode(value.clone())?;
+            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            for claim in &input.claims {
+                crate::memory::caps::check_claim_input(claim)?;
+            }
+        }
+        "remember" => {
+            let input: crate::memory::ClaimInput = decode(value.clone())?;
+            crate::memory::caps::check_claim_input(&input)?;
+        }
+        "claim_retract" => {
+            let _input: ClaimRefRequest = decode(value.clone())?;
+        }
+        "forget" => {
+            let _input: ForgetRequest = decode(value.clone())?;
+        }
+        "claim_list" => {
+            let input: crate::memory::ClaimListFilter = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
+        }
+        "claim_history" => {
+            let _input: ClaimRefRequest = decode(value.clone())?;
+        }
+        "safe_delete" => {
+            let _input: SafeDeleteRequest = decode(value.clone())?;
+        }
+        "pending_writes" => {
+            let input: ReceiptsRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(
+                input
+                    .limit
+                    .unwrap_or(crate::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT),
+            )?;
+        }
+        "hydrate" => {
+            let input: HydrateRequest = decode(value.clone())?;
+            crate::memory::caps::check_batch_len("refs", input.refs.len())?;
+        }
+        "get_entity" => {
+            let _input: EntityRequest = decode(value.clone())?;
+        }
+        "query_bm25" => {
+            let input: QueryBm25Request = decode(value.clone())?;
+            crate::memory::caps::check_query(&input.query)?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
+        }
+        "neighbors" => {
+            let input: NeighborsRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.opts.limit)?;
+        }
+        "put_structural" => {
+            let _input: crate::memory::StructuralPutInput = decode(value.clone())?;
+        }
+        "put_habit_checkin" => {
+            let _input: crate::memory::HabitCheckinInput = decode(value.clone())?;
+        }
+        "admit_imported_claim" => {
+            let _input: crate::memory::AdmitImportedClaimInput = decode(value.clone())?;
+        }
+        "put_blob_artifact" => {
+            let _input: crate::memory::BlobArtifactInput = decode(value.clone())?;
+        }
+        "append_blob_version" => {
+            let input: AppendBlobVersionRequest = decode(value.clone())?;
+            if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
+                return Err(MemoryError::bad_request(
+                    "blob base64 exceeds the content ceiling",
+                ));
+            }
+        }
+        "read_blob_version" => {
+            let _input: ReadBlobVersionRequest = decode(value.clone())?;
+        }
+        "create_note" => {
+            let _input: CreateNoteRequest = decode(value.clone())?;
+        }
+        "create_note_from_entity" => {
+            let _input: CreateNoteFromEntityRequest = decode(value.clone())?;
+        }
+        "edit_note" => {
+            let _input: EditNoteRequest = decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -651,6 +966,27 @@ pub fn invoke(
         "rooms.trunk" => encode(rooms_trunk(memory, decode(value)?)?),
         "rooms.claim" => encode(rooms_claim(memory, decode(value)?)?),
         "rooms.speak" => encode(rooms_speak(memory, decode(value)?)?),
+        "commit" => encode(commit(memory, decode(value)?)?),
+        "remember" => encode(remember(memory, decode(value)?)?),
+        "claim_retract" => encode(claim_retract(memory, decode(value)?)?),
+        "forget" => encode(forget(memory, decode(value)?)?),
+        "claim_list" => encode(claim_list(memory, decode(value)?)?),
+        "claim_history" => encode(claim_history(memory, decode(value)?)?),
+        "safe_delete" => encode(safe_delete(memory, decode(value)?)?),
+        "pending_writes" => encode(pending_writes(memory, decode(value)?)?),
+        "hydrate" => encode(hydrate(memory, decode(value)?)?),
+        "get_entity" => encode(get_entity(memory, decode(value)?)?),
+        "query_bm25" => encode(query_bm25(memory, decode(value)?)?),
+        "neighbors" => encode(neighbors(memory, decode(value)?)?),
+        "put_structural" => encode(put_structural(memory, decode(value)?)?),
+        "put_habit_checkin" => encode(put_habit_checkin(memory, decode(value)?)?),
+        "admit_imported_claim" => encode(admit_imported_claim(memory, decode(value)?)?),
+        "put_blob_artifact" => encode(put_blob_artifact(memory, decode(value)?)?),
+        "append_blob_version" => encode(append_blob_version(memory, decode(value)?)?),
+        "read_blob_version" => encode(read_blob_version(memory, decode(value)?)?),
+        "create_note" => encode(create_note(memory, decode(value)?)?),
+        "create_note_from_entity" => encode(create_note_from_entity(memory, decode(value)?)?),
+        "edit_note" => encode(edit_note(memory, decode(value)?)?),
         _ => {
             Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
@@ -1046,4 +1382,154 @@ pub fn browser_screenshot(
     input: oneiron_browser::ScreenshotInput,
 ) -> Result<oneiron_browser::ScreenshotOutput, oneiron_browser::BrowserError> {
     driver.screenshot(input)
+}
+pub fn commit(
+    memory: &Memory<'_>,
+    input: CommitRequest,
+) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+    for claim in &input.claims {
+        crate::memory::caps::check_claim_input(claim)?;
+    }
+    memory.commit(&input.claims)
+}
+pub fn remember(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimInput,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::memory::caps::check_claim_input(&input)?;
+    memory.claim_upsert(&input)
+}
+pub fn claim_retract(
+    memory: &Memory<'_>,
+    input: ClaimRefRequest,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    memory.claim_retract(&input.claim_ref)
+}
+pub fn forget(
+    memory: &Memory<'_>,
+    input: ForgetRequest,
+) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+    memory_requests::forget_claims(memory, input)
+}
+pub fn claim_list(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimListFilter,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>> {
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    memory.claim_list(&input)
+}
+pub fn claim_history(
+    memory: &Memory<'_>,
+    input: ClaimRefRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>> {
+    memory.claim_history(&input.claim_ref)
+}
+pub fn safe_delete(
+    memory: &Memory<'_>,
+    input: SafeDeleteRequest,
+) -> MemoryResult<crate::memory::DeleteReceipt> {
+    memory.safe_delete(&input.entity_ref, input.reason)
+}
+pub fn pending_writes(
+    memory: &Memory<'_>,
+    input: ReceiptsRequest,
+) -> MemoryResult<Vec<crate::memory::PendingWrite>> {
+    crate::memory::caps::check_limit_nonzero(
+        input
+            .limit
+            .unwrap_or(crate::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT),
+    )?;
+    memory.pending_writes(
+        input
+            .limit
+            .unwrap_or(crate::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT),
+    )
+}
+pub fn hydrate(
+    memory: &Memory<'_>,
+    input: HydrateRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>> {
+    crate::memory::caps::check_batch_len("refs", input.refs.len())?;
+    memory.hydrate(&input.refs)
+}
+pub fn get_entity(
+    memory: &Memory<'_>,
+    input: EntityRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>> {
+    memory.get_entity(&input.entity_ref)
+}
+pub fn query_bm25(
+    memory: &Memory<'_>,
+    input: QueryBm25Request,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>> {
+    crate::memory::caps::check_query(&input.query)?;
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    memory.query_bm25(&input.query, input.limit)
+}
+pub fn neighbors(
+    memory: &Memory<'_>,
+    input: NeighborsRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>> {
+    crate::memory::caps::check_limit_nonzero(input.opts.limit)?;
+    memory.neighbors(&input.entity_ref, &input.opts)
+}
+pub fn put_structural(
+    memory: &Memory<'_>,
+    input: crate::memory::StructuralPutInput,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    memory.put_structural(&input)
+}
+pub fn put_habit_checkin(
+    memory: &Memory<'_>,
+    input: crate::memory::HabitCheckinInput,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    memory.put_habit_checkin(&input)
+}
+pub fn admit_imported_claim(
+    memory: &Memory<'_>,
+    input: crate::memory::AdmitImportedClaimInput,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    memory.admit_imported_claim(&input)
+}
+pub fn put_blob_artifact(
+    memory: &Memory<'_>,
+    input: crate::memory::BlobArtifactInput,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    memory.put_blob_artifact(&input)
+}
+pub fn append_blob_version(
+    memory: &Memory<'_>,
+    input: AppendBlobVersionRequest,
+) -> MemoryResult<crate::memory::BlobVersionView> {
+    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
+        return Err(MemoryError::bad_request(
+            "blob base64 exceeds the content ceiling",
+        ));
+    }
+    memory_requests::append_blob(memory, input)
+}
+pub fn read_blob_version(
+    memory: &Memory<'_>,
+    input: ReadBlobVersionRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::BlobContent>> {
+    memory_requests::read_blob(memory, input)
+}
+pub fn create_note(
+    memory: &Memory<'_>,
+    input: CreateNoteRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    memory.create_note(&input.kind, &input.markdown)
+}
+pub fn create_note_from_entity(
+    memory: &Memory<'_>,
+    input: CreateNoteFromEntityRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    memory.create_note_from_entity(&input.source_ref, &input.kind)
+}
+pub fn edit_note(
+    memory: &Memory<'_>,
+    input: EditNoteRequest,
+) -> MemoryResult<crate::note::NoteProgramEditOutcome> {
+    memory.edit_note(&input.note_ref, &input.edit)
 }

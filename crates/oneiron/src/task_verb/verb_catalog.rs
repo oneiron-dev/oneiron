@@ -42,6 +42,27 @@ pub enum AgentVerb {
     BrowserWaitFor,
     BrowserExpect,
     BrowserScreenshot,
+    Commit,
+    Remember,
+    ClaimRetract,
+    Forget,
+    ClaimList,
+    ClaimHistory,
+    SafeDelete,
+    PendingWrites,
+    Hydrate,
+    GetEntity,
+    QueryBm25,
+    Neighbors,
+    PutStructural,
+    PutHabitCheckin,
+    AdmitImportedClaim,
+    PutBlobArtifact,
+    AppendBlobVersion,
+    ReadBlobVersion,
+    CreateNote,
+    CreateNoteFromEntity,
+    EditNote,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -86,6 +107,27 @@ impl AgentVerb {
         Self::BrowserWaitFor,
         Self::BrowserExpect,
         Self::BrowserScreenshot,
+        Self::Commit,
+        Self::Remember,
+        Self::ClaimRetract,
+        Self::Forget,
+        Self::ClaimList,
+        Self::ClaimHistory,
+        Self::SafeDelete,
+        Self::PendingWrites,
+        Self::Hydrate,
+        Self::GetEntity,
+        Self::QueryBm25,
+        Self::Neighbors,
+        Self::PutStructural,
+        Self::PutHabitCheckin,
+        Self::AdmitImportedClaim,
+        Self::PutBlobArtifact,
+        Self::AppendBlobVersion,
+        Self::ReadBlobVersion,
+        Self::CreateNote,
+        Self::CreateNoteFromEntity,
+        Self::EditNote,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -133,6 +175,27 @@ impl AgentVerb {
             Self::BrowserWaitFor => "browser.wait_for",
             Self::BrowserExpect => "browser.expect",
             Self::BrowserScreenshot => "browser.screenshot",
+            Self::Commit => "commit",
+            Self::Remember => "remember",
+            Self::ClaimRetract => "claim_retract",
+            Self::Forget => "forget",
+            Self::ClaimList => "claim_list",
+            Self::ClaimHistory => "claim_history",
+            Self::SafeDelete => "safe_delete",
+            Self::PendingWrites => "pending_writes",
+            Self::Hydrate => "hydrate",
+            Self::GetEntity => "get_entity",
+            Self::QueryBm25 => "query_bm25",
+            Self::Neighbors => "neighbors",
+            Self::PutStructural => "put_structural",
+            Self::PutHabitCheckin => "put_habit_checkin",
+            Self::AdmitImportedClaim => "admit_imported_claim",
+            Self::PutBlobArtifact => "put_blob_artifact",
+            Self::AppendBlobVersion => "append_blob_version",
+            Self::ReadBlobVersion => "read_blob_version",
+            Self::CreateNote => "create_note",
+            Self::CreateNoteFromEntity => "create_note_from_entity",
+            Self::EditNote => "edit_note",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -166,6 +229,27 @@ impl AgentVerb {
                 | Self::RoomsTrunk
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
+                | Self::Commit
+                | Self::Remember
+                | Self::ClaimRetract
+                | Self::Forget
+                | Self::ClaimList
+                | Self::ClaimHistory
+                | Self::SafeDelete
+                | Self::PendingWrites
+                | Self::Hydrate
+                | Self::GetEntity
+                | Self::QueryBm25
+                | Self::Neighbors
+                | Self::PutStructural
+                | Self::PutHabitCheckin
+                | Self::AdmitImportedClaim
+                | Self::PutBlobArtifact
+                | Self::AppendBlobVersion
+                | Self::ReadBlobVersion
+                | Self::CreateNote
+                | Self::CreateNoteFromEntity
+                | Self::EditNote
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -217,6 +301,27 @@ impl AgentVerb {
                 | Self::RoomsTrunk
                 | Self::RoomsClaim
                 | Self::RoomsSpeak
+                | Self::Commit
+                | Self::Remember
+                | Self::ClaimRetract
+                | Self::Forget
+                | Self::ClaimList
+                | Self::ClaimHistory
+                | Self::SafeDelete
+                | Self::PendingWrites
+                | Self::Hydrate
+                | Self::GetEntity
+                | Self::QueryBm25
+                | Self::Neighbors
+                | Self::PutStructural
+                | Self::PutHabitCheckin
+                | Self::AdmitImportedClaim
+                | Self::PutBlobArtifact
+                | Self::AppendBlobVersion
+                | Self::ReadBlobVersion
+                | Self::CreateNote
+                | Self::CreateNoteFromEntity
+                | Self::EditNote
         )
     }
     pub const fn is_section(self) -> bool {
@@ -250,6 +355,9 @@ impl AgentVerb {
                 | Self::RoomsMessages
                 | Self::RoomsRender
                 | Self::RoomsFind
+                | Self::Commit
+                | Self::Forget
+                | Self::PendingWrites
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -260,6 +368,12 @@ impl AgentVerb {
                 | Self::BoardSubscribe
                 | Self::BoardUnsubscribe
                 | Self::Describe
+                | Self::ClaimList
+                | Self::ClaimHistory
+                | Self::Hydrate
+                | Self::GetEntity
+                | Self::QueryBm25
+                | Self::Neighbors
         )
     }
     pub const fn requires_unscoped(self) -> bool {
@@ -298,6 +412,21 @@ impl AgentVerb {
                 | Self::BrowserWaitFor
                 | Self::BrowserExpect
                 | Self::BrowserScreenshot
+                | Self::Commit
+                | Self::Remember
+                | Self::ClaimRetract
+                | Self::Forget
+                | Self::SafeDelete
+                | Self::PendingWrites
+                | Self::PutStructural
+                | Self::PutHabitCheckin
+                | Self::AdmitImportedClaim
+                | Self::PutBlobArtifact
+                | Self::AppendBlobVersion
+                | Self::ReadBlobVersion
+                | Self::CreateNote
+                | Self::CreateNoteFromEntity
+                | Self::EditNote
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -322,10 +451,31 @@ impl AgentVerb {
                 | Self::BrowserClick
                 | Self::BrowserType
                 | Self::BrowserSelect
+                | Self::Commit
+                | Self::Remember
+                | Self::ClaimRetract
+                | Self::Forget
+                | Self::SafeDelete
+                | Self::PutStructural
+                | Self::PutHabitCheckin
+                | Self::AdmitImportedClaim
+                | Self::PutBlobArtifact
+                | Self::AppendBlobVersion
+                | Self::CreateNote
+                | Self::CreateNoteFromEntity
+                | Self::EditNote
         )
     }
     pub const fn proposes(self) -> bool {
-        matches!(self, Self::Cancel | Self::TasksCreate | Self::ClaimUpsert)
+        matches!(
+            self,
+            Self::Cancel
+                | Self::TasksCreate
+                | Self::ClaimUpsert
+                | Self::Commit
+                | Self::Remember
+                | Self::AdmitImportedClaim
+        )
     }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
@@ -370,6 +520,27 @@ impl AgentVerb {
             Self::BrowserWaitFor => &["spec"],
             Self::BrowserExpect => &["spec"],
             Self::BrowserScreenshot => &["spec"],
+            Self::Commit => &["spec"],
+            Self::Remember => &["spec"],
+            Self::ClaimRetract => &["spec"],
+            Self::Forget => &["spec"],
+            Self::ClaimList => &["spec"],
+            Self::ClaimHistory => &["spec"],
+            Self::SafeDelete => &["spec"],
+            Self::PendingWrites => &["spec"],
+            Self::Hydrate => &["spec"],
+            Self::GetEntity => &["spec"],
+            Self::QueryBm25 => &["spec"],
+            Self::Neighbors => &["spec"],
+            Self::PutStructural => &["spec"],
+            Self::PutHabitCheckin => &["spec"],
+            Self::AdmitImportedClaim => &["spec"],
+            Self::PutBlobArtifact => &["spec"],
+            Self::AppendBlobVersion => &["spec"],
+            Self::ReadBlobVersion => &["spec"],
+            Self::CreateNote => &["spec"],
+            Self::CreateNoteFromEntity => &["spec"],
+            Self::EditNote => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -415,6 +586,27 @@ impl AgentVerb {
             Self::BrowserWaitFor => &["spec"],
             Self::BrowserExpect => &["spec"],
             Self::BrowserScreenshot => &["spec"],
+            Self::Commit => &["spec"],
+            Self::Remember => &["spec"],
+            Self::ClaimRetract => &["spec"],
+            Self::Forget => &["spec"],
+            Self::ClaimList => &["spec"],
+            Self::ClaimHistory => &["spec"],
+            Self::SafeDelete => &["spec"],
+            Self::PendingWrites => &["spec"],
+            Self::Hydrate => &["spec"],
+            Self::GetEntity => &["spec"],
+            Self::QueryBm25 => &["spec"],
+            Self::Neighbors => &["spec"],
+            Self::PutStructural => &["spec"],
+            Self::PutHabitCheckin => &["spec"],
+            Self::AdmitImportedClaim => &["spec"],
+            Self::PutBlobArtifact => &["spec"],
+            Self::AppendBlobVersion => &["spec"],
+            Self::ReadBlobVersion => &["spec"],
+            Self::CreateNote => &["spec"],
+            Self::CreateNoteFromEntity => &["spec"],
+            Self::EditNote => &["spec"],
         }
     }
 }
