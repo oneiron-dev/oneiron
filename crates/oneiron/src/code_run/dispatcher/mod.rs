@@ -6,9 +6,10 @@ mod fold_verbs;
 mod human_speech;
 mod leader;
 mod memory_verbs;
+mod verb_hooks;
 mod wake_policy;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
@@ -69,6 +70,14 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) external_effect_seen: Cell<bool>,
     /// The host's door onto the SDK verb table, if it binds one.
     pub(super) agent_verbs: Option<std::sync::Arc<dyn crate::code_run::AgentVerbDoor>>,
+    /// The guest's view of the last call's result when a verb hook changed
+    /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
+    /// executor's host takes it for its reply; the run records the result.
+    pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// The calls a verb hook's ask parked, as the run's history shows them,
+    /// with the invocation each ask waits under.
+    pub(super) parked_hooks:
+        RefCell<Vec<(verb_hooks::ParkedCall, crate::runtime_hooks::InvocationId)>>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -182,6 +191,8 @@ impl<'a> HostSelfDispatcher<'a> {
             owner_proof: None,
             external_effect_seen: Cell::new(false),
             agent_verbs: None,
+            hook_view: RefCell::new(None),
+            parked_hooks: RefCell::new(Vec::new()),
         })
     }
 
@@ -256,10 +267,14 @@ impl<'a> HostSelfDispatcher<'a> {
     /// write. It accepts a bridge-call history, never a lineage: the mapping
     /// from history to lineage is [`lineage_for_run`], owned here, so no
     /// caller can assert a narrower history than the one it recorded.
+    ///
+    /// The same history names the calls a verb hook's ask parked, so the
+    /// same call made again resumes its ask.
     pub(crate) fn observe_bridge_history(&self, bridge_calls: &[CodeRunBridgeCall]) {
         if lineage_for_run(bridge_calls).contains(ClaimSource::ToolOutput) {
             self.external_effect_seen.set(true);
         }
+        self.observe_parked_hooks(bridge_calls);
     }
 
     /// The bound session ref, or `None` for a canonical run.
@@ -333,6 +348,8 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
+        // A hook's view of an earlier call is never this call's.
+        *self.hook_view.borrow_mut() = None;
         // The descriptor bridge answers before the policy probe: that probe is
         // itself a vault read, and `self.context` must perform none.
         if matches!(call, SelfCall::Context(_)) {
@@ -369,7 +386,7 @@ impl<'a> HostSelfDispatcher<'a> {
                     }
                 }
             };
-            self.dispatch_effect(call, site, read_as)
+            self.dispatch_hooked(call, site, read_as)
         })
     }
 

@@ -600,7 +600,7 @@ impl EngineNativeExecutor<'_> {
         // worst case is a re-emission that lands on the same derived MESSAGE
         // id.
         self.storage
-            .put_code_run_raw_output(&marker, &marker_bytes)?;
+            .put_code_run_raw_output(config.run_id, &marker, &marker_bytes)?;
         Ok(())
     }
 
@@ -748,7 +748,7 @@ impl EngineNativeExecutor<'_> {
             };
             if output.output_ref() == source {
                 // A body that is not clean reaches the model as the mark.
-                if !clean_for_context(&self.storage, output)? {
+                if !clean_for_context(&self.storage, Some(record.run_id), output)? {
                     return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.as_bytes().to_vec());
                 }
                 return Ok(self
@@ -990,7 +990,8 @@ impl EngineNativeExecutor<'_> {
             else {
                 return Err(Error::CorruptedIndex("executor result binding").into());
             };
-            let preview: String = if clean_for_context(&self.storage, output)? {
+            let preview: String = if clean_for_context(&self.storage, Some(record.run_id), output)?
+            {
                 output
                     .preview
                     .text

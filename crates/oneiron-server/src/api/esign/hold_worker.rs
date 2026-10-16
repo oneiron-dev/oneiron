@@ -121,12 +121,10 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
         DecisionAnswer::Choice(label) if label == HOLD_DECLINE => HeldSigningAnswer::Decline,
         _ => return Ok(()),
     };
-    let settled = server.vault().settle_esign_hold(
-        &held.document,
-        &held.recipient,
-        held.held_at,
-        answer,
-    )?;
+    let settled =
+        server
+            .vault()
+            .settle_esign_hold(&held.document, &held.recipient, held.held_at, answer)?;
     tracing::info!(
         document = %settled.document,
         recipient = %settled.recipient,

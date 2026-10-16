@@ -389,6 +389,10 @@ fn apply_tombstone_batch(
             }
         }
     }
+    #[cfg(unix)]
+    if let Err(error) = vault.collect_released_result_bodies(256) {
+        tracing::error!(kind = ?error.kind(), "released result bodies remain queued");
+    }
     vault.finish_gate_decision_retirements_after_commit();
     for (work, stage, err) in &failures {
         match stage {

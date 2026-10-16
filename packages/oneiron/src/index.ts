@@ -244,6 +244,12 @@ export class Oneiron {
       list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesList(input) as unknown),
       default: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDefault(input) as unknown),
     },
+    disclosure: {
+      offer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultDisclosureOffer(input) as unknown),
+    },
+    shares: {
+      create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesCreate(input) as unknown),
+    },
     hooks: {
       replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
     },
@@ -279,6 +285,7 @@ export class Oneiron {
     rooms: {
       list: (): unknown[] => this.#call(() => this.#client.vaultRoomsList({}) as unknown[]),
       messages: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
+      participants: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsParticipants(input) as unknown),
       render: (roomRef: string): string[] => this.#call(() => this.#client.vaultRoomsRender({room_ref: roomRef}) as string[]),
       find: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsFind({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
       get: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsGet({room_ref: roomRef, turn_ref: turnRef}) as unknown),

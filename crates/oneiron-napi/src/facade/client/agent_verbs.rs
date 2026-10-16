@@ -181,6 +181,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -207,6 +208,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -227,6 +229,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -247,6 +250,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -267,6 +271,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -287,6 +292,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -521,6 +527,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_disclosure_offer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.offer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shares_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shares.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.replay", input)
@@ -538,6 +559,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -558,6 +580,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -578,6 +601,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -598,6 +622,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -618,6 +643,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -638,6 +664,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -658,6 +685,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -678,6 +706,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -698,6 +727,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -718,6 +748,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -738,6 +769,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -758,6 +790,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -778,6 +811,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -795,6 +829,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -833,6 +868,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.messages", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_participants(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.participants", input)
             .map_err(facade_error)
     }
     #[napi]

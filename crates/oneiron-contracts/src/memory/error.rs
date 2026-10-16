@@ -4,7 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ClaimError, Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError};
+use crate::error::{
+    ClaimError, Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError, VerbHookStop,
+};
 
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
@@ -81,6 +83,12 @@ pub const MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER: &str = "VAULT_LOCKED_SINGLE_WR
 /// `replacement` the error carries (EIRI-ARCH-0002 §The contract).
 pub const MEMORY_CODE_WRONG_ROOT: &str = "WRONG_ROOT";
 
+/// A verb hook asked before the verb ran (ARCH-0080 §3): the verb waits on an
+/// open ask, and the refusal's `hook` names the invocation and the ask. A
+/// retry with the same invocation answers the same ask, never a second one.
+/// Distinct from `FORBIDDEN`: nothing was refused, the verb is only waiting,
+/// like a gate's pending write.
+pub const MEMORY_CODE_PENDING_ASK: &str = "PENDING_ASK";
 /// A write named a record ref that does not resolve under its writer's own
 /// scoped read (OF-063): invented, missing and unreadable are this one
 /// refusal. The message names the field pointer, never the ref. The write
@@ -143,6 +151,11 @@ pub struct MemoryError {
     /// the same reason `gate_denial` is.
     #[serde(flatten)]
     pub wrong_root: Option<Box<MemoryWrongRoot>>,
+    /// The verb hook's stop behind this refusal (ARCH-0080 §3): skipped,
+    /// pending on an ask, or hidden. Boxed for the same reason `gate_denial`
+    /// is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<Box<VerbHookStop>>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -195,6 +208,7 @@ impl MemoryError {
             read_receipt: None,
             policy_denial: None,
             wrong_root: None,
+            hook: None,
         }
     }
 
@@ -277,6 +291,33 @@ impl MemoryError {
     }
 }
 
+impl MemoryError {
+    /// A verb hook's stop as the refusal a caller reads: a skip is the
+    /// `INVALID_STATE` family with the hook's reason, an ask is
+    /// `PENDING_ASK`, a hidden result is `FORBIDDEN`. The typed stop rides in
+    /// `hook`.
+    fn verb_hook(stop: VerbHookStop) -> Self {
+        let (code, suggestion) = match &stop {
+            VerbHookStop::Skipped { .. } => (
+                MEMORY_CODE_INVALID_STATE,
+                "A verb hook skipped this call for the reason given; change the call, or ask the vault owner about the hook.",
+            ),
+            VerbHookStop::Pending { .. } => (
+                MEMORY_CODE_PENDING_ASK,
+                "Wait for the ask to be answered, then retry with the same invocation id.",
+            ),
+            VerbHookStop::Hidden { .. } => (
+                MEMORY_CODE_FORBIDDEN,
+                "A blocking verb hook failed, so this result stays hidden; retry later or ask the vault owner.",
+            ),
+        };
+        Self {
+            hook: Some(Box::new(stop.clone())),
+            ..Self::new(code, stop.to_string(), &[suggestion])
+        }
+    }
+}
+
 impl std::fmt::Display for MemoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
@@ -289,6 +330,9 @@ impl From<Error> for MemoryError {
     fn from(err: Error) -> Self {
         if let Error::Claim(ClaimError::ScopedReadOwnerNotLive(refusal)) = err {
             return *refusal;
+        }
+        if let Error::VerbHook(stop) = err {
+            return Self::verb_hook(*stop);
         }
         let message = err.to_string();
         // ONE-1936: the successor ref travels as a FIELD, not as prose. A
