@@ -24419,6 +24419,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensActivateRequest",
+      "LensDeactivateRequest"
+     ],
+     "path": "src/lens/activation.rs",
+     "purpose": "The owner's selection of a proposed pack lens for its slot, and its clearing (OF-250)",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -24716,6 +24730,7 @@
      "purpose": "Vault-scoped lens intent records and the upgrade regeneration door",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 5,
       "struct": 1
      }
@@ -24846,7 +24861,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 11
+      "re-export": 14
      }
     },
     {
@@ -24858,8 +24873,45 @@
      "path": "src/lens/mount.rs",
      "purpose": "Pack-aware lens mount decision, evaluated against the live vault on each render",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LensListPage",
+      "LensListRequest",
+      "LensListRow",
+      "LensProposalState",
+      "LensProposeRequest",
+      "LensSlot"
+     ],
+     "path": "src/lens/proposal.rs",
+     "purpose": "Pack lens proposals (OF-250): one frozen compiled tree bound to an installed pack's skill, with its authored…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 11,
+      "enum": 1,
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LensDefaultRequest",
+      "LensDossierSource"
+     ],
+     "path": "src/lens/sdk.rs",
+     "purpose": "`vault.lenses.default` (OF-250): the default vault projection over the caller's own read key",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -33575,12 +33627,28 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LensActivationReceipt",
+      "LensApproval",
+      "LensProposalReceipt",
+      "LensSlotDecision"
+     ],
+     "path": "src/receipt/lens.rs",
+     "purpose": "The receipts of the pack lens lifecycle (OF-250): a proposal, and the owner's selection or clearing of a…",
+     "surface": {
+      "enum": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 17,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -42863,7 +42931,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 110
+      "fn": 115
      }
     },
     {
@@ -47710,7 +47778,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 43,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47976,7 +48044,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48440,7 +48508,7 @@
    },
    "over_bar": 91,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2919,
+   "source_files": 2923,
    "test_files": 903
   },
   "oneiron-android": {
@@ -55948,7 +56016,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 92
+      "fn": 97
      }
     },
     {
@@ -56947,7 +57015,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 93
+      "fn": 98
      }
     },
     {
@@ -59366,7 +59434,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
