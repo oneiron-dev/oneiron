@@ -94,7 +94,10 @@ impl Vault {
         };
         let starts: Vec<_> = match since {
             Some(position) => vec![(position.source(), Some(position))],
-            None => FactSource::ALL.iter().map(|source| (*source, None)).collect(),
+            None => FactSource::ALL
+                .iter()
+                .map(|source| (*source, None))
+                .collect(),
         };
         let mut entries = Vec::new();
         for (source, mut after) in starts {
@@ -166,7 +169,9 @@ impl Replay<'_> {
                     served += 1;
                     let live = read::answer(lane, self.grant, request, &mut scratch)?;
                     let hash = blake3::hash(live.as_bytes()).to_hex();
-                    if pinned.is_some_and(|pin| pin.request == request && pin.response_hash == hash.as_str()) {
+                    if pinned.is_some_and(|pin| {
+                        pin.request == request && pin.response_hash == hash.as_str()
+                    }) {
                         Ok(live)
                     } else {
                         missing.get_or_insert_with(|| request.to_owned());
@@ -183,7 +188,12 @@ impl Replay<'_> {
                 reason: format!("a read's history is gone: {}", bounded(&request)),
             };
         }
-        ran(judge(self.binding, result), Some(memo.outcome.clone()), true, false)
+        ran(
+            judge(self.binding, result),
+            Some(memo.outcome.clone()),
+            true,
+            false,
+        )
     }
 
     /// No run pinned this entry. The live entity stands in only while its
@@ -193,7 +203,12 @@ impl Replay<'_> {
             return Ok(None);
         };
         let actor = filter::actor_class(self.vault, entry.actor)?;
-        if !filter::fact_matches(&self.binding.selector, entry.kind, seen.claim.as_ref(), actor) {
+        if !filter::fact_matches(
+            &self.binding.selector,
+            entry.kind,
+            seen.claim.as_ref(),
+            actor,
+        ) {
             return Ok(None);
         }
         if entry.body_hash != Some(seen.body_hash) {
@@ -202,8 +217,20 @@ impl Replay<'_> {
                     .to_owned(),
             }));
         }
-        let now = self.vault.store.clock.now_recorded_at().saturating_mul(1_000);
-        let input = input_json(self.binding_id, self.binding, entry, actor, &seen.claim_json, now)?;
+        let now = self
+            .vault
+            .store
+            .clock
+            .now_recorded_at()
+            .saturating_mul(1_000);
+        let input = input_json(
+            self.binding_id,
+            self.binding,
+            entry,
+            actor,
+            &seen.claim_json,
+            now,
+        )?;
         let mut pins = Vec::new();
         let result = match &self.body {
             Ok(body) => {

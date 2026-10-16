@@ -50,3 +50,10 @@ pub(super) const TASK_POST_ID_DOMAIN: &[u8] = b"oneiron.tasks.post.v1";
 pub(super) const TASK_SETTLE_ID_DOMAIN: &[u8] = b"oneiron.tasks.settle.v1";
 /// The proposal-value key the highway's typed post stamp rides under.
 pub(super) const TASK_POST_STAMP_KEY: &str = "post";
+/// The stored predicate of the question an engine block asks a TASK's owner
+/// (OF-220): its label text and the typed continuation the ask's settlement
+/// runs on the TASK.
+pub(super) const TASK_BLOCK_QUESTION_PREDICATE: &str = "tasks.block_question";
+/// Derived id of a blocked TASK's question CLAIM. Parts: the ask group, so a
+/// settlement finds its continuation from the group alone.
+pub(super) const TASK_BLOCK_QUESTION_ID_DOMAIN: &[u8] = b"oneiron.tasks.block_question.v1";
