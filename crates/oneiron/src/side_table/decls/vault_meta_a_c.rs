@@ -301,6 +301,9 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// Node-local fold ledger of one executor run: its marks, compact ask, folds and unfold
+    /// appends (JSON). Key: id16(run).
+    CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw;
     /// The taint refs beside one raw-output row, keyed by the same content handle, in the same
