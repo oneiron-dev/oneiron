@@ -89,6 +89,9 @@ pub(super) fn apply_op(
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::WorldKeyWraps(_) => {}
+        // The signed record of a shared-act change; the change itself is the
+        // execution's (`federation::shared_act`).
+        AuthorityOp::OwnerHandover(_) => {}
     }
 }
 

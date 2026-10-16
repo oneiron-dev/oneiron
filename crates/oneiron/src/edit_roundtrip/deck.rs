@@ -31,6 +31,15 @@ use serde::{Deserialize, Serialize};
 const DECK_ID_MARKS: SideTable<EntityId, IdMarks, Named> =
     SideTable::new(&side_table::BLOB_ARTIFACT_DECK_ID_MARKS);
 
+/// Removes an erased deck artifact's native-id history.
+pub(super) fn erase_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact: &EntityId,
+) -> Result<()> {
+    DECK_ID_MARKS.delete(store, txn, artifact).map(drop)
+}
+
 const MAX_RENDERS: usize = 4_096;
 const MAX_RENDERER_BYTES: usize = 256;
 

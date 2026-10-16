@@ -15,16 +15,15 @@ use super::record::{
 
 /// Current ConnectorKeyRecord body schema version.
 ///
-/// v3 carries optional custody, catalog, and qualification fields. Earlier
-/// fields keep their positions; missing optional fields decode as None.
-pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 3;
+/// v4 retains the successful suite receipt on the key itself.
+pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 4;
 
 /// Pinned on-disk MessagePack key set for ConnectorKeyRecord bodies.
 ///
 /// APPEND-ONLY and position-addressed by the `KEY_*` consts below: an existing
 /// index must never move, or every stored body silently re-reads as a
 /// different field.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 21] = [
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 22] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -46,6 +45,7 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 21] = [
     "consent_required",
     "retained_manifest",
     "pending_manifest",
+    "qualification_receipt",
 ];
 
 const KEY_SCHEMA_VERSION: &str = CONNECTOR_KEY_BODY_KEYS[0];
@@ -69,6 +69,7 @@ const KEY_ADMISSION_EPOCH: &str = CONNECTOR_KEY_BODY_KEYS[17];
 const KEY_CONSENT_REQUIRED: &str = CONNECTOR_KEY_BODY_KEYS[18];
 const KEY_RETAINED_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[19];
 const KEY_PENDING_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[20];
+const KEY_QUALIFICATION_RECEIPT: &str = CONNECTOR_KEY_BODY_KEYS[21];
 const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
     KEY_SUGGESTED_BUDGETS,
     KEY_SECRET_REF,
@@ -231,6 +232,10 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
         (
             Value::from(KEY_PENDING_MANIFEST),
             encode_json_option(record.pending_manifest.as_ref())?,
+        ),
+        (
+            Value::from(KEY_QUALIFICATION_RECEIPT),
+            encode_json_option(record.qualification_receipt.as_ref())?,
         ),
     ]);
 
@@ -439,7 +444,7 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
     validate_connector_key_body_keys(entries)?;
 
     let schema_version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
-    if !matches!(schema_version, Some(1..=CONNECTOR_KEY_SCHEMA_VERSION)) {
+    if schema_version != Some(CONNECTOR_KEY_SCHEMA_VERSION) {
         return Err(invalid_body("unsupported schema version"));
     }
 
@@ -466,9 +471,6 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
         )?)?,
         suggested_budgets: optional_value(entries, KEY_SUGGESTED_BUDGETS)
             .map_or_else(|| Ok(Vec::new()), decode_budget_rows)?,
-        // The v3 (ONE-1886) trio: absent on every stored v1/v2 body, which
-        // therefore reads back unreferenced, at generation 0, and
-        // unclassified — the pre-live-transport defaults.
         secret_ref: optional_value(entries, KEY_SECRET_REF)
             .map_or_else(|| Ok(None), decode_optional_string)?,
         key_generation: optional_value(entries, KEY_KEY_GENERATION)
@@ -489,6 +491,10 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             .map_or_else(|| Ok(None), decode_json_option)?,
         pending_manifest: optional_value(entries, KEY_PENDING_MANIFEST)
             .map_or_else(|| Ok(None), decode_json_option::<PendingConnectorManifest>)?,
+        qualification_receipt: decode_json_option(required_value(
+            entries,
+            KEY_QUALIFICATION_RECEIPT,
+        )?)?,
     };
     record.validate()?;
     Ok(record)

@@ -194,6 +194,7 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
+default = ["sync"]
 code-sandbox-wasmtime = []
 image-station-ocr = ["dep:ocrs", "dep:rten"]
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest

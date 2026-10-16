@@ -18,7 +18,11 @@ use crate::store::Store;
 pub(crate) type EntitySideRowEraser = fn(&Store, &mut heed::RwTxn<'_>, &EntityId) -> Result<()>;
 
 /// Every per-entity eraser, one line per module.
-const ERASERS: &[EntitySideRowEraser] = &[crate::typed_body::erase_in_txn];
+const ERASERS: &[EntitySideRowEraser] = &[
+    crate::typed_body::erase_in_txn,
+    crate::office_body::erase_in_txn,
+    crate::edit_roundtrip::deck_create::erase_in_txn,
+];
 
 /// Runs before the record's body and edges go. `physical` is false for a soft
 /// erase, which keeps the shell's topology (redirects, claim reassignment).
