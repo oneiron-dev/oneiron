@@ -50,15 +50,19 @@ pub enum EngineScan {
     VisibleRefRows,
     /// One repository's keep-ref owners, every kind.
     KeepOwnerRows,
+    /// The vault's inbound STOPs this replica has not projected yet, which
+    /// each external send reads. A STOP the projector keeps refusing stays.
+    PendingCommStops,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
         Self::KeepOwnerRows,
+        Self::PendingCommStops,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -77,6 +81,7 @@ impl EngineScan {
             Self::PublicationRows => "publication_rows",
             Self::VisibleRefRows => "visible_ref_rows",
             Self::KeepOwnerRows => "keep_owner_rows",
+            Self::PendingCommStops => "pending_comm_stops",
         }
     }
 
@@ -86,6 +91,7 @@ impl EngineScan {
             Self::PublicationRows => 2,
             Self::VisibleRefRows => 3,
             Self::KeepOwnerRows => 4,
+            Self::PendingCommStops => 5,
         }]
     }
 }

@@ -114,7 +114,11 @@ pub(crate) fn hydrate_external_effect_contact(
         }
     }
 
-    fold_matching_comm_do_not_contact_heads(store, txn, party_ref, &channel_class, &mut hydrated)?;
+    // Every PERSON that carries the counterparty's key, read once for both
+    // comm legs: the node-local party shortcut would fail open.
+    let persons = crate::campaign::claims::do_not_contact_subjects_in_txn(store, txn, party_ref)?;
+    fold_matching_comm_do_not_contact_heads(store, txn, &persons, &channel_class, &mut hydrated)?;
+    fold_comm_stop(store, txn, &persons, &channel_class, &mut hydrated)?;
     // A send override answers the counterparty's opt-out. The owner's own
     // revocation is not an opt-out, so no override lifts it (nor does the
     // opt-out posture; see the evaluator).
@@ -259,14 +263,14 @@ fn counterparty_contact_by_identity_index(
 fn fold_matching_comm_do_not_contact_heads(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    party_ref: &str,
+    persons: &[EntityId],
     channel_class: &str,
     hydrated: &mut ExternalEffectGateInput,
 ) -> Result<()> {
-    if !crate::campaign::claims::counterparty_do_not_contact_in_txn(
+    if !crate::campaign::claims::subjects_do_not_contact_in_txn(
         store,
         txn,
-        party_ref,
+        persons,
         Some(channel_class),
         &hydrated.verb,
     )? {
@@ -278,6 +282,34 @@ fn fold_matching_comm_do_not_contact_heads(
     if hydrated.counterparty_opt_out_receipt_reason.is_none() {
         hydrated.counterparty_opt_out_receipt_reason =
             Some(COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON);
+    }
+    Ok(())
+}
+
+/// OR-folds the counterparty's comm STOP (F06): a STOP's standing
+/// `comm.opt_out` head, which the contact rows above only cache and a supported
+/// drop removes (R2-F5), and a STOP this replica has not projected yet. Either holds the send as a
+/// projected STOP's contact row does, so an owner override or posture answers
+/// it the same way. Monotonic, like every leg here.
+fn fold_comm_stop(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    persons: &[EntityId],
+    channel_class: &str,
+    hydrated: &mut ExternalEffectGateInput,
+) -> Result<()> {
+    let Some(reason) = comm_result(crate::comm::send_stop_reason_in_txn(
+        store,
+        txn,
+        persons,
+        channel_class,
+    ))?
+    else {
+        return Ok(());
+    };
+    hydrated.counterparty_opted_out = true;
+    if hydrated.counterparty_opt_out_receipt_reason.is_none() {
+        hydrated.counterparty_opt_out_receipt_reason = Some(reason);
     }
     Ok(())
 }

@@ -174,6 +174,9 @@ fn no_origin_scan_refuses_for_its_row_count() {
                 let repo_id = lfs_repo_id(&handle.identity().as_hex()).expect("repo id");
                 Door::Census(repo_id, handle)
             }
+            EngineScan::PendingCommStops => {
+                unreachable!("{scan:?} is not an origin scan")
+            }
         };
         for _ in 0..2 {
             let read = match &door {

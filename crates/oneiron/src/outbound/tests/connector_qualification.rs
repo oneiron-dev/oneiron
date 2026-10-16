@@ -779,3 +779,150 @@ fn scheduled_cold_dm_projects_one_counterparty_touch_after_owner_grant()
     );
     Ok(())
 }
+
+/// A vault that sends email to `address` under an exact send grant, with an
+/// active sender identity and an introduced contact for it.
+fn stop_hold_sender(
+    address: &str,
+) -> Result<(tempfile::TempDir, TimedVault, EntityId, EntityId), Box<dyn std::error::Error>> {
+    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
+    let (tmp, vault) = temp_vault();
+    clear_bootstrap_policy(&vault)?;
+    let actor = entity(0x81);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"agent",
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x82),
+        &provider_email_policy_manifest(&actor.to_hex(), "email"),
+    )?;
+    let identity_ref = entity(0x83);
+    let identity = crate::test_util::self_held_identity_in_state(
+        "email",
+        "sender@example.com",
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::actor(actor),
+        ChannelIdentityState::Active,
+        10,
+    );
+    vault.create_channel_identity(&identity_ref, &identity)?;
+    vault.create_counterparty_contact(
+        &entity(0x84),
+        &CounterpartyContactRecord::user_introduction(identity_ref, address, 10)?,
+    )?;
+    Ok((tmp, vault, actor, identity_ref))
+}
+
+/// Dispatches one email to `address`; `tag` keeps each send its own intent.
+fn send_to(
+    vault: &Vault,
+    (actor, identity_ref): (EntityId, EntityId),
+    address: &str,
+    tag: &str,
+    sink: &mut RecordingExecutor,
+) -> Result<OutboundDispatchOutcome, Box<dyn std::error::Error>> {
+    let mut request = qualification_request("email", "send", actor, tag)
+        .channel_identity_ref(identity_ref)
+        .counterparty_ref(address);
+    request.intent.target = address.to_owned();
+    Ok(vault.dispatch_outbound_intent(request, sink)?.outcome)
+}
+
+/// F06: an inbound STOP holds a send to its party from the moment it is
+/// recorded, before any projector pass; the pass keeps it held, and only the
+/// owner's clear lets the next send out.
+#[test]
+fn an_inbound_stop_holds_sends_from_arrival_until_the_owners_clear()
+-> Result<(), Box<dyn std::error::Error>> {
+    let address = "stopped@example.com";
+    let (_tmp, vault, actor, identity_ref) = stop_hold_sender(address)?;
+    let sender = (actor, identity_ref);
+    let mut sink = RecordingExecutor::default();
+    crate::comm::record_comm_inbound_stop(&vault, address, "email", 30)?;
+    let before_pass = send_to(&vault, sender, address, "stop:before-pass", &mut sink)?;
+    assert_eq!(
+        before_pass,
+        OutboundDispatchOutcome::Held,
+        "STOP not yet projected"
+    );
+    crate::comm::run_comm_projector(&vault)?;
+    let after_pass = send_to(&vault, sender, address, "stop:after-pass", &mut sink)?;
+    assert_eq!(after_pass, OutboundDispatchOutcome::Held, "STOP projected");
+    assert!(sink.calls.is_empty(), "a STOP crossed the wire");
+
+    crate::comm::request_opt_out_clear(&vault, address, "email", 60)?;
+    let human = crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Human);
+    crate::comm::approve_pending_opt_out_clear(&vault, address, "email", human, 61)?;
+    let cleared = send_to(&vault, sender, address, "stop:cleared", &mut sink)?;
+    assert_eq!(cleared, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls.len(), 1);
+    Ok(())
+}
+
+/// F06 R2-F5: the contact row a STOP's projection writes is a cache; once a
+/// supported drop removes it, the standing STOP still holds the send.
+#[test]
+fn a_projected_stop_holds_sends_after_the_contact_cache_is_dropped()
+-> Result<(), Box<dyn std::error::Error>> {
+    let address = "dropped@example.com";
+    let (_tmp, vault, actor, identity_ref) = stop_hold_sender(address)?;
+    crate::comm::record_comm_inbound_stop(&vault, address, "email", 30)?;
+    crate::comm::run_comm_projector(&vault)?;
+    crate::counterparty_contact::drop_contact_cache_row(&vault, &entity(0x84))?;
+    let mut sink = RecordingExecutor::default();
+    let outcome = send_to(&vault, (actor, identity_ref), address, "drop", &mut sink)?;
+    assert_eq!(outcome, OutboundDispatchOutcome::Held);
+    assert!(sink.calls.is_empty(), "a STOP crossed the wire");
+    Ok(())
+}
+
+/// F06: a STOP another vault already projected reaches this one by sync with
+/// `projected` set, and holds this vault's sends before its own pass.
+#[cfg(feature = "sync")]
+#[test]
+fn a_synced_projected_stop_holds_sends_before_the_replicas_pass()
+-> Result<(), Box<dyn std::error::Error>> {
+    let address = "synced@example.com";
+    let (_origin_tmp, origin) = temp_vault();
+    crate::comm::record_comm_inbound_stop(&origin, address, "email", 30)?;
+    crate::comm::run_comm_projector(&origin)?;
+    let party = crate::comm::resolve_or_create_comm_party(&origin, address)?;
+    let stops = origin.entities_by_type(crate::registry::ENTITY_TYPE_COMM_RECORD)?;
+    assert_eq!(stops.len(), 1, "one STOP event");
+
+    let (_tmp, replica, actor, identity_ref) = stop_hold_sender(address)?;
+    for id in [party, stops[0]] {
+        let raw = origin.get_raw(&id)?.expect("origin row");
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).expect("row header");
+        crate::sync::replay::replay_entity(
+            &replica,
+            crate::sync::replay::ReplicatedEntity {
+                id,
+                entity_type: header.entity_type,
+                occurred: crate::temporal::TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                learned_at: header.learned_at,
+                body: &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            },
+            crate::sync::client::ImportTier::OwnDevice,
+        )?;
+    }
+    let mut sink = RecordingExecutor::default();
+    let outcome = send_to(
+        &replica,
+        (actor, identity_ref),
+        address,
+        "synced",
+        &mut sink,
+    )?;
+    assert_eq!(outcome, OutboundDispatchOutcome::Held);
+    assert!(sink.calls.is_empty(), "a synced STOP crossed the wire");
+    Ok(())
+}
