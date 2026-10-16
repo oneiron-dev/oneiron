@@ -273,8 +273,27 @@ Beside sittings, the Dreamer's wake policy (ARCH-0026) wakes its three
 recipes from the vault's wake-policy row: Continuous after landed turns,
 Weave on accumulation, a quiet window or the longest wait, and Nightly on its
 cadence. Continuous reads new turns through the sieve. Nightly queues the
-vault cleanup pass and the Coach's retrieval tune. Weave's input waits in the
-policy outbox for its recipe body. Each wake waits for no running chat turn,
+vault cleanup pass, the Coach's nightly jobs, and the Dreamer's curator and
+harness audit. Weave's input waits in the policy outbox for its recipe body.
+
+The curator grades the Dreamer's own aged consolidations and files the next
+demotion rung for each as a proposal; the harness audit scores the Dreamer's
+recorded tuning config (its role models, prompt hash and pass dials, plus the
+Coach's retrieval weights) by how often you accepted its reviewed proposals,
+and files a retune proposal naming the surfaces a backbone change or a score
+drop implicates. Both land in the owner run tray (`/v1/owner/runs`), one
+run per night. Approve a curator run and its next pass applies each demotion
+whose target is unchanged since grading; a retune proposal is advice only and
+changes nothing.
+
+The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
+detectors (refused Dreamer consolidations, consent storms and denials,
+per-actor write drift) over the last day of Gate receipts, and the read-side
+pass runs the retrieval-miss detector. Each run is signed by the scheduled
+detector instance, and a run that does not verify stores nothing. A retrieval
+miss files a proposed reindex and a refused consolidation a proposed retry,
+through the production healer host (`Vault::healer_proposal`); nothing applies
+them. Each wake waits for no running chat turn,
 no running workflow and `idle_secs` of quiet since the last turn. A peer's sync apply wakes the
 Dreamer too, so turns another host wrote are read without waiting for a local
 one.
