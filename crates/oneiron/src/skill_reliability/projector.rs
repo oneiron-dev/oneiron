@@ -1,80 +1,67 @@
-//! Projecting the `skill.reliability` claim from the outcome ledger, including the imported base.
+//! Project attributed skill outcomes into the shared learning.reliability cells.
 
-use std::collections::HashMap;
-
-use rmpv::Value;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::Vault;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
+use crate::learning::evidence::{EVIDENCE, cells_for_subject_in_txn};
+use crate::learning::project::project_cell_in_txn;
+use crate::learning::{Anchor, EvidenceSource, LearningCell, LearningEvidence, Observation};
+use crate::receipt::ReceiptRecord;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
 
-use super::codec::{KEY_SCHEMA_VERSION, decode_value, encode_value, invalid, map_u64};
-use super::floor::floor_check_in_txn;
+use super::codec::invalid;
 use super::ledger::{
-    ExecutorArm, OutcomeRef, outcome_is_local, receipt_executor, receipt_manifest_names_skill,
-    record_outcome_in_txn, tally_outcomes,
+    projection_outcomes_in_txn, receipt_executor, receipt_manifest_names_skill,
+    record_outcome_in_txn,
 };
-use super::posterior::{
-    KEY_ALPHA, KEY_BETA, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
-};
+use super::posterior::SkillReliabilityPosterior;
+use super::priors::ensure_prior_in_txn;
 use super::provenance::skill_reliability_prior;
-use super::read::{active_reliability_heads_in_txn, validate_executor};
-use crate::side_table::{self, Raw, RawValue, SideTable};
+use super::read::{
+    SkillReliabilityQuery, posterior_from_estimate, resolved_estimate_in_txn, validate_executor,
+};
 
-/// The §G.1 predicate this module projects. Reserved `skill.*` namespace:
-/// public claim writes are rejected, and the rows land through the
-/// engine-owned reserved door.
-pub const PREDICATE_SKILL_RELIABILITY: &str = "skill.reliability";
+pub const PREDICATE_SKILL_RELIABILITY: &str = crate::learning::PREDICATE_LEARNING_RELIABILITY;
 
-/// Imported (alpha, beta) reliability base. Key: id16(skill).
-///
-/// The α, β a synced claim carried that this vault's outcome ledger cannot
-/// reproduce. Node-local like the ledger it completes — this row is a record of
-/// what arrived, not a fact about the skill, so it never travels.
-const IMPORTED_BASE: SideTable<EntityId, ImportedBaseRow, Raw> =
-    SideTable::new(&side_table::SKILL_RELIABILITY_IMPORTED_BASE);
+/// Receipt task placement: JSON {node_id, tree_version}. Missing is invalid.
+pub const FIELD_SKILL_TYPE_REF: &str = "typeRef";
+/// Receipt anchor: a serialized learning::Anchor, not agent agreement.
+pub const FIELD_SKILL_LEARNING_ANCHOR: &str = "learning.anchor";
+/// The existing attempt success lane measures this axis unless explicitly stamped.
+pub const SKILL_OUTCOME_AXIS: &str = "quality";
 
-/// The same imported base for a named executor's arm.
-const PAIRED_IMPORTED_BASE: SideTable<ExecutorArm, ImportedBaseRow, Raw> =
-    SideTable::new(&side_table::SKILL_RELIABILITY_PAIRED_IMPORTED_BASE);
-
-/// [`IMPORTED_BASE`]'s row: the posterior plus its own leading schema-version byte, the byte
-/// layout [`write_imported_base_in_txn`] has always spelled.
-struct ImportedBaseRow(SkillReliabilityPosterior);
-
-impl RawValue for ImportedBaseRow {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        let row = Value::Map(vec![
-            (
-                Value::from(KEY_SCHEMA_VERSION),
-                Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
-            ),
-            (Value::from(KEY_ALPHA), Value::F32(self.0.alpha)),
-            (Value::from(KEY_BETA), Value::F32(self.0.beta)),
-        ]);
-        Ok(encode_value(&row)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
-        let value = decode_value(bytes)?;
-        if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
-            return Err(invalid("unsupported skill reliability imported-base schema").into());
-        }
-        Ok(Self(SkillReliabilityPosterior::from_value(&value)?))
-    }
+pub(super) fn receipt_query(receipt: &ReceiptRecord) -> Result<SkillReliabilityQuery> {
+    let type_ref = serde_json::from_str(
+        receipt
+            .fields
+            .get(FIELD_SKILL_TYPE_REF)
+            .ok_or(invalid("a skill outcome requires its task typeRef"))?,
+    )
+    .map_err(|_| invalid("invalid skill receipt typeRef"))?;
+    let type_parents = receipt
+        .fields
+        .get("typeParents")
+        .map(|raw| serde_json::from_str(raw))
+        .transpose()
+        .map_err(|_| invalid("invalid skill receipt type parents"))?
+        .unwrap_or_default();
+    let query = SkillReliabilityQuery {
+        type_ref,
+        axis: receipt
+            .fields
+            .get("axis")
+            .cloned()
+            .unwrap_or_else(|| SKILL_OUTCOME_AXIS.to_owned()),
+        type_parents,
+    };
+    query.validate()?;
+    Ok(query)
 }
 
-// ---------------------------------------------------------------------------
-// Projector
-// ---------------------------------------------------------------------------
-
-/// Projects `skill.reliability` over one SK-04 attribution pass.
+/// Projects `learning.reliability` over one SK-04 attribution pass.
 ///
 /// Records the defect losses those judgments carry and re-projects every skill
 /// they touched, returning those skills in first-seen order. Lapse and
@@ -88,7 +75,7 @@ impl RawValue for ImportedBaseRow {
 ///
 /// **Every judgment is re-grounded here, not trusted.** [`AttributionJudgment`]
 /// is a public type with public fields, so the argument is caller-owned data —
-/// and this function authors reserved `skill.*` truth through the engine-owned
+/// and this function authors reserved `learning.*` truth through the engine-owned
 /// door. So a row counts only if it IS the row ONE-1737's projector persisted
 /// at that sequence (`attribution_judgments` is the stack seam, and the seam is
 /// over PERSISTED judgments) and its citation resolves to a real pack receipt
@@ -191,23 +178,18 @@ pub fn project_skill_reliability(
     Ok(projected)
 }
 
-/// Re-projects the legacy unknown-executor arm from the outcome ledger.
-/// Named executor wins use [`project_skill_reliability_for_executor`].
-///
-/// The entry point for skills whose evidence is wins only — a skill that has
-/// never been blamed still has a posterior, and it is not the attribution
-/// projector's job to say so.
+/// An unqualified projection cannot invent an executor or task placement.
 pub fn project_skill_reliability_for(
-    vault: &Vault,
-    skill: &EntityId,
-    at: u64,
+    _vault: &Vault,
+    _skill: &EntityId,
+    _at: u64,
 ) -> Result<SkillReliabilityPosterior> {
-    let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn_grouped(|wtxn| project_in_txn(vault, wtxn, skill, None, prior, at))
+    Err(invalid(
+        "skill reliability projection requires an executor revision",
+    ))
 }
 
-/// Reprojects the named executor's arm; A/B, cutover and held-out runs all
-/// credit this pair through their stamped terminal receipt, never a pooled arm.
+/// Re-projects this executor's attributed receipts into their separate typed cells.
 pub fn project_skill_reliability_for_executor(
     vault: &Vault,
     skill: &EntityId,
@@ -216,244 +198,142 @@ pub fn project_skill_reliability_for_executor(
 ) -> Result<SkillReliabilityPosterior> {
     validate_executor(executor)?;
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn_grouped(|wtxn| {
-        project_in_txn(vault, wtxn, skill, Some(executor), prior, at)
-    })
+    vault.with_write_txn_grouped(|txn| project_in_txn(vault, txn, skill, Some(executor), prior, at))
 }
 
 pub(super) fn project_in_txn(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
     executor: Option<&str>,
     prior: SkillReliabilityPosterior,
     at: u64,
 ) -> Result<SkillReliabilityPosterior> {
-    // A head awaiting its owner's answer is neither folded, compared nor
-    // superseded: it stays as it is until the answer lets it in.
-    let mut heads = Vec::new();
-    for head in active_reliability_heads_in_txn(vault, wtxn, skill, executor)? {
-        if claim_consolidation_eligible_in_txn(
-            &vault.store,
-            wtxn,
-            &head.0,
-            ConsolidationReader::SkillReliabilityProjection,
-        )? {
-            heads.push(head);
+    let executor = executor.ok_or(invalid("skill reliability requires an executor revision"))?;
+    validate_executor(executor)?;
+    let outcomes = projection_outcomes_in_txn(vault, txn, skill, executor)?;
+    let managed: BTreeSet<_> = outcomes
+        .iter()
+        .map(|(receipt, _)| receipt.clone())
+        .collect();
+    let mut judges = BTreeMap::new();
+    for judgment in crate::skill_attribution::attribution_judgments_in_txn(vault, txn)? {
+        if judgment.subject == *skill && judgment.verdict == AttributionVerdict::SkillDefect {
+            let judge =
+                crate::skill_attribution::judgment_judge_in_txn(vault, txn, judgment.sequence)?;
+            for receipt in judgment.evidence_receipts {
+                judges.insert(receipt, judge.clone());
+            }
         }
     }
-    let base = projection_base_in_txn(vault, wtxn, skill, executor, prior, &heads)?;
-    let tally = tally_outcomes(vault, wtxn, skill, executor)?;
-    let posterior = tally.posterior(base);
-    let evidence = Value::Array(
-        tally
-            .cited
-            .iter()
-            .map(|receipt| Value::from(receipt.as_str()))
-            .collect(),
-    );
-
-    // Convergence, not just currency: ONE head that already says exactly this
-    // is the no-op case, but TWO heads is a fork that must collapse even when
-    // the winning value is unchanged.
-    let unchanged = match heads.as_slice() {
-        [(_, body, _)] => {
-            body.value == posterior_value(posterior, executor)
-                && body.evidence.as_ref() == Some(&evidence)
-        }
-        _ => false,
-    };
-    if !unchanged {
-        let claim_id = vault.store.clock.entity_id()?;
-        let mut body = ClaimBody::new(
-            PREDICATE_SKILL_RELIABILITY,
-            ClaimSubject::Entity(*skill),
-            posterior_value(posterior, executor),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.evidence = Some(evidence);
-        body.source = Some(ClaimSource::Observed);
-        vault.put_reserved_claim_in_txn(
-            wtxn,
-            &claim_id,
-            &body,
-            TimeRange { start: at, end: at },
-            at,
-        )?;
-        // EVERY active head is superseded, not just the first one found.
-        // `EntityId::now()` is per-replica unique, so two replicas that both
-        // projected this skill hold two distinct claim entities; after a sync
-        // both are Active, and superseding one of them leaves the other active
-        // forever. Same shape as the scan-verdict precedent in `skill_hub`,
-        // including its `superseded_at` clamp: `supersede_reserved_claim_in_txn`
-        // re-Puts the old row over `{start: old_start, end: now}`, and an
-        // out-of-order event time would make that range invalid and roll the
-        // whole transaction back — permanently, since the retry re-derives the
-        // same `at`.
-        for (head_id, _, head_start) in &heads {
-            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, at.max(*head_start))?;
-        }
-    }
-
-    // Cache follows truth, in the same transaction that moved truth.
-    // A scalar record cache cannot represent multiple executor arms. Preserve
-    // its legacy/unknown reading; named selection reads pair claims directly.
-    if executor.is_none() {
-        vault.refresh_skill_confidence_cache_in_txn(
-            wtxn,
-            skill,
-            posterior.mean(),
-            TimeRange { start: at, end: at },
-            at,
-        )?;
-    }
-    floor_check_in_txn(
-        vault,
-        wtxn,
-        skill,
-        executor,
-        posterior,
-        attributed_outcomes(prior, posterior),
-        at,
-    )?;
-    Ok(posterior)
-}
-
-/// The α, β the local outcome ledger is folded ON TOP of.
-///
-/// Sync carries entities, edges and tombstones — `vault_meta` outcome rows
-/// stay node-local, so a replica that receives another's reliability CLAIM
-/// receives the posterior but none of the outcomes underneath it. Recomputing
-/// `prior + local tally` and superseding that claim would DESTROY the other
-/// replica's history with one local loss.
-///
-/// So a head citing receipts this vault holds no outcome rows for is history
-/// this ledger cannot reproduce: its α, β becomes the base, and the local tally
-/// folds onto it. The base is persisted (node-local, like the ledger it
-/// completes) because the head that carried it is superseded moments later —
-/// and because the claim body is pinned to `{alpha, beta}`, so it has nowhere
-/// else to live. Claims THIS replica writes cite only local receipts, so they
-/// never re-enter as a base and the fold cannot double-count itself.
-///
-/// The honest bound: this converges history INTO a replica, not between two
-/// replicas that each attribute outcomes the other never sees. Cross-replica
-/// exactness needs per-outcome identity on the wire (the outcome rows
-/// themselves), which is a sync-scope change, not a projector one.
-fn projection_base_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    skill: &EntityId,
-    executor: Option<&str>,
-    prior: SkillReliabilityPosterior,
-    heads: &[(EntityId, ClaimBody, u64)],
-) -> Result<SkillReliabilityPosterior> {
-    let mut base = read_imported_base_in_txn(vault, wtxn, skill, executor)?;
-    let mut imported = None;
-    for (_, body, _) in heads {
-        if !cites_receipts_absent_locally(vault, wtxn, skill, executor, body)? {
-            continue;
-        }
-        let candidate = SkillReliabilityPosterior::from_value(&body.value)?;
-        // The richest head wins: more pseudo-observations is strictly more
-        // history, and picking by weight is order-independent where picking
-        // by arrival is not.
-        if base.is_none_or(|held| candidate.observations() > held.observations()) {
-            base = Some(candidate);
-            imported = Some(candidate);
-        }
-    }
-    if let Some(imported) = imported {
-        write_imported_base_in_txn(vault, wtxn, skill, executor, imported)?;
-    }
-    Ok(base.unwrap_or(prior))
-}
-
-/// True when the claim rests on at least one receipt the local outcome ledger
-/// has no row for — the mark of a posterior projected somewhere else.
-fn cites_receipts_absent_locally(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    skill: &EntityId,
-    executor: Option<&str>,
-    body: &ClaimBody,
-) -> Result<bool> {
-    let Some(Value::Array(cited)) = body.evidence.as_ref() else {
-        return Ok(false);
-    };
-    for receipt in cited {
-        let Some(receipt) = receipt.as_str() else {
+    let mut desired: BTreeMap<LearningCell, (SkillReliabilityQuery, Vec<LearningEvidence>)> =
+        BTreeMap::new();
+    for (receipt_ref, outcome) in &outcomes {
+        let Some(outcome) = outcome else {
             continue;
         };
-        if !outcome_is_local(vault, rtxn, &OutcomeRef::new(skill, executor, receipt))? {
-            return Ok(true);
+        let receipt = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, receipt_ref)?
+            .ok_or(invalid("skill reliability receipt disappeared"))?;
+        let query = receipt_query(&receipt)?;
+        let cell = query.cell(*skill, executor)?;
+        // A routed failure or successful attempt alone is not an anchor.
+        // Keep its attribution record, but mint no numerical claim from it.
+        let Some(raw_anchor) = receipt.fields.get(FIELD_SKILL_LEARNING_ANCHOR) else {
+            continue;
+        };
+        let anchor: Anchor = serde_json::from_str(raw_anchor)
+            .map_err(|_| invalid("invalid skill receipt learning anchor"))?;
+        let source = EvidenceSource::Anchored(anchor);
+        if !source
+            .admit()?
+            .feeds(crate::learning::LearningPredicate::Reliability)
+        {
+            return Err(invalid("skill reliability requires a performance anchor"));
+        }
+        let judge = judges
+            .get(receipt_ref)
+            .cloned()
+            .flatten()
+            .or_else(|| receipt.fields.get("judge").cloned());
+        let mut evidence = LearningEvidence::anchored(
+            receipt_ref.clone(),
+            receipt.occurred_at,
+            anchor,
+            Observation::Success(outcome.win),
+        );
+        evidence.weight = if outcome.win {
+            1.0
+        } else {
+            f64::from(outcome.loss)
+        };
+        evidence.on_judge_model =
+            receipt.fields.get("judge.model").map(String::as_str) == Some(executor);
+        evidence.judge = judge;
+        desired
+            .entry(cell)
+            .or_insert_with(|| (query, Vec::new()))
+            .1
+            .push(evidence);
+    }
+
+    // Amendments and displaced verdicts replace an attempt's evidence, never
+    // add a second run. Other learning producers' receipt rows are untouched.
+    let mut changed = BTreeSet::new();
+    for row in cells_for_subject_in_txn(vault, txn, skill)? {
+        if row.cell.predicate != crate::learning::LearningPredicate::Reliability
+            || row.cell.executor.as_deref() != Some(executor)
+        {
+            continue;
+        }
+        let digest = row.cell.digest();
+        for ((_, receipt), _) in EVIDENCE.scan_from(&vault.store, txn, &digest)? {
+            if managed.contains(&receipt)
+                && !desired
+                    .get(&row.cell)
+                    .is_some_and(|(_, rows)| rows.iter().any(|row| row.receipt == receipt))
+            {
+                EVIDENCE.delete(&vault.store, txn, &(digest, receipt))?;
+                changed.insert(digest);
+            }
         }
     }
-    Ok(false)
-}
-
-fn read_imported_base_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    skill: &EntityId,
-    executor: Option<&str>,
-) -> Result<Option<SkillReliabilityPosterior>> {
-    let row = match executor {
-        None => IMPORTED_BASE.get(&vault.store, rtxn, skill)?,
-        Some(executor) => {
-            PAIRED_IMPORTED_BASE.get(&vault.store, rtxn, &ExecutorArm::new(skill, executor))?
+    for (cell, (query, evidence)) in desired {
+        ensure_prior_in_txn(vault, txn, &cell, &query.type_parents)?;
+        for row in evidence {
+            crate::learning::record_evidence_in_txn(vault, txn, &cell, &row, at)?;
         }
-    };
-    Ok(row.map(|row| row.0))
-}
-
-fn write_imported_base_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    skill: &EntityId,
-    executor: Option<&str>,
-    base: SkillReliabilityPosterior,
-) -> Result<()> {
-    let row = ImportedBaseRow(base);
-    match executor {
-        None => IMPORTED_BASE.put(&vault.store, wtxn, skill, &row),
-        Some(executor) => {
-            PAIRED_IMPORTED_BASE.put(&vault.store, wtxn, &ExecutorArm::new(skill, executor), &row)
-        }
+        changed.remove(&cell.digest());
     }
-}
-
-pub(super) fn posterior_value(
-    posterior: SkillReliabilityPosterior,
-    executor: Option<&str>,
-) -> Value {
-    let mut value = posterior.to_value();
-    if let (Value::Map(entries), Some(executor)) = (&mut value, executor) {
-        entries.push((Value::from("executor"), Value::from(executor)));
+    for digest in changed {
+        project_cell_in_txn(vault, txn, &digest, at)?;
     }
-    value
-}
-
-/// Attributed outcomes carried by a posterior: the pseudo-observation weight it
-/// holds ABOVE its prior.
-///
-/// Derived rather than counted, because the local outcome ledger is not the
-/// whole story on a replica — a synced posterior carries outcomes whose rows
-/// never travelled. Equals the local tally exactly whenever it is the whole
-/// story, so the pure-local reading is unchanged.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "float-to-int saturates in Rust; the weight is clamped non-negative first"
-)]
-pub(super) fn attributed_outcomes(
-    prior: SkillReliabilityPosterior,
-    posterior: SkillReliabilityPosterior,
-) -> u32 {
-    (posterior.observations() - prior.observations())
-        .round()
-        .max(0.0) as u32
+    let estimate = resolved_estimate_in_txn(vault, txn, skill, Some(executor))?;
+    let posterior = estimate
+        .as_ref()
+        .map(posterior_from_estimate)
+        .transpose()?
+        .unwrap_or(prior);
+    vault.refresh_skill_confidence_cache_in_txn(
+        txn,
+        skill,
+        posterior.mean(),
+        TimeRange { start: at, end: at },
+        at,
+    )?;
+    if let Some(estimate) = estimate {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let outcomes = estimate.runs as u32;
+        super::floor::floor_check_in_txn(
+            vault,
+            txn,
+            skill,
+            Some(executor),
+            posterior,
+            outcomes,
+            at,
+        )?;
+    }
+    Ok(posterior)
 }
 
 /// The ROUTED judgments ONE-1737 persisted, keyed by sequence.
