@@ -86,7 +86,7 @@ pub struct ExpectedSpend {
 impl ExpectedSpend {
     /// A tree's expected spend: the saturating sum. It is a prior if any node is.
     #[must_use]
-    pub fn sum<'a>(nodes: impl IntoIterator<Item = &'a Self>) -> Self {
+    pub fn sum(nodes: impl IntoIterator<Item = Self>) -> Self {
         let mut total = Self {
             units: 0,
             samples: 0,

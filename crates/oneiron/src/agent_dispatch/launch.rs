@@ -290,7 +290,7 @@ impl AgentDispatcher<'_> {
         if budget == Some(0) {
             return Err(invalid("a spawn budget is more than zero units"));
         }
-        let expected = ExpectedSpend::sum(nodes.iter().map(|node| &node.expected));
+        let expected = ExpectedSpend::sum(nodes.iter().map(|node| node.expected));
         let agent_count = u64::try_from(nodes.len()).unwrap_or(u64::MAX);
         // (cap view, reservation, units reserved, parent scope, most it may spend)
         let (cap, reserve, reserved_units, parent_scope, spendable) = match (tree, budget) {
