@@ -40,6 +40,7 @@ pub(crate) use failure_rules::{
 mod gap;
 mod judge_context;
 mod neighbourhood;
+pub(crate) mod nightly_merge;
 mod open_conflict;
 mod parallel;
 mod partition;
@@ -52,6 +53,7 @@ mod roles;
 pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;
+mod sieve_attempt;
 mod step_charge;
 mod support;
 mod turn_text;

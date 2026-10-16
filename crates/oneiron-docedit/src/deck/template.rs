@@ -3,9 +3,9 @@
 //! take. Template import keeps masters, layouts and themes opaque (ARCH-0077,
 //! "Creation operation"); this view only reads them.
 use super::graph::{A, Graph, P, child, path};
-use super::resolve::{Layer, SlideContext, attr};
+use super::resolve::{Found, Layer, SlideContext, attr};
 use super::{DeckError, Placeholder, ShapeView, Value, shapes};
-use crate::ooxml::DOCUMENT_RELATIONSHIPS;
+use crate::ooxml::{DOCUMENT_RELATIONSHIPS, XmlTree};
 use crate::retained_opc::Package;
 
 /// Every master in presentation order and the layouts each one lists.
@@ -50,6 +50,28 @@ pub struct TextStyle {
     pub size: Value<u32>,
     /// `marL`, in EMU.
     pub indent: Value<i64>,
+    /// `indent`: the first line's offset from `marL`, in EMU; negative hangs.
+    pub first_line: Value<i64>,
+    /// `a:defRPr/@b`.
+    pub bold: Value<bool>,
+    /// `a:defRPr/a:latin/@typeface`, theme references such as `+mn-lt` kept
+    /// as written.
+    pub typeface: Value<String>,
+    /// `a:lnSpc`.
+    pub line_spacing: Value<Spacing>,
+    /// `a:spcBef`.
+    pub space_before: Value<Spacing>,
+    /// `a:spcAft`.
+    pub space_after: Value<Spacing>,
+}
+
+/// A paragraph spacing: a share of one single-spaced line, or points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Spacing {
+    /// `a:spcPct`, in thousandths of a percent.
+    Percent(i64),
+    /// `a:spcPts`, in hundredths of a point.
+    Points(i64),
 }
 
 impl TemplateView {
@@ -188,8 +210,59 @@ fn walk(context: &SlideContext<'_>) -> Vec<ShapeView> {
 fn style(context: &SlideContext<'_>, layers: &[Layer<'_>], ph: Option<&Placeholder>) -> TextStyle {
     let chain = context.paragraph_layers(layers, ph, 1);
     let defaults = context.map_layers(&chain, |tree, node| child(tree, node, A, "defRPr"));
+    let latin = context.map_layers(&defaults, |tree, node| child(tree, node, A, "latin"));
     TextStyle {
         size: context.lookup(&defaults, attr("sz", |v| v.parse().ok()), None),
         indent: context.lookup(&chain, attr("marL", |v| v.parse().ok()), None),
+        first_line: context.lookup(&chain, attr("indent", |v| v.parse().ok()), None),
+        bold: context.lookup(
+            &defaults,
+            attr("b", |v| match v {
+                "1" | "true" => Some(true),
+                "0" | "false" => Some(false),
+                _ => None,
+            }),
+            Some(false),
+        ),
+        typeface: context.lookup(&latin, attr("typeface", |v| Some(v.to_owned())), None),
+        line_spacing: context.lookup(&chain, spacing("lnSpc"), None),
+        space_before: context.lookup(&chain, spacing("spcBef"), None),
+        space_after: context.lookup(&chain, spacing("spcAft"), None),
+    }
+}
+
+/// A spacing element's `a:spcPct` or `a:spcPts` value. A percentage may be
+/// written as thousandths or as a `%` string.
+fn spacing(element: &'static str) -> impl Fn(&XmlTree, usize) -> Option<Found<Spacing>> {
+    move |tree, node| {
+        let at = child(tree, node, A, element)?;
+        let (node, value) = if let Some(pct) = child(tree, at, A, "spcPct") {
+            let value = tree.nodes[pct]
+                .attr("val")
+                .and_then(|v| match v.strip_suffix('%') {
+                    Some(percent) => percent
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|p| p.is_finite() && (0.0..=13_200.0).contains(p))
+                        .map(|p| Spacing::Percent((p * 1000.0).round() as i64)),
+                    None => v.parse().ok().map(Spacing::Percent),
+                });
+            (pct, value)
+        } else {
+            let pts = child(tree, at, A, "spcPts")?;
+            (
+                pts,
+                tree.nodes[pts]
+                    .attr("val")
+                    .and_then(|v| v.parse().ok())
+                    .map(Spacing::Points),
+            )
+        };
+        Some(Found {
+            node,
+            attribute: Some("val"),
+            value,
+        })
     }
 }

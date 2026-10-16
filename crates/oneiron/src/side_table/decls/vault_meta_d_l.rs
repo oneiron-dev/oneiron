@@ -2,6 +2,13 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// The creation record of one deck made from a kept outline: born-from, template, slides,
+    /// write set and fit. Key: id16 (artifact).
+    DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
+    /// The design directions compiled from one kept outline. Key: id16 (outline note).
+    DECK_DESIGN_SPEC: VaultMeta b"deck:design_spec:v1:" Named;
+    /// A person's keep of one outline brief: frontier, exact bytes and hash. Key: id16 (note).
+    DECK_OUTLINE_KEEP: VaultMeta b"deck:outline_keep:v1:" Named;
     /// Marker that the one-time row-deletion-fence backfill from applied soft-delete markers has
     /// run. Key: ().
     DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw;
@@ -83,6 +90,10 @@ side_tables! {
     /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
     /// lists the same ones. Ids only, never their text. Key: id16.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
+    /// Atomic merge/narrative outputs for one nightly fan-in receipt. Key: id16.
+    DREAMER_NIGHTLY_MERGED: VaultMeta b"dreamer:nightly:merged:v1:" Named;
+    /// Promoted/attached proposal ids returned by one nightly child. Key: id16.
+    DREAMER_NIGHTLY_OUTPUT: VaultMeta b"dreamer:nightly:output:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
@@ -129,11 +140,15 @@ side_tables! {
     /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
     /// successors. Key: id16.
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
+    /// Sample audit grade per durable rung attempt. Key: id16.
+    DREAMER_SIEVE_AUDIT: VaultMeta b"dreamer:sieve:audit:v1:" Named;
     /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
     /// Key: id16(turn).
     DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;
     /// Where the continuous sieve stands on the TURN timeline. Key: ().
     DREAMER_SIEVE_CURSOR: VaultMeta b"dreamer:sieve:cursor:v1" Named;
+    /// Retained original cheap span readings, for sampled expensive-path audits. Key: turn id16 + span hash32.
+    DREAMER_SIEVE_HISTORY: VaultMeta b"dreamer:sieve:history:v1:" Named;
     /// A TURN owed a new sieve read (new, changed words or saved tags). Key: id16(turn).
     DREAMER_SIEVE_OWED: VaultMeta b"dreamer:sieve:owed:v1:" Raw;
     /// The sieve's interest queue, one span per row. Key: u32be(inverted score) + hash32(span).
@@ -168,11 +183,16 @@ side_tables! {
     DREAMER_WAKE_STATE: VaultMeta b"dreamer:wake-policy:state:v1" LegacyJson;
     /// Digest (32 bytes) of the last queued wake projector image. Key: ().
     DREAMER_WAKE_PROJECTION: VaultMeta b"dreamer:wake:projection:v1" Raw;
+    /// Owner-authored wake recipe budgets and rung instructions. Key: ().
+    DREAMER_WAKE_RECIPE_POLICY: VaultMeta b"dreamer:wake:recipe_policy:v1" LegacyJson;
     /// Per-scope (micro/meso/macro) consolidation watermark: last learned_at/turn_id progress. Key:
     /// u8.
     DREAMER_WATERMARK: VaultMeta b"dreamer:watermark:v1:" Raw;
     /// Committed weave-recipe result bound to its pin, evidence and claim. Key: id16(attempt).
     DREAMER_WEAVE_RECIPE_RESULT: VaultMeta b"dreamer:weave:result:v1:" LegacyJson;
+    /// One compiled acting revision (a charter or brief revision compiled from one principal's
+    /// approved preferences) and its answer. Key: string (revision id, 64 hex).
+    EDIT_DISTANCE_ACTING_REVISION: VaultMeta b"edit_distance/acting_revision/v1\0" Named;
     /// Write-once Δ side-ledger row for one receipt: a captured edit-distance measurement (canonical
     /// JSON), or the literal marker "uncaptured" when capture was attempted and failed. Key: string.
     EDIT_DISTANCE_AMENDMENT_DELTA: VaultMeta b"edit_distance/amendment_delta/v1\0" Raw;
@@ -231,14 +251,26 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// A proposal retained beside its artifact until Keep or Discard: an edit proposal or a native
+    /// organ output. Key: id16 + hash32 (blake3 of the proposal ref).
+    EDIT_SETTLE_PENDING_PROPOSAL: VaultMeta b"edit_settle:pending:v1:" Named;
     /// Stranded edit proposal. Key: id16 + hash32.
     EDIT_SETTLE_STRANDED_PROPOSAL: VaultMeta b"edit_settle:stranded:v1:" Named;
+    /// The once-only undo of one kept proposal: the version it restored. Key: id16 + hash32.
+    EDIT_SETTLE_UNDO: VaultMeta b"edit_settle:undo:v1:" Named;
     /// The device family and runtime that computed the current embedding vector, outside the space
     /// identity (ARCH-0036). Key: id16.
     EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;
+    /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
+    /// row (OF-370). Key: space key16 + id16.
+    EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
+    /// Media kind slot to declared space id (OF-370). Key: one input-kind byte.
+    EMBEDDING_SLOT: VaultMeta b"embedding/slot/" Named;
+    /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
+    EMBEDDING_SPACE: VaultMeta b"embedding/space/" Named;
     /// Pointer from an entity to its owning document, plus generation/pending-update counters. Key:
     /// hex32.
     ENTITY_DOC_HEAD: VaultMeta b"entity_doc:v1:head:" Named;
@@ -296,6 +328,9 @@ side_tables! {
     FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// The owner's confidence scale for claims one federation peer sends, this device's local
+    /// truth (OF-149). Key: id16(peer principal).
+    FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
     FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.

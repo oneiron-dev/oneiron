@@ -38,6 +38,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) text_search: Option<(String, usize)>,
     pub(super) rank_profile: Option<crate::config::Bm25RankProfile>,
     pub(super) phonetic_search: Option<Vec<String>>,
+    /// Typed media queries, one ranked list per declared space (OF-370).
+    pub(super) media_search: Vec<super::media_channel::MediaQuery>,
     pub(super) temporal_search: Option<TemporalSearchConfig>,
     pub(super) ppr_search: Option<(Vec<EntityId>, u32)>,
     pub(super) ppr_expand: Option<(Vec<EntityId>, u32)>,
@@ -77,6 +79,7 @@ pub struct PipelineBuilder<'a> {
     /// selection's caller-supplied agent id. Bare `Vault::query` has none.
     pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
     pub(super) skill_executor: Option<String>,
+    pub(super) skill_reliability_query: Option<crate::skill_reliability::SkillReliabilityQuery>,
     pub(super) corpus_scope: CorpusScope,
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
@@ -103,6 +106,12 @@ pub struct PipelineBuilder<'a> {
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
+    /// The run's affect retrieval policy (OF-423): the vault's by default,
+    /// replaced per run with [`Self::affect_policy`].
+    pub(super) affect_policy: super::AffectRetrievalPolicy,
+    /// The query side of emotion congruence. When unset, a run bound to a
+    /// retrieval turn reads that turn's VAD annotation.
+    pub(super) query_affect: Option<crate::affect::Vad>,
     pub(super) skip_vector_rescore: bool,
     /// The no-match floors the run judges, hashes and records by, read once
     /// when it starts ([`Self::no_match_floors`]).
@@ -125,6 +134,7 @@ impl<'a> PipelineBuilder<'a> {
             text_search: None,
             rank_profile: None,
             phonetic_search: None,
+            media_search: Vec::new(),
             temporal_search: None,
             ppr_search: None,
             ppr_expand: None,
@@ -152,6 +162,7 @@ impl<'a> PipelineBuilder<'a> {
             active_world_selection: None,
             execution_actor: None,
             skill_executor: None,
+            skill_reliability_query: None,
             corpus_scope: CorpusScope::All,
             made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
@@ -172,6 +183,8 @@ impl<'a> PipelineBuilder<'a> {
             rerank: None,
             hyde: None,
             access_factor_overrides: None,
+            affect_policy: vault.config.affect_retrieval,
+            query_affect: None,
             skip_vector_rescore: false,
             no_match_floors: None,
             session: None,
@@ -188,11 +201,22 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     /// Selects the exact executor model@revision for skill reliability ranking.
-    /// Unspecified queries rank the unknown-executor arm, not another model's evidence.
+    /// Add skill_reliability_context to read measured cells. Untyped discovery
+    /// uses provenance only, never an unrelated task's evidence.
     pub fn skill_executor(mut self, model: impl Into<String>) -> Result<Self> {
         let model = model.into();
         crate::skill_reliability::validate_executor(&model)?;
         self.skill_executor = Some(model);
+        Ok(self)
+    }
+
+    /// Bind skill UCB ranking to the placement and axis the task will stamp.
+    pub fn skill_reliability_context(
+        mut self,
+        query: crate::skill_reliability::SkillReliabilityQuery,
+    ) -> Result<Self> {
+        query.validate()?;
+        self.skill_reliability_query = Some(query);
         Ok(self)
     }
 
@@ -337,6 +361,28 @@ impl<'a> PipelineBuilder<'a> {
     /// when `fast_dims` is not configured.
     pub fn skip_vector_rescore(mut self, skip: bool) -> Self {
         self.skip_vector_rescore = skip;
+        self
+    }
+
+    /// Searches one declared media space with a query vector its `query_kind` tower encoded
+    /// (OF-370). Each call is its own ranked list, fused on its own scale; `kinds` keeps only
+    /// those media kinds, every kind the space holds when empty. The space, tower and width
+    /// are checked when the run reads.
+    pub fn search_media(
+        mut self,
+        space_id: &str,
+        query_kind: crate::embed::InputKind,
+        vector: &[f32],
+        kinds: &[crate::embed::InputKind],
+        limit: usize,
+    ) -> Self {
+        self.media_search.push(super::media_channel::MediaQuery {
+            space_id: space_id.to_owned(),
+            query_kind,
+            vector: vector.to_vec(),
+            kinds: kinds.to_vec(),
+            limit,
+        });
         self
     }
 
@@ -597,6 +643,20 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn boost_contiguity(mut self) -> Self {
         self.apply_contiguity = true;
+        self
+    }
+
+    /// Replaces the vault's affect retrieval policy for this run. Validated
+    /// when the run starts.
+    pub fn affect_policy(mut self, policy: super::AffectRetrievalPolicy) -> Self {
+        self.affect_policy = policy;
+        self
+    }
+
+    /// The current turn's VAD, the query side of emotion congruence.
+    /// Validated when the run starts.
+    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+        self.query_affect = Some(vad);
         self
     }
 

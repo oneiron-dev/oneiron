@@ -66,8 +66,32 @@ impl<'a> ContextPackBuilder<'a> {
         self.pipeline = self.pipeline.skill_executor(model)?;
         Ok(self)
     }
+    /// Rank skills for this task's required placement and scored axis.
+    pub fn skill_reliability_context(
+        mut self,
+        query: crate::skill_reliability::SkillReliabilityQuery,
+    ) -> crate::Result<Self> {
+        self.pipeline = self.pipeline.skill_reliability_context(query)?;
+        Ok(self)
+    }
+
     pub fn retrieval_effort(mut self, effort: crate::memory::Effort, seeds: &[EntityId]) -> Self {
         self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
+        self
+    }
+    /// Adds one typed media-space list to this pack's retrieval (OF-370); see
+    /// [`crate::pipeline::PipelineBuilder::search_media`].
+    pub fn search_media(
+        mut self,
+        space_id: &str,
+        query_kind: crate::embed::InputKind,
+        vector: &[f32],
+        kinds: &[crate::embed::InputKind],
+        limit: usize,
+    ) -> Self {
+        self.pipeline = self
+            .pipeline
+            .search_media(space_id, query_kind, vector, kinds, limit);
         self
     }
     pub fn deadline(mut self, deadline: &'a crate::retrieval_depth::RetrievalDeadline) -> Self {
@@ -80,6 +104,18 @@ impl<'a> ContextPackBuilder<'a> {
         options: crate::rerank::RerankOptions,
     ) -> Self {
         self.pipeline = self.pipeline.rerank(reranker, options);
+        self
+    }
+
+    /// Replaces the vault's affect retrieval policy for this pack (OF-423).
+    pub fn affect_policy(mut self, policy: crate::pipeline::AffectRetrievalPolicy) -> Self {
+        self.pipeline = self.pipeline.affect_policy(policy);
+        self
+    }
+
+    /// The current turn's VAD, the query side of emotion congruence.
+    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+        self.pipeline = self.pipeline.query_affect(vad);
         self
     }
 

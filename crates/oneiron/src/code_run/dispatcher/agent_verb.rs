@@ -1,4 +1,4 @@
-//! Code mode's `self.memory.<verb>`: the run's write origin and the receipt a write keeps.
+//! Code mode's verb-table calls: the run's write origin and the receipt a write keeps.
 
 use serde_json::Value;
 

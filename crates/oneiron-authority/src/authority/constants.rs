@@ -68,11 +68,9 @@ pub const OP_KIND_GENESIS: &str = "genesis";
 pub const OP_KIND_ENROLL_DEVICE: &str = "enroll_device";
 pub const OP_KIND_REVOKE_DEVICE: &str = "revoke_device";
 pub const OP_KIND_ROTATE_KEY: &str = "rotate_key";
-pub const OP_KIND_SET_TIER_FLOOR: &str = "set_tier_floor";
 pub const OP_KIND_RE_ROOT: &str = "re_root";
 pub const OP_KIND_FEDERATION_CONFIRM: &str = "federation_confirm";
 pub const OP_KIND_CRITICAL_WRITE_CONFIRM: &str = "critical_write_confirm";
-pub const OP_KIND_VETO_PENDING_WIDEN: &str = "veto_pending_widen";
 pub const OP_KIND_FEDERATION_LIFECYCLE: &str = "federation_lifecycle";
 pub const OP_KIND_BIND_ACTOR: &str = "bind_actor";
 pub const OP_KIND_REBIND_ACTOR: &str = "rebind_actor";
@@ -107,25 +105,6 @@ pub const MAX_PACT_SCOPE_BYTES: usize = 4096;
 pub const MAX_PARENTS: usize = 32;
 pub const MAX_COSIGNS: usize = 8;
 pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 4096;
-
-/// Lower bound (24h) accepted for the legacy signed
-/// `Genesis.pending_widen_delay_secs` field.
-///
-/// Wire validation only: the field has no fold effect. The delayed-widen
-/// ceremony it configured died 2026-08-05 (identity canon, "Device-key widen
-/// ceremony (dead 2026-08-05)"; ARCH-0040 ONE-AUTHLOG-F6); widening is owner
-/// action through the host and lands at once. The band is kept so old and new
-/// peers agree on which genesis entries are valid.
-pub const MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = 24 * 60 * 60;
-/// Upper bound (48h) accepted for the legacy signed
-/// `Genesis.pending_widen_delay_secs` field. Wire validation only.
-pub const MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = 48 * 60 * 60;
-/// Value new genesis entries write into the legacy
-/// `Genesis.pending_widen_delay_secs` field (and the value the legacy compact
-/// genesis encoding implies). No fold effect.
-pub const DEFAULT_PENDING_WIDEN_DELAY_SECS: u64 = MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS;
-const _: () = assert!(DEFAULT_PENDING_WIDEN_DELAY_SECS >= MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS);
-const _: () = assert!(DEFAULT_PENDING_WIDEN_DELAY_SECS <= MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS);
 
 pub const OP_KIND_SLIP_MINT: &str = "slip_mint";
 pub const OP_KIND_SLIP_REVOKE: &str = "slip_revoke";

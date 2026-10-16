@@ -572,6 +572,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 "executor actor is not the queued Dreamer authority",
             ));
         }
+        if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
+            return self.run_nightly_merge(attempt, ctx).await;
+        }
+        if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::CONTINUE_ATTEMPT {
+            return crate::dreamer_wake::nightly::continue_nightly(attempt, ctx);
+        }
+        if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
+            return self.run_sieve_rungs(attempt, ctx).await;
+        }
         // The session-end miner carries its own pinned `{session}` payload,
         // not a partition map. Reject a supplied branch scope explicitly,
         // then let the miner's codec validate the exact session ref below.

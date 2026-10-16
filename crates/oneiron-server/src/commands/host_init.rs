@@ -9,6 +9,10 @@ const TEMPLATES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../deploy/systemd/oneiron.service"),
     ),
     (
+        "systemd/oneiron.socket",
+        include_bytes!("../../../../deploy/systemd/oneiron.socket"),
+    ),
+    (
         "launchd/com.oneiron.server.plist",
         include_bytes!("../../../../deploy/launchd/com.oneiron.server.plist"),
     ),

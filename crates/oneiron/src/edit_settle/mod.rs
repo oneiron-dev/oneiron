@@ -40,6 +40,15 @@
 //! `proposed`, not `selected`. No version is appended and no anchor moves.
 //! The old ref is consumed once; explicit reconciliation uses a new ref.
 //!
+//! # The proposal landing and undo (ARCH-0078, ARCH-0077)
+//!
+//! A proposal can wait beside its artifact under its ref until a person keeps
+//! or discards it ([`Vault::retain_edit_proposal`](crate::Vault::retain_edit_proposal), [`Vault::keep_pending_proposal`](crate::Vault::keep_pending_proposal)).
+//! A native organ's export file waits the same way ([`Vault::propose_native_output`](crate::Vault::propose_native_output))
+//! and its Keep appends it as a version with its made_by. Undo after Keep
+//! ([`Vault::undo_kept_proposal`](crate::Vault::undo_kept_proposal)) is a new version, once per Keep; the settle
+//! token stays consumed.
+//!
 //! # Re-anchor on select (D2/D5)
 //!
 //! In the same transaction as the append, select replays the manifest's anchor
@@ -81,11 +90,17 @@
 
 mod codec;
 mod keys;
+mod pending;
 mod receipts;
 mod records;
 mod settle;
 mod stranded;
+mod undo;
+pub use pending::{
+    NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind, PendingProposalView,
+};
 pub use stranded::StrandedEditProposal;
+pub use undo::{KeepUndo, KeepUndoOutcome};
 
 pub use self::keys::{
     SETTLE_VERB_CLASS, SETTLED_ANCHOR_KEYS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,

@@ -81,8 +81,9 @@ impl StoredEstimateClaim {
     }
 
     pub(crate) fn from_value(value: &rmpv::Value) -> Result<Self> {
-        rmpv::ext::from_value(value.clone())
-            .map_err(|_| Error::InvalidClaimBody("a learning claim value is an estimate with its cell"))
+        rmpv::ext::from_value(value.clone()).map_err(|_| {
+            Error::InvalidClaimBody("a learning claim value is an estimate with its cell")
+        })
     }
 }
 
@@ -95,7 +96,9 @@ impl StoredEstimateClaim {
 pub(crate) fn validate_learning_claim_structure(body: &ClaimBody) -> Result<()> {
     let stored = StoredEstimateClaim::from_value(&body.value)?;
     if stored.kind != VALUE_KIND {
-        return Err(Error::InvalidClaimBody("a learning claim's value kind is estimate"));
+        return Err(Error::InvalidClaimBody(
+            "a learning claim's value kind is estimate",
+        ));
     }
     if stored.cell.predicate.as_str() != body.predicate {
         return Err(Error::InvalidClaimBody(
@@ -124,7 +127,8 @@ pub(crate) fn validate_learning_claim_structure(body: &ClaimBody) -> Result<()> 
 
 /// The window in force: the catalog half-life, in seconds.
 pub(crate) fn window_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Window> {
-    let days = learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_WINDOW_HALF_LIFE_DAYS)?;
+    let days =
+        learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_WINDOW_HALF_LIFE_DAYS)?;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let half_life = (days * DAY_SECS).round().max(1.0) as u64;
     Ok(Window { half_life })
@@ -164,7 +168,13 @@ pub(crate) fn fold_cell_in_txn(
         {
             w /= rate;
         }
-        let (observation, converted) = convert(&ev.observation, ev.judge.as_deref(), &conversions);
+        let (observation, converted) = if row.cell.predicate == LearningPredicate::Reliability
+            || ev.observation.form() != EstimateForm::Beta
+        {
+            convert(&ev.observation, ev.judge.as_deref(), &conversions)
+        } else {
+            (ev.observation.clone(), false)
+        };
         match (&mut tally, &observation) {
             (OwnTally::Beta { wins, losses }, Observation::Success(ok)) => {
                 if *ok {
@@ -173,7 +183,21 @@ pub(crate) fn fold_cell_in_txn(
                     *losses += w;
                 }
             }
-            (OwnTally::Mean { sum_w, sum_wx, sum_wxx }, Observation::Magnitude(x)) => {
+            // A converted binary score is fractional success mass, not a
+            // newly observed run. The original receipt still holds its bool.
+            (OwnTally::Beta { wins, losses }, Observation::Magnitude(score)) => {
+                let score = score.clamp(0.0, 1.0);
+                *wins += w * score;
+                *losses += w * (1.0 - score);
+            }
+            (
+                OwnTally::Mean {
+                    sum_w,
+                    sum_wx,
+                    sum_wxx,
+                },
+                Observation::Magnitude(x),
+            ) => {
                 *sum_w += w;
                 *sum_wx += w * x;
                 *sum_wxx += w * x * x;
@@ -219,15 +243,26 @@ pub(crate) fn fold_cell_in_txn(
     ))
 }
 
-/// Follows a score through the judge-swap conversions in force. A magnitude
-/// maps through each overlap score map; a pass/fail judgment is kept as it was.
+/// Follows a score through the judge-swap maps. Converted binary scores
+/// become fractional Beta mass while retaining their original run weight.
 fn convert<'a>(
     observation: &Observation,
     judge: Option<&'a str>,
     conversions: &'a BTreeMap<String, JudgeConversion>,
 ) -> (Observation, bool) {
-    let (Observation::Magnitude(mut x), Some(mut judge)) = (observation.clone(), judge) else {
+    let Some(mut judge) = judge else {
         return (observation.clone(), false);
+    };
+    let mut x = match observation {
+        Observation::Magnitude(x) => *x,
+        Observation::Success(ok) => {
+            if *ok {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        Observation::Category(_) => return (observation.clone(), false),
     };
     let mut converted = false;
     for _ in 0..MAX_CONVERSION_HOPS {
@@ -238,7 +273,11 @@ fn convert<'a>(
         judge = &conversion.to_judge;
         converted = true;
     }
-    (Observation::Magnitude(x), converted)
+    if converted {
+        (Observation::Magnitude(x), true)
+    } else {
+        (observation.clone(), false)
+    }
 }
 
 /// Re-projects one cell and writes its head: a new superseding claim when the
@@ -264,7 +303,12 @@ pub(crate) fn project_cell_in_txn(
 
     let stored = StoredEstimateClaim::new(&row.cell, &estimate);
     let value = stored.to_value()?;
-    let evidence = rmpv::Value::Array(cited.iter().map(|r| rmpv::Value::from(r.as_str())).collect());
+    let evidence = rmpv::Value::Array(
+        cited
+            .iter()
+            .map(|r| rmpv::Value::from(r.as_str()))
+            .collect(),
+    );
     let unchanged = match heads.as_slice() {
         [(_, body, _)] => body.value == value && body.evidence.as_ref() == Some(&evidence),
         _ => false,
@@ -285,13 +329,21 @@ pub(crate) fn project_cell_in_txn(
             wtxn,
             &claim_id,
             &body,
-            TimeRange { start: now, end: now },
+            TimeRange {
+                start: now,
+                end: now,
+            },
             now,
         )?;
         // Every active head goes, not just the first: two replicas that both
         // projected this cell hold two distinct heads after a sync.
         for (head_id, _, head_start) in &heads {
-            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, now.max(*head_start))?;
+            vault.supersede_reserved_claim_in_txn(
+                wtxn,
+                &claim_id,
+                head_id,
+                now.max(*head_start),
+            )?;
         }
     }
     cache_setting_fit_in_txn(vault, wtxn, &row.cell, Some(&estimate), now)?;
@@ -310,7 +362,9 @@ pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
         CELL.scan_keys(&vault.store, &rtxn, &[])?
     };
     for digest in &digests {
-        vault.with_write_txn_grouped(|wtxn| project_cell_in_txn(vault, wtxn, digest, now).map(|_| ()))?;
+        vault.with_write_txn_grouped(|wtxn| {
+            project_cell_in_txn(vault, wtxn, digest, now).map(|_| ())
+        })?;
     }
     Ok(digests.len())
 }
@@ -368,7 +422,11 @@ pub(crate) fn active_heads_in_txn(
     Ok(rows)
 }
 
-fn entity_header(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<EntityMetadataHeader> {
+fn entity_header(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EntityMetadataHeader> {
     let raw = vault
         .store
         .port_entity_record(txn, id)?
@@ -418,7 +476,10 @@ fn cache_setting_fit_in_txn(
         || cell.executor.is_some()
         || cell.axis.is_some()
         || cell.consent_scope.is_some()
-        || !cell.type_ref.as_ref().is_some_and(super::cell::TypeRef::is_root)
+        || !cell
+            .type_ref
+            .as_ref()
+            .is_some_and(super::cell::TypeRef::is_root)
     {
         return Ok(());
     }

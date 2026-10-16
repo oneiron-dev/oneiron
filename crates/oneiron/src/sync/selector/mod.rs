@@ -18,6 +18,7 @@ pub(in crate::sync) use document_admission::{
 mod edge;
 mod held_retire;
 mod note_admission;
+mod peer_confidence;
 mod scope;
 mod text_egress;
 pub(crate) use note_admission::admit_note_in_txn;
@@ -42,11 +43,13 @@ pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
-    encode_selector_vv_request, encode_sync_selector, filtered_window_doc, guest_share_envelope,
+    encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
+    guest_share_envelope,
     guest_share_envelope_body,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;
+pub use self::peer_confidence::{DEFAULT_FEDERATED_CONFIDENCE_SCALE, PeerConfidence};
 
 #[cfg(test)]
 use self::{authorize::*, codec::*};

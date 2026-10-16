@@ -46,9 +46,7 @@ impl VerifiedClaimTransition {
                 "transition requires exact claim put",
             ));
         };
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
@@ -92,11 +90,11 @@ impl VerifiedClaimTransition {
                 "transition requires exact claim put",
             ));
         };
-        let raw = store
-            .entities
-            .get(txn, predecessor.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, predecessor)?
             .ok_or(Error::EntityNotFound)?;
-        if id == predecessor || store.entities.get(txn, id.as_bytes())?.is_some() {
+        if id == predecessor
+            || crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some()
+        {
             return Err(Error::InvalidClaimBody("claim successor already exists"));
         }
         Ok(Self {
@@ -158,9 +156,7 @@ impl VerifiedClaimTransition {
         let BatchOp::Put { id, data, .. } = op else {
             return Err(Error::InvalidClaimBody("consent requires claim put"));
         };
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
@@ -214,9 +210,7 @@ impl VerifiedClaimTransition {
         let BatchOp::Put { id, data, .. } = op else {
             return Err(Error::InvalidClaimBody("consent edit requires claim put"));
         };
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
@@ -247,9 +241,7 @@ impl VerifiedClaimTransition {
         let BatchOp::Put { id, data, .. } = op else {
             return Err(Error::InvalidClaimBody("session merge requires claim put"));
         };
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
         let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
         let next = crate::claim::validate_claim_body_and_decode(data, false)?;
@@ -295,17 +287,17 @@ impl VerifiedClaimTransition {
         }
         let pinned = match self.successor_of {
             Some(predecessor) => {
-                if store.entities.get(txn, id.as_bytes())?.is_some() {
+                if crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some() {
                     return Ok(false);
                 }
                 predecessor
             }
             None => *id,
         };
-        Ok(store
-            .entities
-            .get(txn, pinned.as_bytes())?
-            .is_some_and(|raw| blake3::hash(&raw).as_bytes() == &self.prior_hash))
+        Ok(
+            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &pinned)?
+                .is_some_and(|raw| blake3::hash(&raw).as_bytes() == &self.prior_hash),
+        )
     }
 
     /// The predecessor a succession proof was derived from; `None` for an

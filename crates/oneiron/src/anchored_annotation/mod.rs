@@ -46,6 +46,7 @@
 //! its original version rather than lying about position. The op vocabulary
 //! ([`ReanchorOp`]) is a MINIMAL local representation — see its docs for the
 //! ARTL-3 reconciliation seam.
+mod anchor_text;
 mod codec;
 mod conversation;
 mod model;
@@ -54,7 +55,9 @@ mod pptx_settle;
 #[cfg(test)]
 mod pptx_tests;
 mod reanchor;
+mod recovery;
 mod threads;
+pub use self::recovery::{ReattachOffer, UnattachedThread};
 pub(crate) use threads::thread_brief_ref;
 
 pub(crate) use self::codec::{decode_locator, encode_locator};

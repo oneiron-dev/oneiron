@@ -146,7 +146,7 @@ impl FailureRules {
     }
 }
 
-/// The existing `self.memory.put_claim` first-party trap is the resident
+/// The existing `vault.claims.put` first-party trap is the resident
 /// authoring surface. Its subject is the host-bound resident, never Dreamer.
 pub(crate) const PREDICATE: &str = "core.dreamer_failure_rules";
 
@@ -304,7 +304,7 @@ pub(crate) fn step_effector_eligible_in_txn(
 
 impl Vault {
     /// Host configuration door. Agent-authored rows use the first-party
-    /// `self.memory.put_claim` trap, with the resident actor bound by its host.
+    /// `vault.claims.put` trap, with the resident actor bound by its host.
     pub fn set_dreamer_failure_rules(&self, actor: WriteActor, json: &[u8]) -> Result<()> {
         self.put_dreamer_failure_rules(actor, json, None)
     }

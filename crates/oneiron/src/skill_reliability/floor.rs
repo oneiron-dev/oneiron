@@ -12,12 +12,10 @@ use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
 
 use super::codec::invalid;
-use super::ledger::tally_outcomes;
 use super::posterior::{KEY_ALPHA, KEY_BETA, SkillReliabilityPosterior};
-use super::projector::attributed_outcomes;
-use super::provenance::skill_reliability_prior;
 use super::read::{
-    active_claims_in_txn, active_reliability_heads_in_txn, resolved_reliability_posterior_in_txn,
+    active_claims_in_txn, active_reliability_heads_in_txn, posterior_from_estimate,
+    resolved_estimate_in_txn,
 };
 
 /// The floor-crossing PROPOSAL predicate. A proposal to quarantine is a ROW,
@@ -116,35 +114,17 @@ pub fn set_skill_reliability_floor(vault: &Vault, floor: f32) -> Result<()> {
 /// Returns the EXISTING proposal while one is open: a second crossing is the
 /// same unanswered question, not a second question.
 ///
-/// Reads the CLAIM, exactly as selection does. The local outcome ledger is not
-/// the whole posterior on a replica — a vault that synced a below-floor claim
-/// holds no outcome rows behind it, so recomputing from the tally would exit at
-/// `outcomes < MIN_OUTCOMES` and skip the quarantine proposal the evidence
-/// already demands. The ledger answers only for a skill nobody has projected.
+/// Reads a projected learning estimate and its own effective run mass.
+/// Borrowed priors alone never satisfy the minimum-evidence guard.
 pub fn check_reliability_floor(
     vault: &Vault,
     skill: &EntityId,
     at: u64,
 ) -> Result<Option<EntityId>> {
-    let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn_grouped(|wtxn| {
-        let posterior = match resolved_reliability_posterior_in_txn(vault, wtxn, skill, None)? {
-            Some(posterior) => posterior,
-            None => tally_outcomes(vault, wtxn, skill, None)?.posterior(prior),
-        };
-        floor_check_in_txn(
-            vault,
-            wtxn,
-            skill,
-            None,
-            posterior,
-            attributed_outcomes(prior, posterior),
-            at,
-        )
-    })
+    check_floor_for(vault, skill, None, at)
 }
 
-/// Checks the floor against just one executor arm, not pooled skill history.
+/// Checks an executor's richest measured cell, never borrowed evidence.
 pub fn check_reliability_floor_for_executor(
     vault: &Vault,
     skill: &EntityId,
@@ -152,20 +132,28 @@ pub fn check_reliability_floor_for_executor(
     at: u64,
 ) -> Result<Option<EntityId>> {
     super::read::validate_executor(executor)?;
-    let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn_grouped(|wtxn| {
-        let posterior =
-            match resolved_reliability_posterior_in_txn(vault, wtxn, skill, Some(executor))? {
-                Some(posterior) => posterior,
-                None => tally_outcomes(vault, wtxn, skill, Some(executor))?.posterior(prior),
-            };
+    check_floor_for(vault, skill, Some(executor), at)
+}
+
+fn check_floor_for(
+    vault: &Vault,
+    skill: &EntityId,
+    executor: Option<&str>,
+    at: u64,
+) -> Result<Option<EntityId>> {
+    vault.with_write_txn_grouped(|txn| {
+        let Some(estimate) = resolved_estimate_in_txn(vault, txn, skill, executor)? else {
+            return Ok(None);
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let outcomes = estimate.runs as u32;
         floor_check_in_txn(
             vault,
-            wtxn,
+            txn,
             skill,
-            Some(executor),
-            posterior,
-            attributed_outcomes(prior, posterior),
+            executor,
+            posterior_from_estimate(&estimate)?,
+            outcomes,
             at,
         )
     })

@@ -72,6 +72,19 @@ side_tables! {
     NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named;
     /// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
     NOTE_RECEIPT: VaultMeta b"note_receipt:v1:" Named;
+    /// One live office body commit's receipt: peer, operation span and MadeBy. Key: id16 (artifact
+    /// or fork) + u64be (sequence).
+    OFFICE_BODY_COMMIT: VaultMeta b"office_body:commit:v1:" Named;
+    /// A live office body's or fork's Loro snapshot. Key: id16 (artifact or fork).
+    OFFICE_BODY_DOC: VaultMeta b"office_body:doc:v1:" Raw;
+    /// The body frontier an office body export version projects. Key: id16 (artifact) + u64be
+    /// (version).
+    OFFICE_BODY_EXPORT: VaultMeta b"office_body:export:v1:" Named;
+    /// Machine work on a live office body: opener, base frontier and state. Key: id16 (fork).
+    OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named;
+    /// A live office body's head: kind, imported source version and frontiers. Key: id16
+    /// (artifact).
+    OFFICE_BODY_HEAD: VaultMeta b"office_body:head:v1:" Named;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).
     OFF_RECORD_COPY_RECEIPT: VaultMeta b"offrecord_copy:v0:" Named;
@@ -339,6 +352,17 @@ side_tables! {
     PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named;
+    /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
+    PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
+    /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
+    /// (occurrence).
+    PROVENANCE_BODY: VaultMeta b"provenance:body:v1:" Named;
+    /// Who holds a body digest. Key: bytes32 (BLAKE3) + id16 (occurrence).
+    PROVENANCE_BODY_DIGEST: VaultMeta b"provenance:body_digest:v1:" Named;
+    /// File digests no descriptor holds, for the body-file collector. Key: bytes32 (BLAKE3).
+    PROVENANCE_BODY_RELEASED: VaultMeta b"provenance:body_released:v1:" Named;
+    /// One row's immutable birth envelope (Rule A made_by). Key: id16.
+    PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named;
     /// Disposable cache: which PERSON actor currently represents one provider key. Key: bytes32
     /// (sha256 of provider key).
     PROVIDER_ACTOR_INDEX: VaultMeta b"provider_confidence/actor/v1\0" Raw;
