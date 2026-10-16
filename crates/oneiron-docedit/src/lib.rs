@@ -14,6 +14,7 @@ pub mod deck;
 pub mod design_plan;
 pub mod edit;
 pub mod emit;
+pub mod fonts;
 pub mod graphic;
 pub mod native_patch;
 pub mod ooxml;

@@ -1,5 +1,6 @@
 //! Scheduled curator and harness-evaluation facets on one gated Dreamer
 //! authority, and the Coach's nightly retrieval tune on the same lane.
+pub mod coach;
 mod curator;
 mod evaluation;
 mod proposals;
@@ -129,6 +130,7 @@ pub(crate) fn execute(
                 .store
                 .tune_retrieval_blend_weights_when_ready(Default::default())?;
         }
+        coach::COACH_READ_HARDENING_FACET => coach::run_read_hardening(ctx.vault)?,
         POLICY_WAKE_FACET => {
             let trigger: crate::dreamer_wake::WakePolicyTrigger =
                 serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
