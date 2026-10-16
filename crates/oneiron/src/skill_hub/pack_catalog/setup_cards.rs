@@ -12,20 +12,20 @@
 //! only; the host validates an action event through the lens mediation frame
 //! before it reads the toggles back with [`PackSetupView::card_action`].
 
+use super::PackInstallStatus;
 use super::invalid;
 use super::setup::{PackSetupConnection, PackSetupRisk};
 use super::setup_session::{
     PackSetupAnswer, PackSetupCheck, PackSetupConnectionState, PackSetupView,
 };
-use super::PackInstallStatus;
 use crate::error::Result;
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
     GeneratedUiActionTier, GeneratedUiCard, GeneratedUiStateSnapshot, LedgerCell, LedgerRowAtom,
-    LensAtom, LensAtomId, LensNode, LensRenderId, LensStatus, LensText, LensTextSpan,
-    MetaLineAtom, ReceiptAtom, SealAtom, SealLevel, SectionAtom, SelfUiAction,
-    SelfUiActionId, SelfUiBindableProperty, SelfUiBinding, SelfUiControl, SelfUiControlId,
-    SelfUiStateKey, SelfUiStateValue, StatusDotAtom, TextBlockAtom, ToggleControl,
+    LensAtom, LensAtomId, LensNode, LensRenderId, LensStatus, LensText, LensTextSpan, MetaLineAtom,
+    ReceiptAtom, SealAtom, SealLevel, SectionAtom, SelfUiAction, SelfUiActionId,
+    SelfUiBindableProperty, SelfUiBinding, SelfUiControl, SelfUiControlId, SelfUiStateKey,
+    SelfUiStateValue, StatusDotAtom, TextBlockAtom, ToggleControl,
 };
 
 /// Lens text stays under the kit's own bound.
@@ -145,10 +145,18 @@ impl PackSetupView {
             for (permission, granted) in connection.permissions.iter().zip(&state.permissions) {
                 out.push_str(&format!(
                     "- [{}] {} ({} risk{}). It can {}. What could go wrong: {}\n",
-                    if granted.granted { "allowed" } else { "not allowed" },
+                    if granted.granted {
+                        "allowed"
+                    } else {
+                        "not allowed"
+                    },
                     permission.scope.as_deref().unwrap_or(&permission.id),
                     permission.level.as_str(),
-                    if permission.optional { ", optional" } else { "" },
+                    if permission.optional {
+                        ", optional"
+                    } else {
+                        ""
+                    },
                     lowercase_first(&permission.what),
                     permission.risk
                 ));
@@ -186,7 +194,12 @@ impl PackSetupView {
         let mut root = sheet("checklist", &title, Vec::new(), &title)?;
         root.children.push(text_block(
             "checklist-status",
-            &format!("{} {}. {}", self.pack_name, self.version, status_line(self.status)),
+            &format!(
+                "{} {}. {}",
+                self.pack_name,
+                self.version,
+                status_line(self.status)
+            ),
         )?);
         if !self.setup.accounts.is_empty() {
             let mut rows = Vec::new();
@@ -202,19 +215,30 @@ impl PackSetupView {
                     })
                     .peekable();
                 let ready = serving.peek().is_some() && serving.all(|(_, state)| state.ready);
-                let sign_up = account.sign_up.as_deref().unwrap_or("Use one you already hold");
+                let sign_up = account
+                    .sign_up
+                    .as_deref()
+                    .unwrap_or("Use one you already hold");
                 rows.push(LedgerRowAtom {
                     cells: vec![cell("Account", &account.label)?, cell("Sign up", sign_up)?],
                     status: Some(dot(
-                        if ready { LensStatus::Complete } else { LensStatus::Proposed },
+                        if ready {
+                            LensStatus::Complete
+                        } else {
+                            LensStatus::Proposed
+                        },
                         if ready { "Connected" } else { "Needed" },
                     )?),
                     seal: None,
                 });
                 fallback.push_str(&format!(" {} ({sign_up});", account.label));
             }
-            root.children
-                .push(sheet("checklist-accounts", "Accounts you need", rows, &fallback)?);
+            root.children.push(sheet(
+                "checklist-accounts",
+                "Accounts you need",
+                rows,
+                &fallback,
+            )?);
         }
         let mut rows = Vec::new();
         let mut fallback = String::from("Connections:");
@@ -232,8 +256,12 @@ impl PackSetupView {
             fallback.push_str(&format!(" {}: {next};", connection.label));
         }
         if !rows.is_empty() {
-            root.children
-                .push(sheet("checklist-connections", "Connections", rows, &fallback)?);
+            root.children.push(sheet(
+                "checklist-connections",
+                "Connections",
+                rows,
+                &fallback,
+            )?);
         }
         let lines = self
             .instructions
@@ -249,7 +277,13 @@ impl PackSetupView {
             }),
             lens_text(&self.instructions)?,
         ));
-        card(self, "checklist", root, Vec::new(), GeneratedUiStateSnapshot::default())
+        card(
+            self,
+            "checklist",
+            root,
+            Vec::new(),
+            GeneratedUiStateSnapshot::default(),
+        )
     }
 
     fn review_card(
@@ -274,7 +308,11 @@ impl PackSetupView {
                     )?,
                 ],
                 status: Some(dot(
-                    if granted.granted { LensStatus::Approved } else { LensStatus::Proposed },
+                    if granted.granted {
+                        LensStatus::Approved
+                    } else {
+                        LensStatus::Proposed
+                    },
                     if granted.granted {
                         "Allowed"
                     } else if permission.optional {
@@ -329,11 +367,8 @@ impl PackSetupView {
             actions.push(declare(&id, GeneratedUiActionTier::Local)?);
             values.push((SelfUiStateKey::new(id)?, SelfUiStateValue::Bool(checked)));
         }
-        for (secret_index, (secret, stored)) in connection
-            .secrets
-            .iter()
-            .zip(&state.secrets)
-            .enumerate()
+        for (secret_index, (secret, stored)) in
+            connection.secrets.iter().zip(&state.secrets).enumerate()
         {
             let id = format!("secret.c{index}.s{secret_index}");
             let label = if stored.stored {
@@ -389,7 +424,13 @@ impl PackSetupView {
             }),
             lens_text(fallback)?,
         );
-        card(self, "risks", root, Vec::new(), GeneratedUiStateSnapshot::default())
+        card(
+            self,
+            "risks",
+            root,
+            Vec::new(),
+            GeneratedUiStateSnapshot::default(),
+        )
     }
 
     fn checks_card(&self) -> Result<GeneratedUiCard> {
@@ -421,7 +462,11 @@ impl PackSetupView {
             .enumerate()
         {
             let mut lines = Vec::new();
-            for granted in state.permissions.iter().filter(|permission| permission.granted) {
+            for granted in state
+                .permissions
+                .iter()
+                .filter(|permission| permission.granted)
+            {
                 lines.push(MetaLineAtom {
                     label: lens_text(&granted.id)?,
                     value: lens_text(format!(
@@ -447,7 +492,13 @@ impl PackSetupView {
                 lens_text(title)?,
             ));
         }
-        card(self, "checks", root, Vec::new(), GeneratedUiStateSnapshot::default())
+        card(
+            self,
+            "checks",
+            root,
+            Vec::new(),
+            GeneratedUiStateSnapshot::default(),
+        )
     }
 
     /// Every risk in plain words, the highest first, then every power the
@@ -652,7 +703,9 @@ fn next_step(connection: &PackSetupConnection, state: &PackSetupConnectionState)
         PackSetupCheck::Unchecked => "Check the connection".to_owned(),
         PackSetupCheck::Verified { .. } => "Ready".to_owned(),
         PackSetupCheck::Failed { reason, .. } => format!("Fix it and check again: {reason}"),
-        PackSetupCheck::Stale { .. } => "Something changed since its check; check it again".to_owned(),
+        PackSetupCheck::Stale { .. } => {
+            "Something changed since its check; check it again".to_owned()
+        }
     }
 }
 
@@ -661,7 +714,10 @@ fn connection_status(state: &PackSetupConnectionState) -> LensStatus {
         _ if state.ready => LensStatus::Complete,
         PackSetupCheck::Failed { .. } => LensStatus::Rejected,
         PackSetupCheck::Stale { .. } => LensStatus::Stale,
-        _ if state.permissions.iter().any(|permission| permission.granted)
+        _ if state
+            .permissions
+            .iter()
+            .any(|permission| permission.granted)
             || state.secrets.iter().any(|secret| secret.stored) =>
         {
             LensStatus::Running

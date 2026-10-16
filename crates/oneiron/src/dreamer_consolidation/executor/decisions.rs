@@ -163,10 +163,9 @@ impl ConsolidationExecutor<'_> {
                 Ok(Some(decisions))
             }
             GeneratedDecisions::Trapped => Ok(None),
-            GeneratedDecisions::Unread(_) => Err(invalid_consolidation(
-                "a durable decision read came back unread",
-            )
-            .into()),
+            GeneratedDecisions::Unread(_) => {
+                Err(invalid_consolidation("a durable decision read came back unread").into())
+            }
         }
     }
 }

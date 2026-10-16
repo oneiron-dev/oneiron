@@ -493,10 +493,8 @@ impl SyncClient {
                         "sealed packet for a base window",
                     ));
                 };
-                let packet =
-                    crate::world_keys::SealedResidenceContent::from_bytes(payload).map_err(
-                        |_| TransportError::InvalidPayload("malformed sealed packet"),
-                    )?;
+                let packet = crate::world_keys::SealedResidenceContent::from_bytes(payload)
+                    .map_err(|_| TransportError::InvalidPayload("malformed sealed packet"))?;
                 self.manager
                     .take_sealed_residence_content(world, &key, &packet)
                     .map_err(|_| TransportError::InvalidPayload("sealed packet refused"))?;

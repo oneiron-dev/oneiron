@@ -254,7 +254,9 @@ impl VaultVm {
             let domains: Vec<String> = config
                 .artifact_domains
                 .iter()
-                .map(|domain| oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain))
+                .map(|domain| {
+                    oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain)
+                })
                 .filter(|domain| !domain.is_empty())
                 .collect();
             anyhow::ensure!(

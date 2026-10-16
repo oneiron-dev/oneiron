@@ -766,7 +766,10 @@ impl GmailDelegatedAdapter {
         reviewed_send_refs: &[String],
         requests: &[OutboundDispatchRequest],
     ) -> Result<Vec<ConsentReceipt>> {
-        let mut reviewed = reviewed_send_refs.iter().map(String::as_str).collect::<Vec<_>>();
+        let mut reviewed = reviewed_send_refs
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         let mut requested = requests
             .iter()
             .map(|request| request.intent_ref.as_str())

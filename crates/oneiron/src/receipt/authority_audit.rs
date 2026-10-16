@@ -196,9 +196,9 @@ impl Vault {
         let mut scanned = 0;
         let mut last = None;
         let mut more = false;
-        for id in self
-            .store
-            .port_entity_ids_by_type(&txn, ENTITY_TYPE_AUTHORITY_LOG, query.after)?
+        for id in
+            self.store
+                .port_entity_ids_by_type(&txn, ENTITY_TYPE_AUTHORITY_LOG, query.after)?
         {
             let id = id?;
             if rows.len() == limit || scanned == scan_cap {
@@ -262,9 +262,7 @@ impl FoldIssues {
                 AuthorityFoldIssue::InvalidAncestry(entry) => (entry, "invalid_ancestry"),
                 AuthorityFoldIssue::RetiredSigner(entry) => (entry, "retired_signer"),
                 AuthorityFoldIssue::UnsettledHandoff(entry) => (entry, "unsettled_handoff"),
-                AuthorityFoldIssue::SignerNotInAncestry(entry) => {
-                    (entry, "signer_not_in_ancestry")
-                }
+                AuthorityFoldIssue::SignerNotInAncestry(entry) => (entry, "signer_not_in_ancestry"),
                 AuthorityFoldIssue::NonMonotonicSeq(entry) => (entry, "non_monotonic_seq"),
                 AuthorityFoldIssue::StaleRosterApproval(entry) => (entry, "stale_roster_approval"),
                 AuthorityFoldIssue::WrongVault(entry) => (entry, "wrong_vault"),

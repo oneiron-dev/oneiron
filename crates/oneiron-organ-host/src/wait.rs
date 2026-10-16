@@ -177,7 +177,9 @@ impl OrganRouter {
                     held_by: actor,
                     held_at: vault.now_recorded_at(),
                 };
-                Ok(Submitted::Waiting(vault.hold_organ_wait(&row, &wait.reason)?))
+                Ok(Submitted::Waiting(
+                    vault.hold_organ_wait(&row, &wait.reason)?,
+                ))
             }
         }
     }

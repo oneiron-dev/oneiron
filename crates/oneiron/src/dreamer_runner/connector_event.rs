@@ -105,7 +105,8 @@ pub trait ConnectorEventResponder {
     ///
     /// # Errors
     /// The turn could not run; the driver parks the attempt.
-    fn reply(&mut self, vault: &Vault, wake: &ConnectorEventWake) -> Result<Option<ConnectorReply>>;
+    fn reply(&mut self, vault: &Vault, wake: &ConnectorEventWake)
+    -> Result<Option<ConnectorReply>>;
 
     /// The host's sink for the reply's channel and thread, its per-send plan
     /// keyed by `dispatch.request.intent_ref`.

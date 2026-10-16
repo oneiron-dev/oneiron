@@ -134,7 +134,10 @@ fn child_state(
     if !status.is_live_presence() {
         return None;
     }
-    let (agent, task_ref) = by_attempt.get(&node.attempt_id).cloned().unwrap_or_default();
+    let (agent, task_ref) = by_attempt
+        .get(&node.attempt_id)
+        .cloned()
+        .unwrap_or_default();
     Some(ChildState {
         attempt: node.attempt_id.clone(),
         agent,

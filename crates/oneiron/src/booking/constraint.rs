@@ -586,8 +586,8 @@ pub async fn parse_constraint_with_backend(
         .await
         .map_err(|error| BookingError::ConstraintParse(error.to_string()))?;
 
-    let extraction: ConstraintExtraction =
-        serde_json::from_str(&response_text(&response.message)).map_err(|error| {
+    let extraction: ConstraintExtraction = serde_json::from_str(&response_text(&response.message))
+        .map_err(|error| {
             BookingError::ConstraintParse(format!("parser payload is not a constraint: {error}"))
         })?;
     // A timezone override is the only free-form string the parser may emit.

@@ -93,14 +93,12 @@ const fn pin(
 }
 
 /// Typed decisions made outside `decide()`. Each one leaves this list when its surface moves.
-const BYPASSES: &[Pin] = &[
-    pin(
-        "crates/oneiron/src/edit_roundtrip/slides_review.rs",
-        "trait SlideReviewProvider",
-        "pub trait SlideReviewProvider {",
-        "slide review: a second typed ladder (band escalation and receipt) beside decide()",
-    ),
-];
+const BYPASSES: &[Pin] = &[pin(
+    "crates/oneiron/src/edit_roundtrip/slides_review.rs",
+    "trait SlideReviewProvider",
+    "pub trait SlideReviewProvider {",
+    "slide review: a second typed ladder (band escalation and receipt) beside decide()",
+)];
 
 /// Model calls and seams that are not typed decisions. They stay outside `decide()`.
 const OUTSIDE: &[Pin] = &[

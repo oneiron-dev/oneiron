@@ -222,7 +222,9 @@ fn contract(request: &AiVerdictRequest) -> MemoryResult<AnswerContract> {
 fn clock(request: &AiVerdictRequest) -> (Duration, u64) {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX));
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
     let asked = request.deadline_ms.unwrap_or(AI_VERDICT_DEADLINE_MS);
     let budget_ms = match request.until_ms {
         Some(until) => until

@@ -19,11 +19,11 @@ mod tier_classification;
 mod vault_agent;
 mod vault_context;
 
-pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::attendee_ask::{
     ATTENDEE_UNKNOWN_OPTION, AttendeeIdentityChoice, AttendeeIdentityResolution,
     UnknownAttendeeAsk, attendee_ask_ref,
 };
+pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 pub use self::room_party::RoomParty;
 pub(crate) use self::room_party::{is_vault_owner, room_party_in};

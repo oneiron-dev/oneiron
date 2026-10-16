@@ -88,7 +88,11 @@ type Absent = String;
 impl MeshLlmTransport {
     /// Calls go out on `runtime`, which drives `transport`.
     #[must_use]
-    pub fn new(transport: Arc<dyn MeshTransport>, nodes: Arc<dyn LlmNodes>, runtime: Handle) -> Self {
+    pub fn new(
+        transport: Arc<dyn MeshTransport>,
+        nodes: Arc<dyn LlmNodes>,
+        runtime: Handle,
+    ) -> Self {
         Self {
             leg: Arc::new(Leg {
                 transport,
@@ -117,9 +121,15 @@ impl Drop for AbortOnDrop {
 }
 
 impl OwnServerTransport for MeshLlmTransport {
-    fn generate<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
         let leg = Arc::clone(&self.leg);
-        let task = self.runtime.spawn(async move { leg.generate(request).await });
+        let task = self
+            .runtime
+            .spawn(async move { leg.generate(request).await });
         let guard = AbortOnDrop(task.abort_handle());
         Box::pin(async move {
             let _guard = guard;
@@ -131,7 +141,9 @@ impl OwnServerTransport for MeshLlmTransport {
     fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let leg = Arc::clone(&self.leg);
         let (send, receive) = mpsc::unbounded_channel();
-        let task = self.runtime.spawn(async move { leg.stream(request, send).await });
+        let task = self
+            .runtime
+            .spawn(async move { leg.stream(request, send).await });
         Ok(LlmStream::new(Received {
             receive,
             _guard: AbortOnDrop(task.abort_handle()),
@@ -212,7 +224,9 @@ impl Leg {
     ) -> Result<LlmResult<LlmResponse>, Absent> {
         let conn = self.dial(machine).await?;
         let answer = async {
-            let request = put(&*conn, body.to_vec()).await.map_err(|err| err.to_string())?;
+            let request = put(&*conn, body.to_vec())
+                .await
+                .map_err(|err| err.to_string())?;
             match exchange(&*conn, &Request::Generate { request })
                 .await
                 .map_err(|err| err.to_string())?
@@ -271,7 +285,9 @@ impl Leg {
     ) -> Result<(), Absent> {
         let conn = self.dial(machine).await?;
         let ran = async {
-            let request = put(&*conn, body.to_vec()).await.map_err(|err| err.to_string())?;
+            let request = put(&*conn, body.to_vec())
+                .await
+                .map_err(|err| err.to_string())?;
             let id = match exchange(&*conn, &Request::Stream { request })
                 .await
                 .map_err(|err| err.to_string())?
@@ -300,9 +316,11 @@ impl Leg {
                         return Ok(());
                     }
                 };
-                let batch = match take(&*conn, events).await.ok().and_then(|bytes| {
-                    rmp_serde::from_slice::<Batch>(&bytes).ok()
-                }) {
+                let batch = match take(&*conn, events)
+                    .await
+                    .ok()
+                    .and_then(|bytes| rmp_serde::from_slice::<Batch>(&bytes).ok())
+                {
                     Some(batch) => batch,
                     None => {
                         let _ = send.send(cut());

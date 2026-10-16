@@ -189,7 +189,9 @@ impl PackSetup {
 
     #[must_use]
     pub fn connection(&self, id: &str) -> Option<&PackSetupConnection> {
-        self.connections.iter().find(|connection| connection.id == id)
+        self.connections
+            .iter()
+            .find(|connection| connection.id == id)
     }
 
     /// Every connection one of whose permissions serves `grant`.
@@ -221,7 +223,8 @@ impl PackSetup {
         if self.accounts.is_empty() && self.connections.is_empty() {
             return Err(invalid("setup declares no account and no connection"));
         }
-        if self.accounts.len() > MAX_SETUP_ACCOUNTS || self.connections.len() > MAX_SETUP_CONNECTIONS
+        if self.accounts.len() > MAX_SETUP_ACCOUNTS
+            || self.connections.len() > MAX_SETUP_CONNECTIONS
         {
             return Err(invalid("setup declares too many accounts or connections"));
         }
@@ -234,7 +237,10 @@ impl PackSetup {
                     .note
                     .as_deref()
                     .is_some_and(|note| !text(note, MAX_SETUP_TEXT_BYTES))
-                || account.sign_up.as_deref().is_some_and(|link| !https_link(link))
+                || account
+                    .sign_up
+                    .as_deref()
+                    .is_some_and(|link| !https_link(link))
             {
                 return Err(invalid("invalid or duplicate setup account"));
             }
@@ -327,7 +333,9 @@ impl PackSetupConnection {
 
     #[must_use]
     pub fn permission(&self, id: &str) -> Option<&PackSetupPermission> {
-        self.permissions.iter().find(|permission| permission.id == id)
+        self.permissions
+            .iter()
+            .find(|permission| permission.id == id)
     }
 }
 

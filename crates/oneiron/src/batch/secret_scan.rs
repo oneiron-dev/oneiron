@@ -5,13 +5,13 @@ mod wordlist;
 
 use heed::{RoTxn, RwTxn};
 
+pub(super) use self::mask::mask_batch_ops;
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
     Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,
     release_reads_json_text, release_reads_whole, release_reads_whole_json,
     sanitize_messagepack_credentials_in, write_door_refuses_raw,
 };
-pub(super) use self::mask::mask_batch_ops;
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
@@ -678,7 +678,9 @@ fn detect_bytes(bytes: &[u8], door: Door) -> bool {
 /// one names, with its reason.
 fn provider_token_spans(text: &str) -> Vec<(std::ops::Range<usize>, &'static str)> {
     text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
-        .filter_map(|token| classify_token(token).map(|reason| (shapes::span_of(text, token), reason)))
+        .filter_map(|token| {
+            classify_token(token).map(|reason| (shapes::span_of(text, token), reason))
+        })
         .collect()
 }
 

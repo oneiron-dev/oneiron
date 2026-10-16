@@ -973,11 +973,11 @@ async fn setup_view(
     let owner = owner(&auth, &server)?;
     let key = query_params(query)?;
     let reply = blocking(move || {
-        PackSetupReply::new(server.vault().pack_setup(
-            &owner,
-            &key.pack,
-            key.source.as_deref(),
-        )?)
+        PackSetupReply::new(
+            server
+                .vault()
+                .pack_setup(&owner, &key.pack, key.source.as_deref())?,
+        )
     })
     .await?;
     Ok(Json(reply))

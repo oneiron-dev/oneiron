@@ -78,7 +78,11 @@ impl ExportDiaryLedger {
     pub(crate) fn finish(
         mut self,
         vault: &Vault,
-    ) -> (Vec<ExportDiaryRead>, Vec<ExportDiaryHold>, BTreeSet<EntityId>) {
+    ) -> (
+        Vec<ExportDiaryRead>,
+        Vec<ExportDiaryHold>,
+        BTreeSet<EntityId>,
+    ) {
         let mut unlogged = BTreeSet::new();
         let reads = match self.gate.finish(vault) {
             Ok(receipt) => {

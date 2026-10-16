@@ -25,8 +25,8 @@ use super::filter::{MatcherSpec, evaluate_filter, filter_dependencies};
 use super::membership::MembershipCause;
 use super::storage::{load_record, matcher_to_json};
 use super::support::{
-    EVALUATOR_VERSION, canonical_json_bytes, cosine_similarity_micros,
-    edge_kind_from_name, hex_lower, invalid, rmpv_to_json, vector_pair_fingerprint,
+    EVALUATOR_VERSION, canonical_json_bytes, cosine_similarity_micros, edge_kind_from_name,
+    hex_lower, invalid, rmpv_to_json, vector_pair_fingerprint,
 };
 
 /// The LLM dependency of a rubric-driven judge.

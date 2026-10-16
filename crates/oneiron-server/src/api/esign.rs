@@ -2,8 +2,8 @@
 //! path; after loading, the client scrubs it and sends it only in POST bodies.
 use crate::server::SyncServer;
 mod editor_budget;
-mod presentation;
 pub(crate) mod hold_worker;
+mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;
 use axum::extract::{DefaultBodyLimit, State};

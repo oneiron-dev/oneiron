@@ -16,9 +16,9 @@ use oneiron::llm::SpentKind;
 use oneiron::llm::media::MediaRequest;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
 use oneiron::{
-    ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
-    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
-    LlmUsage, ModelId, RetryableLlmError,
+    ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage,
+    ModelId, RetryableLlmError,
 };
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
@@ -303,7 +303,11 @@ impl OfferLadder {
         let Some(parked) = walk.parked(self.rungs.len()) else {
             return;
         };
-        let own: Vec<&str> = self.rungs.iter().map(|rung| rung.provider.as_str()).collect();
+        let own: Vec<&str> = self
+            .rungs
+            .iter()
+            .map(|rung| rung.provider.as_str())
+            .collect();
         for (index, rest) in parked {
             let rung = &self.rungs[index];
             let asked = Asked {
@@ -426,8 +430,14 @@ impl OfferLadder {
             Some(rest) => Passed::Refused { kind, rest, sent },
             None if provider_down(&error) => {
                 let rung = &self.rungs[index];
-                let rest = self.rests.failed_down(&rung.offer.binding, &rung.wire_model);
-                tracing::warn!(rung = rung.position, kind, "rung's provider is down; trying the next");
+                let rest = self
+                    .rests
+                    .failed_down(&rung.offer.binding, &rung.wire_model);
+                tracing::warn!(
+                    rung = rung.position,
+                    kind,
+                    "rung's provider is down; trying the next"
+                );
                 Passed::Down { kind, rest, sent }
             }
             None => {
@@ -686,8 +696,7 @@ impl OfferLadder {
             .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         match gate.generate(bound, permit.lease()).await {
             Ok(mut response) => {
-                self.rests
-                    .succeeded(&rung.offer.binding, &rung.wire_model);
+                self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle(CallOutcome::Answered(&response.usage))?;
                 response.usage = self.answered(index, walk, response.usage);
                 Ok(Sent::Answer(response))
@@ -797,8 +806,7 @@ impl OfferLadder {
         let answered = gate.run(bound, permit.lease()).await;
         match answered {
             Ok(mut response) => {
-                self.rests
-                    .succeeded(&rung.offer.binding, &rung.wire_model);
+                self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle_media(response.usage.token_units(operation, &media.caps))?;
                 if self.receipt {
                     let raw = std::mem::take(&mut response.usage.raw_provider);
@@ -1038,8 +1046,7 @@ impl OfferLadder {
                 usage,
                 finish_reason,
             } => {
-                self.rests
-                    .succeeded(&rung.offer.binding, &rung.wire_model);
+                self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 let done = match permit.settle(CallOutcome::Answered(&usage)) {
                     Ok(_) => Ok(LlmStreamEvent::Done {
                         message,

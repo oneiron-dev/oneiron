@@ -186,27 +186,31 @@ impl Walk {
             .latest()
             .into_values()
             .filter_map(|passed| match passed {
-                Passed::Down { rest: Some(rest), .. }
-                | Passed::Refused { rest: Some(rest), .. }
+                Passed::Down {
+                    rest: Some(rest), ..
+                }
+                | Passed::Refused {
+                    rest: Some(rest), ..
+                }
                 | Passed::Resting { rest } => Some(*rest),
                 _ => None,
             })
             .collect();
-        !rests.is_empty() && rests.iter().all(|rest| rest.source == ResetSource::Unhealthy)
+        !rests.is_empty()
+            && rests
+                .iter()
+                .all(|rest| rest.source == ResetSource::Unhealthy)
     }
 
     /// Whether every rung the call could use rests: none it passed failed
     /// but by a limit refusal or an outage it rests for.
     pub(super) fn limited(&self) -> bool {
-        !self
-            .passed
-            .iter()
-            .any(|(_, passed)| {
-                matches!(
-                    passed,
-                    Passed::Failed { .. } | Passed::Down { rest: None, .. }
-                )
-            })
+        !self.passed.iter().any(|(_, passed)| {
+            matches!(
+                passed,
+                Passed::Failed { .. } | Passed::Down { rest: None, .. }
+            )
+        })
     }
 }
 

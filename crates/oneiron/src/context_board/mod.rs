@@ -50,10 +50,10 @@ pub use self_brief::{
     BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
     SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
 };
+mod hook_pins;
 mod memories;
 mod memories_frame;
 mod memories_projection;
-mod hook_pins;
 mod memory_pins;
 pub use hook_pins::HookPin;
 mod notifications;

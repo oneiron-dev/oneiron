@@ -28,8 +28,7 @@ pub(crate) fn clamp_admits(
     if !ctx.admits(store, rtxn, id, entity_type, claim_body)? {
         return Ok(false);
     }
-    if ctx.mode() == DisclosureMode::OwnerAlone
-        || entity_type != crate::registry::ENTITY_TYPE_CLAIM
+    if ctx.mode() == DisclosureMode::OwnerAlone || entity_type != crate::registry::ENTITY_TYPE_CLAIM
     {
         return Ok(true);
     }

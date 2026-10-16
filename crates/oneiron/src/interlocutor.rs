@@ -652,12 +652,9 @@ impl Vault {
                 continue;
             }
             let answer = match &segment.evidence {
-                VoiceAttributionEvidence::ResidualCluster { .. } => self.attendee_identity_in_txn(
-                    rtxn,
-                    voice_session_ref,
-                    &speaker_key,
-                    revision,
-                )?,
+                VoiceAttributionEvidence::ResidualCluster { .. } => {
+                    self.attendee_identity_in_txn(rtxn, voice_session_ref, &speaker_key, revision)?
+                }
                 _ => None,
             };
             parties.push(self.voice_roster_party(rtxn, segment, answer)?);

@@ -31,7 +31,9 @@ use crate::llm::{
     DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
 };
 
-use super::contract::{POLICY_MODEL_ANSWER_PARSE_MAX_BYTES, PolicyModelAnswer, PolicyOutputContract};
+use super::contract::{
+    POLICY_MODEL_ANSWER_PARSE_MAX_BYTES, PolicyModelAnswer, PolicyOutputContract,
+};
 use super::planes::{HostedLegalPolicy, PolicyPlane, PolicyRubricRow, parse_hosted_category_label};
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{PolicyClassifyDecision, PolicyVerdictCategory};

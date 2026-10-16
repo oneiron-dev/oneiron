@@ -228,5 +228,8 @@ pub(crate) fn reserve_channel_identity_grant_in_txn(
         return Ok(None);
     }
     effects.push((candidate.effect_key, fingerprint));
-    Ok(Some(reservation(Some(ChannelIdentityGrantUsage { started, effects }))))
+    Ok(Some(reservation(Some(ChannelIdentityGrantUsage {
+        started,
+        effects,
+    }))))
 }

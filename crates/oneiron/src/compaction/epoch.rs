@@ -578,7 +578,15 @@ pub(super) fn mint_epoch_summary_with(
     product: &CompactionProduct,
     extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
-    mint_epoch_summary_guarded(vault, session_ref, byline, request, product, |_| Ok(()), extra)
+    mint_epoch_summary_guarded(
+        vault,
+        session_ref,
+        byline,
+        request,
+        product,
+        |_| Ok(()),
+        extra,
+    )
 }
 
 /// [`mint_epoch_summary_with`] whose `landing` runs FIRST in the mint's own

@@ -54,7 +54,9 @@ pub enum ManagedError {
     #[error("--artifact-http-socket must be an absolute path")]
     RelativeArtifactSocket,
 
-    #[error("--artifact-domains names where the artifact origin answers; it needs --artifact-http-socket")]
+    #[error(
+        "--artifact-domains names where the artifact origin answers; it needs --artifact-http-socket"
+    )]
     ArtifactDomainsWithoutSocket,
 
     #[error("--{flag} must be a non-negative file descriptor, got {value}")]
@@ -237,7 +239,9 @@ impl ManagedArgs {
                 .artifact_domains
                 .iter()
                 .flatten()
-                .map(|domain| oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain))
+                .map(|domain| {
+                    oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain)
+                })
                 .filter(|domain| !domain.is_empty())
                 .collect(),
         };

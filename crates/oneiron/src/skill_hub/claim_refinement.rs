@@ -1,11 +1,11 @@
 //! Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission.
 //! A branch proposal is inert source in vault_meta, never an ordinary live CLAIM.
 
+use super::decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_pair_state};
 use super::refinement_admission::{
     RefinementAdmissionProof, RefinementControl, RefinementState, RefinementTarget, put_control,
     read_control,
 };
-use super::decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_pair_state};
 use super::refinement_custody::RefinementReceipt;
 use super::{package_codec::invalid, shared_gate::checked_useful_decision};
 use crate::side_table::{self, LegacyJson, SideTable};

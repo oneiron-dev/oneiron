@@ -76,10 +76,7 @@ impl ConnState {
     /// This socket's peer as a world-privacy destination: the machine it
     /// proved, re-judged against the fold, or unknown. Destination-aware
     /// doors (the sealed relay) read world settings against it.
-    pub(super) fn destination(
-        &self,
-        vault: &oneiron::Vault,
-    ) -> oneiron::authority::Destination {
+    pub(super) fn destination(&self, vault: &oneiron::Vault) -> oneiron::authority::Destination {
         match self.peer_machine(vault) {
             oneiron::authority::PeerMachine::Proven { machine, .. } => {
                 oneiron::authority::Destination::Machine(machine)

@@ -341,7 +341,9 @@ fn mcp_board_sections(
         let read = mcp_scoped_read(&server.vault, actor)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
+            .map_or(0, |elapsed| {
+                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+            });
         oneiron::context_board::People::load(&server.vault, now, &mut |person| {
             read.is_entity_readable(&person)
         })

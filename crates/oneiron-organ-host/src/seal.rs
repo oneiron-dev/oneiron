@@ -38,9 +38,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use self::binding::{RevisionArgs, SealCall};
-use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::error::{HostError, Unavailable};
 use crate::fetch::GuardedFetch;
+use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::receipt::AskReceipt;
 use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSpec};

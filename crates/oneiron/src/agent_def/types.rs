@@ -489,7 +489,10 @@ impl MemoryProfile {
     }
 
     #[must_use]
-    pub const fn with_output_decay(mut self, decay: crate::compaction::output::OutputDecayPolicy) -> Self {
+    pub const fn with_output_decay(
+        mut self,
+        decay: crate::compaction::output::OutputDecayPolicy,
+    ) -> Self {
         self.output_decay = Some(decay);
         self
     }

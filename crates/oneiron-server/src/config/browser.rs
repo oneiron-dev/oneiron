@@ -56,7 +56,9 @@ impl BrowserConfig {
         // runs on the owner's Mac, container VM or not.
         #[cfg(target_os = "macos")]
         {
-            anyhow::bail!("the browser guest never runs on this host; serve from a fleet Linux host");
+            anyhow::bail!(
+                "the browser guest never runs on this host; serve from a fleet Linux host"
+            );
         }
         if !self.runtime.is_absolute() {
             anyhow::bail!("browser.runtime must be an absolute path to a container CLI");

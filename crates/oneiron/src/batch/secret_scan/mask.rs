@@ -30,9 +30,9 @@ use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::{
-    CustodyClass, CustodyWrite, KeySpan, MASKED_FILE_BAND, MaskedFile, SECRET_CUSTODY_SCHEMA_VERSION,
-    SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus, filled, masked_file_in_txn,
-    put_masked_file_in_txn, register_custody_in_txn,
+    CustodyClass, CustodyWrite, KeySpan, MASKED_FILE_BAND, MaskedFile,
+    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    filled, masked_file_in_txn, put_masked_file_in_txn, register_custody_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -110,9 +110,9 @@ pub(in crate::batch) fn mask_batch_ops(
             .keys
             .into_iter()
             .map(|(span, reason, value)| {
-                let (_, custody) = minted
-                    .get(&value)
-                    .ok_or(Error::InvariantViolation("a file's key has no custody record"))?;
+                let (_, custody) = minted.get(&value).ok_or(Error::InvariantViolation(
+                    "a file's key has no custody record",
+                ))?;
                 Ok(KeySpan {
                     start: offset(span.start)?,
                     end: offset(span.end)?,
@@ -260,11 +260,7 @@ impl Masker {
                     allow_maintenance: false,
                     hub_sync_imported: false,
                     ..
-                } if !matches!(
-                    *entity_type,
-                    ENTITY_TYPE_SECRET_CUSTODY | ENTITY_TYPE_ASSET
-                ) =>
-                {
+                } if !matches!(*entity_type, ENTITY_TYPE_SECRET_CUSTODY | ENTITY_TYPE_ASSET) => {
                     self.at = Some((*id, "body".to_owned()));
                     if let Some(masked) = self.mask_body(data)? {
                         *data = masked;
@@ -317,7 +313,9 @@ impl Masker {
         for (span, reason) in merged(spans) {
             let value = data
                 .get(span.clone())
-                .ok_or(Error::InvariantViolation("a file's key span left its bytes"))?
+                .ok_or(Error::InvariantViolation(
+                    "a file's key span left its bytes",
+                ))?
                 .to_vec();
             self.handle(&value, reason)?;
             keys.push((span, reason, value));
@@ -509,7 +507,9 @@ impl Masker {
                 .store
                 .port_short_id_reference(&*wtxn, &id)?
                 .map(|(short_id, _)| short_id)
-                .ok_or(Error::InvariantViolation("a masked secret's record has no handle"))?;
+                .ok_or(Error::InvariantViolation(
+                    "a masked secret's record has no handle",
+                ))?;
             MASK_ORIGIN.put(
                 write.store,
                 wtxn,
@@ -565,7 +565,10 @@ fn file_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
                     .unwrap_or(rest.len() - error.valid_up_to()),
             ),
         };
-        if let Some(text) = rest.get(..valid).and_then(|run| std::str::from_utf8(run).ok()) {
+        if let Some(text) = rest
+            .get(..valid)
+            .and_then(|run| std::str::from_utf8(run).ok())
+        {
             spans.extend(
                 secret_spans(text)
                     .into_iter()

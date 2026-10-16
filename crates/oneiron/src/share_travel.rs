@@ -85,9 +85,10 @@ impl TravelChoice {
     pub fn default_for(kind: TravelKind) -> Self {
         let born_with = match kind {
             TravelKind::LensPack => BTreeSet::from([BornWithField::IntentPrompt]),
-            TravelKind::Summary | TravelKind::Brief | TravelKind::Artifact | TravelKind::Document => {
-                BTreeSet::new()
-            }
+            TravelKind::Summary
+            | TravelKind::Brief
+            | TravelKind::Artifact
+            | TravelKind::Document => BTreeSet::new(),
         };
         Self { born_with }
     }

@@ -527,9 +527,7 @@ impl Vault {
             share_id,
             issuer,
             share,
-            &crate::share_travel::TravelChoice::default_for(
-                crate::share_travel::TravelKind::Brief,
-            ),
+            &crate::share_travel::TravelChoice::default_for(crate::share_travel::TravelKind::Brief),
         )
     }
 
@@ -572,15 +570,14 @@ impl Vault {
             }
         }
         verify_share_actor(&self.store, &txn, issuer)?;
-        let (gate_id, decision) =
-            crate::gate::check_share_create_policy(
-                &self.store,
-                &mut txn,
-                share_id,
-                issuer,
-                share,
-                travel,
-            )?;
+        let (gate_id, decision) = crate::gate::check_share_create_policy(
+            &self.store,
+            &mut txn,
+            share_id,
+            issuer,
+            share,
+            travel,
+        )?;
         if decision.outcome() != GateOutcome::Allow {
             let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),

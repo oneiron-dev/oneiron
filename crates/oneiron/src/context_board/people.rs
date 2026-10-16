@@ -147,8 +147,11 @@ impl People {
             else {
                 continue;
             };
-            let Some((handle, _)) =
-                crate::ports::ShortIdStoreRead::port_short_id_reference(&vault.store, &rtxn, &person)?
+            let Some((handle, _)) = crate::ports::ShortIdStoreRead::port_short_id_reference(
+                &vault.store,
+                &rtxn,
+                &person,
+            )?
             else {
                 continue;
             };
@@ -247,7 +250,10 @@ impl People {
     }
 
     /// Sets each person's `about` line from `about(person)`.
-    pub fn set_about(&mut self, about: &mut dyn FnMut(EntityId) -> Result<Option<String>>) -> Result<()> {
+    pub fn set_about(
+        &mut self,
+        about: &mut dyn FnMut(EntityId) -> Result<Option<String>>,
+    ) -> Result<()> {
         for row in &mut self.rows {
             row.about = about(row.person)?;
         }

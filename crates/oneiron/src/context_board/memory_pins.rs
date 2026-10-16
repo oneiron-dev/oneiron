@@ -1,8 +1,8 @@
 //! Explicit memory pins bypass query relevance and render shedding, never read authority.
 use super::memories::{MemoriesSection, MemoryRow, MemorySource, MemoryTier};
 use super::memories_projection::{finish_projection, foreign_row, memory_asset_ref, memory_slot};
-use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::Result;
+use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
 impl MemoriesSection {
     /// Pins are engine-issued short references already selected by the caller.
     /// Each read still resolves the actor ceiling and returns its mandatory receipt.
@@ -97,7 +97,8 @@ pub(super) fn pinned_row(
                 .short_ids_reverse
                 .get(txn, found.id.as_bytes())?
                 .map(|raw| {
-                    crate::batch::parse_short_id_value(&raw).map(|(short_id, _)| short_id.to_owned())
+                    crate::batch::parse_short_id_value(&raw)
+                        .map(|(short_id, _)| short_id.to_owned())
                 })
                 .transpose()?,
         };

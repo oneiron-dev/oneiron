@@ -292,7 +292,9 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
             return Err(invalid("invalid natural-person requirement"));
         }
         if r.natural_person.is_some() && r.automated {
-            return Err(invalid("the law keeps this signature with a natural person"));
+            return Err(invalid(
+                "the law keeps this signature with a natural person",
+            ));
         }
     }
     let mut fields = BTreeSet::new();

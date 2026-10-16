@@ -101,7 +101,10 @@ pub(crate) fn fanout_meter_rows(
     paused: bool,
     denied: bool,
 ) -> Vec<FanoutMeterRow> {
-    let id = format!("fanout:{}", crate::context_board::one_line_token(correlation));
+    let id = format!(
+        "fanout:{}",
+        crate::context_board::one_line_token(correlation)
+    );
     let state = if denied {
         "denied_parked"
     } else if paused {
@@ -113,10 +116,18 @@ pub(crate) fn fanout_meter_rows(
         id: id.clone(),
         line: format!("{id} consults={} {state}", estimate.total_count),
     }];
-    rows.extend(estimate.per_peer.iter().map(|(peer, count)| FanoutMeterRow {
-        id: format!("{id}:peer:{peer}"),
-        line: format!("{id} peer={} consults={count}", crate::context_board::one_line_token(peer)),
-    }));
+    rows.extend(
+        estimate
+            .per_peer
+            .iter()
+            .map(|(peer, count)| FanoutMeterRow {
+                id: format!("{id}:peer:{peer}"),
+                line: format!(
+                    "{id} peer={} consults={count}",
+                    crate::context_board::one_line_token(peer)
+                ),
+            }),
+    );
     if let Some(pathology) = pathology {
         let evidence = match pathology {
             crate::outbound_chokepoint::FanoutPathology::ConsultCycle { peer_path } => {
@@ -125,7 +136,10 @@ pub(crate) fn fanout_meter_rows(
                 for (index, peer) in peer_path.iter().enumerate() {
                     rows.push(FanoutMeterRow {
                         id: format!("{id}:cycle:{index}"),
-                        line: format!("{id} cycle_hop={index} peer={}", crate::context_board::one_line_token(peer)),
+                        line: format!(
+                            "{id} cycle_hop={index} peer={}",
+                            crate::context_board::one_line_token(peer)
+                        ),
                     });
                 }
                 "consult_cycle".to_owned()

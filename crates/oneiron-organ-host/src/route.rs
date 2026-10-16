@@ -96,7 +96,10 @@ pub struct NodeWait {
 /// What became of a routed call.
 #[derive(Debug)]
 pub enum Routed {
-    Done { outcome: OrganOutcome, ran_on: RanOn },
+    Done {
+        outcome: OrganOutcome,
+        ran_on: RanOn,
+    },
     /// No node can run it now. [`OrganRouter::submit`] holds such a call
     /// in the vault until one can.
     Waiting(NodeWait),

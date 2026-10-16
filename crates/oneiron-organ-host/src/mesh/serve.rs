@@ -121,8 +121,7 @@ impl OrganService {
         staging: &Arc<Staging>,
         carried: &Carried,
     ) -> Result<PeerResult, String> {
-        let peer: PeerCall =
-            decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
+        let peer: PeerCall = decode(&staging.take(carried)?).map_err(|err| err.to_string())?;
         let mut inputs = Vec::with_capacity(peer.inputs.len());
         for input in &peer.inputs {
             let read = match &input.read {

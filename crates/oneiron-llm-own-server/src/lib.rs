@@ -1,11 +1,13 @@
 //! Own-server LlmBackend. Transport belongs to oneiron-remote; policy stays above the trait.
 //! [`mesh`] is the transport to a model on another of the owner's nodes (OF-575 MESH).
 pub mod mesh;
+pub use mesh::{
+    LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MeshLlmTransport, VaultLlmNodes,
+};
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmGenerateFuture,
     LlmRequest, LlmStreamResult, ModelId, ModelLocality,
 };
-pub use mesh::{LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MeshLlmTransport, VaultLlmNodes};
 pub use oneiron_remote::llm::{OwnServerTransport, RemoteLlmClient};
 use std::collections::BTreeMap;
 pub struct OwnServerBackend<T> {

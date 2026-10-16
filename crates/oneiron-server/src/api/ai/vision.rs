@@ -24,8 +24,8 @@ use axum::response::{IntoResponse, Response};
 use oneiron::llm::decision::catalogue::QuestionFamily;
 use oneiron::llm::decision::{
     AnswerContract, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial, DecisionImage,
-    DecisionLadder, DecisionProvider, DecisionRung, EvidenceVersion, HumanDecisionQueue, HumanDecisionRequest,
-    ProviderPin, Reversibility, TypedDecision,
+    DecisionLadder, DecisionProvider, DecisionRung, EvidenceVersion, HumanDecisionQueue,
+    HumanDecisionRequest, ProviderPin, Reversibility, TypedDecision,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::manifest::ModelRole;
@@ -221,7 +221,17 @@ async fn asked(
     };
     if boxed {
         let run = run()?;
-        return box_answer(server, vault, actor, body.question, pulled, image, run, run_id).await;
+        return box_answer(
+            server,
+            vault,
+            actor,
+            body.question,
+            pulled,
+            image,
+            run,
+            run_id,
+        )
+        .await;
     }
     let purpose = CallPurpose::Other {
         name: "ai.ask_image".to_owned(),
@@ -242,9 +252,7 @@ async fn asked(
             content: vec![
                 ContentPart::Image {
                     media_type: image.media_type,
-                    image: ImageContent::Base64 {
-                        data: pulled.bytes,
-                    },
+                    image: ImageContent::Base64 { data: pulled.bytes },
                 },
                 ContentPart::Text {
                     text: body.question,
@@ -327,8 +335,18 @@ async fn box_answer(
         )
     })?;
     let question = ASK_IMAGE_BOX
-        .question(&[pulled.asset_ref.as_bytes()], question, AnswerContract::Box)
-        .map_err(|error| refusal(StatusCode::BAD_REQUEST, "invalid_question", error.to_string()))?;
+        .question(
+            &[pulled.asset_ref.as_bytes()],
+            question,
+            AnswerContract::Box,
+        )
+        .map_err(|error| {
+            refusal(
+                StatusCode::BAD_REQUEST,
+                "invalid_question",
+                error.to_string(),
+            )
+        })?;
     let images = vec![DecisionImage {
         name: BOX_IMAGE.to_owned(),
         evidence: EvidenceVersion {
@@ -337,19 +355,14 @@ async fn box_answer(
         },
         image,
     }];
-    let seat = LocalVisionModel::new(
-        &server.ai,
-        vault,
-        run,
-        tokio::runtime::Handle::current(),
-    )
-    .ok_or_else(|| {
-        refusal(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no_model_configured",
-            "no [models.roles.local_vision] rung serves ask_image",
-        )
-    })?;
+    let seat = LocalVisionModel::new(&server.ai, vault, run, tokio::runtime::Handle::current())
+        .ok_or_else(|| {
+            refusal(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no_model_configured",
+                "no [models.roles.local_vision] rung serves ask_image",
+            )
+        })?;
     let rung = seat.rung().map_err(|error| {
         refusal(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -395,7 +408,11 @@ async fn box_answer(
     let last = seat.last_call();
     let decision = decided.map_err(|error| match &last {
         Some(Err(failure)) => super::media::failure(failure),
-        _ => refusal(StatusCode::BAD_GATEWAY, "decision_failed", error.to_string()),
+        _ => refusal(
+            StatusCode::BAD_GATEWAY,
+            "decision_failed",
+            error.to_string(),
+        ),
     })?;
     let (usage, finish_reason) = match last {
         Some(Ok((usage, finish_reason))) => (Some(usage), Some(finish_reason)),

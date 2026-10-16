@@ -46,10 +46,7 @@ pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec
     let mut concepts = Vec::new();
     let rows = section(document, &["evidence_ledger", "entities"])
         .chain(section(document, &["claims"]))
-        .chain(
-            section(document, &["skills"])
-                .filter_map(|bundle| bundle.get("entity")),
-        );
+        .chain(section(document, &["skills"]).filter_map(|bundle| bundle.get("entity")));
     for row in rows {
         concepts.push(concept(row)?);
     }
@@ -71,7 +68,10 @@ pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec
         let name = u8::try_from(kind)
             .ok()
             .and_then(crate::edge::EdgeKind::try_from_u8)
-            .map_or_else(|| format!("edge {kind}"), |kind| kind.name().replace('_', " "));
+            .map_or_else(
+                || format!("edge {kind}"),
+                |kind| kind.name().replace('_', " "),
+            );
         links.entry(source).or_default().push((name, target));
     }
     let mut citations: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
@@ -100,10 +100,16 @@ pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec
 
     let mut kinds: BTreeMap<&str, Vec<&Concept>> = BTreeMap::new();
     for concept in &concepts {
-        kinds.entry(concept.kind.as_str()).or_default().push(concept);
+        kinds
+            .entry(concept.kind.as_str())
+            .or_default()
+            .push(concept);
         let text = render_concept(
             concept,
-            links.get(concept.id.as_str()).map(Vec::as_slice).unwrap_or_default(),
+            links
+                .get(concept.id.as_str())
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
             citations
                 .get(concept.id.as_str())
                 .map(Vec::as_slice)
@@ -139,7 +145,10 @@ pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec
         &stamp,
         &[("okf_version", OKF_SPEC_VERSION)],
     );
-    let _ = writeln!(root, "# Not a full copy\n\n{LOSS_DECLARATION}\n\n# Contents\n");
+    let _ = writeln!(
+        root,
+        "# Not a full copy\n\n{LOSS_DECLARATION}\n\n# Contents\n"
+    );
     for (kind, list) in &kinds {
         let _ = writeln!(
             root,
@@ -219,7 +228,9 @@ fn render_concept(
     });
     let main = match &concept.body {
         Value::String(body) => Some(body.as_str()),
-        body => main_key.and_then(|key| body.get(key)).and_then(Value::as_str),
+        body => main_key
+            .and_then(|key| body.get(key))
+            .and_then(Value::as_str),
     };
     if let Some(main) = main {
         let _ = writeln!(text, "{}\n", main.trim_end());
@@ -302,19 +313,19 @@ fn plain(value: &Value) -> Value {
     let inner = value.get("value");
     match value.get("type").and_then(Value::as_str) {
         Some("boolean") => inner.cloned().unwrap_or(Value::Null),
-        Some("integer") => inner
-            .and_then(Value::as_str)
-            .map_or(Value::Null, |digits| {
-                digits
-                    .parse::<i64>()
-                    .map(Value::from)
-                    .or_else(|_| digits.parse::<u64>().map(Value::from))
-                    .unwrap_or_else(|_| Value::from(digits))
-            }),
+        Some("integer") => inner.and_then(Value::as_str).map_or(Value::Null, |digits| {
+            digits
+                .parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| digits.parse::<u64>().map(Value::from))
+                .unwrap_or_else(|_| Value::from(digits))
+        }),
         Some("f32") => inner
             .and_then(Value::as_u64)
             .and_then(|bits| u32::try_from(bits).ok())
-            .map_or(Value::Null, |bits| Value::from(f64::from(f32::from_bits(bits)))),
+            .map_or(Value::Null, |bits| {
+                Value::from(f64::from(f32::from_bits(bits)))
+            }),
         Some("f64") => inner
             .and_then(Value::as_u64)
             .map_or(Value::Null, |bits| Value::from(f64::from_bits(bits))),
@@ -384,7 +395,11 @@ fn link_text(title: &str) -> String {
 fn kind_title(kind: &str) -> String {
     let mut chars = kind.chars();
     chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect::<String>().replace('_', " ")
+        first
+            .to_uppercase()
+            .chain(chars)
+            .collect::<String>()
+            .replace('_', " ")
     })
 }
 

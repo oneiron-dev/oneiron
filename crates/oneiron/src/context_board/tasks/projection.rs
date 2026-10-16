@@ -313,8 +313,10 @@ impl TasksSectionRows {
                 }),
             }
         }
-        let mut done: std::collections::BTreeMap<&str, std::collections::BTreeMap<crate::EntityId, usize>> =
-            std::collections::BTreeMap::new();
+        let mut done: std::collections::BTreeMap<
+            &str,
+            std::collections::BTreeMap<crate::EntityId, usize>,
+        > = std::collections::BTreeMap::new();
         for intent in &self.intents {
             if intent.status == TaskBoardStatus::Done
                 && let (Some(node), Some(who)) = (intent.type_node.as_deref(), intent.who)

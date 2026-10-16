@@ -66,7 +66,10 @@ enum Reply {
     Generated(Result<Carried, oneiron::LlmError>),
     Started(Result<u64, oneiron::LlmError>),
     /// Events as JSON lines, in order; `end` when the stream is over.
-    Events { events: Carried, end: bool },
+    Events {
+        events: Carried,
+        end: bool,
+    },
     Cancelled,
     /// The node does not take this request; another may.
     Refused(String),
@@ -119,7 +122,10 @@ struct Staging {
 impl Staging {
     fn staged(&self) -> usize {
         lock(&self.incoming).values().map(Vec::len).sum::<usize>()
-            + lock(&self.outgoing).values().map(|bytes| bytes.len()).sum::<usize>()
+            + lock(&self.outgoing)
+                .values()
+                .map(|bytes| bytes.len())
+                .sum::<usize>()
     }
 
     fn put(&self, hash: [u8; 32], total: u64, offset: u64, bytes: &[u8]) -> Result<(), String> {
@@ -198,7 +204,10 @@ async fn put(conn: &dyn MeshConnection, bytes: Vec<u8>) -> Result<Carried, MeshE
             other => return Err(unexpected(&other)),
         }
     }
-    Ok(Carried::Staged { hash: named, len: total })
+    Ok(Carried::Staged {
+        hash: named,
+        len: total,
+    })
 }
 
 /// A body a reply named, got in pieces when staged, checked against its hash.
