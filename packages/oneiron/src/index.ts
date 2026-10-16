@@ -241,6 +241,13 @@ export class Oneiron {
       remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
       leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
     },
+    legal_holds: {
+      place: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as unknown),
+      widen: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsWiden(input) as unknown),
+      list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsList(input) as unknown),
+      log: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsLog(input) as unknown),
+      lift_and_erase: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as unknown),
+    },
     lenses: {
       propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
       activate: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesActivate(input) as unknown),
@@ -299,7 +306,10 @@ export class Oneiron {
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
       join: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsJoin(input) as unknown),
       consent: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsConsent(input) as unknown),
-      host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
+      host: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown), {
+        pin: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHostPin(input) as unknown),
+        hand: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHostHand(input) as unknown),
+      }),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
     projects: {

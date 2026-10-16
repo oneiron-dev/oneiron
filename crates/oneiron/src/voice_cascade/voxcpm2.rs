@@ -11,6 +11,7 @@ use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSe
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
+    llm::ModelLocality,
     voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip},
 };
 
@@ -138,12 +139,15 @@ impl VoxCpm2Pcm {
 }
 
 /// One generation, one banked voice identity, one warm target. The identity's
-/// source refs are fenced at Start; a withdrawal or ref change stops the render.
+/// source refs are fenced at Start, under the render consent that reaches the
+/// worker; a withdrawal, a new render decision or a ref change stops the render.
 pub struct VoxCpm2Adapter<Q> {
     vault: Arc<Vault>,
     limits: VoiceServingLimits,
     voice_id: String,
     register: String,
+    /// Where the host's worker runs.
+    locality: ModelLocality,
     queue: Q,
     generation: Option<GenerationEpoch>,
     target: Option<RenderTarget>,
@@ -157,8 +161,16 @@ pub struct VoxCpm2Adapter<Q> {
 }
 
 impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
-    pub fn new(vault: Arc<Vault>, voice_id: &str, register: &str, queue: Q) -> Result<Self> {
-        Self::new_for_holder(vault, voice_id, register, None, queue)
+    /// `locality` is where the host's worker runs; the reference clip is the
+    /// person's raw voice, so a third party's worker refuses.
+    pub fn new(
+        vault: Arc<Vault>,
+        voice_id: &str,
+        register: &str,
+        locality: ModelLocality,
+        queue: Q,
+    ) -> Result<Self> {
+        Self::new_for_holder(vault, voice_id, register, None, locality, queue)
     }
 
     /// `holder` must come from the authenticated host identity, not speech.
@@ -167,8 +179,12 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
         voice_id: &str,
         register: &str,
         holder: Option<EntityId>,
+        locality: ModelLocality,
         queue: Q,
     ) -> Result<Self> {
+        if locality == ModelLocality::ThirdParty {
+            return Err(invalid("a voice reference never goes to a third party"));
+        }
         let limits = vault.voice_serving_limits(holder)?;
         if voice_id.trim().is_empty() || register.trim().is_empty() || register.len() > 128 {
             return Err(invalid("invalid reference selection"));
@@ -178,6 +194,7 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
             limits,
             voice_id: voice_id.into(),
             register: register.into(),
+            locality,
             queue,
             generation: None,
             target: None,
@@ -303,9 +320,12 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
                 return Err(invalid("worker serving limits narrower than vault policy"));
             }
             // Source refs only: generated refs never stand in for the identity.
-            let (cloned, fence) =
-                self.vault
-                    .prepare_fenced_voice_clone(&self.voice_id, TARGET, false)?;
+            let (cloned, fence) = self.vault.prepare_fenced_voice_clone(
+                &self.voice_id,
+                TARGET,
+                false,
+                self.locality,
+            )?;
             let reference = cloned
                 .clips
                 .into_iter()
