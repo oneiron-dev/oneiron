@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2993 | 903 | 110 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2993 | 903 | 111 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 9 | 0 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 56 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 15 | 8 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 57 | 14 | 5 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 59 | 14 | 6 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 18 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 9 | 2 | 0 |
@@ -53,7 +53,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 0 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 19 | 1 | 0 |
-| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 14 | 1 | 2 |
+| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 15 | 1 | 2 |
 
 ## oneiron
 
@@ -264,7 +264,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `vault` | dir | 29 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | dir | 17 | m | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `voice_cascade` | file+dir | 31 | L | yes | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
-| `voice_identity` | dir | 11 | m | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
+| `voice_identity` | dir | 11 | L | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
 | `voice_segment` | file | 1 | s | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `wave_orchestration` | file+dir | 2 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `web_fetch` | file+dir | 4 | m | — | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
@@ -398,6 +398,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
+| `contract` | dir | 2 | L | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
 | `deck` | dir | 10 | m | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
 | `design_plan` | dir | 6 | L | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `docx_body` | file | 1 | s | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
@@ -704,6 +705,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `calc` | file | 1 | s | Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock |
 | `clock` | file | 1 | s | What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset… |
 | `context` | file | 1 | m | Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names… |
+| `contract_port` | file | 1 | s | The document contract's recalculation port (ARCH-0075 section 2): a host serving `oneiron_docedit::contract`… |
 | `engine` | file | 1 | m | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `error` | file | 1 | s | Typed failures for the formula crate |
 | `links` | file | 1 | L | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |

@@ -2649,7 +2649,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/memory/query.rs` | src | m | — | — | Memory implementation of the same lazy read contracts as LMDB |
 | `src/ports/mod.rs` | src | s | 7 re-export · 16 crate-vis | — | Transaction-composable storage ports |
 | `src/ports/mutation.rs` | src | s | 5 crate-vis | — | Mutation audit composition |
-| `src/ports/query.rs` | src | s | 3 struct · 2 enum · 5 trait · 1 type | DeletionFamily, DeletionState, EdgeStoreRead, EntityStoreRead, EntityTime, RetrievalIndexRead, ShortIdStoreRead, TimeAxis +2 | Read halves of the storage ports |
+| `src/ports/query.rs` | src | s | 3 struct · 2 enum · 7 trait · 1 type | ChangeLogStoreRead, DeletionFamily, DeletionState, EdgeStoreRead, EntityStoreRead, EntityTime, JobQueueRead, RetrievalIndexRead +4 | Read halves of the storage ports |
 | `src/ports/records.rs` | src | s | 3 struct · 2 enum · 1 fn | ChangeLogRecord, ChangeOp, EdgeDirection, EntityRecord, SourceSpan | Backend-independent values carried across storage ports |
 | `src/ports/regeneration.rs` | src | s | 4 crate-vis | — | Generation-fenced completion of derived artifacts |
 | `src/ports/retrieval.rs` | src | s | 2 crate-vis | — | Query execution options for retrieval ports, independent of storage handles |
@@ -3693,7 +3693,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_identity/codec_records.rs` | src | m | 10 crate-vis | — | Print/evidence/segment/roster encode_/decode_ pairs; roster pair is the interlocutor-seam wire shape |
 | `src/voice_identity/math_keys.rs` | src | s | 9 crate-vis | — | Vector-math door (normalize/cosine/same-space check) and the digest helper the typed side tables' keys are… |
 | `src/voice_identity/mod.rs` | src | s | 1 mod · 1 re-export · 2 crate-vis | — | VOX-02 voice identity substrate: consent log, enrollment, local matching |
-| `src/voice_identity/ref_bank.rs` | src | m | 6 struct · 1 enum · 8 fn · 5 crate-vis | VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceTargetClone, VoiceTargetRecord | Private per-vault voice reference bank |
+| `src/voice_identity/ref_bank.rs` | src | L | 9 struct · 1 enum · 10 fn · 5 crate-vis | VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceRenderConsent, VoiceRenderDecision, VoiceRenderGrant +2 | Private per-vault voice reference bank |
 | `src/voice_identity/ref_bank/tests.rs` | test | s | — | — | — |
 | `src/voice_identity/ref_limits.rs` | src | s | 9 crate-vis | — | Resolved policy-manifest limits for the private render-reference bank |
 | `src/voice_identity/storage_admission.rs` | src | m | 28 crate-vis | — | Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination… |

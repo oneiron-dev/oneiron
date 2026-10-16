@@ -10,6 +10,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeStoreInventory, EntityStoreRead};
 use crate::ppr::read_graph_version;
 use crate::ppr_community::{
     CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
@@ -195,16 +196,11 @@ impl Store {
     ) -> Result<(CommunitySnapshot, CommunityRefreshReport)> {
         crate::config::validate_ppr_community(config)?;
         let mut entities = BTreeSet::new();
-        for (scanned, entry) in self.entities.iter(txn)?.enumerate() {
+        for (scanned, entry) in self.port_entity_raw_records(txn)?.enumerate() {
             if scanned >= MAX_COMMUNITY_NODES {
                 return Err(Error::CorruptedIndex("ppr community graph bounds"));
             }
-            let (key, raw) = entry?;
-            let id = EntityId::from_bytes(
-                key.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("ppr community entity id"))?,
-            )?;
+            let (id, raw) = entry?;
             if !self.ppr_community_live_entity_in_txn(txn, &id, &raw)? {
                 continue;
             }
@@ -212,7 +208,7 @@ impl Store {
         }
         let mut edges = Vec::new();
         // Scan outgoing rows once; reading the inverse index would double weight.
-        for (scanned, entry) in self.edges_out.iter(txn)?.enumerate() {
+        for (scanned, entry) in self.port_edge_rows_raw(txn)?.enumerate() {
             if scanned >= MAX_COMMUNITY_EDGES {
                 return Err(Error::CorruptedIndex("ppr community graph bounds"));
             }
