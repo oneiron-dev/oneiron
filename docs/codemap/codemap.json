@@ -25448,7 +25448,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 21,
+      "const": 22,
       "fn": 1,
       "struct": 1
      }
@@ -27405,7 +27405,7 @@
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
       "crate-vis": 2,
-      "fn": 10,
+      "fn": 11,
       "struct": 5
      }
     },
@@ -42749,6 +42749,7 @@
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaitRequest",
+      "VaultReceiptsRequest",
       "WorkCompanionSetRequest",
       "WorkspaceRefRequest"
      ],
@@ -42758,7 +42759,7 @@
       "enum": 1,
       "fn": 6,
       "re-export": 5,
-      "struct": 23
+      "struct": 24
      }
     },
     {
@@ -42786,7 +42787,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 108
+      "fn": 110
      }
     },
     {
@@ -42798,21 +42799,28 @@
       "AiOptions",
       "AiOptionsRequest",
       "AiPart",
+      "AiVerdict",
+      "AiVerdictRequest",
+      "AiVerdictReversibility",
       "AiVideoCancelled",
       "AiVideoJob",
       "AiVideoJobRequest",
       "AiVideoTicket",
+      "HookReplayOutcome",
+      "HookReplayRow",
+      "HooksReplayRequest",
       "PackFileInput",
       "PackPutOutcome",
       "PackPutReceipt",
       "PackPutRequest"
      ],
      "path": "src/task_verb/sdk_host.rs",
-     "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and the…",
+     "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "enum": 3,
-      "fn": 6,
-      "struct": 10
+      "const": 3,
+      "enum": 5,
+      "fn": 8,
+      "struct": 14
      }
     },
     {
@@ -55857,7 +55865,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 90
+      "fn": 92
      }
     },
     {
@@ -56856,7 +56864,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 91
+      "fn": 93
      }
     },
     {
@@ -59265,7 +59273,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -61676,6 +61684,16 @@
       "crate-vis": 5,
       "fn": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_verdict.rs",
+     "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -64889,6 +64907,13 @@
      "layout": "file",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…"
     },
+    "decision_verdict": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder"
+    },
     "device_local": {
      "files": 1,
      "impl_vault": false,
@@ -65102,7 +65127,7 @@
    },
    "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 447,
+   "source_files": 448,
    "test_files": 182
   },
   "oneiron-spawn": {
