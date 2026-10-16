@@ -317,12 +317,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/bundle_validation.rs` | src | m | 2 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
 | `src/batch/export/credential_filter.rs` | src | m | 9 fn · 2 crate-vis | — | Credential filtering at memory serve and export serialization boundaries |
 | `src/batch/export/document_import.rs` | src | m | 3 fn · 3 crate-vis | — | Validating JSON import through ordinary admission doors, never sync replay |
-| `src/batch/export/document_snapshot.rs` | src | s | 1 fn · 3 crate-vis | — | Snapshot enumeration for whole-vault export |
+| `src/batch/export/document_snapshot.rs` | src | m | 1 fn · 5 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | m | — | — | Observable whole-vault export/import contracts |
-| `src/batch/export/document_types.rs` | src | s | 11 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | ExportAdapterDescriptor, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportSourceVault +4 | Versioned six-part whole-vault interchange document |
+| `src/batch/export/document_types.rs` | src | s | 15 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | ExportAdapterDescriptor, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportLedger, ExportPack, ExportPackSource, ExportResultBody +8 | Versioned seven-part whole-vault interchange document |
 | `src/batch/export/document_validation.rs` | src | s | 1 crate-vis | — | Import-time validation of the serializer's full document, not its claims |
 | `src/batch/export/export_authority.rs` | src | m | 2 struct · 2 enum · 3 fn · 3 const · 6 crate-vis | ExportAuthorityManifest, VaultImportClassification, VaultImportMismatch, VaultImportReceipt | Export authority digests, import classification, and label validation |
-| `src/batch/export/export_egress.rs` | src | s | 13 fn | — | Whole-vault manifest egress doors and the Vault export surface |
+| `src/batch/export/export_egress.rs` | src | s | 13 fn · 1 crate-vis | — | Whole-vault manifest egress doors and the Vault export surface |
 | `src/batch/export/export_enumerate.rs` | src | s | 1 struct · 1 fn | WholeVaultExportRow | Snapshot enumeration for whole-vault exports, independent of type whitelists |
 | `src/batch/export/export_manifest.rs` | src | m | 6 struct · 35 fn · 2 const · 2 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest, ExportSerializerManifest | Whole-vault export manifest artifact types and stanza impls |
 | `src/batch/export/expression_import.rs` | src | s | 8 crate-vis | — | Dependency scheduling for the owning expression-preference archive adapter |
@@ -360,7 +360,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/put_staging.rs` | src | m | 26 crate-vis | — | Body/index/edge row staging helpers shared by the put and update paths |
 | `src/batch/put_apply/request.rs` | src | s | 12 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
-| `src/batch/secret_scan.rs` | src | L | 1 enum · 27 crate-vis | SecretScanMode | — |
+| `src/batch/secret_scan.rs` | src | L | 1 enum · 29 crate-vis | SecretScanMode | — |
 | `src/batch/secret_scan/shapes.rs` | src | m | 13 crate-vis | — | Credential-shape detection shared by write, serve, and export |
 | `src/batch/secret_scan/tests.rs` | test | m | — | — | — |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 10 crate-vis | — | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
@@ -815,12 +815,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/wake_policy.rs` | src | s | 1 crate-vis | — | Owner-authorized Dreamer wake-policy action; off-record never writes base |
 | `src/code_run/mod.rs` | src | s | 4 mod · 7 re-export · 7 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/payload.rs` | src | m | 8 crate-vis | — | — |
-| `src/code_run/replay.rs` | src | m | 10 struct · 1 enum · 18 fn · 7 const · 6 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor +3 | — |
+| `src/code_run/replay.rs` | src | m | 10 struct · 1 enum · 18 fn · 7 const · 7 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor +3 | — |
 | `src/code_run/run_verbs.rs` | src | s | 5 struct · 1 const | MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange | The inputs of the verb-table rows a code run answers itself (`context: "run"` in… |
 | `src/code_run/storage/compaction.rs` | src | m | 17 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
 | `src/code_run/storage/mod.rs` | src | s | 1 re-export · 8 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
-| `src/code_run/storage/records.rs` | src | m | 1 struct · 9 fn · 17 crate-vis | CodeRunModelHealCount | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
+| `src/code_run/storage/records.rs` | src | m | 2 struct · 11 fn · 25 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/routing.rs` | src | m | 28 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
 | `src/code_run/storage/speech_identity.rs` | src | s | 10 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
 | `src/code_run/support.rs` | src | s | 28 crate-vis | — | — |
