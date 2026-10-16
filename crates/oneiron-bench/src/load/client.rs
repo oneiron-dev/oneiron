@@ -79,7 +79,7 @@ impl Agent {
         let mut accepted = |skew: i64| -> Result<bool, String> {
             self.skew = skew;
             let body = json!({"query": "clock", "effort": "light", "limit": 1});
-            match self.post("recall", &body).1 {
+            match self.post("vault.recall", &body).1 {
                 Ok(_) => Ok(true),
                 Err(error) if error.starts_with("401") => Ok(false),
                 Err(error) => Err(format!("clock probe: {error}")),
@@ -195,8 +195,8 @@ impl Agent {
             }),
         };
         let verb = match record {
-            Record::Turn { .. } => "witness",
-            Record::Claim { .. } => "claim_upsert",
+            Record::Turn { .. } => "vault.witness",
+            Record::Claim { .. } => "vault.claims.upsert",
         };
         let (ms, result) = self.post(verb, &body);
         Sample {
@@ -221,7 +221,7 @@ impl Agent {
         if let Some(deadline) = deadline_ms {
             body["deadline_ms"] = json!(deadline);
         }
-        let (ms, result) = self.post("recall", &body);
+        let (ms, result) = self.post("vault.recall", &body);
         match result {
             Ok(pack) => {
                 let items = pack["items"].as_array().cloned().unwrap_or_default();

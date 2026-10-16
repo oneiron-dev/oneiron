@@ -34,9 +34,9 @@ other than `$root`; it does not add a WASI adapter to make such an import work.
 
 The build emits:
 
-- `quickjs-first-party.wasm`: all 13 typed imports;
+- `quickjs-first-party.wasm`: all 15 typed imports;
 
-- `quickjs-foreign.wasm`: only the four non-write imports;
+- `quickjs-foreign.wasm`: only the six non-write imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
 
 The foreign WIT file is a generated import projection of the same world, not
@@ -63,22 +63,31 @@ random bytes. Both seeds and step sequence are host-owned. A guest cannot obtain
 ambient entropy through the initial QuickJS PRNG seed.
 
 `console.log(...)` produces the next observation. `finish(value)` marks a
-completed step. `writeOutput('/mnt/outputs/name', bytes)` returns an output file.
+completed step, and a later call replaces its answer.
+`writeOutput('/mnt/outputs/name', bytes)` appends to an output file, so a large
+file is written in pieces. None of them holds a result whole or charges a size
+budget: each streams to the host as it is written, through the hidden
+`output-text` and `output-bytes` imports, in frames of at most one 1 MiB
+message (text cut at a UTF-16 boundary, a lone surrogate sent as U+FFFD). The
+host keeps each body in the vault's result store and gives the model a handle
+and a preview.
 Foreign guests have no `self` object. Their `propose.file(...)` and
 `propose.claim(...)` produce typed proposal deltas, not committed writes.
 Only workspace/output file paths are proposal targets; upload and skill files
 remain read-only. Native globals (`process`, `require`, `fetch`, `std`, `os`)
 are absent. No import loader can reintroduce them.
 
-First-party `self.memory` carries one async method per SDK verb-table row the
-host serves (`self.memory.recall(input)`, `self.memory.tasks.create(input)`).
+First-party code gets one async method per SDK verb-table row the host
+serves, at the row's full path (`vault.recall(input)`, `tasks.create(input)`,
+`self.focus.refresh(input)`, a bare `describe(input)`).
 Bootstrap builds them from the hidden `self.verbs` imports and then deletes
 `self.verbs`, so a row added to `scripts/sdk/agent-verbs.json` reaches the guest
 with no component rebuild. The memory reads and writes the run answers itself
-(`search`, `put_claim`, `supersede_claim`, `put_edge`) are rows of the same table,
-so they arrive the same way. A verb input is encoded once and the call sends
-that text. One holding a non-finite number, boxed or not, is refused before the
-call (`non_finite_verb_input`), since JSON would carry it as null; one JSON
+(`vault.search`, `vault.claims.put`, `vault.claims.supersede`,
+`vault.edges.put`) are rows of the same table, so they arrive the same way. A
+verb input is encoded once and the call sends that text. One holding a
+non-finite number, boxed or not, is refused before the call
+(`non_finite_verb_input`), since JSON would carry it as null; one JSON
 cannot carry at all is `invalid_verb_input`. A refused call throws a stable
 code, never prose, and so does the bridge's own argument check
 (`invalid_host_argument`).

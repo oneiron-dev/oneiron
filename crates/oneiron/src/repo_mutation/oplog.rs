@@ -285,6 +285,7 @@ impl Vault {
                 actor_id: stale.actor_id,
                 session_id: stale.session_id,
                 provenance_claim_id: None,
+                op_provenance: crate::code_document::CodeOpProvenance::default(),
                 operation: RepoMutationOperation::RecoverSnapshot {
                     fork_hash: stale.pre_action_fork_hash,
                 },

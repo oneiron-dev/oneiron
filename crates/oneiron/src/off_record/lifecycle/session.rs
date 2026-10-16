@@ -329,7 +329,7 @@ impl OffRecordSession<'_> {
     /// therefore share this one.
     ///
     /// Scores ride out with the ids (ONE-1729): the canonical sibling returns
-    /// [`ScoredEntity`] and the executor's `self.memory.search` outcome
+    /// [`ScoredEntity`] and the executor's `vault.search` outcome
     /// carries per-hit scores, so projecting them away here would have forced
     /// a second scoring body on the session path.
     ///
@@ -547,6 +547,56 @@ impl OffRecordSession<'_> {
                 })
             }
         }
+    }
+
+    /// One overlay write of the caller's own, on a route the caller captured:
+    /// [`Self::side_table_compare_and_put_routed`]'s Overlay arm with the
+    /// body handed over. `write` runs inside the base writer once the segment
+    /// is installed and the participant and route are checked; `apply`
+    /// stages one journaled op through the session apply, on a fresh view, so
+    /// each op sees the ones before it. A fresh [`Self::read_view`] inside
+    /// `write` sees them too. Everything staged commits with the segment, or
+    /// none of it does.
+    ///
+    /// Only an `Overlay` route writes here. A late writer whose room flipped
+    /// or closed meets the route's own refusal, not a write.
+    pub(crate) fn overlay_write_routed<T>(
+        &self,
+        route: &SessionWriteRoute,
+        write: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            &dyn Fn(&mut heed::RwTxn<'_>, crate::session_overlay::JournalEntry) -> Result<()>,
+        ) -> Result<T>,
+    ) -> Result<T> {
+        route.require_recording(&self.session_ref)?;
+        if route.target() != RouteTarget::Overlay {
+            return Err(Error::InvariantViolation(
+                "an overlay write needs an Overlay route",
+            ));
+        }
+        let overlay = self.entry.overlay.clone();
+        let apply: &dyn Fn(
+            &mut heed::RwTxn<'_>,
+            crate::session_overlay::JournalEntry,
+        ) -> Result<()> = &|wtxn, entry| {
+            crate::batch::apply_ops_session(
+                &self.read_view()?,
+                route,
+                &self.vault.config,
+                &self.vault.analyzer,
+                wtxn,
+                vec![entry],
+            )
+        };
+        let (segment, written) = self.vault.with_write_txn_grouped(|wtxn| {
+            let segment = overlay.install_txn_segment()?;
+            self.participant_in_txn(wtxn)?;
+            route.revalidate()?;
+            let written = write(wtxn, apply)?;
+            Ok((segment, written))
+        })?;
+        segment.commit()?;
+        Ok(written)
     }
 
     /// Atomically compare-and-put one routed side-table row and update one

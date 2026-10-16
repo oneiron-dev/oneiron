@@ -79,7 +79,7 @@ pub(crate) fn record_version_claim(
         return Ok(());
     };
     let deleted_here = {
-        let raw = store.entities.get(txn, artifact.as_bytes())?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &artifact)?;
         crate::deletion::row_deletion_marked(store, txn, &artifact, raw.as_deref())?
     };
     if deleted_here {
@@ -186,7 +186,7 @@ pub(super) fn live_claim_holders(
 
 /// A stored artifact row with its body, under no delete this vault holds.
 fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_BLOB_ARTIFACT {

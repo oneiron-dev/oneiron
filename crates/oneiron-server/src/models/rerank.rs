@@ -171,7 +171,7 @@ impl LlmBackend for RerankBackend {
             match reply.status {
                 200..=299 => {}
                 status if limit::is_limit_status(status, &reply.body) => {
-                    return Err(limit::limit_refusal(&reply.headers, &reply.body).into());
+                    return Err(limit::limit_refusal(status, &reply.headers, &reply.body).into());
                 }
                 401 | 403 => return Err(FatalLlmError::Auth.into()),
                 400..=499 => return Err(FatalLlmError::InvalidRequest.into()),
@@ -236,7 +236,7 @@ fn indexed_scores(body: &JsonValue, count: usize) -> Option<Vec<f32>> {
     scores.into_iter().collect()
 }
 
-fn transport(failure: HttpFailure) -> LlmError {
+pub(super) fn transport(failure: HttpFailure) -> LlmError {
     match failure {
         HttpFailure::Timeout => RetryableLlmError::Timeout.into(),
         HttpFailure::Connection | HttpFailure::StreamCut => RetryableLlmError::ServerError.into(),

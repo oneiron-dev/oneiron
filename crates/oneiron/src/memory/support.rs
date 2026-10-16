@@ -253,7 +253,7 @@ pub(crate) fn verify_deletion_authority_in_txn(
             ),
             &[
                 "Bind a human-class owner actor key to delete.",
-                "Agents withdraw their own claims via claim_retract.",
+                "Agents withdraw their own claims via vault.claims.retract.",
             ],
         ));
     }

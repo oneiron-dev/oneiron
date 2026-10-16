@@ -5,7 +5,15 @@
 mod tests;
 
 mod discover;
+mod policy;
+mod prune;
 pub use discover::discover_local_window_keys;
+pub use policy::{
+    DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
+    local_is_elected_home, resolve_residence_mode, set_device_sync_preference,
+};
+pub(crate) use prune::record_item_touch_in_txn;
+pub use prune::{prune_thin_items, record_item_touch};
 
 #[cfg(test)]
 use loro::ExportMode;
@@ -52,15 +60,21 @@ pub fn home_search_candidates(
         let Some(raw) = vault.get_raw(&hit.id)? else {
             continue;
         };
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("home search entity header"))?;
-        results.push((
-            hit.id,
-            hit.score,
-            WindowKey::from_timestamp(header.learned_at),
-        ));
+        results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
     Ok(results)
+}
+
+/// The canonical window that holds one entity: a CLAIM that names a world
+/// lives in that world's month partition, every other row in the base month.
+/// A malformed carrier stays in the base partition, as window admission keeps it.
+pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
+    let header =
+        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("residence entity header"))?;
+    Ok(match super::types::entity_world(raw).ok().flatten() {
+        Some(world) => WindowKey::for_world(header.learned_at, world),
+        None => WindowKey::from_timestamp(header.learned_at),
+    })
 }
 
 /// The maximum number of metadata rows returned in one index page.
