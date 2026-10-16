@@ -311,11 +311,6 @@ impl Vault {
             if unchanged {
                 continue;
             }
-            // A page stored before birth stamps places none of its chunks:
-            // they stay unplaced, as its earlier ones are.
-            let placed = self.get_raw_in(&txn, &asset)?.is_none()
-                || crate::federation::record_scope::birth_facet(&self.store, &txn, asset)?
-                    .is_some();
             let membership_key = asset.to_hex();
             let previous_members = MEMBERSHIP
                 .get(&self.store, &txn, &membership_key)?
@@ -353,9 +348,7 @@ impl Vault {
                     fields: vec![("text".into(), segment.text.clone())],
                 });
                 ops.push(edge(chunk, asset));
-                if placed {
-                    text_births.insert(chunk, vec![asset]);
-                }
+                text_births.insert(chunk, vec![asset]);
                 if let Some(text) = summary_text {
                     let model = summary.expect("summary output requires model");
                     let id = stable_ref(

@@ -7,7 +7,6 @@
 
 mod asset_hydrate;
 mod asset_resolve;
-mod asset_text_facets;
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
