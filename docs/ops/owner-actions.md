@@ -287,8 +287,9 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
 (`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
-Credentials inside records are nulled by the serializer; tainted, secret-marked,
-credential-bearing and binary result bodies are withheld and named in `result_body.jsonl`.
+Credentials inside records are nulled by the serializer. Result bodies go through the release
+scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
+and credential-bearing bodies are withheld and named in `result_body.jsonl`.
 
 Your own archive also carries your keys, by default: each active secret-custody record's value,
 in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
@@ -299,6 +300,15 @@ a re-import lists those as `missing_secrets` to re-enter. A caller off this devi
 only for portable records (device-bound ones go as handles); suspended records always go as
 handles; an export-first removal's archive, like any export to a contact or share, carries no
 custody record.
+
+`oneiron export --format okf --out vault-okf.zip` is "Export to OKF": the vault as an Open
+Knowledge Format v0.1 bundle (Google's markdown-plus-YAML-frontmatter format) for importing into
+other tools. Each entity is one concept at `<kind>/<id>.md` with `type`, `title`, `description`
+and `timestamp` frontmatter; graph edges are markdown links; claim evidence is a `# Citations`
+list; `index.md` files list each folder. It is lossy by design and says so in its root
+`index.md` and in every file's `oneiron_copy: "lossy"`: it drops bi-temporal validity,
+confidence, approval and lifecycle, typed edge values, run results, source packages and every
+custody secret, and it does not re-import as a vault. The archive is the full copy.
 
 A diary is exported as a read of it (OF-490): only diaries the owner's grant covers, logged on the
 receipt with the reason `export`. An agent that reviews each read of its diary first (its

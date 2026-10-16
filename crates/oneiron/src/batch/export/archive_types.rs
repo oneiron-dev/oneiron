@@ -6,6 +6,16 @@ use serde::{Deserialize, Serialize};
 
 /// The manifest's `format`: the one whole-vault export shape.
 pub const VAULT_ARCHIVE_FORMAT: &str = "oneiron-vault-archive";
+/// The format of the "Export to OKF" bundle: lossy, never re-imported as a
+/// vault, and labelled as not a full copy.
+pub const VAULT_OKF_FORMAT: &str = "okf-0.1";
+
+/// What a snapshot is cut into: the full archive, or the lossy OKF bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExportCut {
+    Archive,
+    Okf,
+}
 /// The archive member holding the [`super::WholeVaultDocumentManifest`].
 pub const VAULT_ARCHIVE_MANIFEST_PATH: &str = "manifest.json";
 pub(crate) const VAULT_ARCHIVE_RECORDS_DIR: &str = "records/";

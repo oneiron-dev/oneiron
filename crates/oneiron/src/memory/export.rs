@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
 use crate::authority::VerifiedSlip;
-use crate::batch::export::VAULT_ARCHIVE_FORMAT;
 use crate::claim::CallerLocality;
 use crate::edge::EdgeActorClass;
 use crate::memory::verify_actor_binding_in_txn;
@@ -14,7 +13,9 @@ use crate::side_table::{self, Named, SideTable};
 
 /// The export target. `archive` (the default) is the whole vault: one ZIP of
 /// one JSONL file per record kind, each attached file once by BLAKE3, and a
-/// manifest. It re-imports into a fresh vault.
+/// manifest. It re-imports into a fresh vault. `okf` is "Export to OKF": a
+/// ZIP of markdown concepts with YAML frontmatter (Open Knowledge Format
+/// v0.1) for other tools, lossy and labelled as not a full copy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExportOptions {
     #[serde(default)]
@@ -29,6 +30,8 @@ pub struct ExportOptions {
 
 /// The `format` that names the whole-vault archive.
 pub const EXPORT_TARGET_ARCHIVE: &str = "archive";
+/// The `format` that names the lossy OKF bundle.
+pub const EXPORT_TARGET_OKF: &str = "okf";
 
 /// One whole-vault export, written by the call that renders it, so every
 /// owner can see that the vault left and in what shape. Never the bytes. A
@@ -51,7 +54,8 @@ pub struct ExportReceipt {
 const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
     SideTable::new(&side_table::EXPORT_RECEIPT);
 
-/// One whole-vault export. On the wire the archive is standard base64.
+/// One export: the archive, or the OKF bundle. On the wire the ZIP is
+/// standard base64.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryExport {
     /// The archive manifest's `format`.
@@ -215,14 +219,20 @@ fn render_export(
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<MemoryExport> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
-    if name != EXPORT_TARGET_ARCHIVE {
-        return Err(MemoryError::bad_request_with(
-            format!("unknown export format {name:?}"),
-            &["Use: archive."],
-        ));
-    }
     let include_secrets = opts.include_secrets.unwrap_or(true);
-    let export = vault.export_whole_vault_with_admission(locality, include_secrets, admit)?;
+    let export = match name {
+        EXPORT_TARGET_ARCHIVE => {
+            vault.export_whole_vault_with_admission(locality, include_secrets, admit)?
+        }
+        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, admit)?,
+        _ => {
+            return Err(MemoryError::bad_request_with(
+                format!("unknown export format {name:?}"),
+                &["Use one of: archive, okf."],
+            ));
+        }
+    };
+    let format = export.manifest.format.clone();
     let digest = blake3::hash(&export.bytes).to_hex().to_string();
     let receipt = ExportReceipt {
         at: vault.store.clock.now_recorded_at(),
@@ -250,7 +260,7 @@ fn render_export(
         tracing::warn!(%error, "whole-vault export served without its receipt");
     }
     Ok(MemoryExport {
-        format: VAULT_ARCHIVE_FORMAT.to_owned(),
+        format,
         archive: export.bytes,
         digest,
     })
