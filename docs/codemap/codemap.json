@@ -3056,7 +3056,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/base_apply/mod.rs",
@@ -3179,7 +3179,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -3605,7 +3605,7 @@
      "path": "src/batch/facet_validation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -3615,7 +3615,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -8767,7 +8767,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3
      }
     },
@@ -18607,10 +18607,20 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/asset_text.rs",
+     "purpose": "Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -37212,7 +37222,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/authorize.rs",
@@ -37319,6 +37329,16 @@
      "path": "src/sync/selector/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/text_egress.rs",
+     "purpose": "The text fence at sync egress and peer document admission (facet rule C): an ASSET_TEXT written from source…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -42739,7 +42759,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43376,7 +43396,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43530,9 +43550,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 48,
+   "over_bar": 50,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2612,
+   "source_files": 2614,
    "test_files": 899
   },
   "oneiron-android": {

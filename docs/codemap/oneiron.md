@@ -282,7 +282,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/authority_log.rs` | src | s | 4 crate-vis | — | — |
 | `src/batch/base_apply/edge.rs` | src | s | 2 crate-vis | — | — |
 | `src/batch/base_apply/indexes.rs` | src | s | 2 crate-vis | — | — |
-| `src/batch/base_apply/mod.rs` | src | m | 3 crate-vis | — | — |
+| `src/batch/base_apply/mod.rs` | src | L | 3 crate-vis | — | — |
 | `src/batch/base_apply/project_history.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/base_apply/replay.rs` | src | s | 2 crate-vis | — | — |
 | `src/batch/base_apply/validation.rs` | src | s | 5 crate-vis | — | — |
@@ -293,7 +293,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/builder/mod.rs` | src | s | 1 struct · 5 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/ops.rs` | src | s | 3 crate-vis | — | Batch op vocabulary and shared op constructors |
 | `src/batch/builder/preflight.rs` | src | s | 1 crate-vis | — | Claim-gate preflight loop including CommitmentGapDecay arms |
-| `src/batch/builder/puts.rs` | src | m | 2 fn · 10 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
+| `src/batch/builder/puts.rs` | src | m | 2 fn · 11 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
 | `src/batch/child_of_overlay.rs` | src | m | 15 crate-vis | — | — |
 | `src/batch/claim_candidate_apply.rs` | src | s | 4 crate-vis | — | — |
 | `src/batch/claim_materialization.rs` | src | m | 20 crate-vis | — | Exact-operation envelope handoff |
@@ -330,8 +330,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/receipt_sources.rs` | src | s | 3 enum · 2 fn · 6 crate-vis | ExportReceiptSource, ReceiptSourceOmission, ReceiptSourceOrigin | Actual cited pack receipts in an archive |
 | `src/batch/export/tests.rs` | test | L | — | — | — |
 | `src/batch/facet_identity.rs` | src | s | 1 crate-vis | — | FACET overwrite checks for immutable substrate identity and retired privacy axes |
-| `src/batch/facet_validation.rs` | src | s | 5 crate-vis | — | — |
-| `src/batch/gate_mode.rs` | src | s | 12 crate-vis | — | — |
+| `src/batch/facet_validation.rs` | src | s | 6 crate-vis | — | — |
+| `src/batch/gate_mode.rs` | src | s | 13 crate-vis | — | — |
 | `src/batch/gate_staging.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 crate-vis | — | Final-state leader-chat TURN candidates, independent of batch op order |
@@ -738,7 +738,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/slip_tests.rs` | test | m | — | — | Root provisioning and fail-closed read admission land together |
 | `src/claim/scoped_read/tests.rs` | test | m | — | — | The one point-read entry and the read-grant holes it keeps closed |
 | `src/claim/scoped_read/versions.rs` | src | s | 8 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
-| `src/claim/scoped_read/visibility.rs` | src | m | 3 fn · 10 crate-vis | — | — |
+| `src/claim/scoped_read/visibility.rs` | src | m | 3 fn · 11 crate-vis | — | — |
 | `src/claim/scoped_read/weave_correction.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | WeaveLinkCorrection | Authenticated wrong-link labels emitted by the live weave report |
 | `src/claim/scoped_read/weave_digest.rs` | src | m | 2 struct · 2 enum · 4 fn · 1 crate-vis | StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule | Host-triggered, per-reader report schedules |
 | `src/claim/scoped_read/weave_digest/tests.rs` | test | m | — | — | — |
@@ -1508,7 +1508,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/peer_authority.rs` | src | s | 4 fn · 2 const · 2 crate-vis | — | Peer authority-log admission (FED-03) and roster refolding |
 | `src/federation/pending_act.rs` | src | m | 4 struct · 1 enum · 9 fn · 7 crate-vis | ActExecution, PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence | Row-driven shared-vault objection windows |
 | `src/federation/pending_act/tests.rs` | test | L | — | — | — |
-| `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 18 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
+| `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 19 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
+| `src/federation/record_scope/asset_text.rs` | src | s | 4 crate-vis | — | Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is… |
 | `src/federation/record_scope/export.rs` | src | s | 1 fn | — | The scoped export door |
 | `src/federation/record_scope/tests.rs` | test | s | — | — | — |
 | `src/federation/relationships.rs` | src | m | 1 struct · 2 enum · 6 fn · 3 const | MemberRelationship, MemberRelationshipContext, RelationshipTrustClass | Member-to-person binding, label trust classes, and relationship claim doors |
@@ -3076,7 +3077,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence_operation_budgets.rs` | src | s | 1 struct · 1 fn · 1 const | ResidenceOperationBudgets | Resolved holder-side residence operation budgets |
 | `src/sync/schema.rs` | src | s | 6 fn · 2 crate-vis | — | CRDT Doc schema creation for the sync layer |
 | `src/sync/selector/admission.rs` | src | L | 1 enum · 2 fn · 18 crate-vis | FederationAdmissionRole | Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone… |
-| `src/sync/selector/authorize.rs` | src | m | 1 fn · 8 crate-vis | — | Grant and pact authorization resolving the requested position under the grant ceiling, guest-share… |
+| `src/sync/selector/authorize.rs` | src | L | 1 fn · 8 crate-vis | — | Grant and pact authorization resolving the requested position under the grant ceiling, guest-share… |
 | `src/sync/selector/codec.rs` | src | m | 2 struct · 2 enum · 12 fn · 1 const · 13 crate-vis | RequestedAxis, SelectorVvRequest, SyncSelector, SyncSelectorWorld | Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope… |
 | `src/sync/selector/document_admission.rs` | src | m | 5 crate-vis | — | Transaction-bound peer document admission from stored ledger truth |
 | `src/sync/selector/edge.rs` | src | m | 12 crate-vis | — | Admitted-edge copy with reserved-kind rejection and the FacetOf off-table verdict |
@@ -3086,6 +3087,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/note_admission.rs` | src | s | 1 crate-vis | — | Transaction-bound NOTE selector admission |
 | `src/sync/selector/scope.rs` | src | m | 11 crate-vis | — | Export scope tables: coreference consent context, per-source facet scope mirror, and per-entity decisions |
 | `src/sync/selector/tests.rs` | test | XL | — | — | — |
+| `src/sync/selector/text_egress.rs` | src | s | 2 crate-vis | — | The text fence at sync egress and peer document admission (facet rule C): an ASSET_TEXT written from source… |
 | `src/sync/server_state.rs` | src | m | 6 fn | — | Server-side `sync_state` persistence per the ARCH-0023b key layout |
 | `src/sync/sweep_fence.rs` | src | s | 5 crate-vis | — | Windows a sweep holds closed while it rewrites their persisted state |
 | `src/sync/tests.rs` | test | m | — | — | Observer B and forward rematerialization admit through one entity-ingest entry and one tombstone… |
