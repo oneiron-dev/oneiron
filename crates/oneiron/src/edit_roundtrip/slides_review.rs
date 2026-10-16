@@ -135,9 +135,12 @@ pub struct SlideReviewRequest<'a> {
     pub at: u64,
 }
 
-/// One question over selected slide/shape units, via adjacent provider rungs.
-/// A band answer or abstention moves at most one rung; missing rungs fail
-/// closed. Errors and malformed output leave no partial proposal behind.
+/// One question over selected slide/shape units, via a route of provider
+/// rungs: the first at the dial's first rung, each above the one before (a
+/// rung with no provider is skipped, ARCH-0076 #posture), the last at the
+/// dial's ceiling; any other route is refused. An enforced in-band answer from
+/// the first provider moves once, to the next; an abstention lists its unit as
+/// abstained. Errors and malformed output leave no partial proposal behind.
 pub fn review_slides(
     base: &[u8],
     base_version: Option<u64>,
