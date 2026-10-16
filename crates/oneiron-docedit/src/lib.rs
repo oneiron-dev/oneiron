@@ -16,6 +16,7 @@ pub mod edit;
 pub mod emit;
 pub mod fonts;
 pub mod graphic;
+pub mod live;
 pub mod native_patch;
 pub mod ooxml;
 pub mod retained_opc;
