@@ -15,8 +15,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/egress.rs` | src | s | 2 struct · 1 trait | EgressRelay, HttpRequest, HttpResponse | Host-owned transport |
 | `src/launcher.rs` | src | m | 1 fn | — | Unprivileged in-container launcher and syscall-argument broker |
 | `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 5 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
-| `src/linux.rs` | src | s | 12 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
+| `src/linux.rs` | src | m | 12 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
 | `src/relay_protocol.rs` | src | s | 1 struct · 1 enum · 2 fn | RelayReply, RelayRequest | Bounded host/guest network transport over the no-NIC VM's private vsock |
-| `src/supervisor.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
+| `src/supervisor.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
 | `src/transport.rs` | src | s | 1 struct · 1 trait · 1 fn | SessionLease, SessionTransport | A selected backend's private duplex transport and lifetime custody |
 | `src/wire.rs` | src | s | 8 crate-vis | — | Private, bounded launcher/supervisor protocol |
