@@ -330,7 +330,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -2175,7 +2175,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 24,
       "struct": 1
      }
@@ -3605,7 +3605,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -4125,13 +4125,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/ledger.rs",
      "purpose": "Claims are the document state machine",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -8250,7 +8250,7 @@
      "path": "src/claim/deferred.rs",
      "purpose": "Local, content-bound destructive proposals",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 4
      }
     },
@@ -8329,7 +8329,7 @@
      "path": "src/claim/history_projection.rs",
      "purpose": "Verified MACHINE history residence: exact birth + transition closure at a trusted pin",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 4,
       "struct": 1
      }
@@ -8393,7 +8393,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 11
      }
     },
@@ -8471,7 +8471,7 @@
      "path": "src/claim/read.rs",
      "purpose": "`Vault` claim read doors: targeted `get_claim`, the subject/predicate scans, the session-bundle projection…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2
      }
     },
@@ -10593,7 +10593,7 @@
      "purpose": "Claim family predicates, key vocabulary, typed values, body build/parse/validate",
      "surface": {
       "const": 7,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 5,
       "fn": 8,
       "struct": 2,
@@ -11802,7 +11802,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 25,
       "fn": 24,
       "struct": 2
      }
@@ -13941,6 +13941,7 @@
      "path": "src/critic/review.rs",
      "purpose": "Artifact-independent review fan-out and the persisted calibration feedback loop",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "re-export": 1,
@@ -13974,7 +13975,9 @@
      "notable": [],
      "path": "src/critic/review/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "s",
@@ -14802,7 +14805,7 @@
      "path": "src/dreamer_consolidation/neighbourhood.rs",
      "purpose": "The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -14887,13 +14890,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resources/prior.rs",
      "purpose": "Exact stored-head admission and question routing",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -14903,7 +14906,7 @@
      "path": "src/dreamer_consolidation/resources/signals.rs",
      "purpose": "Actor- and branch-filtered graph/vector inputs for mechanical selection",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -14915,7 +14918,7 @@
      "path": "src/dreamer_consolidation/resources/write.rs",
      "purpose": "Sealed resource handoff",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2,
       "struct": 1
      }
@@ -15345,6 +15348,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 4,
       "re-export": 4,
       "struct": 3
@@ -16001,7 +16005,7 @@
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 5,
       "fn": 8,
       "struct": 8
@@ -16258,7 +16262,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "FinalizedProposalText",
@@ -18924,7 +18928,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 12,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -18938,6 +18942,16 @@
      "purpose": "Vault policy rows for connector admission capacity",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/consolidation_readers.rs",
+     "purpose": "The readers that consolidate a claim, and the question each asks first",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -19135,7 +19149,7 @@
      "path": "src/gate/doors/claim_write.rs",
      "purpose": "Claim write entry seams plus the phase-ordered inner executor",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19155,7 +19169,7 @@
      "path": "src/gate/doors/dreamer_run.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -19175,7 +19189,7 @@
      "path": "src/gate/doors/peripheral.rs",
      "purpose": "Write mode types and the small standalone claim doors",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -19334,7 +19348,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 57,
+      "crate-vis": 60,
       "re-export": 8
      }
     },
@@ -19353,6 +19367,16 @@
       "crate-vis": 13,
       "fn": 7,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/owner_answer.rs",
+     "purpose": "The owner-answer obligation: a critical claim's durable hold, which only its owner's answer closes…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -19509,6 +19533,16 @@
      "path": "src/gate/repair_tests.rs",
      "purpose": "ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/replicated_confirm.rs",
+     "purpose": "Device-local confirmation for a newly materialized critical claim revision",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "L",
@@ -19714,6 +19748,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/gate/tests/auto_checker_closure.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/gate/tests/burst_retired.rs",
      "purpose": "Write velocity does not replace the ordinary verdict or create a pause",
      "surface": {}
@@ -19775,11 +19817,77 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/consolidation_readers.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/consolidation_readers/history.rs",
+     "purpose": "The table's arms for signed histories and event ledgers: a held carrier or event keeps every positive read…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/consolidation_readers/identity.rs",
+     "purpose": "The table's arms for actor, attribution, representation and vault-default readers",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/consolidation_readers/questions.rs",
+     "purpose": "The table's arms for the question readers: an answer's calibration label, a graph answer, a standing…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/consolidation_readers/reserved.rs",
+     "purpose": "The table's arms for readers of reserved heads and critic calibration",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/consolidation_readers/skill.rs",
+     "purpose": "The table's arms for the skill readers",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/credential_lifetimes.rs",
      "purpose": "Credential expiry policies are trusted, restrictive and applied at mint",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/critical_confirm_holds.rs",
+     "purpose": "What keeps a critical claim held until its owner answers, and what lets it go",
      "surface": {}
     },
     {
@@ -19823,7 +19931,7 @@
      "path": "src/gate/tests/dreamer_precommit.rs",
      "purpose": "Dreamer precommit: evidence floor, shell and live rows, degeneracy, and denial codes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -19914,6 +20022,14 @@
      "notable": [],
      "path": "src/gate/tests/posture_override.rs",
      "purpose": "Opt-out posture, override receipts, and the posture dial",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/replicated_critical_confirm.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -23456,7 +23572,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "mod": 8,
       "re-export": 12
      }
@@ -24934,8 +25050,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 34,
-      "fn": 11,
+      "crate-vis": 35,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -28687,7 +28803,7 @@
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
       "crate-vis": 5,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -29809,7 +29925,7 @@
      "path": "src/provenance/derived_attachment.rs",
      "purpose": "Validate generated support evidence at the provenance write door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -29950,7 +30066,7 @@
      "path": "src/provenance/writes.rs",
      "purpose": "Vault write doors: put, supersede, retract, model substrate, and the shared writer",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4
      }
     },
@@ -29962,7 +30078,7 @@
      "purpose": "Provider confidence priors and read-time confidence composition (ES-09)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 9,
       "re-export": 1
      }
@@ -33747,7 +33863,7 @@
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -33934,7 +34050,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 2,
       "re-export": 18
      }
@@ -34465,7 +34581,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 6,
       "struct": 1
@@ -34499,7 +34615,7 @@
      "purpose": "The author seam and the dev-partitioned evidence brief handed across it",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
       "struct": 2,
@@ -35392,16 +35508,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/store/pending_gate_consent/invalidation.rs",
-     "purpose": "Claim-scoped critical-confirm invalidation closures",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/store/pending_gate_consent/keys.rs",
      "purpose": "Vault-meta key prefixes, key builders, upper bounds, and key-parsing helpers for pending gate-consent rows",
      "surface": {
@@ -35415,8 +35521,18 @@
      "path": "src/store/pending_gate_consent/mod.rs",
      "purpose": "Pending gate-consent claim records — run/group/hash indexes, sequence counter, pagination, sweep-state…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/pending_gate_consent/obligation.rs",
+     "purpose": "Claim-scoped owner-answer obligations: the durable hold a critical confirm opens, which only its owner's…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -35444,13 +35560,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/pending_gate_consent/tray.rs",
      "purpose": "Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "fn": 2
      }
     },
@@ -38550,7 +38666,7 @@
      "path": "src/task_verb/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the task_verb tests",
      "surface": {
-      "crate-vis": 58
+      "crate-vis": 59
      }
     },
     {
@@ -38681,7 +38797,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -42477,7 +42593,7 @@
     "edit_distance": {
      "files": 68,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
@@ -42580,7 +42696,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 118,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43120,7 +43236,7 @@
     },
     "skill_optimize": {
      "files": 22,
-     "impl_vault": false,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
@@ -43336,10 +43452,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 46,
+   "over_bar": 47,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2605,
-   "test_files": 888
+   "source_files": 2608,
+   "test_files": 897
   },
   "oneiron-android": {
    "files": [
@@ -53381,7 +53497,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -54310,6 +54426,14 @@
      "notable": [],
      "path": "src/api/tests/org_admin.rs",
      "purpose": "Organization credentials expose only their fixed administrative action list",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/owner_authored_writes.rs",
+     "purpose": "Owner-authored writes carry their own confirmation (security pack 2, F14 R6)",
      "surface": {}
     },
     {
@@ -58047,7 +58171,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 203,
+     "files": 204,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58288,7 +58412,7 @@
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 361,
-   "test_files": 174
+   "test_files": 175
   },
   "oneiron-spawn": {
    "files": [

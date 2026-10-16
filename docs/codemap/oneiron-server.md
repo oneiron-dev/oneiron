@@ -102,7 +102,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign.rs` | src | m | 2 crate-vis | — | Session-less signing ceremony |
 | `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
-| `src/api/facade.rs` | src | m | 3 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 4 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
 | `src/api/facade/tests.rs` | test | XL | — | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
@@ -204,6 +204,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mod.rs` | test | L | 52 crate-vis | — | — |
 | `src/api/tests/off_record_rooms.rs` | test | XL | — | — | ARCH-0052 D5, the notice model (owner ruling 2026-10-10, O1 = A): anyone in a room may start an off-record… |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
+| `src/api/tests/owner_authored_writes.rs` | test | s | — | — | Owner-authored writes carry their own confirmation (security pack 2, F14 R6) |
 | `src/api/tests/owner_healer.rs` | test | m | — | — | `/v1/owner` safety and repair: the owner rotates a secret (ARCH-0069 S6), reads the three signed healer… |
 | `src/api/tests/owner_routes.rs` | test | L | 4 crate-vis | — | `/v1/owner`: one owner door, receipted acts, whole-batch and whole-run consent |
 | `src/api/tests/owner_secrets.rs` | test | m | — | — | `/v1/owner/secrets/register`: the owner puts a secret into custody (ARCH-0069 S1–S3), with the repo… |
