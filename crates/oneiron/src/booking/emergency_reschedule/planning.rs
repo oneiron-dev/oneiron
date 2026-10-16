@@ -474,8 +474,13 @@ pub(super) fn plan_item(
         }
         if let (Some(payload), Some(ics)) = (&mut plan.payload, &ics) {
             payload.ics_blob_ref = persist_content_in(
-                vault, txn, request, &plan.booking.event_type.0,
-                crate::calendar::CALENDAR_INVITE_MEDIA_TYPE, ics, now_utc,
+                vault,
+                txn,
+                request,
+                &plan.booking.event_type.0,
+                crate::calendar::CALENDAR_INVITE_MEDIA_TYPE,
+                ics,
+                now_utc,
             )?;
         }
         plan.content_hash = plan.hash()?;

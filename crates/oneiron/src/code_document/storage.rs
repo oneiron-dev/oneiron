@@ -625,11 +625,7 @@ impl Vault {
     }
 }
 
-pub(super) fn load_head(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    id: &[u8; 32],
-) -> Result<Option<HeadRow>> {
+pub(super) fn load_head(store: &Store, txn: &RoTxn<'_>, id: &[u8; 32]) -> Result<Option<HeadRow>> {
     let Some(row) = CODE_DOCUMENT_HEAD.get(store, txn, id)? else {
         return Ok(None);
     };

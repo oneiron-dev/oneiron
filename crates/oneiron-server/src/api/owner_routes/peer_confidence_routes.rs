@@ -19,10 +19,7 @@ use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route(
-        "/federation/peer-confidence",
-        get(list).post(set),
-    )
+    Router::new().route("/federation/peer-confidence", get(list).post(set))
 }
 
 #[derive(Debug, Serialize)]

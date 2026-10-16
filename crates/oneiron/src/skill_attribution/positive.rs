@@ -128,5 +128,7 @@ pub fn pending_positive_proposals(vault: &Vault) -> Result<Vec<PositiveSkillProp
 ///
 /// Storage errors.
 pub fn retire_positive_proposal(vault: &Vault, evidence_sequence: u64) -> Result<bool> {
-    vault.with_write_txn_grouped(|wtxn| POSITIVE_PROPOSAL.delete(&vault.store, wtxn, &evidence_sequence))
+    vault.with_write_txn_grouped(|wtxn| {
+        POSITIVE_PROPOSAL.delete(&vault.store, wtxn, &evidence_sequence)
+    })
 }

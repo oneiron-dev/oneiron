@@ -146,7 +146,9 @@ impl Memory<'_> {
         occurred_at: u64,
     ) -> MemoryResult<LandedImage> {
         if request.operation != AiOperation::Image {
-            return Err(MemoryError::bad_request("an image asset renders an image call"));
+            return Err(MemoryError::bad_request(
+                "an image asset renders an image call",
+            ));
         }
         let reader = AssetConsumer {
             capabilities: vec![LlmCapability::ImageInput],

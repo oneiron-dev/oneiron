@@ -494,7 +494,10 @@ pub(crate) fn survey(config: &OneironerConfig) -> anyhow::Result<Survey> {
             .copied()
             .find(|engine| engine.built_in())
             .ok_or_else(|| {
-                anyhow::anyhow!("oneironer runtime {} has no built-in engine", config.runtime.as_str())
+                anyhow::anyhow!(
+                    "oneironer runtime {} has no built-in engine",
+                    config.runtime.as_str()
+                )
             })?;
         return Ok(Survey {
             engines: here.into_iter().map(|engine| (engine, None)).collect(),

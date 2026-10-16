@@ -1,8 +1,8 @@
 //! First-run embedder and tagger choices, using the same config and providers as serve.
 use crate::cli::InitArgs;
 use crate::config::{
-    EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, EnvConfig,
-    OneironerConfig, OneironerMode, OneironerProvider, ServeArgs, ServeConfig,
+    EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerConfig,
+    OneironerMode, OneironerProvider, ServeArgs, ServeConfig,
 };
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -150,8 +150,11 @@ fn ask_tagger(
         OneironerProvider::Local => ask_local_tagger(args, input, output)?,
         OneironerProvider::Endpoint => {
             if args.oneironer_url.is_none() {
-                args.oneironer_url =
-                    Some(ask_line(input, output, "Tagger server URL on this machine: ")?);
+                args.oneironer_url = Some(ask_line(
+                    input,
+                    output,
+                    "Tagger server URL on this machine: ",
+                )?);
             }
             if args.oneironer_checkpoint_sha16.is_none() {
                 args.oneironer_checkpoint_sha16 = Some(ask_line(
@@ -205,7 +208,9 @@ fn ask_local_tagger(
         let measured = match row {
             Some(row) => match (row.clears, row.mean_ms) {
                 (true, Some(ms)) => format!("{ms:.1} ms per reference case"),
-                (false, Some(ms)) => format!("{ms:.1} ms per reference case, misses the parity bar"),
+                (false, Some(ms)) => {
+                    format!("{ms:.1} ms per reference case, misses the parity bar")
+                }
                 (_, None) => "could not run the bundle".to_owned(),
             },
             None => "no reference in the bundle; unmeasured".to_owned(),
@@ -302,7 +307,9 @@ fn tagger_table(args: &InitArgs) -> anyhow::Result<toml::Table> {
     if choice == OneironerProvider::None
         && (args.oneironer_checkpoint_sha16.is_some() || args.oneironer_label_count.is_some())
     {
-        anyhow::bail!("tagger checkpoint and label count options require --oneironer local or endpoint");
+        anyhow::bail!(
+            "tagger checkpoint and label count options require --oneironer local or endpoint"
+        );
     }
     let mut table = toml::Table::new();
     table.insert("provider".into(), choice.as_str().into());

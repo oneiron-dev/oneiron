@@ -251,11 +251,11 @@ fn put_coverage_in(
             "executor coverage exceeds durable replay",
         ));
     }
-    let minted = dbs
-        .port_entity_record(&*txn, &mint.summary_id())?
-        .ok_or(Error::InvariantViolation(
-            "executor coverage names no live summary",
-        ))?;
+    let minted =
+        dbs.port_entity_record(&*txn, &mint.summary_id())?
+            .ok_or(Error::InvariantViolation(
+                "executor coverage names no live summary",
+            ))?;
     let row = CodeRunCompactionCoverage {
         run_id: span.run_id,
         session_ref: span.session_ref,

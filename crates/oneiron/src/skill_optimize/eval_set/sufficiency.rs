@@ -18,7 +18,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{EvalCase, EvalLabel, EvalLabelKind, EvalSeat, append_label_in_txn, case_in_txn, invalid, rows_in_txn};
+use super::{
+    EvalCase, EvalLabel, EvalLabelKind, EvalSeat, append_label_in_txn, case_in_txn, invalid,
+    rows_in_txn,
+};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -102,7 +105,9 @@ impl SufficiencyCard {
 
 fn nonnegative(value: Option<f64>) -> Result<()> {
     if value.is_some_and(|value| !value.is_finite() || value < 0.0) {
-        return Err(invalid("a sufficiency measurement must be finite and nonnegative"));
+        return Err(invalid(
+            "a sufficiency measurement must be finite and nonnegative",
+        ));
     }
     Ok(())
 }
@@ -121,11 +126,9 @@ pub fn sufficiency_card(input: SufficiencyInput) -> Result<SufficiencyCard> {
     {
         return Err(invalid("a paired interval must be finite and ordered"));
     }
-    let margin = input.retest_noise.map(|noise| {
-        input
-            .owner_margin
-            .map_or(noise, |owner| owner.min(noise))
-    });
+    let margin = input
+        .retest_noise
+        .map(|noise| input.owner_margin.map_or(noise, |owner| owner.min(noise)));
     let mut unknown = Vec::new();
     if input.set_changed {
         unknown.push(UnknownReason::SetChanged);
@@ -296,7 +299,8 @@ impl Vault {
         at: u64,
     ) -> Result<EvalCase> {
         self.with_write_txn_grouped(|txn| {
-            let actor = crate::dreamer_runner::maintenance::validate_person_in_txn(self, txn, owner)?;
+            let actor =
+                crate::dreamer_runner::maintenance::validate_person_in_txn(self, txn, owner)?;
             let key = ask_key(decision, case);
             let mut ask: EvalLabelAsk = super::decode(
                 &self

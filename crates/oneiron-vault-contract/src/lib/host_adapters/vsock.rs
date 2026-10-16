@@ -31,7 +31,13 @@ const REJOIN_WINDOW: Duration = Duration::from_secs(10);
 
 fn socket(flags: libc::c_int) -> io::Result<OwnedFd> {
     // SAFETY: socket takes no pointers; a non-negative result is a new fd.
-    let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC | flags, 0) };
+    let fd = unsafe {
+        libc::socket(
+            libc::AF_VSOCK,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC | flags,
+            0,
+        )
+    };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -162,7 +168,9 @@ impl AsyncRead for VsockStream {
             let unfilled = buf.initialize_unfilled();
             let read = guard.try_io(|fd| {
                 // SAFETY: unfilled is valid for writes of its whole length.
-                let n = unsafe { libc::read(fd.as_raw_fd(), unfilled.as_mut_ptr().cast(), unfilled.len()) };
+                let n = unsafe {
+                    libc::read(fd.as_raw_fd(), unfilled.as_mut_ptr().cast(), unfilled.len())
+                };
                 usize::try_from(n).map_err(|_| io::Error::last_os_error())
             });
             match read {
@@ -188,7 +196,12 @@ impl AsyncWrite for VsockStream {
             let written = guard.try_io(|fd| {
                 // SAFETY: data is valid for reads of its whole length.
                 let n = unsafe {
-                    libc::send(fd.as_raw_fd(), data.as_ptr().cast(), data.len(), libc::MSG_NOSIGNAL)
+                    libc::send(
+                        fd.as_raw_fd(),
+                        data.as_ptr().cast(),
+                        data.len(),
+                        libc::MSG_NOSIGNAL,
+                    )
                 };
                 usize::try_from(n).map_err(|_| io::Error::last_os_error())
             });
@@ -308,10 +321,16 @@ impl GuestLink {
     /// Reports the next wake and parks until the host resumes the guest, or
     /// the wake comes due while the host left it running. The host keeps
     /// `next_wake` before it pauses or snapshots, so the wake is armed first.
-    pub async fn idle(&self, next_wake: Option<SystemTime>, snapshot_ok: bool) -> anyhow::Result<()> {
+    pub async fn idle(
+        &self,
+        next_wake: Option<SystemTime>,
+        snapshot_ok: bool,
+    ) -> anyhow::Result<()> {
         self.0.send(&VmGuestFrame::Idle {
-            next_wake: next_wake
-                .map(|at| at.duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs())),
+            next_wake: next_wake.map(|at| {
+                at.duration_since(UNIX_EPOCH)
+                    .map_or(0, |since| since.as_secs())
+            }),
             snapshot_ok,
         })?;
         let resumed = self.0.events.resumed.notified();

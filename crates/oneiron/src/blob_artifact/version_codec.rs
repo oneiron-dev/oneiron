@@ -177,9 +177,11 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
                 );
             }
             KEY_MADE_BY => {
-                made_by = Some(made_by_from_text(value.as_str().ok_or(Error::Artifact(
-                    ArtifactError::InvalidBlobArtifactBody("made_by must be a UTF-8 string"),
-                ))?)?);
+                made_by = Some(made_by_from_text(value.as_str().ok_or(
+                    Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                        "made_by must be a UTF-8 string",
+                    )),
+                )?)?);
             }
             KEY_PARENT_VERSION => parent_version = Some(u64_value(value, "parent_version")?),
             KEY_FORK_OF_VERSION => fork_of_version = Some(u64_value(value, "fork_of_version")?),

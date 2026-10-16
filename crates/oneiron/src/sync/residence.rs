@@ -69,8 +69,8 @@ pub fn home_search_candidates(
 /// lives in that world's month partition, every other row in the base month.
 /// A malformed carrier stays in the base partition, as window admission keeps it.
 pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
-    let header = EntityMetadataHeader::parse(raw)
-        .ok_or(Error::CorruptedIndex("residence entity header"))?;
+    let header =
+        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("residence entity header"))?;
     Ok(match super::types::entity_world(raw).ok().flatten() {
         Some(world) => WindowKey::for_world(header.learned_at, world),
         None => WindowKey::from_timestamp(header.learned_at),

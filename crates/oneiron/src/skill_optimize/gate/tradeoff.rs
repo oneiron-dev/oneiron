@@ -109,7 +109,10 @@ fn matching_rule(
         })
 }
 
-fn learning_full(preferences: Option<&SkillTradeoffPreferences>, limits: SkillTradeoffLimits) -> bool {
+fn learning_full(
+    preferences: Option<&SkillTradeoffPreferences>,
+    limits: SkillTradeoffLimits,
+) -> bool {
     let learned = preferences.map_or(0, |preferences| preferences.learned.len());
     limits
         .max_learned_rules
@@ -550,7 +553,9 @@ pub(super) fn plan(
         vault,
         &txn,
         definition.project.as_ref(),
-        preferences.as_ref().map(|preferences| preferences.responsible),
+        preferences
+            .as_ref()
+            .map(|preferences| preferences.responsible),
     )?;
     drop(txn);
     let project = definition
@@ -612,9 +617,10 @@ pub(super) fn plan(
             }
             // Choice probability is confidence in the chosen option, not
             // P(yes): the lower tail is uncertainty, never a confident no.
-            if let Some(verdict) = jev.as_ref().filter(|verdict| {
-                band.is_some_and(|band| verdict.probability >= band.high)
-            }) {
+            if let Some(verdict) = jev
+                .as_ref()
+                .filter(|verdict| band.is_some_and(|band| verdict.probability >= band.high))
+            {
                 let authentication = format!("{}@{}", verdict.pin.model, verdict.pin.version);
                 let choice = verdict.choice;
                 return Ok(TradeoffPlan::Decided {
@@ -775,7 +781,9 @@ pub fn settle_skill_tradeoff_ask(
         {
             return Err(invalid("tradeoff goal changed before the pick"));
         }
-        let holder = previous.as_ref().map_or(actor, |previous| previous.responsible);
+        let holder = previous
+            .as_ref()
+            .map_or(actor, |previous| previous.responsible);
         if learning_full(
             previous.as_ref(),
             skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?,

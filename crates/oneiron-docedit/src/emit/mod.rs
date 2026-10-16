@@ -435,9 +435,7 @@ impl Writer<'_> {
                         // family: a time axis reads as a line, any other
                         // category axis as columns.
                         let family = match dataset.columns.first().map(|column| column.kind) {
-                            _ if matches!(placement.content, Content::Share(_)) => {
-                                ChartFamily::Pie
-                            }
+                            _ if matches!(placement.content, Content::Share(_)) => ChartFamily::Pie,
                             Some(ColumnKind::Date) => ChartFamily::Line,
                             _ => ChartFamily::Bar,
                         };

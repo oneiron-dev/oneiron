@@ -438,7 +438,10 @@ fn covering_invite_in_txn(
 ) -> Result<Option<EntityId>, CalendarError> {
     let principal = actor.to_hex();
     let mut matched: Option<EntityId> = None;
-    for entry in vault.store.port_entity_ids_by_type(txn, ENTITY_TYPE_OUTBOUND_GRANT, None)? {
+    for entry in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_OUTBOUND_GRANT, None)?
+    {
         let grant_ref = entry?;
         let Some(grant) = standing_outbound_grant_in_txn(&vault.store, txn, &grant_ref)? else {
             continue;
@@ -554,7 +557,8 @@ fn sending_identity_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<Option<ChannelIdentity>, CalendarError> {
-    if let Some(identity) = active_identity_for_channel(vault, txn, actor, CALENDAR_INVITE_CHANNEL)? {
+    if let Some(identity) = active_identity_for_channel(vault, txn, actor, CALENDAR_INVITE_CHANNEL)?
+    {
         return Ok(Some(identity));
     }
     active_identity_for_channel(vault, txn, actor, "email")
@@ -594,7 +598,10 @@ fn active_identity_for_channel(
 ) -> Result<Option<ChannelIdentity>, CalendarError> {
     let wanted = crate::counterparty_contact::normalize_channel_class(channel_class);
     let mut found: Option<ChannelIdentity> = None;
-    for entry in vault.store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
+    for entry in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
+    {
         let id = entry?;
         let Some(identity) = vault
             .get_channel_identity_in_txn(txn, &id)

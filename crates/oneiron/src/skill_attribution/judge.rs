@@ -208,8 +208,8 @@ fn bounded_state(request: &JudgeRequest<'_>, questions: &[DecisionQuestion]) -> 
     let mut cut = None;
     loop {
         let state = request_state(request, questions, cut);
-        let fits = serde_json::to_vec(&state)
-            .is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES);
+        let fits =
+            serde_json::to_vec(&state).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES);
         cut = match cut {
             _ if fits => return state,
             None if longest > 0 => Some(longest / 2),

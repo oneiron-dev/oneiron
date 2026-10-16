@@ -225,9 +225,14 @@ impl<'a> EngineNativeExecutor<'a> {
         // history. Synchronize it BEFORE the mint, even across a soft yield.
         self.sync_output_context(&record)?;
         let plan = match &self.storage {
-            ExecutorStorage::Canonical(vault) => {
-                driver.integrate_with_coverage(vault, byline, placement, gated, accumulated, &span)?
-            }
+            ExecutorStorage::Canonical(vault) => driver.integrate_with_coverage(
+                vault,
+                byline,
+                placement,
+                gated,
+                accumulated,
+                &span,
+            )?,
             // A room's run lands through its own handle, on the route it
             // captured at entry: the summary stays in the room's overlay and
             // drops with it at close, and a closed or flipped room refuses.

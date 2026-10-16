@@ -271,9 +271,8 @@ impl OfferCooldowns {
                         SpentKind::Credit => vec![QuotaChoice::TopUp, QuotaChoice::AddAccount],
                     },
                 };
-                let bytes = rmp_serde::to_vec_named(&question).map_err(|_| {
-                    oneiron::Error::InvariantViolation("encode a quota question")
-                })?;
+                let bytes = rmp_serde::to_vec_named(&question)
+                    .map_err(|_| oneiron::Error::InvariantViolation("encode a quota question"))?;
                 vault.sync_state_put_in_write_txn(txn, &question_key(&question.id), &bytes)?;
             }
             Ok::<_, oneiron::Error>(rest)
@@ -400,10 +399,16 @@ fn rest_end(
         return rest(until, ResetSource::ErrorTime);
     }
     if let Some(seconds) = refusal.retry_after.filter(|seconds| *seconds > 0) {
-        return rest(now.saturating_add(seconds).min(longest), ResetSource::RetryAfter);
+        return rest(
+            now.saturating_add(seconds).min(longest),
+            ResetSource::RetryAfter,
+        );
     }
     if strikes == 0 {
-        return rest(now.saturating_add(default_secs).min(longest), ResetSource::Default);
+        return rest(
+            now.saturating_add(default_secs).min(longest),
+            ResetSource::Default,
+        );
     }
     let backoff = default_secs
         .max(1)
@@ -416,7 +421,8 @@ fn rest_end(
     seed.copy_from_slice(&digest.finalize().as_bytes()[..8]);
     let jitter = u64::from_le_bytes(seed) % (backoff / 4 + 1);
     rest(
-        now.saturating_add(backoff.saturating_add(jitter)).min(longest),
+        now.saturating_add(backoff.saturating_add(jitter))
+            .min(longest),
         ResetSource::Backoff,
     )
 }

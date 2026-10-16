@@ -27,7 +27,6 @@ pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };
 pub use gate::GatedBackend;
-pub use media::MediaGate;
 pub use host::{
     AccountStatus, Allocation, AllocationGrantError, AllocationRef, AllocationRefusal, HostAccount,
     KeyCustody, OfferBinding, OfferRoute, OfferRouteError, PaidConnector, Payer, UnitRate,
@@ -36,6 +35,7 @@ pub use job_maximum::{
     AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused,
     MaximumShown, MaximumStop, ResumeOffer, ResumeRefused, StopRefused,
 };
+pub use media::MediaGate;
 pub use permit::RunPermit;
 pub use receipt::{
     CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink, TeacherReport,

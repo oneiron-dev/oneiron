@@ -209,7 +209,10 @@ pub(crate) fn resolve_invite_event_in_txn(
 ) -> Result<Option<EntityId>, CalendarError> {
     let indexed = PASSPORT_INDEX.get(&vault.store, txn, &passport_digest(uid))?;
     let mut found = None;
-    for entry in vault.store.port_entity_ids_by_type(txn, ENTITY_TYPE_EVENT, None)? {
+    for entry in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_EVENT, None)?
+    {
         let event = entry?;
         let mut exception = false;
         for id in vault.claims_for_subject_in_txn(txn, &event)? {

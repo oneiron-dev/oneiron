@@ -8,11 +8,11 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::codebase::{CodebaseScopeKey, RepoRef};
-use crate::federation::{ScopeAxis, ScopeId};
 use crate::context_pack::EmptyReason;
 use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,

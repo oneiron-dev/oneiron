@@ -80,8 +80,7 @@ impl SyncConnection {
         &self,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> crate::error::Result<mpsc::UnboundedReceiver<SyncEvent>> {
-        let (client, event_rx) =
-            SyncClient::new(Arc::clone(&self.manager), self.client_config())?;
+        let (client, event_rx) = SyncClient::new(Arc::clone(&self.manager), self.client_config())?;
         let event_tx = client.event_tx.clone();
         let mut client = client;
 

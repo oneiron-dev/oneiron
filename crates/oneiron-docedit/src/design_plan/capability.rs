@@ -147,7 +147,10 @@ impl Metrics {
             first_line: style.first_line.value.unwrap_or(0),
             insets,
             face: typeface.and_then(|name| fonts.face(name, bold, false)),
-            line_spacing: style.line_spacing.value.unwrap_or(Spacing::Percent(100_000)),
+            line_spacing: style
+                .line_spacing
+                .value
+                .unwrap_or(Spacing::Percent(100_000)),
             before: style.space_before.value.unwrap_or(Spacing::Points(0)),
             after: style.space_after.value.unwrap_or(Spacing::Points(0)),
         })
@@ -542,7 +545,13 @@ pub(super) fn measured(need: &Need<'_>, room: &Room<'_>, carry: Carry) -> Option
     match (need, carry) {
         (Need::Title(text), _) => room.text?.measured(&[*text]),
         (Need::Text(paragraphs), _) => room.text?.measured(paragraphs),
-        (Need::Data { dataset: Some(dataset), .. }, Carry::Table | Carry::Chart | Carry::Share) => {
+        (
+            Need::Data {
+                dataset: Some(dataset),
+                ..
+            },
+            Carry::Table | Carry::Chart | Carry::Share,
+        ) => {
             let texts: Vec<String> = dataset
                 .columns
                 .iter()

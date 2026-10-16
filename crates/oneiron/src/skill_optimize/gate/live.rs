@@ -66,7 +66,10 @@ pub(super) fn goal_axis_plan(definition: &GoalDefinition, pulls_per_axis: u32) -
 fn plan_digest(plan: &GoalAxisPlan) -> String {
     let mut hash = Sha256::new();
     hash.update(PLAN_DOMAIN);
-    for (side, axes) in [(&b"offline"[..], &plan.offline), (&b"online"[..], &plan.online)] {
+    for (side, axes) in [
+        (&b"offline"[..], &plan.offline),
+        (&b"online"[..], &plan.online),
+    ] {
         hash.update(side);
         hash.update(b"\0");
         for axis in axes {
@@ -124,7 +127,9 @@ pub fn measure_skill_edit_goal_axes(
         if proposal_digest != skill_body_binding_digest(&staged)?
             || target_digest != skill_body_binding_digest(&current)?
         {
-            return Err(retry("a skill body moved while its goal axes were measured"));
+            return Err(retry(
+                "a skill body moved while its goal axes were measured",
+            ));
         }
         let held_out = held_out_receipts_in_txn(vault, txn, &target)?;
         if held_out != report.held_out_receipts {
@@ -132,7 +137,11 @@ pub fn measure_skill_edit_goal_axes(
                 "the reserved evidence moved while the goal axes were measured",
             ));
         }
-        if goal_axis_plan(&goal_definition_in_txn(vault, txn, &target)?, pulls_per_axis) != plan {
+        if goal_axis_plan(
+            &goal_definition_in_txn(vault, txn, &target)?,
+            pulls_per_axis,
+        ) != plan
+        {
             return Err(retry("the goal moved while its axes were measured"));
         }
         let row = LiveAxesRow {

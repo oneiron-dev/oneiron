@@ -104,8 +104,7 @@ pub fn run_attribution_audit_with_decisions(
             hunks: &[],
             floor,
         };
-        let answer =
-            classify_split(decisions, &request, &[])?.and_then(|(split, _)| split.sole());
+        let answer = classify_split(decisions, &request, &[])?.and_then(|(split, _)| split.sole());
         if answer.is_none() {
             abstained += 1;
         }

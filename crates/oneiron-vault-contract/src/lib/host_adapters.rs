@@ -16,8 +16,8 @@ pub use embedded::{AppHost, EmbeddedHost};
 mod desktop;
 #[cfg(unix)]
 pub use desktop::{
-    ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost,
-    SecretSource, SystemdHost,
+    ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost, SecretSource,
+    SystemdHost,
 };
 #[cfg(target_os = "linux")]
 mod vsock;

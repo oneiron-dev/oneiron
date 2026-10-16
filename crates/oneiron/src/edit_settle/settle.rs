@@ -18,7 +18,9 @@ use crate::edit_roundtrip::judgment_cells::verify_sheet_answer_bytes;
 use crate::edit_roundtrip::{EditOp, EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess};
+use crate::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -557,7 +559,11 @@ impl Vault {
             .any(|grant| grant.bound().contains(&required)))
     }
 
-    pub(super) fn authorize_settle(&self, consent: &SettleConsent, actor: WriteActor) -> Result<()> {
+    pub(super) fn authorize_settle(
+        &self,
+        consent: &SettleConsent,
+        actor: WriteActor,
+    ) -> Result<()> {
         match consent {
             SettleConsent::OwnerConsent { .. } => Ok(()),
             SettleConsent::StandingGrant { brief_ref } => {

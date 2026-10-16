@@ -56,6 +56,11 @@ pub fn record_retest(vault: &Vault, retest: &Retest, now: u64) -> Result<Option<
         .executor(retest.executor.clone())
         .axis(retest.axis.clone());
     cell.type_ref = retest.type_ref.clone();
-    let evidence = LearningEvidence::anchored(retest.receipt.clone(), retest.at, Anchor::Retest, observation);
+    let evidence = LearningEvidence::anchored(
+        retest.receipt.clone(),
+        retest.at,
+        Anchor::Retest,
+        observation,
+    );
     record_evidence(vault, &cell, &evidence, now)
 }

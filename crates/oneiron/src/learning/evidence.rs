@@ -77,7 +77,10 @@ impl Anchor {
             ),
             LearningPredicate::RetestNoise => matches!(self, Self::Retest),
             LearningPredicate::Setting => {
-                matches!(self, Self::FittingCheck | Self::Audit { .. } | Self::HeldOut)
+                matches!(
+                    self,
+                    Self::FittingCheck | Self::Audit { .. } | Self::HeldOut
+                )
             }
         }
     }
@@ -190,7 +193,12 @@ pub struct LearningEvidence {
 impl LearningEvidence {
     /// A whole-run anchored observation with no judge.
     #[must_use]
-    pub fn anchored(receipt: impl Into<String>, at: u64, anchor: Anchor, observation: Observation) -> Self {
+    pub fn anchored(
+        receipt: impl Into<String>,
+        at: u64,
+        anchor: Anchor,
+        observation: Observation,
+    ) -> Self {
         Self {
             receipt: receipt.into(),
             at,
@@ -265,7 +273,10 @@ pub(crate) fn record_evidence_in_txn(
             "this anchor does not feed this learning member",
         ));
     }
-    bounded_ref(&evidence.receipt, "an evidence receipt is 1..=256 bytes without NUL")?;
+    bounded_ref(
+        &evidence.receipt,
+        "an evidence receipt is 1..=256 bytes without NUL",
+    )?;
     if let Some(judge) = &evidence.judge {
         bounded_ref(judge, "a judge revision is 1..=256 bytes without NUL")?;
     }
@@ -288,7 +299,12 @@ pub(crate) fn record_evidence_in_txn(
         on_judge_model: evidence.on_judge_model,
         outcome_label: evidence.outcome_label.clone(),
     };
-    EVIDENCE.put(&vault.store, wtxn, &(digest, evidence.receipt.clone()), &row)?;
+    EVIDENCE.put(
+        &vault.store,
+        wtxn,
+        &(digest, evidence.receipt.clone()),
+        &row,
+    )?;
     project_cell_in_txn(vault, wtxn, &digest, now)
 }
 

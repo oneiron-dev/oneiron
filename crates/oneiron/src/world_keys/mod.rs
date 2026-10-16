@@ -43,6 +43,8 @@ pub use self::content::{
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::machine::{machine_encryption_key, machine_secret};
+pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
+pub(crate) use self::pads::{destroy_world_keys_in_txn, validate_pad_put_in_txn};
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
@@ -50,8 +52,6 @@ pub use self::root_issue::PreparedRoot;
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::WorldKeySession;
 pub use self::state::{WorldRecoveryState, recovery_state};
-pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
-pub(crate) use self::pads::{destroy_world_keys_in_txn, validate_pad_put_in_txn};
 pub use self::vault_key::{VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind};
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

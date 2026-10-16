@@ -13,8 +13,8 @@ use crate::learning_setting::{self, LEARNING_BORROWED_PRIOR_RUNS};
 use super::cell::{LearningCell, TypeRef};
 use super::estimate::{Estimate, Prior, PriorOrigin};
 use super::evidence::{CELL, cells_for_subject_in_txn};
-use super::project::{StoredEstimateClaim, active_heads_in_txn, window_in_txn};
 use super::prior::cell_prior_in_txn;
+use super::project::{StoredEstimateClaim, active_heads_in_txn, window_in_txn};
 
 /// One reading of a cell.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +90,8 @@ pub fn read_learning(
         }
     }
 
-    let cap = learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_BORROWED_PRIOR_RUNS)?;
+    let cap =
+        learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_BORROWED_PRIOR_RUNS)?;
     let subject_cells = cells_for_subject_in_txn(vault, txn, &cell.subject)?;
     for (ignore_executor, origin) in [(false, PriorOrigin::Parent), (true, PriorOrigin::Carried)] {
         let mut candidates: Vec<LearningCell> = Vec::new();
@@ -99,7 +100,9 @@ pub fn read_learning(
             candidates.extend(
                 subject_cells
                     .iter()
-                    .filter(|row| row.cell != *cell && row.cell.same_question_modulo(cell, false, true))
+                    .filter(|row| {
+                        row.cell != *cell && row.cell.same_question_modulo(cell, false, true)
+                    })
                     .map(|row| row.cell.clone()),
             );
         }
@@ -117,7 +120,8 @@ pub fn read_learning(
         // Any type last, the richest cell first.
         let mut any_type: Vec<(f64, LearningCell)> = Vec::new();
         for row in &subject_cells {
-            if row.cell != *cell && row.cell.same_question_modulo(cell, true, ignore_executor)
+            if row.cell != *cell
+                && row.cell.same_question_modulo(cell, true, ignore_executor)
                 && let Some(estimate) = own_estimate_in_txn(vault, txn, &row.cell)?
             {
                 any_type.push((estimate.runs, row.cell.clone()));
@@ -149,7 +153,10 @@ pub fn read_learning(
         Some(row) => (cell_prior_in_txn(vault, txn, row, &digest)?, row.of.clone()),
         None => {
             let form = default_form(cell);
-            (Prior::shipped(form), cell.predicate.default_of(form).to_owned())
+            (
+                Prior::shipped(form),
+                cell.predicate.default_of(form).to_owned(),
+            )
         }
     };
     Ok(LearningRead {

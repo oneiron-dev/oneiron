@@ -338,10 +338,7 @@ impl AgentDispatcher<'_> {
             if SCOPE.contains(&self.vault.store, txn, &id.0)? {
                 return Ok(Some(id));
             }
-            match queue
-                .get_in_txn(txn, cursor)?
-                .and_then(|row| row.retry_of)
-            {
+            match queue.get_in_txn(txn, cursor)?.and_then(|row| row.retry_of) {
                 Some(previous) => cursor = previous,
                 None => return Ok(None),
             }

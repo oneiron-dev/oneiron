@@ -439,27 +439,25 @@ impl Vault {
             return Ok(CooperativeDeletionIngress::Unauthenticated);
         }
         let key = (pact_id, body.nonce);
-        self.with_write_txn_grouped(|txn| {
-            match INCOMING.get(&self.store, txn, &key)? {
-                Some(filed) if filed.request == bytes => Ok(CooperativeDeletionIngress::AlreadyFiled),
-                Some(_) => Ok(CooperativeDeletionIngress::Conflict),
-                None => {
-                    let filed = IncomingCooperativeDeletion {
-                        request_id: hex(&body.nonce),
-                        connection_id: hex(&pact_id),
-                        requester_vault_id: hex(&body.requester_vault_id),
-                        worlds: body.worlds.iter().map(EntityId::to_hex).collect(),
-                        epoch_cutoff: body.epoch_cutoff,
-                        requested_at: body.ts,
-                        received_at: now,
-                        request: bytes.to_vec(),
-                        disposition: None,
-                        reply_status: None,
-                        reply_started_at: None,
-                    };
-                    INCOMING.put(&self.store, txn, &key, &filed)?;
-                    Ok(CooperativeDeletionIngress::Filed)
-                }
+        self.with_write_txn_grouped(|txn| match INCOMING.get(&self.store, txn, &key)? {
+            Some(filed) if filed.request == bytes => Ok(CooperativeDeletionIngress::AlreadyFiled),
+            Some(_) => Ok(CooperativeDeletionIngress::Conflict),
+            None => {
+                let filed = IncomingCooperativeDeletion {
+                    request_id: hex(&body.nonce),
+                    connection_id: hex(&pact_id),
+                    requester_vault_id: hex(&body.requester_vault_id),
+                    worlds: body.worlds.iter().map(EntityId::to_hex).collect(),
+                    epoch_cutoff: body.epoch_cutoff,
+                    requested_at: body.ts,
+                    received_at: now,
+                    request: bytes.to_vec(),
+                    disposition: None,
+                    reply_status: None,
+                    reply_started_at: None,
+                };
+                INCOMING.put(&self.store, txn, &key, &filed)?;
+                Ok(CooperativeDeletionIngress::Filed)
             }
         })
     }
@@ -492,7 +490,9 @@ impl Vault {
             CooperativeDeletionReplyOutcome::Acknowledged => {
                 CooperativeDeletionDeliveryStatus::Acknowledged
             }
-            CooperativeDeletionReplyOutcome::Declined => CooperativeDeletionDeliveryStatus::Declined,
+            CooperativeDeletionReplyOutcome::Declined => {
+                CooperativeDeletionDeliveryStatus::Declined
+            }
         };
         let key = (
             reply.nonce,
@@ -538,7 +538,9 @@ impl Vault {
         let delete = answer.kind == CooperativeDeletionDispositionKind::Delete;
         if delete {
             if answer.reason_code.is_some() || answer.review_at.is_some() {
-                return Err(invalid("a delete choice carries no reason code or review date"));
+                return Err(invalid(
+                    "a delete choice carries no reason code or review date",
+                ));
             }
         } else {
             let code = answer
@@ -608,7 +610,13 @@ impl Vault {
             let payload = serde_json::from_slice::<DeliveryPayload>(&attempt.payload).ok();
             let live = match &payload {
                 Some(payload) => self.with_write_txn_grouped(|txn| {
-                    move_leg(self, txn, payload, CooperativeDeletionDeliveryStatus::Sent, now)
+                    move_leg(
+                        self,
+                        txn,
+                        payload,
+                        CooperativeDeletionDeliveryStatus::Sent,
+                        now,
+                    )
                 })?,
                 None => false,
             };
@@ -700,8 +708,9 @@ impl Vault {
                             id: attempt.id,
                             lease_owner,
                             attempt_count: attempt.attempt_count,
-                            backoff_until: now
-                                .saturating_add((age / 2).clamp(MIN_BACKOFF_SECS, MAX_BACKOFF_SECS)),
+                            backoff_until: now.saturating_add(
+                                (age / 2).clamp(MIN_BACKOFF_SECS, MAX_BACKOFF_SECS),
+                            ),
                             last_error: Some(error.clone()),
                             now,
                         },

@@ -167,9 +167,16 @@ impl PackManifest {
                 .ok_or_else(|| invalid("agent pack requires a facet map"))?
                 .validate_paths()?;
             if adapter.is_some()
-                || ["predicates", "kinds", "grants", "wakes", "hooks", "migrations"]
-                    .iter()
-                    .any(|key| fields.contains_key(key))
+                || [
+                    "predicates",
+                    "kinds",
+                    "grants",
+                    "wakes",
+                    "hooks",
+                    "migrations",
+                ]
+                .iter()
+                .any(|key| fields.contains_key(key))
             {
                 return Err(invalid("agent pack cannot declare runtime powers"));
             }

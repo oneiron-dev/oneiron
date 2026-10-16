@@ -16,12 +16,12 @@ use std::collections::BTreeSet;
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable, SideTableDbs};
 use crate::store::{decode_vector_row, encode_vector_row_v1};
-use crate::Vault;
 
 /// Longest declared space id.
 pub const EMBEDDING_SPACE_ID_MAX_LEN: usize = 256;

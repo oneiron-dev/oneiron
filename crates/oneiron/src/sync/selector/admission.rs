@@ -656,8 +656,7 @@ fn restamp_federated_transcript(blob: &[u8]) -> Result<Vec<u8>> {
     }
     let mut encoded = Vec::with_capacity(blob.len() + 32);
     encoded.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
-    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries))
-        .map_err(|_| refused())?;
+    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).map_err(|_| refused())?;
     Ok(encoded)
 }
 

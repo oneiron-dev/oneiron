@@ -4,8 +4,7 @@
 //! change or a score regression implicates. A retune is a proposal, never a
 //! deployed change.
 use super::super::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome,
+    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use super::{HARNESS_FACET, MAINTENANCE_QUEUE_KIND, invalid, load_row, proposals};
 use crate::attempt_queue::AttemptId;
@@ -145,11 +144,17 @@ impl Vault {
         }
         config.validate()?;
         let artifact = tuning_artifact()?;
-        let at = TimeRange { start: now, end: now };
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
         if self.get_blob_artifact(&artifact)?.is_none() {
             self.put_blob_artifact(
                 &artifact,
-                &BlobArtifactBody::new("dreamer-tuning-config.json", DREAMER_TUNING_CONFIG_MEDIA_TYPE),
+                &BlobArtifactBody::new(
+                    "dreamer-tuning-config.json",
+                    DREAMER_TUNING_CONFIG_MEDIA_TYPE,
+                ),
                 at,
                 now,
             )?;

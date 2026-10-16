@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value};
 
-use super::judge::{AttributionDecisions, AttributionRules, Attributed};
+use super::judge::{Attributed, AttributionDecisions, AttributionRules};
 use super::types::{
     AttributionLane, AttributionShare, AttributionSplit, AttributionVerdict, HunkVerdict,
     JudgeRequest, UnclearNote, UnclearReason,

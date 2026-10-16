@@ -34,12 +34,12 @@ use zeroize::Zeroizing;
 
 use super::pads::{live_pad_tag_in_txn, require_pad_in_txn};
 use super::{WORLD_KEY_EPOCH, WorldKey, WorldKeyId, base_world, refused};
+use crate::Vault;
 use crate::authority::{Destination, EffectiveRead, SealedCopies};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::Vault;
 
 /// How long a retired packet stays on the shelf (DEC-0005 fix 7).
 pub const SEALED_RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
@@ -65,8 +65,7 @@ const PART_HEADER_LEN: usize = PART_LABEL.len() + 32 + 2 + 2;
 /// The shelf: one packet per row. Key: hex64 (tag) ":" hex64 (digest).
 const SHELF: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::WORLD_KEY_SEALED);
 /// When a shelved packet was retired, in vault seconds. Same key as the shelf.
-const RETIRED: SideTable<String, u64, Raw> =
-    SideTable::new(&side_table::WORLD_KEY_SEALED_RETIRED);
+const RETIRED: SideTable<String, u64, Raw> = SideTable::new(&side_table::WORLD_KEY_SEALED_RETIRED);
 /// A reader's own Loro document per sealed window, the history its packets
 /// continue. Key: hex32 (world) ":" window label.
 pub(super) const MIRROR: SideTable<String, Vec<u8>, Raw> =
@@ -171,7 +170,8 @@ impl SealedResidenceContent {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let malformed = || refused("malformed sealed world content");
         let mut cursor = Cursor { bytes, at: 0 };
-        if cursor.take(4) != Some(&FRAME_MAGIC[..]) || cursor.take(1) != Some(&[FRAME_VERSION][..]) {
+        if cursor.take(4) != Some(&FRAME_MAGIC[..]) || cursor.take(1) != Some(&[FRAME_VERSION][..])
+        {
             return Err(malformed());
         }
         let tag: [u8; 32] = cursor.array().ok_or_else(malformed)?;
@@ -300,8 +300,13 @@ impl WorldContentSealer {
             plaintext.extend_from_slice(&count.to_be_bytes());
             plaintext.extend_from_slice(chunk);
             parts.push(
-                seal(&params, SealKey::SymmetricKek(&kek), &plaintext, &mut SysRng)
-                    .map_err(|_| refused("sealing failed"))?,
+                seal(
+                    &params,
+                    SealKey::SymmetricKek(&kek),
+                    &plaintext,
+                    &mut SysRng,
+                )
+                .map_err(|_| refused("sealing failed"))?,
             );
         }
         Ok(SealedResidenceContent::frame(self.tag, parts))
@@ -315,7 +320,9 @@ impl WorldContentSealer {
         packet: &SealedResidenceContent,
     ) -> Result<OpenedSealedContent> {
         if packet.tag != self.tag {
-            return Err(refused("the packet is sealed under another key of the world"));
+            return Err(refused(
+                "the packet is sealed under another key of the world",
+            ));
         }
         let kek = self.kek();
         let policy = OpenPolicy {
@@ -428,8 +435,8 @@ fn decode_body(body: &[u8]) -> Result<OpenedSealedContent> {
     if cursor.take(BODY_LABEL.len()) != Some(BODY_LABEL) {
         return Err(malformed());
     }
-    let world = EntityId::from_bytes(cursor.array().ok_or_else(malformed)?)
-        .map_err(|_| malformed())?;
+    let world =
+        EntityId::from_bytes(cursor.array().ok_or_else(malformed)?).map_err(|_| malformed())?;
     let generation = u64::from_be_bytes(cursor.array().ok_or_else(malformed)?);
     let mint: [u8; 16] = cursor.array().ok_or_else(malformed)?;
     let kind: [u8; 1] = cursor.array().ok_or_else(malformed)?;
@@ -599,7 +606,10 @@ impl Vault {
     /// Refused when `world`'s sealed copies are off.
     pub(crate) fn require_sealed_copies(&self, world: EntityId) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        if self.authority_view_readonly_in_txn(&txn)?.world_privacy(world).sealed
+        if self
+            .authority_view_readonly_in_txn(&txn)?
+            .world_privacy(world)
+            .sealed
             == SealedCopies::Off
         {
             return Err(refused("the world's sealed copies are off"));

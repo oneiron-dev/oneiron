@@ -107,7 +107,11 @@ pub enum RevisionStatus {
     /// Accepted by `by`: the published revision its target's owner applies.
     Accepted { by: EntityId, at: u64 },
     /// Declined by `by`, with the reason as written.
-    Declined { by: EntityId, at: u64, reason: String },
+    Declined {
+        by: EntityId,
+        at: u64,
+        reason: String,
+    },
     /// Replaced, before an answer, by a newer compilation.
     Superseded { by_revision: String, at: u64 },
 }

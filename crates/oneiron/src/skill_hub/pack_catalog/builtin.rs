@@ -143,7 +143,9 @@ impl Vault {
             {
                 Ok(())
             }
-            _ => Err(super::invalid("the channel's built-in pack is not installed")),
+            _ => Err(super::invalid(
+                "the channel's built-in pack is not installed",
+            )),
         }
     }
 }

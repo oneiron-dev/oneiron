@@ -50,7 +50,10 @@ impl SyncWake {
                 if let Some(wake) = handle.wake_on_turn(&vault, WakeTurnSubject::Vault)
                     && let Err(error) = wake.await
                 {
-                    tracing::warn!(panicked = error.is_panic(), "sync-apply wake did not finish");
+                    tracing::warn!(
+                        panicked = error.is_panic(),
+                        "sync-apply wake did not finish"
+                    );
                 }
             }
         });

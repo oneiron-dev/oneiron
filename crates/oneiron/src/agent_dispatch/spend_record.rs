@@ -34,7 +34,9 @@ impl SpendScopeId {
             || !id.bytes().all(|byte| byte.is_ascii_graphic())
             || (id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
         {
-            return Err(invalid("a launch id is 1..=128 printable bytes, not an attempt id"));
+            return Err(invalid(
+                "a launch id is 1..=128 printable bytes, not an attempt id",
+            ));
         }
         Ok(Self(id))
     }
@@ -121,7 +123,9 @@ pub enum ChildSpend {
 /// The one refusal of the lease tree: spend or a reservation beyond the cap.
 #[derive(Debug, thiserror::Error)]
 pub enum SpendRefused {
-    #[error("spend scope {scope} cannot cover {asked_units} units: {available_units} available under its cap")]
+    #[error(
+        "spend scope {scope} cannot cover {asked_units} units: {available_units} available under its cap"
+    )]
     OverCap {
         scope: SpendScopeId,
         available_units: u64,

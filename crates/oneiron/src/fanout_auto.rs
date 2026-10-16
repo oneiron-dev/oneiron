@@ -54,8 +54,8 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::decision::catalogue::FANOUT_ASK;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionLadder, DecisionRung, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    DecisionRung, Reversibility,
 };
 use crate::outbound_chokepoint::{
     FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutPlan,
@@ -310,7 +310,10 @@ impl FanoutDecisions<'_> {
             &[context.trigger.token().as_bytes()],
             self.wording.clone(),
             AnswerContract::Choice {
-                options: VERDICTS.iter().map(|(label, _)| (*label).to_owned()).collect(),
+                options: VERDICTS
+                    .iter()
+                    .map(|(label, _)| (*label).to_owned())
+                    .collect(),
             },
         )?;
         // Allowing starts outbound consults, so a cut abstains rather than

@@ -516,7 +516,11 @@ impl Vault {
         Ok(row.view(*artifact_id))
     }
 
-    fn pending_row(&self, artifact_id: &EntityId, proposal_ref: &str) -> Result<Option<PendingRow>> {
+    fn pending_row(
+        &self,
+        artifact_id: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<Option<PendingRow>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(row) = PENDING.get(
             &self.store,

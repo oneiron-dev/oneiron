@@ -121,7 +121,11 @@ struct NoChat;
 impl SingleSend for NoChat {}
 
 impl LlmBackend for NoChat {
-    fn generate<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
         Box::pin(async { Err(LlmError::from(FatalLlmError::InvalidRequest)) })
     }
 
@@ -261,10 +265,9 @@ impl MediaRuntime {
             for (position, model) in seat.rungs.iter().enumerate() {
                 let provider = &config.providers[&model.provider];
                 let mut entry = RungStatus::new(model, provider);
-                match backends
-                    .get(&model.provider)
-                    .and_then(|backend| media_rung(provider, backend, model, position, *operation, &seat.caps))
-                {
+                match backends.get(&model.provider).and_then(|backend| {
+                    media_rung(provider, backend, model, position, *operation, &seat.caps)
+                }) {
                     Some(rung) => {
                         rows.push((rung.model.clone(), model.clone(), provider.locality));
                         rungs.push(rung);
@@ -349,7 +352,9 @@ impl MediaRuntime {
     /// What the media meter has left to spend, in token units.
     #[must_use]
     pub fn units_left(&self) -> Option<u64> {
-        self.meter.as_ref().map(|meter| meter.read().remaining_units)
+        self.meter
+            .as_ref()
+            .map(|meter| meter.read().remaining_units)
     }
 
     /// The seat id and widest locality that serve `operation`.
@@ -459,7 +464,9 @@ impl MediaRuntime {
         stopped
     }
 
-    fn lock_jobs(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>> {
+    fn lock_jobs(
+        &self,
+    ) -> std::sync::MutexGuard<'_, BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>> {
         self.jobs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -547,10 +554,8 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
         let provider = &config.providers[name];
         match ProviderHttp::new(provider, KeyStyle::Bearer) {
             Ok(http) => {
-                let backend: Arc<dyn MediaBackend> = Arc::new(OpenAiMediaBackend::new(
-                    MediaHttp { http },
-                    wire_models,
-                ));
+                let backend: Arc<dyn MediaBackend> =
+                    Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models));
                 backends.insert(name.to_owned(), backend);
             }
             Err(error) => {

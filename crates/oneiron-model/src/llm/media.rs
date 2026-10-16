@@ -525,8 +525,11 @@ pub type MediaFuture<'a, T> = Pin<Box<dyn Future<Output = LlmResult<T>> + Send +
 /// permit its submit started.
 pub trait MediaBackend: Send + Sync {
     /// Runs one call to its answer.
-    fn run<'a>(&'a self, request: MediaRequest, lease: &'a BudgetLease)
-    -> MediaFuture<'a, MediaResponse>;
+    fn run<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+    ) -> MediaFuture<'a, MediaResponse>;
 
     /// Starts one long call as a provider job; returns the provider's job id.
     fn submit<'a>(
