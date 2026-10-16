@@ -368,6 +368,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         read_receipt: None,
         policy_denial: None,
         wrong_root: None,
+        hook: None,
     }
 }
 
