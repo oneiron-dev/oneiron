@@ -8,6 +8,8 @@ pub enum AgentVerb {
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
+    SelfIdentityAnswer,
+    SelfIdentitySettle,
     SelfMemoryDiaryQuery,
     Cancel,
     Steer,
@@ -152,6 +154,8 @@ impl AgentVerb {
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
+        Self::SelfIdentityAnswer,
+        Self::SelfIdentitySettle,
         Self::SelfMemoryDiaryQuery,
         Self::Cancel,
         Self::Steer,
@@ -299,6 +303,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
+            Self::SelfIdentityAnswer => "self.identity.answer",
+            Self::SelfIdentitySettle => "self.identity.settle",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
@@ -444,6 +450,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -595,6 +603,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -785,6 +795,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::VaultWitness
@@ -918,6 +930,8 @@ impl AgentVerb {
             self,
             Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::Cancel
                 | Self::Steer
                 | Self::TasksCreate
@@ -1011,6 +1025,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfIdentityAnswer => &["spec"],
+            Self::SelfIdentitySettle => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
@@ -1156,6 +1172,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfIdentityAnswer => &["spec"],
+            Self::SelfIdentitySettle => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],

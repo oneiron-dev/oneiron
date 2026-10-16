@@ -236,6 +236,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_identity_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.identity.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.identity.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_identity_settle(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.identity.settle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.identity.settle", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_memory_diary_query(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.memory.diary.query")?;
         let output = py

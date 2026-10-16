@@ -38,6 +38,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
             ),
             (
+                "self.identity.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+                >(),
+            ),
+            (
+                "self.identity.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::identity::IdentityActNowRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary.query",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::DiaryQueryRequest,
@@ -744,6 +756,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.memory.diary.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.identity.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.identity.settle" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1648,6 +1674,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary.review" => {
             let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
         }
+        "self.identity.answer" => {
+            let _input: crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest =
+                decode(value.clone())?;
+        }
+        "self.identity.settle" => {
+            let _input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest =
+                decode(value.clone())?;
+        }
         "self.memory.diary.query" => {
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
@@ -2106,6 +2140,8 @@ pub fn invoke(
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
+        "self.identity.answer" => encode(self_identity_answer(memory, decode(value)?)?),
+        "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -2396,6 +2432,18 @@ pub fn self_memory_diary_review(
     input: crate::memory::DiaryReviewAnswer,
 ) -> MemoryResult<crate::memory::DiaryReadRequest> {
     memory.answer_diary_read(&input)
+}
+pub fn self_identity_answer(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentitySettled> {
+    memory.identity_answer(&input)
+}
+pub fn self_identity_settle(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentityActNow> {
+    memory.identity_act_now(&input)
 }
 pub fn self_memory_diary_query(
     memory: &Memory<'_>,

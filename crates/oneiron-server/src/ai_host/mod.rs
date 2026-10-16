@@ -31,6 +31,7 @@ mod compaction;
 pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
 mod harness;
+pub(crate) mod identity;
 mod local_vision;
 mod policy;
 mod status;

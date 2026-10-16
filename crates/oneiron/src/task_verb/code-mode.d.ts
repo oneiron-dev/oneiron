@@ -47,6 +47,10 @@ declare namespace self {
   };
   const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
+  const identity: {
+    answer(input: { ask: string; choice: string }): Promise<unknown>;
+    settle(input: { conversation?: string | null; effect: "send" | "pay" | "invite" | "share"; name: string; prompt: string; someone_new: string }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;

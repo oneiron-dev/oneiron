@@ -248,6 +248,14 @@ pub const PROJECT_PROPOSAL: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// Which of these entities does one saved mention name, or is it someone new (OF-123)? Keyed
+/// by the mention's entity kind.
+pub const IDENTITY_SETTLE: QuestionFamily = QuestionFamily {
+    name: "dreamer.identity_settle",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -276,4 +284,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     POLICY_HOSTED_VIOLATION,
     BOOKING_OFF_TOPIC,
     PROJECT_PROPOSAL,
+    IDENTITY_SETTLE,
 ];

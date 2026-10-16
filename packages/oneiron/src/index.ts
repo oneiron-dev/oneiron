@@ -137,6 +137,10 @@ export class Oneiron {
         query: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as unknown),
       }),
     },
+    identity: {
+      answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentityAnswer(input) as unknown),
+      settle: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentitySettle(input) as unknown),
+    },
     skills: {
       save: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsSave(input) as unknown),
       fork: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsFork(input) as unknown),

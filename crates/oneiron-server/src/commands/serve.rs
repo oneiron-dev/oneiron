@@ -212,6 +212,8 @@ pub(super) async fn serve_with_config(
     workers.push(sync_server.spawn_board_publisher());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server));
+    // Uncertain identities are decided, or asked of the person (OF-123).
+    workers.push(crate::ai_host::identity::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     // Documents whose signing finished are sealed as a task (OF-415).

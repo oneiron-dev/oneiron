@@ -238,6 +238,9 @@ class Oneiron:
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
         @property
+        def identity(self) -> "Oneiron._SelfIdentityVerbs":
+            return Oneiron._SelfIdentityVerbs(self._client)
+        @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
     class _SelfMemoryVerbs:
@@ -257,6 +260,13 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
         def query(self, spec):
             return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
+    class _SelfIdentityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.self_identity_answer(json.dumps(spec))))
+        def settle(self, spec):
+            return json.loads(_translate(lambda: self._client.self_identity_settle(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

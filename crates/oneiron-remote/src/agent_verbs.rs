@@ -47,6 +47,12 @@ impl OneironClient {
                 "self.memory.diary.review" => remote_agent_verb_output::<
                     oneiron::memory::DiaryReadRequest,
                 >(client, verb, &input),
+                "self.identity.answer" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::maintenance::identity::IdentitySettled,
+                >(client, verb, &input),
+                "self.identity.settle" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::maintenance::identity::IdentityActNow,
+                >(client, verb, &input),
                 "self.memory.diary.query" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryQueryOutcome,
                 >(client, verb, &input),
@@ -502,6 +508,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.memory.diary.review", value)
+    }
+    pub fn self_identity_answer(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+    ) -> Result<oneiron::dreamer_runner::maintenance::identity::IdentitySettled, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.identity.answer", value)
+    }
+    pub fn self_identity_settle(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::identity::IdentityActNowRequest,
+    ) -> Result<oneiron::dreamer_runner::maintenance::identity::IdentityActNow, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.identity.settle", value)
     }
     pub fn self_memory_diary_query(
         &self,
