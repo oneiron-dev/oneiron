@@ -255,6 +255,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_memory_diary_reads(json.dumps(spec))))
         def review(self, spec):
             return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
+        def query(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -319,6 +321,15 @@ class Oneiron:
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
+        @property
+        def shared(self) -> "Oneiron._VaultSharedVerbs":
+            return Oneiron._VaultSharedVerbs(self._client)
+        @property
+        def members(self) -> "Oneiron._VaultMembersVerbs":
+            return Oneiron._VaultMembersVerbs(self._client)
+        @property
+        def authority(self) -> "Oneiron._VaultAuthorityVerbs":
+            return Oneiron._VaultAuthorityVerbs(self._client)
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
@@ -447,6 +458,47 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_packs_setup_answer(json.dumps(spec))))
         def verify(self, spec):
             return json.loads(_translate(lambda: self._client.vault_packs_setup_verify(json.dumps(spec))))
+    class _VaultSharedVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def propose_delete(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shared_propose_delete(json.dumps(spec))))
+        def propose_transfer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shared_propose_transfer(json.dumps(spec))))
+        def propose_remove_owner(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shared_propose_remove_owner(json.dumps(spec))))
+        def execute(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shared_execute(json.dumps(spec))))
+        def receipt(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shared_receipt(json.dumps(spec))))
+        def outcomes(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shared_outcomes(json.dumps(spec))))
+        def deletion(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shared_deletion(json.dumps(spec))))
+    class _VaultMembersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def add(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
+        def change(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_members_change(json.dumps(spec))))
+        def remove(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_members_remove(json.dumps(spec))))
+        def leave(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_members_leave(json.dumps(spec))))
+    class _VaultAuthorityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs":
+            return Oneiron._VaultAuthorityHandoffAlarmsVerbs(self._client)
+    class _VaultAuthorityHandoffAlarmsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms(json.dumps(spec))))
+        def acknowledge(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -542,6 +594,14 @@ class Oneiron:
     class _VaultProjectsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def propose(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_propose(json.dumps(spec))))
+        def proposals(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_proposals(json.dumps(spec))))
+        def dismiss_card(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_dismiss_card(json.dumps(spec))))
+        def confirm(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_confirm(json.dumps(spec))))
         @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs":
             return Oneiron._VaultProjectsGoalVerbs(self._client)
@@ -550,6 +610,8 @@ class Oneiron:
     class _VaultProjectsGoalVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def intake(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_intake(json.dumps(spec))))
         def revisions(self, spec):
             return json.loads(_translate(lambda: self._client.vault_projects_goal_revisions(json.dumps(spec))))
         def dismiss(self, spec):

@@ -361,6 +361,34 @@ pub struct AiVerdictRequest {
     /// [`AI_VERDICT_DEADLINE_MS`] when absent.
     #[serde(default)]
     pub deadline_ms: Option<u64>,
+    /// A routine driver step (OF-523, the CUA-S1 pattern): `options` are the
+    /// step's candidates (at most 61), and the ladder also offers NONE,
+    /// reobserve and "too complicated, ask up". The answer comes back as an
+    /// `outcome` the program acts on.
+    #[serde(default)]
+    pub routine: bool,
+    /// An image the question reads, by its view handle (`<asset>@<hash>`):
+    /// a screenshot, as an evidence ref. Read under the caller's own scoped
+    /// read; the question names it as `image`. An image call starts at the
+    /// Local-vision rung.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// Find the question's target in `image`: a Box answer (none when the
+    /// target is absent). `options` stay empty; a routine Box acts at the
+    /// box's centre.
+    #[serde(default)]
+    pub locate: bool,
+    /// NONE or reobserve outcomes the subgoal's steps gave in a row before
+    /// this one: the answer says when the next observation takes a
+    /// screenshot.
+    #[serde(default)]
+    pub misses: u32,
+    /// The subgoal's one clock, as the Unix milliseconds it ends at: every
+    /// routine step of one subgoal names the same instant, so a reobserve or
+    /// a retry never restarts it. One call still runs at most 60000
+    /// milliseconds. The answer names the instant its own clock ends at.
+    #[serde(default)]
+    pub until_ms: Option<u64>,
 }
 
 /// `ai.verdict`'s answer: the ladder's answer, its probability, the rung
@@ -372,6 +400,18 @@ pub struct AiVerdict {
     pub p: Option<f64>,
     pub rung: Option<crate::llm::decision::DecisionRung>,
     pub receipt: crate::llm::decision::DecisionReceipt,
+    /// A routine step's outcome: act on a candidate or at a point, NONE,
+    /// reobserve, or ask up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<crate::llm::decision::RoutineOutcome>,
+    /// A routine step's screenshot trigger: the subgoal's steps gave NONE or
+    /// reobserve twice in a row, so the next observation takes a screenshot.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub screenshot: bool,
+    /// The Unix milliseconds this call's clock ended at: a routine program
+    /// passes it on as the next step's `until_ms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_ms: Option<u64>,
 }
 
 impl From<crate::llm::decision::TypedDecision> for AiVerdict {
@@ -381,6 +421,9 @@ impl From<crate::llm::decision::TypedDecision> for AiVerdict {
             p: decision.probability,
             rung: decision.receipt.time.and_then(|time| time.answered),
             receipt: decision.receipt,
+            outcome: None,
+            screenshot: false,
+            until_ms: None,
         }
     }
 }
