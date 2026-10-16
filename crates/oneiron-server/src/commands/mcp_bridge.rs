@@ -584,7 +584,7 @@ impl Refusal {
                 id,
                 -32001,
                 "mcp_auth_required",
-                "the server refused this credential before MCP; it may be revoked or expired, so ask the vault owner for a new one",
+                "the server refused this credential before MCP; check --url names the vault that minted it. If revoked or expired, stop that vault, re-mint with `oneiron token agent --name <name> --tier <tier> --out <new-file> --config <vault-config>`, restart `oneiron serve --config <vault-config>`, and update --credential-file",
                 Some(body.clone()),
             ),
             Self::Refused(answer) => match answer.get("error") {
@@ -601,7 +601,16 @@ impl Refusal {
                 rpc_error(id, -32000, "server_error", message, Some(body.clone()))
             }
             Self::Unreachable(message) => {
-                rpc_error(id, -32000, "server_unreachable", message, None)
+                rpc_error(
+                    id,
+                    -32000,
+                    "server_unreachable",
+                    &format!(
+                        "{message}; start the vault with `oneiron serve --config <vault-config>` \
+                         and check --url matches its host and port; MCP does not start a vault"
+                    ),
+                    None,
+                )
             }
             Self::TooLarge => rpc_error(
                 id,
@@ -651,7 +660,13 @@ fn credential_env(name: &str) -> anyhow::Result<String> {
 /// other users can read is a credential they hold too.
 fn read_credential_file(path: &Path) -> anyhow::Result<(String, String)> {
     let mut file = std::fs::File::open(path)
-        .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "open {}: {error}; pass the file written by `oneiron token agent --name \
+                 <name> --out <new-file> --config <vault-config>` (with the vault stopped)",
+                path.display()
+            )
+        })?;
     super::credential_file::admit(path, &file)?;
     let mut text = String::new();
     file.read_to_string(&mut text)
