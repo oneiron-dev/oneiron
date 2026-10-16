@@ -175,3 +175,18 @@ pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use rooms::project_room_audience_in;
 
 pub use crate::gate::RoomThreadFill;
+
+mod join_consent;
+mod join_door;
+mod join_receipt;
+pub(crate) use join_consent::person_of_actor_in_txn;
+pub use join_consent::{
+    AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
+    ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,
+    RequiredParty, RoomWork, SpendConsent, decide_join_in_txn, require_actor_join_in_txn,
+    require_join_for_branch_in_txn, require_join_in_txn,
+};
+pub use join_door::{
+    ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,
+};
+pub use join_receipt::{JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer};

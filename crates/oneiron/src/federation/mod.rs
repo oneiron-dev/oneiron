@@ -20,6 +20,7 @@ pub(crate) use coreference::share_consent_valid_at;
 mod grant;
 pub(crate) mod grant_policy;
 mod membership_gate;
+pub use membership_gate::MembershipStanding;
 pub use membership_gate::SharedVaultWrite;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;

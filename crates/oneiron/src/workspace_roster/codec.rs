@@ -172,6 +172,16 @@ const MEMBER_INTENT: SideTable<MemberIntentKey, [u8; 32], Raw> =
 const COMPANION_PRINCIPAL: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::WORKSPACE_ROSTER_COMPANION_PRINCIPAL);
 
+/// The principal a companion PERSON was onboarded for, from the guard row
+/// above; `None` for a person who is no one's companion (OF-531).
+pub(super) fn companion_principal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    companion: EntityId,
+) -> Result<Option<EntityId>> {
+    COMPANION_PRINCIPAL.get(&vault.store, txn, &companion)
+}
+
 /// An unfinished onboarding owns its member slot too. A second id must not
 /// create another companion while the first journal is waiting for custody.
 fn reserve_member_in_txn(
