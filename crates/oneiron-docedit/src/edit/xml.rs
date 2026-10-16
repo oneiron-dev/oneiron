@@ -91,13 +91,26 @@ pub(crate) fn set_attribute(bytes: &[u8], node: &Node, name: &str, value: &str) 
     }
 }
 
+/// `node`'s open tag, attributes and namespace bindings kept, written
+/// open (`<x a="1">`) when the element is empty (`<x a="1"/>`).
+pub(crate) fn open_tag(bytes: &[u8], node: &Node) -> Vec<u8> {
+    if node.empty {
+        let mut tag = bytes[node.span.start..attribute_point(bytes, node)]
+            .trim_ascii_end()
+            .to_vec();
+        tag.push(b'>');
+        tag
+    } else {
+        bytes[node.span.start..node.open_end].to_vec()
+    }
+}
+
 /// Insert `inner` as the first child of `node`, opening it if it was empty.
 pub(crate) fn insert_first(bytes: &[u8], node: &Node, inner: &str) -> Splice {
     if node.empty {
-        let open = &bytes[node.span.start..attribute_point(bytes, node)];
-        let open = String::from_utf8_lossy(open);
-        let value = format!("{}>{inner}</{}>", open.trim_end(), node.qualified);
-        (node.span.clone(), value.into_bytes())
+        let mut value = open_tag(bytes, node);
+        value.extend(format!("{inner}</{}>", node.qualified).into_bytes());
+        (node.span.clone(), value)
     } else {
         (node.open_end..node.open_end, inner.as_bytes().to_vec())
     }
@@ -151,7 +164,11 @@ pub(crate) fn c_nv_pr(tree: &XmlTree, shape: usize) -> Option<usize> {
 
 /// The next free part name `{stem}{n}{suffix}` above every existing one
 /// (ASCII case-insensitive): names are never reused.
-pub(crate) fn next_part(package: &Package, stem: &str, suffix: &str) -> String {
+pub(crate) fn next_part(
+    package: &Package,
+    stem: &str,
+    suffix: &str,
+) -> Result<String, EditRefusal> {
     let stem_lower = stem.to_ascii_lowercase();
     let high = package
         .names()
@@ -163,5 +180,6 @@ pub(crate) fn next_part(package: &Package, stem: &str, suffix: &str) -> String {
         })
         .max()
         .unwrap_or(0);
-    format!("{stem}{}{suffix}", high + 1)
+    let next = high.checked_add(1).ok_or(EditRefusal::IdSpaceExhausted)?;
+    Ok(format!("{stem}{next}{suffix}"))
 }

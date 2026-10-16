@@ -52,6 +52,41 @@ fn ancestors(tree: &XmlTree, at: usize) -> impl Iterator<Item = usize> + '_ {
     std::iter::successors(tree.nodes[at].parent, |&up| tree.nodes[up].parent)
 }
 
+/// Every behaviour in the element (a time node other than a `p:par` or
+/// `p:seq` container) sits in an effect inside it: nothing else, no sound,
+/// video or command, is timed there.
+pub(super) fn only_effects(tree: &XmlTree, at: usize) -> bool {
+    subtree(tree, at)
+        .filter(|&n| {
+            let node = &tree.nodes[n];
+            node.parent
+                .is_some_and(|up| tree.nodes[up].is(P, "childTnLst"))
+                && !node.is(P, "par")
+                && !node.is(P, "seq")
+        })
+        .all(|n| {
+            ancestors(tree, n)
+                .take_while(|&up| up >= at)
+                .any(|up| is_effect(tree, up))
+        })
+}
+
+/// `p:tn` values that name no `p:cTn` in the part.
+pub(super) fn dangling(tree: &XmlTree) -> Vec<&str> {
+    let ids: Vec<&str> = tree
+        .nodes
+        .iter()
+        .filter(|node| node.is(P, "cTn"))
+        .filter_map(|node| node.attr("id"))
+        .collect();
+    tree.nodes
+        .iter()
+        .filter(|node| node.is(P, "tn"))
+        .filter_map(|node| node.attr("val"))
+        .filter(|val| !ids.contains(val))
+        .collect()
+}
+
 /// A `p:par` whose `p:cTn` carries a preset class: one effect.
 fn is_effect(tree: &XmlTree, at: usize) -> bool {
     tree.nodes[at].is(P, "par")
@@ -139,6 +174,9 @@ pub(super) fn cascade(tree: &XmlTree, deleted: &[u32]) -> Result<Vec<usize>, Edi
             .filter(|&n| is_effect(tree, n))
             .collect();
         if all.iter().all(|e| effects.contains(e)) {
+            if !only_effects(tree, step) {
+                return Err(unsupported("the step times more than the shape's effects"));
+            }
             removed.push(step);
             continue;
         }
@@ -202,6 +240,21 @@ pub(super) fn cascade(tree: &XmlTree, deleted: &[u32]) -> Result<Vec<usize>, Edi
     match builds {
         Some(list) if !doomed.is_empty() && doomed.len() == entries.len() => removed.push(list),
         _ => removed.extend(doomed),
+    }
+    // A surviving condition must not name a removed time node.
+    let gone_ids = ids(tree, &removed);
+    let inside: Vec<usize> = removed.iter().flat_map(|&at| subtree(tree, at)).collect();
+    if subtree(tree, timing).any(|n| {
+        tree.nodes[n].is(P, "tn")
+            && !inside.contains(&n)
+            && tree.nodes[n]
+                .attr("val")
+                .and_then(|val| val.parse().ok())
+                .is_some_and(|val| gone_ids.contains(&val))
+    }) {
+        return Err(unsupported(
+            "a surviving timing condition names a removed time node",
+        ));
     }
     Ok(removed)
 }

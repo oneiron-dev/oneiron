@@ -1214,3 +1214,46 @@ fn office_oracle_candidate() {
     std::fs::write(format!("{path}.base"), &base).unwrap();
     std::fs::write(&path, deck.export().unwrap()).unwrap();
 }
+
+#[test]
+fn an_empty_text_element_opens_with_its_own_bindings() {
+    let mut package = deck();
+    let bound = r#"<q:t xmlns:q="http://schemas.openxmlformats.org/drawingml/2006/main"/>"#;
+    let slide = part(&package, SLIDE).replacen("<a:t>Two</a:t>", bound, 1);
+    package.replace_xml_part(SLIDE, slide.into_bytes()).unwrap();
+    let op = ValueEdit::ReplaceRunText {
+        target: target(&package, SLIDE, 8),
+        paragraph: 1,
+        run: 0,
+        expected: "",
+        text: "Hello",
+    };
+    edit(&mut package, &op).unwrap();
+    assert!(shape_xml(&package, SLIDE, 8).contains(
+        r#"<q:t xmlns:q="http://schemas.openxmlformats.org/drawingml/2006/main">Hello</q:t>"#
+    ));
+}
+
+#[test]
+fn set_xfrm_owns_a_transform_where_there_was_none() {
+    let mut package = deck();
+    let frame = xfrm(5_000_000, 4_500_000, 3_000_000, 1_000_000);
+    let slide = part(&package, SLIDE);
+    assert_eq!(slide.matches(&frame).count(), 1);
+    package
+        .replace_xml_part(SLIDE, slide.replacen(&frame, "", 1).into_bytes())
+        .unwrap();
+    let op = ValueEdit::SetXfrm {
+        target: target(&package, SLIDE, 9),
+        xfrm: Xfrm {
+            offset: Some((5_000_000, 4_500_000)),
+            extent: Some((3_000_000, 1_000_000)),
+            ..Xfrm::default()
+        },
+    };
+    let report = edit(&mut package, &op).unwrap();
+    assert_eq!(report.changed_parts, [SLIDE]);
+    let geometry = view_shape(&package, 0, 9).geometry;
+    assert_eq!(geometry.offset.value, Some((5_000_000, 4_500_000)));
+    assert_eq!(geometry.rotation.value, Some(0));
+}

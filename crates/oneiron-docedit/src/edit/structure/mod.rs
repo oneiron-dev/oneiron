@@ -269,6 +269,15 @@ fn end_of(tree: &XmlTree, container: usize) -> usize {
     })
 }
 
+/// Every `p:cNvPr/@id` inside the shape element, branches the view does not
+/// enter (`mc:AlternateContent`) included: what deleting it removes.
+fn shape_ids(tree: &XmlTree, at: usize) -> Vec<u32> {
+    timing::subtree(tree, at)
+        .filter(|&n| tree.nodes[n].is(P, "cNvPr"))
+        .filter_map(|n| tree.nodes[n].attr("id")?.parse().ok())
+        .collect()
+}
+
 /// The view index of `shape` in its slide.
 fn position(slide: &SlideView, shape: &ShapeView) -> usize {
     slide
@@ -299,10 +308,6 @@ fn delete_shape(
     shape: &ShapeView,
     cascade: bool,
 ) -> Result<(Plan, Vec<Effect>), EditRefusal> {
-    let index = position(slide, shape);
-    let deleted: Vec<u32> = members(slide, index)
-        .filter_map(|at| slide.shapes[at].id)
-        .collect();
     if let Some(&group) = shape.group_path.last()
         && direct_members(slide, group) == 1
     {
@@ -311,6 +316,7 @@ fn delete_shape(
         ));
     }
     let (bytes, tree) = xml::read(next, &slide.part)?;
+    let deleted = shape_ids(&tree, shape.node.index);
     let mut removed = vec![shape.node.index];
     let mut effects = Vec::new();
     for link in &slide.animation.connections {

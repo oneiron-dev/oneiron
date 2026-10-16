@@ -185,11 +185,11 @@ impl Sides<'_> {
     }
 
     fn removed(&self, id: u32, cascade: bool, removed: &[usize]) -> Result<(), EditRefusal> {
-        let ((old, old_tree, old_view), (new, _, new_view)) = (self.old, self.new);
+        let ((old, old_tree, old_view), (new, new_tree, new_view)) = (self.old, self.new);
         let shape = find_shape(old_tree, id).ok_or(EditRefusal::Missing("shape"))?;
         let index_of = view_index(old_view, shape).ok_or(EditRefusal::Missing("shape"))?;
         let gone: Vec<usize> = members(old_view, index_of).collect();
-        let deleted: Vec<u32> = gone.iter().filter_map(|&k| old_view.shapes[k].id).collect();
+        let deleted = super::shape_ids(old_tree, shape);
         let expected = xml::splice(
             old,
             removed
@@ -219,7 +219,8 @@ impl Sides<'_> {
                 at == root
                     || std::iter::successors(node.parent, |&up| old_tree.nodes[up].parent)
                         .any(|up| up == root)
-            }) && timing::gone(old_tree, at, &deleted);
+            }) && timing::gone(old_tree, at, &deleted)
+                && timing::only_effects(old_tree, at);
             if !cascade || !(glue || timed) {
                 return Err(self
                     .fault("a removed element is neither the shape nor one of its dependencies"));
@@ -250,7 +251,11 @@ impl Sides<'_> {
                 .map(|t| (t.shape, t.role, t.text, t.timing_id))
                 .collect()
         };
-        if survivors != read || dangling || entries(old_view) != entries(new_view) {
+        let before = timing::dangling(old_tree);
+        let unlinked = timing::dangling(new_tree)
+            .iter()
+            .any(|val| !before.contains(val));
+        if survivors != read || dangling || unlinked || entries(old_view) != entries(new_view) {
             return Err(EditRefusal::ReadBack(
                 "the surviving shapes or their animation entries changed",
             ));

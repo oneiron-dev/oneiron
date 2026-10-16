@@ -312,11 +312,10 @@ fn rewrite_paragraph(
     };
     let node = &tree.nodes[paragraph.node];
     let mut out = Vec::new();
+    out.extend(xml::open_tag(bytes, node));
     let mut cursor = if node.empty {
-        out.extend(format!("<{}>", node.qualified).into_bytes());
         node.span.end
     } else {
-        out.extend_from_slice(&bytes[node.span.start..node.open_end]);
         node.open_end
     };
     let mut pending = match host {
@@ -383,7 +382,8 @@ fn run_bytes(bytes: &[u8], tree: &XmlTree, run: usize, text: &str) -> Result<Vec
     let escaped = escape_text(text);
     let mut out = bytes[node.span.start..t_node.span.start].to_vec();
     if t_node.empty {
-        out.extend(format!("<{q}>{escaped}</{q}>", q = t_node.qualified).into_bytes());
+        out.extend(xml::open_tag(bytes, t_node));
+        out.extend(format!("{escaped}</{}>", t_node.qualified).into_bytes());
     } else {
         out.extend_from_slice(&bytes[t_node.span.start..t_node.content.start]);
         out.extend(escaped.into_bytes());

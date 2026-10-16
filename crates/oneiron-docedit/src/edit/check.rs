@@ -418,6 +418,16 @@ pub(super) fn timing(index: &AnimationIndex) -> impl PartialEq + '_ {
     )
 }
 
+/// A declared property reads as written; an undeclared one as before or,
+/// where the shape had no transform to read it from, as the default a new
+/// own transform gives it.
+fn kept<T: PartialEq>(declared: Option<T>, old: Option<T>, new: Option<T>, default: T) -> bool {
+    match declared {
+        Some(value) => new == Some(value),
+        None => new == old || (old.is_none() && new == Some(default)),
+    }
+}
+
 fn shape_in<'v>(view: &'v DeckView, slide: &str, id: u32) -> Result<&'v ShapeView, EditRefusal> {
     view.slides
         .iter()
@@ -481,9 +491,9 @@ fn reads_back(
             let own = |declared: bool, inherited: bool| !declared || !inherited;
             let good = (xfrm.offset.map_or(old.offset.value, Some) == new.offset.value)
                 && (xfrm.extent.map_or(old.extent.value, Some) == new.extent.value)
-                && (xfrm.rotation.map_or(old.rotation.value, Some) == new.rotation.value)
-                && (xfrm.flip_h.map_or(old.flip_h.value, Some) == new.flip_h.value)
-                && (xfrm.flip_v.map_or(old.flip_v.value, Some) == new.flip_v.value)
+                && kept(xfrm.rotation, old.rotation.value, new.rotation.value, 0)
+                && kept(xfrm.flip_h, old.flip_h.value, new.flip_h.value, false)
+                && kept(xfrm.flip_v, old.flip_v.value, new.flip_v.value, false)
                 && own(xfrm.offset.is_some(), new.offset.inherited)
                 && own(xfrm.extent.is_some(), new.extent.inherited);
             if !good {
@@ -502,7 +512,7 @@ fn reads_back(
             ) else {
                 return fault("the move does not read back");
             };
-            let (dx, dy) = ((to.0 - from.0) as f64, (to.1 - from.1) as f64);
+            let (dx, dy) = (to.0 as f64 - from.0 as f64, to.1 as f64 - from.1 as f64);
             let moved = (m.a * dx + m.c * dy, m.b * dx + m.d * dy);
             let slack = (
                 0.5 * (m.a.abs() + m.c.abs()) + 1e-6,

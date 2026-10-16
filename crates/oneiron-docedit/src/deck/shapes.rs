@@ -85,7 +85,7 @@ fn visit(
 }
 
 /// Canonical GUID evidence: uppercase and braced.
-fn guid(id: &str) -> String {
+pub(crate) fn guid(id: &str) -> String {
     format!("{{{}}}", id.trim_matches(['{', '}']).to_ascii_uppercase())
 }
 

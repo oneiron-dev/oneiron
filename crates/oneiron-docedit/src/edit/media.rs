@@ -67,7 +67,7 @@ pub(super) fn set_picture(
         Output::Image(image) if image.media == MediaType::Jpeg => ("jpeg", "image/jpeg"),
         _ => return Err(EditRefusal::Invalid("set_picture takes a PNG or JPEG")),
     };
-    let media = xml::next_part(next, "ppt/media/image", &format!(".{extension}"));
+    let media = xml::next_part(next, "ppt/media/image", &format!(".{extension}"))?;
     let mut allowed = vec![slide.to_owned(), rels_name(slide), media.clone()];
     if !default_names(next, extension, content_type)? {
         allowed.push(TYPES.to_owned());
@@ -262,7 +262,7 @@ fn create_notes(
     let notes_xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:notes xmlns:a="{A}" xmlns:r="{R}" xmlns:p="{P}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{image}<p:sp><p:nvSpPr><p:cNvPr id="3" name="{body_name}"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body"{body_idx}/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>{paragraphs}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"#
     );
-    let notes = xml::next_part(next, "ppt/notesSlides/notesSlide", ".xml");
+    let notes = xml::next_part(next, "ppt/notesSlides/notesSlide", ".xml")?;
     next.add_part(&notes, NOTES_TYPE, notes_xml.into_bytes())?;
     next.relate(&notes, &format!("{R}/notesMaster"), &master)?;
     next.relate(&notes, &format!("{R}/slide"), slide)?;

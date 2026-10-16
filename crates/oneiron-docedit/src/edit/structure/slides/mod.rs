@@ -23,7 +23,7 @@ use super::super::check::declared_type;
 use super::super::media::related;
 use super::super::xml::{self, P, R};
 use super::{Plan, mint_guid};
-use crate::deck::DeckView;
+use crate::deck::{DeckView, guid};
 use crate::edit::{EditRefusal, Effect};
 use crate::ooxml::{Node, PACKAGE_RELATIONSHIPS, XmlTree};
 use crate::retained_opc::{Package, Relationship, rels_name};
@@ -159,7 +159,7 @@ pub(super) fn mint_creation_id(seed: &[u8], taken: &[u32]) -> Result<u32, EditRe
 /// A new name in `original`'s folder, `{stem}{n}{extension}` above every
 /// existing one: the stem is the file name less its extension and trailing
 /// digits.
-fn clone_name(package: &Package, original: &str) -> String {
+fn clone_name(package: &Package, original: &str) -> Result<String, EditRefusal> {
     let file = original.rfind('/').map_or(0, |at| at + 1);
     let (stem, extension) = match original[file..].rfind('.') {
         Some(dot) => original.split_at(file + dot),
@@ -310,7 +310,7 @@ impl Cloner<'_> {
                 "relationships of {original}"
             )));
         }
-        let name = clone_name(next, original);
+        let name = clone_name(next, original)?;
         next.add_part(&name, &content_type, bytes)?;
         self.cloned.push((original.to_owned(), name.clone()));
         self.relationships(next, original, &name, owner)?;
@@ -331,8 +331,9 @@ fn slide_copy(
     let mut edits = Vec::new();
     let mut fresh: Vec<(String, String)> = Vec::new();
     for node in tree.nodes.iter().filter(|node| node.is(A16, "creationId")) {
-        let old = node.attr("id").unwrap_or_default();
-        let new = match fresh.iter().find(|(from, _)| from == old) {
+        // Keyed as the view reads it: equal GUIDs spelled apart stay paired.
+        let old = guid(node.attr("id").unwrap_or_default());
+        let new = match fresh.iter().find(|(from, _)| *from == old) {
             Some((_, new)) => new.clone(),
             None => {
                 let refs: Vec<&str> = taken.iter().map(String::as_str).collect();
@@ -341,7 +342,7 @@ fn slide_copy(
                     &refs,
                 )?;
                 taken.push(new.clone());
-                fresh.push((old.to_owned(), new.clone()));
+                fresh.push((old, new.clone()));
                 new
             }
         };
@@ -423,7 +424,7 @@ pub(super) fn duplicate(
         .collect();
     let (bytes, tree) = xml::read(&input, slide)?;
     let content_type = declared_type(&input, slide)?.ok_or(EditRefusal::Missing("content type"))?;
-    let copy = clone_name(&input, slide);
+    let copy = clone_name(&input, slide)?;
     next.add_part(
         &copy,
         &content_type,
@@ -591,17 +592,18 @@ pub(super) fn reorder(
         .map(|(&(at, _), &id)| (lists.tree.nodes[at].span.clone(), element(id)))
         .collect();
     for section in &lists.sections {
+        let entry = |id: u32| {
+            section
+                .iter()
+                .find(|&&(_, member)| member == id)
+                .map(|&(at, _)| lists.bytes[lists.tree.nodes[at].span.clone()].to_vec())
+                .unwrap_or_default()
+        };
         let members = order
             .iter()
             .filter(|&&id| section.iter().any(|&(_, member)| member == id));
-        for (&(at, _), id) in section.iter().zip(members) {
-            let node = &lists.tree.nodes[at];
-            edits.push(xml::set_attribute(
-                &lists.bytes,
-                node,
-                "id",
-                &id.to_string(),
-            ));
+        for (&(at, _), &id) in section.iter().zip(members) {
+            edits.push((lists.tree.nodes[at].span.clone(), entry(id)));
         }
     }
     next.replace_xml_part(&lists.part, xml::splice(&lists.bytes, edits)?)?;

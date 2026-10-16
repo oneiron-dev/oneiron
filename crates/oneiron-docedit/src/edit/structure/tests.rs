@@ -422,3 +422,47 @@ fn the_check_refuses_an_undeclared_removal() {
         ));
     }
 }
+
+#[test]
+fn delete_shape_refuses_what_its_rules_cannot_see() {
+    // A sound timed in the click step does not go with the shape's effect.
+    let mut package = deck();
+    let op = delete(&package, 9, true);
+    structure_patch(&mut package, &op).unwrap();
+    let sound = r#"<p:audio><p:cMediaNode><p:cTn id="20"/><p:tgtEl><p:sndTgt r:embed="rId3"/></p:tgtEl></p:cMediaNode></p:audio>"#;
+    let slide = part(&package, SLIDE).replacen(
+        r#"<p:par><p:cTn id="5" "#,
+        &format!(r#"{sound}<p:par><p:cTn id="5" "#),
+        1,
+    );
+    let mut voiced = package.clone();
+    voiced.replace_xml_part(SLIDE, slide.into_bytes()).unwrap();
+    assert!(matches!(
+        refuse(&voiced, &delete(&voiced, 8, true)),
+        EditRefusal::AnimationDependencyUnsupported(_)
+    ));
+
+    // A surviving effect that starts when the deleted one's ends.
+    let waiting = with_slide(|slide| {
+        slide.replacen(
+            r#"nodeType="clickEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst>"#,
+            r#"nodeType="clickEffect"><p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="7"/></p:cond></p:stCondLst>"#,
+            1,
+        )
+    });
+    assert!(matches!(
+        refuse(&waiting, &delete(&waiting, 9, true)),
+        EditRefusal::AnimationDependencyUnsupported(_)
+    ));
+
+    // A group whose member the view does not enter is animated.
+    let typed = shape_xml(&deck(), SLIDE, 9);
+    let wrapped = format!(
+        r#"<p:grpSp><p:nvGrpSpPr><p:cNvPr id="50" name="Wrapper"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/><a:chOff x="0" y="0"/><a:chExt cx="10" cy="10"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="51" name="Visible"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5" cy="5"/></a:xfrm></p:spPr></p:sp><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="p14">{typed}</mc:Choice><mc:Fallback>{typed}</mc:Fallback></mc:AlternateContent></p:grpSp>"#
+    );
+    let hidden = with_slide(|slide| slide.replacen(&typed, &wrapped, 1));
+    assert!(matches!(
+        refuse(&hidden, &delete(&hidden, 50, false)),
+        EditRefusal::AnimationDependencyUnsupported(_)
+    ));
+}

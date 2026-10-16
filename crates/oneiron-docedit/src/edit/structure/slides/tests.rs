@@ -387,6 +387,50 @@ fn duplicate_slide_allocates_above_the_high_water_marks() {
     let ids: Vec<Option<u32>> = view.slides.iter().map(|s| s.creation_id).collect();
     assert_eq!(ids[0], Some(first));
     assert!(ids[2].is_some_and(|id| id != first && id != 1002));
+
+    // A part name at the end of the counter refuses instead of wrapping.
+    let mut full = package.clone();
+    full.add_part(
+        "ppt/slides/slide18446744073709551615.xml",
+        "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
+        part(&package, SECOND).into_bytes(),
+    )
+    .unwrap();
+    let op = duplicate(&full, SECOND, 0, b"a");
+    assert_eq!(refuse(&full, &op), EditRefusal::IdSpaceExhausted);
+}
+
+#[test]
+fn duplicate_slide_keeps_repeated_creation_ids_paired() {
+    let mut package = deck();
+    let tagged = |id: u32, name: &str, spelled: &str| {
+        (
+            format!(r#"<p:cNvPr id="{id}" name="{name}"/>"#),
+            format!(
+                r#"<p:cNvPr id="{id}" name="{name}"><a:extLst><a:ext uri="{{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}}"><a16:creationId id="{spelled}"/></a:ext></a:extLst></p:cNvPr>"#
+            ),
+        )
+    };
+    let mut slide = part(&package, SLIDE);
+    let lower = TITLE_GUID.to_ascii_lowercase();
+    for (from, to) in [tagged(2, "Title 1", TITLE_GUID), tagged(3, "Body", &lower)] {
+        assert!(slide.contains(&from));
+        slide = slide.replacen(&from, &to, 1);
+    }
+    package.replace_xml_part(SLIDE, slide.into_bytes()).unwrap();
+    let op = duplicate(&package, SLIDE, 0, b"pair");
+    structure_patch(&mut package, &op).unwrap();
+    let view = DeckView::read(&package).unwrap();
+    let ids = |s: &SlideView| -> Vec<Option<String>> {
+        s.shapes[..2]
+            .iter()
+            .map(|x| x.creation_id.clone())
+            .collect()
+    };
+    let (source, copy) = (ids(&view.slides[0]), ids(&view.slides[1]));
+    assert_eq!(source[0], source[1]);
+    assert_eq!(copy[0], copy[1]);
+    assert!(copy[0].is_some() && copy[0] != source[0]);
 }
 
 #[test]
@@ -501,6 +545,24 @@ fn reorder_slides_keeps_each_section_whole_and_in_order() {
         refuse(&loose, &op),
         EditRefusal::ReorderUnsupported(_)
     ));
+
+    // Entries spelled apart keep their own bytes when they trade places.
+    let mut spelled = rich();
+    let presentation = part(&spelled, PRESENTATION).replace(
+        r#"<p14:sldId id="256"/></p14:sldIdLst></p14:section><p14:section name="Body" id="{0A1B2C3D-0000-4000-8000-000000000002}"><p14:sldIdLst><p14:sldId id="257"/>"#,
+        r#"<p14:sldId id="256"/><p14:sldId id="257" /></p14:sldIdLst></p14:section><p14:section name="Body" id="{0A1B2C3D-0000-4000-8000-000000000002}"><p14:sldIdLst>"#,
+    );
+    assert!(presentation.contains(r#"<p14:sldId id="257" />"#));
+    spelled
+        .replace_xml_part(PRESENTATION, presentation.into_bytes())
+        .unwrap();
+    let op = StructureEdit::ReorderSlides { order: &[257, 256] };
+    structure_patch(&mut spelled, &op).unwrap();
+    assert!(
+        part(&spelled, PRESENTATION).contains(
+            r#"<p14:sldIdLst><p14:sldId id="257" /><p14:sldId id="256"/></p14:sldIdLst>"#
+        )
+    );
 }
 
 #[test]
