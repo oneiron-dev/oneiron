@@ -101,6 +101,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 cost_per_thousand: None,
                 paired: Vec::new(),
                 person: Vec::new(),
+                time: None,
             },
             human_ask: None,
         },

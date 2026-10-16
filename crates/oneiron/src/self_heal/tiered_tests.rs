@@ -7,6 +7,7 @@ use crate::llm::decision::{
     DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
 
 struct Grade(bool);
@@ -18,7 +19,12 @@ impl DecisionProvider for Grade {
             version: "1".into(),
         }
     }
-    fn decide(&self, _: &DecisionQuestion, _: &[EntityId]) -> Result<ProviderDecision> {
+    fn decide(
+        &self,
+        _: &DecisionQuestion,
+        _: &[EntityId],
+        _: &RetrievalDeadline,
+    ) -> Result<ProviderDecision> {
         Ok(noul(self.0))
     }
 }
@@ -32,6 +38,7 @@ impl DecisionProvider for LabeledGrade {
         &self,
         question: &DecisionQuestion,
         evidence: &[EntityId],
+        _: &RetrievalDeadline,
     ) -> Result<ProviderDecision> {
         let reviewed = question
             .text
@@ -70,6 +77,7 @@ fn decisions(local: &'static dyn DecisionProvider) -> DetectorDecisions<'static>
         principal: EntityId::from_bytes([7; 16]).unwrap(),
         dial: DETECTOR_DIAL,
         bands: DecisionBandPolicy::default(),
+        budget: std::time::Duration::from_secs(3600),
     }
 }
 fn grade(yes: bool) -> DetectorDecisions<'static> {

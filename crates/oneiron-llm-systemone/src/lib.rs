@@ -49,8 +49,8 @@ impl SystemOneSeat {
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        // The request's own wait is the decision's time left, set per call.
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
             .connect_timeout(std::time::Duration::from_secs(3))
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -73,7 +73,12 @@ impl RemoteDecisionSeat for SystemOneSeat {
         self.pin.clone()
     }
 
-    fn ask<'a>(&'a self, request: SeatRequest, _lease: &'a BudgetLease) -> SeatFuture<'a> {
+    fn ask<'a>(
+        &'a self,
+        request: SeatRequest,
+        _lease: &'a BudgetLease,
+        time_left: std::time::Duration,
+    ) -> SeatFuture<'a> {
         Box::pin(async move {
             request.validate_remote()?;
             let model = format!("{}-{}", self.pin.model, self.pin.version);
@@ -95,6 +100,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
             let response = self
                 .client
                 .post(&self.endpoint)
+                .timeout(time_left)
                 .bearer_auth(&self.bearer)
                 .json(&body)
                 .send()

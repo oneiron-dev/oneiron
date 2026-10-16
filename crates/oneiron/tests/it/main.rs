@@ -40,6 +40,9 @@ mod code_mode_result_memory;
 mod collection_bounds;
 mod counterparty_opt_out_shipping_paths_oracle;
 mod decide_path_fitness;
+// The still decision clock is a test hook.
+#[cfg(feature = "test-hooks")]
+mod decision_deadline;
 mod effect_spine_oracle;
 #[cfg(target_os = "linux")]
 mod existing_only_open;

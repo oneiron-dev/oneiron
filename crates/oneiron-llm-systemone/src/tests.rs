@@ -1,7 +1,9 @@
 use super::*;
 use oneiron::llm::decision::{
-    DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, SeatPhase, decide_at_remote_seat,
+    DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, Reversibility, SeatPhase,
+    decide_at_remote_seat,
 };
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EntityId, HostingPrivacyPosture};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -92,6 +94,8 @@ async fn negative_recheck_preserves_pin_and_complete_wrong_revision_is_refused()
             band: DecisionBand::default(),
         },
         &BudgetGuard::with_reserve_units("seat", 16, 8, BudgetExhaustionPolicy::Suspend),
+        Reversibility::ReversibleRead,
+        &RetrievalDeadline::after(std::time::Duration::from_secs(3600)),
     )
     .await
     .unwrap();
@@ -110,6 +114,7 @@ async fn negative_recheck_preserves_pin_and_complete_wrong_revision_is_refused()
             .ask(
                 request(AnswerContract::Noul, vec![]),
                 &BudgetLease::for_test("seat"),
+                std::time::Duration::from_secs(3600),
             )
             .await;
         let requests = handle.join().unwrap();
@@ -153,7 +158,8 @@ async fn malformed_choice_probabilities_and_unpinned_endpoint_fail_closed() {
                 },
                 vec![]
             ),
-            &BudgetLease::for_test("seat")
+            &BudgetLease::for_test("seat"),
+            std::time::Duration::from_secs(3600)
         )
         .await
         .is_err()
@@ -188,7 +194,8 @@ async fn rejects_307_and_308_without_reposting_to_redirect_target() {
         assert!(
             seat.ask(
                 request(AnswerContract::Noul, vec![]),
-                &BudgetLease::for_test("seat")
+                &BudgetLease::for_test("seat"),
+                std::time::Duration::from_secs(3600)
             )
             .await
             .is_err()

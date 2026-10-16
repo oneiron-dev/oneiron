@@ -3,9 +3,15 @@ use crate::llm::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelSet, LlmResult, LlmUsage,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// A clock these tests never reach.
+fn time() -> RetrievalDeadline {
+    RetrievalDeadline::after(std::time::Duration::from_secs(3600))
+}
 
 fn question(class: DecisionClass) -> DecisionQuestion {
     DecisionQuestion {
@@ -41,7 +47,12 @@ impl DecisionProvider for Scripted {
     fn pin(&self) -> ProviderPin {
         self.pin.clone()
     }
-    fn decide(&self, _: &DecisionQuestion, _: &[EntityId]) -> Result<ProviderDecision> {
+    fn decide(
+        &self,
+        _: &DecisionQuestion,
+        _: &[EntityId],
+        _: &RetrievalDeadline,
+    ) -> Result<ProviderDecision> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(self.result.clone())
     }
@@ -88,7 +99,8 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
                 &[],
                 dial(DecisionRung::Rule, DecisionRung::Human),
                 &DecisionBandPolicy::default(),
-                Reversibility::OutboundEffect
+                Reversibility::OutboundEffect,
+                &time(),
             )
             .is_err()
     );
@@ -113,7 +125,8 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
                 &[],
                 dial(DecisionRung::Rule, DecisionRung::Human),
                 &DecisionBandPolicy::default(),
-                Reversibility::OutboundEffect
+                Reversibility::OutboundEffect,
+                &time(),
             )
             .is_err()
     );
@@ -264,6 +277,7 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
             dial(DecisionRung::SystemOne, DecisionRung::Big),
             &policy,
             Reversibility::ReversibleRead,
+            &time(),
         )
     };
     let decision = run(&ladder).unwrap();
@@ -336,6 +350,7 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
             dial(DecisionRung::SystemOne, DecisionRung::Human),
             &policy,
             Reversibility::ReversibleRead,
+            &time(),
         )
         .unwrap();
     assert_eq!(decision.answer, DecisionAnswer::Abstain);
@@ -406,6 +421,7 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
                 dial(DecisionRung::Escalation, ceiling),
                 policy,
                 Reversibility::ReversibleRead,
+                &time(),
             )
             .unwrap()
     };
@@ -489,7 +505,7 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
     .unwrap()
     .with_person(&person)
     .unwrap();
-    assert!(dropped.decide(&q, &evidence).is_err());
+    assert!(dropped.decide(&q, &evidence, &time()).is_err());
 }
 
 #[test]
@@ -523,7 +539,7 @@ fn decision_read_refuses_another_model_a_malformed_read_and_a_refused_budget() {
             call,
         )
         .unwrap()
-        .decide(&q, &evidence)
+        .decide(&q, &evidence, &time())
     };
     // A paired reading outside [0, 1], a missing label, or labels that are no distribution.
     for (primary, paired_yes) in [

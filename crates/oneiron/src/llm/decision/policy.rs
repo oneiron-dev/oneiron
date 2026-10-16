@@ -37,6 +37,15 @@ pub struct PersonThreshold {
     pub version: u32,
 }
 
+/// The "does this need more thinking?" row. A read whose paired P(yes) reaches
+/// `threshold` steps to the next rung while the call has time. No row never steps on
+/// it; the Coach tunes it from quick answers that later proved wrong.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThinkThreshold {
+    pub threshold: f64,
+    pub version: u32,
+}
+
 /// Vault-owned policy snapshot. No learned row means shadow at the dial's
 /// seed band, not an implicit permission to enforce a global threshold.
 /// No person row means a person reading never routes.
@@ -44,6 +53,7 @@ pub struct PersonThreshold {
 pub struct DecisionBandPolicy {
     rows: BTreeMap<(EntityId, u32, Reversibility), LearnedBand>,
     person: Option<PersonThreshold>,
+    think: Option<ThinkThreshold>,
 }
 
 impl DecisionBandPolicy {
@@ -56,6 +66,21 @@ impl DecisionBandPolicy {
         }
         self.person = Some(PersonThreshold { threshold, version });
         Ok(())
+    }
+
+    pub fn set_think_threshold(&mut self, threshold: f64, version: u32) -> Result<()> {
+        if !(threshold > 0.0 && threshold <= 1.0) || version == 0 {
+            return Err(invalid("invalid think threshold"));
+        }
+        if self.think.is_some_and(|row| row.version >= version) {
+            return Err(invalid("think threshold version must advance"));
+        }
+        self.think = Some(ThinkThreshold { threshold, version });
+        Ok(())
+    }
+
+    pub fn think_threshold(&self) -> Option<ThinkThreshold> {
+        self.think
     }
 
     pub fn person_threshold(&self) -> Option<PersonThreshold> {
