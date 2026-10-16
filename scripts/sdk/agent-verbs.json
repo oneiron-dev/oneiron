@@ -47,6 +47,15 @@
       "section": true
     },
     {
+      "name": "self.memory.diary",
+      "input": "DiaryEntryRequest",
+      "output": "crate::task_verb::sdk::DiaryEntryReceipt",
+      "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "cancel",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
@@ -82,11 +91,20 @@
       }
     },
     {
+      "name": "steer",
+      "input": "SteerRequest",
+      "output": "crate::task_verb::sdk::SteerReceipt",
+      "call": "crate::task_verb::sdk::steer_child(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "describe",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
       "mcp_served": "input.task_ref.as_deref().and_then(|id| oneiron::EntityId::from_hex(id).ok())",
-      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else if input.key.is_some() { Err(MemoryError::bad_request(\"describe(card key) expands a board card, which only a live board session holds\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
+      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else if input.key.is_some() { Err(MemoryError::bad_request(\"describe(card key) expands a board card, which only a live board session holds\"))? } else if input.fold.is_some() { Err(MemoryError::bad_request(\"describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp_fields": {
         "task_ref": "task_ref",
@@ -488,6 +506,223 @@
       }
     },
     {
+      "name": "vault.packs.put",
+      "input": "PackPutRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.view",
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Option<crate::blob_artifact::ArtifactView>",
+      "call": "memory.artifacts_view(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// One artifact's kind, head and versions, each with its made_by and born-from.\n",
+          "ts": "/** One artifact's kind, head and versions, each with its made_by and born-from. */",
+          "py": "One artifact's kind, head and versions, each with its made_by and born-from."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.export",
+      "input": "crate::blob_artifact::ArtifactExportRequest",
+      "output": "Option<crate::blob_artifact::ArtifactExportFile>",
+      "call": "memory.artifacts_export(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// One version's export file (base64), with its pinned name and media type.\n",
+          "ts": "/** One version's export file (base64), with its pinned name and media type. */",
+          "py": "One version's export file (base64), with its pinned name and media type."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.born_from",
+      "input": "crate::blob_artifact::BornFromRequest",
+      "output": "crate::blob_artifact::BornFromView",
+      "call": "memory.artifacts_born_from(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The artifacts and versions a task, ask, run, skill or agent run produced.\n",
+          "ts": "/** The artifacts and versions a task, ask, run, skill or agent run produced. */",
+          "py": "The artifacts and versions a task, ask, run, skill or agent run produced."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.proposals",
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Vec<crate::edit_settle::PendingProposalView>",
+      "call": "memory.artifacts_proposals(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The proposals waiting beside one artifact for Keep or Discard.\n",
+          "ts": "/** The proposals waiting beside one artifact for Keep or Discard. */",
+          "py": "The proposals waiting beside one artifact for Keep or Discard."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.propose_deck",
+      "input": "crate::blob_artifact::DeckProposeRequest",
+      "output": "crate::blob_artifact::DeckProposeOutcome",
+      "call": "memory.artifacts_propose_deck(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Runs one native deck transaction over the head and holds the proposal for Keep.\n",
+          "ts": "/** Runs one native deck transaction over the head and holds the proposal for Keep. */",
+          "py": "Runs one native deck transaction over the head and holds the proposal for Keep."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.propose_output",
+      "input": "crate::blob_artifact::NativeOutputRequest",
+      "output": "crate::edit_settle::PendingProposalView",
+      "call": "memory.artifacts_propose_output(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Offers one native organ result as the artifact's next version, held for Keep.\n",
+          "ts": "/** Offers one native organ result as the artifact's next version, held for Keep. */",
+          "py": "Offers one native organ result as the artifact's next version, held for Keep."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.keep",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::KeptProposal",
+      "call": "memory.artifacts_keep(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Keeps one waiting proposal as a new version, once, with its receipt.\n",
+          "ts": "/** Keeps one waiting proposal as a new version, once, with its receipt. */",
+          "py": "Keeps one waiting proposal as a new version, once, with its receipt."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.discard",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::DiscardedProposal",
+      "call": "memory.artifacts_discard(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Discards one waiting proposal, once, with its receipt.\n",
+          "ts": "/** Discards one waiting proposal, once, with its receipt. */",
+          "py": "Discards one waiting proposal, once, with its receipt."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.undo",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::UndoneKeep",
+      "call": "memory.artifacts_undo(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Undoes one Keep with a new version; the settle stays consumed.\n",
+          "ts": "/** Undoes one Keep with a new version; the settle stays consumed. */",
+          "py": "Undoes one Keep with a new version; the settle stays consumed."
+        }
+      }
+    },
+    {
       "name": "can",
       "input": "crate::task_verb::sdk::TaskCanAskRequest",
       "output": "crate::task_verb::TaskAskPreflight",
@@ -689,6 +924,227 @@
         "room_ref": "=conversation_ref"
       },
       "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turn.continue",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_continue(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turn.retry",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_retry(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.host",
+      "input": "RoomHostRequest",
+      "output": "crate::workspace_roster::RoomStanding",
+      "call": "memory.rooms_host(crate::EntityId::from_hex(&input.room_ref)?, input.session_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.sharing",
+      "input": "RoomRefRequest",
+      "output": "crate::workspace_roster::RoomSharingView",
+      "call": "memory.rooms_sharing(crate::EntityId::from_hex(&input.room_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "room_ref": "room_ref"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.companions.sharing.get",
+      "input": "CompanionSharingRequest",
+      "output": "crate::workspace_roster::CompanionSharingView",
+      "call": "memory.companion_sharing_get(&crate::workspace_roster::CompanionSharingTarget { companion: crate::EntityId::from_hex(&input.companion_ref)?, contact: crate::EntityId::from_hex(&input.contact_ref)? })?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.workspace.work_companion.get",
+      "input": "WorkspaceRefRequest",
+      "output": "crate::workspace_roster::WorkCompanionPolicy",
+      "call": "memory.workspace_work_companion_get(&input.workspace_ref)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.workspace.work_companion.set",
+      "input": "WorkCompanionSetRequest",
+      "output": "crate::workspace_roster::WorkCompanionPolicy",
+      "call": "memory.workspace_work_companion_set(&input.workspace_ref, input.policy)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.save",
+      "input": "crate::skill::helper::SkillSaveRequest",
+      "output": "crate::memory::SkillAuthoringReceipt",
+      "call": "{ let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?; memory.skill_save_with_source(id, &record, files, input.expected_version.as_deref(), crate::unix_seconds_now())? }",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.fork",
+      "input": "crate::skill::helper::SkillForkRequest",
+      "output": "crate::memory::SkillAuthoringReceipt",
+      "call": "{ let (parent, id) = crate::skill::helper::fork_target(&input)?; memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())? }",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.callables",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::skill::helper::CallableCardView>",
+      "call": "memory.skill_callables()?",
+      "scope": "Read",
+      "mcp_fields": {},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "ai.options",
+      "input": "AiOptionsRequest",
+      "output": "crate::task_verb::sdk::AiOptions",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.image",
+      "input": "AiCallRequest",
+      "output": "crate::task_verb::sdk::AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.speech",
+      "input": "AiCallRequest",
+      "output": "crate::task_verb::sdk::AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.transcribe",
+      "input": "AiCallRequest",
+      "output": "crate::task_verb::sdk::AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.embed",
+      "input": "AiCallRequest",
+      "output": "crate::task_verb::sdk::AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.video",
+      "input": "AiCallRequest",
+      "output": "crate::task_verb::sdk::AiVideoTicket",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.video.poll",
+      "input": "AiVideoJobRequest",
+      "output": "crate::task_verb::sdk::AiVideoJob",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.video.cancel",
+      "input": "AiVideoJobRequest",
+      "output": "crate::task_verb::sdk::AiVideoCancelled",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "connector.list",
+      "input": "ConnectorListRequest",
+      "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
+      "call": "crate::task_verb::sdk::connector_catalog(memory, input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "connector.status",
+      "input": "ConnectorNameRequest",
+      "output": "Option<crate::task_verb::sdk::ConnectorView>",
+      "call": "crate::task_verb::sdk::connector_description(memory, input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false
     },
     {
@@ -1001,13 +1457,18 @@
     },
     {
       "name": "connector.outbound.schedule",
+      "input": "OutboundScheduleRequest",
+      "output": "crate::memory::OutboundIntentReceipt",
+      "call": "crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
       "uniffi": {
         "args": {
           "draft": "OutboundDraftInput"
         },
         "output": "OutboundIntentReceipt"
-      },
-      "context": "definition"
+      }
     },
     {
       "name": "vault.search",
@@ -1036,6 +1497,41 @@
       "scope": "Write",
       "context": "run",
       "effect": "MemoryPutEdge"
+    },
+    {
+      "name": "self.fold",
+      "input": "crate::compaction::FoldMarkInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Fold"
+    },
+    {
+      "name": "self.compact",
+      "input": "crate::compaction::FoldCompactInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Fold"
+    },
+    {
+      "name": "self.unfold",
+      "input": "crate::compaction::FoldUnfoldInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Fold"
+    },
+    {
+      "name": "self.folds",
+      "input": "crate::compaction::FoldsInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Fold"
+    },
+    {
+      "name": "tasks.refuse",
+      "input": "crate::code_run::TaskRefuseInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "TasksRefuse"
     }
   ]
 }

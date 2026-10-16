@@ -22,6 +22,8 @@ mod lexical_query_hints;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
+pub(crate) mod phonetic_codes;
+pub use self::phonetic_codes::generate_phonetic_codes;
 mod prepared_index;
 mod put_apply;
 pub(crate) use person_substrate::sweep_scope_stamps;
@@ -84,7 +86,9 @@ pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
 use self::prepared_index::PreparedIndexWork;
 pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
 pub use self::short_id::short_id_content_hash;
-pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
+pub(crate) use self::short_id::{
+    delete_short_id_rows_for_id, encode_short_id_forward_key, parse_short_id_value,
+};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };

@@ -139,6 +139,12 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),
+            SelfDispatchOutcome::Fold(_) if self.effect != SelfEffect::Fold => Err(
+                invalid_code_run_replay("fold answer belongs to another effect"),
+            ),
+            SelfDispatchOutcome::TaskRefusal(_) if self.effect != SelfEffect::TasksRefuse => Err(
+                invalid_code_run_replay("task refusal belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(
@@ -544,6 +550,44 @@ pub struct CodeRunReplayRecord {
     pub step_checkpoints: Vec<CodeRunStepCheckpoint>,
     pub outputs: Vec<CodeRunRawOutput>,
     pub abi_layout_checks: Vec<CodeRunAbiLayoutCheck>,
+    /// The run's live result names, each bound to one of `outputs`. A rebind
+    /// replaces its entry in place.
+    pub bindings: Vec<CodeRunResultBinding>,
+}
+
+/// One name a program bound to a result of its run (`r7`, or a name it gave
+/// `store`). The name is the model's handle on the result across steps,
+/// compaction and restart; it grants nothing by itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeRunResultBinding {
+    pub name: String,
+    pub handle: String,
+}
+
+impl CodeRunResultBinding {
+    /// The longest result name, in ASCII characters.
+    pub const MAX_NAME_LEN: usize = 64;
+
+    #[must_use]
+    pub fn new(name: impl Into<String>, handle: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            handle: handle.into(),
+        }
+    }
+
+    /// Whether `name` can name a result: `[A-Za-z_][A-Za-z0-9_]{0,63}`, so it
+    /// reads as a JS identifier.
+    #[must_use]
+    pub fn is_valid_name(name: &str) -> bool {
+        let mut bytes = name.bytes();
+        bytes
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+            && name.len() <= Self::MAX_NAME_LEN
+            && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    }
 }
 
 /// Stable replay-row generation used for guarded executor appends.
@@ -584,6 +628,7 @@ impl CodeRunReplayRecord {
             step_checkpoints: Vec::new(),
             outputs: Vec::new(),
             abi_layout_checks: code_run_replay_abi_layout_checks(),
+            bindings: Vec::new(),
         }
     }
 
@@ -603,20 +648,26 @@ impl CodeRunReplayRecord {
     /// such a run's answers.
     #[must_use]
     pub fn agent_verb_rows(&self) -> Option<Vec<EntityId>> {
-        let mut rows = Vec::new();
-        let verb_calls = self
-            .bridge_calls
-            .iter()
-            .filter(|call| call.effect == SelfEffect::AgentVerb);
-        for call in verb_calls {
-            if let SelfDispatchOutcome::AgentVerb(answer) =
-                decode_self_dispatch_outcome(&call.outcome).ok()?
-            {
-                rows.extend(answer.rows?);
-            }
-        }
-        Some(rows)
+        agent_verb_rows_of(&self.bridge_calls)
     }
+}
+
+/// The served rows of the verb answers among `calls`, as
+/// [`CodeRunReplayRecord::agent_verb_rows`] reads them; `None` when any answer
+/// has no row set or does not decode.
+pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<EntityId>> {
+    let mut rows = Vec::new();
+    let verb_calls = calls
+        .iter()
+        .filter(|call| call.effect == SelfEffect::AgentVerb);
+    for call in verb_calls {
+        if let SelfDispatchOutcome::AgentVerb(answer) =
+            decode_self_dispatch_outcome(&call.outcome).ok()?
+        {
+            rows.extend(answer.rows?);
+        }
+    }
+    Some(rows)
 }
 
 /// Returns the default ABI/layout checks recorded with v1 replay records.

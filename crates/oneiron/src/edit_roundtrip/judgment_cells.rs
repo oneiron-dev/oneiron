@@ -68,9 +68,6 @@ fn sheet_cells(
     bundle: &SheetAnswerBundle,
     source: bool,
 ) -> Result<BTreeMap<CellRef, CellValue>> {
-    let pkg = opc::read(bytes)?;
-    let part = named_sheet_part(&pkg, &bundle.sheet)?;
-    let sheet = pkg.part(&part).ok_or_else(invalid)?;
     // Only cells whose value is needed are parsed. In particular, a formula
     // on an abstaining cell or an unchecked source is not an error.
     let targets: BTreeSet<CellRef> = bundle
@@ -85,6 +82,31 @@ fn sheet_cells(
         })
         .map(|a| a.cell)
         .collect();
+    named_sheet_cells(bytes, &bundle.sheet, &|cell| targets.contains(cell))
+}
+
+/// The workbook's sheet names, in workbook order.
+pub(crate) fn sheet_names(bytes: &[u8]) -> Result<Vec<String>> {
+    let pkg = opc::read(bytes)?;
+    let workbook = pkg.part("xl/workbook.xml").ok_or_else(invalid)?;
+    Ok(xml::elements(workbook)
+        .map_err(|_| invalid())?
+        .iter()
+        .filter(|e| e.is("sheet", SHEET_NS))
+        .filter_map(|e| e.attribute("name").map(str::to_owned))
+        .collect())
+}
+
+/// The saved values of the cells `wanted` selects on one named sheet: the
+/// stored value, or a formula with its saved cache. Nothing is recalculated.
+pub(crate) fn named_sheet_cells(
+    bytes: &[u8],
+    sheet_name: &str,
+    wanted: &dyn Fn(&CellRef) -> bool,
+) -> Result<BTreeMap<CellRef, CellValue>> {
+    let pkg = opc::read(bytes)?;
+    let part = named_sheet_part(&pkg, sheet_name)?;
+    let sheet = pkg.part(&part).ok_or_else(invalid)?;
     let mut cells = BTreeMap::new();
     let mut reader = NsReader::from_reader(sheet);
     let mut current: Option<CellRead> = None;
@@ -149,7 +171,7 @@ fn sheet_cells(
                     return Err(invalid());
                 }
                 current = Some((cell, attrs.get("t").cloned(), String::new(), None, false));
-                finish_cell(&mut current, &targets, &mut cells, &pkg)?;
+                finish_cell(&mut current, wanted, &mut cells, &pkg)?;
             }
             Event::Start(tag)
                 if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "is") =>
@@ -230,7 +252,7 @@ fn sheet_cells(
                 push_captured(&mut current, capture, &value)?;
             }
             Event::End(tag) if depth == 4 && sheet_end(&reader, &tag, "c") && current.is_some() => {
-                finish_cell(&mut current, &targets, &mut cells, &pkg)?;
+                finish_cell(&mut current, wanted, &mut cells, &pkg)?;
                 capture = None;
                 inline_string = false;
                 inline_run = false;
@@ -315,12 +337,12 @@ fn sheet_tag(reader: &NsReader<&[u8]>, tag: &BytesStart<'_>, name: &str) -> bool
 
 fn finish_cell(
     current: &mut Option<CellRead>,
-    targets: &BTreeSet<CellRef>,
+    wanted: &dyn Fn(&CellRef) -> bool,
     cells: &mut BTreeMap<CellRef, CellValue>,
     pkg: &OpcPackage,
 ) -> Result<()> {
     let (cell, kind, value, formula, value_seen) = current.take().ok_or_else(invalid)?;
-    if !targets.contains(&cell) {
+    if !wanted(&cell) {
         return Ok(());
     }
     let parsed = match kind.as_deref() {

@@ -227,8 +227,6 @@ impl Vault {
                     device: issuer.root_device(self.privacy_posture()),
                     genesis_nonce: random_slip_id(),
                     recovery: GenesisRecoveryStep::acknowledge(&recovery, true)?,
-                    tier_floor: AuthorityTier::Software,
-                    pending_widen_delay_secs: 86_400,
                 },
                 now,
             )?;

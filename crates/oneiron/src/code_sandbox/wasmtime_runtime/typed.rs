@@ -193,6 +193,7 @@ pub(super) fn link_imports(
                     let target = match target.as_str() {
                         "console" => StreamTarget::Console,
                         "finish" => StreamTarget::Finish { start },
+                        "store" => StreamTarget::Store { start },
                         _ => return Err(wasmtime::Error::msg("unknown streamed output target")),
                     };
                     Ok((cx.data_mut().output(target, frame.into_bytes())?,))

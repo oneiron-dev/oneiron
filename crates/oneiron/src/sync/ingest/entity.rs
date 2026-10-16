@@ -62,6 +62,14 @@ impl<'a> IngestCtx<'a> {
         self.residence = Some(residence);
         self
     }
+
+    /// The window document the entries come from, whose birth map carries
+    /// each row's Rule A envelope.
+    fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
+        match self.residence? {
+            Residence::Quarantine(doc) | Residence::Forward { doc, .. } => Some(doc),
+        }
+    }
 }
 
 /// The ladder's verdict on one entities-map value.
@@ -193,6 +201,20 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
             value.unwrap_or_default(),
         )?;
     } else {
+        // Rule A: the row's carried birth lands in the savepoint that
+        // admitted the row, or not at all.
+        if !matches!(step, EntityStep::LocalOnlyCompanion(_))
+            && let Some(doc) = ctx.carrier_doc()
+            && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
+            && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
+        {
+            crate::sync::row_birth::stamp_carried_birth_in_txn(
+                ctx.vault,
+                &mut savepoint,
+                doc,
+                &id,
+            )?;
+        }
         savepoint.commit()?;
     }
     Ok(step)
