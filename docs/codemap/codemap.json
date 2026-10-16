@@ -38613,7 +38613,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 37
+      "fn": 47
      }
     },
     {
@@ -38804,7 +38804,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 12
+      "fn": 14
      }
     },
     {
@@ -45741,8 +45741,8 @@
      "purpose": "Browser verbs for code mode (`self.memory.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
       "enum": 1,
-      "fn": 1,
-      "re-export": 1,
+      "fn": 4,
+      "re-export": 2,
       "struct": 15,
       "trait": 1
      }
@@ -53958,7 +53958,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -55409,6 +55409,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrowserConfig"
+     ],
+     "path": "src/config/browser.rs",
+     "purpose": "`[browser]`: the guest a code run's `self.memory.browser.*` verbs drive",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -55568,8 +55582,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 1,
-      "mod": 9,
-      "re-export": 14
+      "mod": 10,
+      "re-export": 15
      }
     },
     {
@@ -57839,8 +57853,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 14,
-      "fn": 10,
+      "crate-vis": 15,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -58612,7 +58626,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58810,7 +58824,7 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 373,
+   "source_files": 374,
    "test_files": 182
   },
   "oneiron-spawn": {
