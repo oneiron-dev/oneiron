@@ -44,12 +44,26 @@ pub(super) async fn handle_window_sync(
         window_sub_tags::UPDATE
             | window_sub_tags::RESIDENCE_UPDATE
             | window_sub_tags::SELECTOR_VV_REQUEST
+            | window_sub_tags::SEALED_UPDATE
+            | window_sub_tags::SEALED_REQUEST
     ) && payload.len() > server.config.max_update_payload
     {
         return Err(ProtocolError::FrameTooLarge {
             size: payload.len(),
             max: server.config.max_update_payload,
         });
+    }
+
+    // Sealed relay (OF-292): a private world's ciphertext resting on and
+    // moving through this node unread. It never loads or creates the window
+    // doc: the host holds no world key and materializes nothing from it.
+    if matches!(
+        sub_tag,
+        window_sub_tags::SEALED_UPDATE | window_sub_tags::SEALED_REQUEST
+    ) {
+        return handle_sealed_relay(
+            server, conn_id, &key, window_key, sub_tag, payload, direct_tx, conn_state,
+        );
     }
 
     if sub_tag == window_sub_tags::PROMOTION_REQUEST {
@@ -399,6 +413,89 @@ pub(super) async fn handle_window_sync(
         _ => {}
     }
 
+    Ok(())
+}
+
+/// The sealed relay door (OF-292): this node shelves a private world's
+/// sealed packets and forwards them between the owner's machines, judged
+/// against the destination each socket proved. The hosted root is never a
+/// world key recipient, so nothing here opens a packet: a take on a node
+/// that may not read the world shelves it, and an answer goes only where
+/// the world may be read or a sealed copy may rest.
+fn handle_sealed_relay(
+    server: &SyncServer,
+    conn_id: u32,
+    key: &WindowKey,
+    window_key: &str,
+    sub_tag: u8,
+    payload: &[u8],
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    conn_state: &ConnState,
+) -> Result<(), ProtocolError> {
+    if conn_state.window_sync_mode == WindowSyncMode::Selector {
+        return Err(ProtocolError::InvalidPayload(
+            "sealed relay on selector lane",
+        ));
+    }
+    let Some(world) = key.world() else {
+        return Err(ProtocolError::InvalidPayload(
+            "sealed packet for a base window",
+        ));
+    };
+    let vault = server.vault();
+    if sub_tag == window_sub_tags::SEALED_UPDATE {
+        let packet = oneiron::world_keys::SealedResidenceContent::from_bytes(payload)
+            .map_err(|_| ProtocolError::InvalidPayload("malformed sealed packet"))?;
+        server
+            .reassert_manager
+            .take_sealed_residence_content(world, key, &packet)
+            .map_err(|_| ProtocolError::InvalidPayload("sealed packet refused"))?;
+        // Forward unread to the other sockets; each socket's delivery door
+        // re-judges the frame against its own destination.
+        let frame =
+            protocol::encode_window_sync(window_key, window_sub_tags::SEALED_UPDATE, payload)
+                .into_result()
+                .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+        let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, frame);
+        return Ok(());
+    }
+    // SEALED_REQUEST: seal fresh where this node may read the world (a
+    // self-hosted home), else forward what the shelf holds for the window.
+    let destination = conn_state.destination(vault);
+    let mut packets = Vec::new();
+    match server.reassert_manager.sealed_residence_content_for(
+        world,
+        key,
+        (!payload.is_empty()).then_some(payload),
+        destination,
+    ) {
+        Ok(Some(packet)) => packets.push(packet),
+        Ok(None) => {
+            let may_rest = vault
+                .sealed_copy_may_rest_on(world, destination)
+                .unwrap_or(false);
+            let may_read = vault
+                .authority_fold()
+                .map(|fold| fold.world_readable_on(world, destination))
+                .unwrap_or(false);
+            if may_rest || may_read {
+                packets = vault
+                    .sealed_window_packets(window_key)
+                    .map_err(|e| ProtocolError::Persistence(e.to_string()))?;
+            }
+        }
+        Err(error) => return Err(ProtocolError::Persistence(error.to_string())),
+    }
+    for packet in packets {
+        let frame = protocol::encode_window_sync(
+            window_key,
+            window_sub_tags::SEALED_UPDATE,
+            packet.as_bytes(),
+        )
+        .into_result()
+        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+        let _ = direct_tx.send(frame);
+    }
     Ok(())
 }
 

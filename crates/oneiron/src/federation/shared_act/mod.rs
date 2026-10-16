@@ -346,7 +346,12 @@ impl Vault {
             .removal_export(act_id)?
             .map(|(member, records)| {
                 let ids = records.iter().map(|record| record.id).collect();
-                self.export_records_archive(&ids)
+                // Its diary reads are the removed owner's, who receives it.
+                let reader = crate::write_envelope::WriteActor::new(
+                    member,
+                    crate::edge::EdgeActorClass::Human,
+                );
+                self.export_records_archive(&ids, reader)
                     .map(|archive| (member, records.len() as u64, archive))
             })
             .transpose()?;

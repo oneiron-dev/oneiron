@@ -52,6 +52,18 @@ for row in ROWS:
     # what an embedded handle answers instead.
     if row.get('host_door') and (row.get('server_door') or row.get('admission', {}).get('owner_grade') or row.get('context', 'memory') != 'memory'):
         raise ValueError(f'{row["name"]}: a host door is a memory row with no other server door')
+# OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
+# input, `*` taking every item of an array. The row's generated engine fn checks
+# that each ref there resolves under the writer's own scoped read before the
+# engine call (`record_refs_check`), so every door that reaches the row meets
+# the check once. Only a plain memory row's doors all reach that fn.
+for row in ROWS:
+    if 'refs' not in row: continue
+    if row.get('context', 'memory') != 'memory' or row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade'):
+        raise ValueError(f'{row["name"]}: only a plain memory row checks its record refs in its engine fn')
+    pointers = row['refs']
+    if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*|[a-z_][a-z0-9_]*))+', p) for p in pointers):
+        raise ValueError(f'{row["name"]}: refs are distinct JSON pointers of field names and `*`')
 def mcp_rows():
     'The rows the MCP doors serve as tools: every row but a browser row.'
     return [row for row in ROWS if row.get('mcp') != 'none']
@@ -636,6 +648,12 @@ def run_catalog():
     out += ''.join('Self::' + variants[r['name']] + ' => crate::code_run::SelfEffect::' + r['effect'] + ',\n' for r in RUN_ROWS) + '} }\n'
     return out + '}\n'
 
+def record_refs_check(row):
+    'OF-063: the record-ref check a row with `refs` runs before its engine call.'
+    if 'refs' not in row: return ''
+    pointers = ', '.join(json.dumps(pointer) for pointer in row['refs'])
+    return f'crate::gate::record_references::admit_row_references(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
+
 def default_const(row, arg):
     'The engine constant that carries one binding default the manifest states.'
     return f"{row['name'].replace('.', '_')}_{arg['name']}_default".upper()
@@ -696,6 +714,7 @@ def outputs():
         checks = r.get('admission', {}).get('validate', '')
         call = r['call']
         result = call[:-1] if call.endswith('?') else f'Ok({call})'
+        result = record_refs_check(r) + result
         if r.get('context') == 'browser':
             core += f"pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
         elif r.get('context') == 'board':
@@ -1004,7 +1023,8 @@ CODE_MODE_DTS_REGENERATE = 'ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron
 # self {`, `declare const vault: {`, `declare function describe(input: …`,
 # `const focus: {`, `claims: {`, `upsert(input: …`, or a verb that holds
 # verbs, `diary: ((input: …) => Promise<unknown>) & {`.
-DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \{| \{)')
+# `self.fold` is the one positional verb, `fold: (span: …` (ARCH-0067 #folds).
+DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \(span: |: \{| \{)')
 def code_mode_dts_current():
     declared, scope = set(), []
     for line in (ROOT/CODE_MODE_DTS).read_text().splitlines():
@@ -1014,7 +1034,7 @@ def code_mode_dts_current():
         head = DTS_LINE.match(text)
         if not head: continue
         name, form = head.groups()
-        if 'input' in form: declared.add('.'.join(scope + [name]))
+        if 'input' in form or 'span' in form: declared.add('.'.join(scope + [name]))
         if text.endswith('{'): scope.append(name)
     return declared == {r['name'] for r in ROWS + RUN_ROWS}
 

@@ -181,6 +181,9 @@ side_tables! {
     /// Crash-safe monotonic counter allocating the next u:w: sequence number for one window. Key:
     /// yyyy-mm.
     SYNC_M_U_SEQ_W: SyncState b"m:u_seq:w:" Raw;
+    /// Host config row: the node account-key verdict lease in seconds (u64 big-endian). Absent
+    /// means the 60-second default. Key: ().
+    MANAGED_ACCOUNT_KEY_LEASE: SyncState b"managed:account-key-lease:v1" Raw;
     /// Marker row admitting a vault as a synthetic canary, the only substitute managed-mode accepts
     /// for the real-tenant isolation preconditions. Key: ().
     MANAGED_CANARY_MARKER: SyncState b"managed:canary:v1" Raw;

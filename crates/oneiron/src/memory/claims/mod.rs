@@ -160,25 +160,35 @@ pub struct PendingWrite {
     pub dreamer_run_id: Option<String>,
 }
 
-/// One gate decision receipt.
+/// One receipt: a gate decision, or, when `vault.receipts` names `kinds`,
+/// a receipt of the unified family in the same shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryReceipt {
-    /// Stable ref (`gate:<decision-hex>`).
+    /// Stable ref (`gate:<decision-hex>`, or the family receipt's id).
     pub receipt_ref: String,
-    /// Gate outcome: `allow`/`pending`/`deny`.
+    /// The receipt family kind (`gate`, `hook`, `outbound`, ...).
+    pub kind: String,
+    /// Gate outcome: `allow`/`pending`/`deny`; the receipt's own outcome
+    /// for another kind.
     pub outcome: String,
     /// Unix seconds.
     pub created_at: u64,
-    /// Gate reason codes.
+    /// Gate reason codes; the policy trace for another kind.
     pub reason_codes: Vec<String>,
-    /// Actor class string the decision was made for.
+    /// Actor class string the decision was made for; empty for a kind that
+    /// names none.
     pub actor_class: String,
     /// Actor entity hex, when the write carried an envelope.
     pub actor_ref: Option<String>,
-    /// Gate content kind (e.g. `claim`).
+    /// Gate content kind (e.g. `claim`); empty for a kind that names none.
     pub content_kind: String,
     /// 32-hex id of the claim the decision covers, if any.
     pub claim_ref: Option<String>,
+    /// A family receipt's own fields (a hook run's hook, CODE id, body hash
+    /// and run key), with its trigger, job and principal refs. Empty on a
+    /// gate-ledger row.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub fields: std::collections::BTreeMap<String, String>,
 }
 
 pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {

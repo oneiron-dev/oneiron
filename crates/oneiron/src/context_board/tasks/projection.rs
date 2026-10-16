@@ -114,7 +114,7 @@ impl TaskRow {
             is_intent: true,
             folded_job_count: intent.realizing_jobs.len(),
             kind: intent.kind,
-            assignee: intent.assignee.clone(),
+            assignee: intent.who_label.clone().or_else(|| intent.assignee.clone()),
             terminal_disposition: intent.terminal_disposition,
             connector_outcome: intent.connector_outcome,
             result_ref: intent.result_ref.clone(),
@@ -287,6 +287,85 @@ impl TasksSectionRows {
     pub fn render(&self) -> TasksSection {
         TasksSection::render_bounded(&self.intents, &self.bare_jobs, self.source_exhausted)
     }
+
+    /// PEOPLE (ARCH-0067): names each task's `who` as this reader's board
+    /// names people, puts each live child on the task it realizes (a child
+    /// whose task is not on the board rides as its own row), and lists who
+    /// `fits:` each open, unassigned task: the persons who finished tasks of
+    /// the same type, most often first.
+    pub fn attach_people(
+        &mut self,
+        people: &crate::context_board::PeopleView<'_>,
+        children: &[crate::context_board::ChildState],
+    ) {
+        for intent in &mut self.intents {
+            intent.who_label = intent.who.map(|who| people.label(who));
+        }
+        for child in children {
+            let task = child.task_ref.as_deref();
+            match task.and_then(|task| self.intents.iter_mut().find(|intent| intent.id == task)) {
+                Some(intent) => intent.children.push(child.token(people)),
+                None => self.bare_jobs.push(JobPresence {
+                    id: child.attempt.clone(),
+                    kind: format!("child {}", child.token(people)),
+                    status: child_board_status(child.status),
+                    cancel_pathology: None,
+                }),
+            }
+        }
+        let mut done: std::collections::BTreeMap<&str, std::collections::BTreeMap<crate::EntityId, usize>> =
+            std::collections::BTreeMap::new();
+        for intent in &self.intents {
+            if intent.status == TaskBoardStatus::Done
+                && let (Some(node), Some(who)) = (intent.type_node.as_deref(), intent.who)
+                && people.people.get(who).is_some()
+            {
+                *done.entry(node).or_default().entry(who).or_default() += 1;
+            }
+        }
+        let fits: Vec<Vec<String>> = self
+            .intents
+            .iter()
+            .map(|intent| {
+                let open = matches!(
+                    intent.status,
+                    TaskBoardStatus::Queued | TaskBoardStatus::Scheduled
+                );
+                let Some(past) = intent
+                    .type_node
+                    .as_deref()
+                    .filter(|_| open && intent.who.is_none())
+                    .and_then(|node| done.get(node))
+                else {
+                    return Vec::new();
+                };
+                let mut ranked: Vec<_> = past.iter().collect();
+                ranked.sort_by(|left, right| right.1.cmp(left.1).then(left.0.cmp(right.0)));
+                ranked
+                    .into_iter()
+                    .take(TASK_FITS_CAP)
+                    .map(|(who, _)| people.label(*who))
+                    .collect()
+            })
+            .collect();
+        for (intent, fits) in self.intents.iter_mut().zip(fits) {
+            intent.fits = fits;
+        }
+    }
+}
+
+/// Most persons one TASKS row names under `fits:`.
+const TASK_FITS_CAP: usize = 3;
+
+/// A live child's run state on the TASKS axis.
+const fn child_board_status(status: crate::agent_run_status::AgentRunStatus) -> TaskBoardStatus {
+    use crate::agent_run_status::AgentRunStatus;
+    match status {
+        AgentRunStatus::Spawned => TaskBoardStatus::Queued,
+        AgentRunStatus::Working | AgentRunStatus::NeedsInput => TaskBoardStatus::Running,
+        AgentRunStatus::Delivered | AgentRunStatus::Archived => TaskBoardStatus::Done,
+        AgentRunStatus::Failed | AgentRunStatus::Abandoned => TaskBoardStatus::Failed,
+    }
 }
 
 /// One non-agent-dispatch JobQueue job projected for the board — a bare
@@ -394,6 +473,18 @@ pub struct TaskIntentPresence {
     /// The persisted TASK state is `Interrupted`: progress is durably paused.
     pub interrupted: bool,
     pub counter_task_ref: Option<String>,
+    /// PEOPLE: the person or actor the task is assigned to, typed.
+    pub who: Option<crate::EntityId>,
+    /// The task type's node, which `fits:` matches past work on.
+    pub type_node: Option<String>,
+    /// `who` as this reader's board names the person; set by
+    /// [`TasksSectionRows::attach_people`].
+    pub who_label: Option<String>,
+    /// Persons who did this type of task before, as this reader's board
+    /// names them.
+    pub fits: Vec<String>,
+    /// Live children realizing this task, as `<agent>:<status>[:lead]`.
+    pub children: Vec<String>,
 }
 
 impl TaskIntentPresence {
@@ -422,6 +513,11 @@ impl TaskIntentPresence {
             ladder_disposition: None,
             interrupted: false,
             counter_task_ref: None,
+            who: None,
+            type_node: None,
+            who_label: None,
+            fits: Vec::new(),
+            children: Vec::new(),
         }
     }
 

@@ -84,6 +84,12 @@ pub struct CallReceipt {
     /// The row ids the reply was derived from, when the transport knows
     /// them; at most [`MAX_CALL_RECEIPT_SERVED`].
     pub served: Vec<String>,
+    /// OF-063: each `served` row this reader may read, as a typed record ref
+    /// a UI can preview and open. Filled when the receipt is answered, under
+    /// the reader's own scoped read, and never stored; a row the reader may
+    /// not read has no ref here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub served_records: Vec<crate::lens::RecordRef>,
 }
 
 /// What a transport hands [`Vault::record_call_receipt`]: everything but the
@@ -215,6 +221,7 @@ impl Vault {
             request_digest: input.request_digest,
             result_digest: input.result_digest,
             served: served.into_iter().map(bounded).collect(),
+            served_records: Vec::new(),
         };
         self.with_write_txn_grouped(|txn| CALL_RECEIPTS.put(&self.store, txn, &id, &receipt))?;
         Ok(receipt_ref)
@@ -237,7 +244,7 @@ impl Memory<'_> {
             .read_txn()
             .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        let Some(receipt) = CALL_RECEIPTS
+        let Some(mut receipt) = CALL_RECEIPTS
             .get(&vault.store, &txn, &id)
             .map_err(MemoryError::from)?
         else {
@@ -245,10 +252,35 @@ impl Memory<'_> {
         };
         let own = receipt.actor_ref == self.actor().to_hex()
             && receipt.actor_class == self.actor_class().gate_actor_class();
-        if own || actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())? {
-            Ok(Some(receipt))
-        } else {
-            Ok(None)
+        if !own && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())? {
+            return Ok(None);
         }
+        // The receipt's snapshot ends before its served rows are read: each
+        // is read through this handle's own lane, in a read of its own.
+        drop(txn);
+        receipt.served_records = self.served_record_refs(&receipt.served)?;
+        Ok(Some(receipt))
+    }
+
+    /// The typed record refs of the `served` row ids this handle may read,
+    /// in order (OF-063). An id that names no row, or a row this reader may
+    /// not read, gets none, alike.
+    fn served_record_refs(&self, served: &[String]) -> MemoryResult<Vec<crate::lens::RecordRef>> {
+        let mut records = Vec::new();
+        for id in served {
+            if EntityId::from_hex(id).is_err() {
+                continue;
+            }
+            match self.get_entity(id) {
+                Ok(read) => {
+                    records.extend(read.value.as_ref().map(crate::lens::RecordRef::from_view));
+                }
+                Err(error)
+                    if error.code == crate::memory::MEMORY_CODE_NOT_FOUND
+                        || error.code == crate::memory::MEMORY_CODE_BAD_REQUEST => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(records)
     }
 }

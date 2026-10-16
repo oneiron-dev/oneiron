@@ -4,7 +4,8 @@ use super::{
     AgentDispatchTarget, AgentDispatcher, DispatchAgent, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
+    ClaimOutcome, SetAttemptResult,
 };
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::consent::AuthenticatedOwner;
@@ -19,6 +20,10 @@ use rmpv::Value;
 use std::collections::HashSet;
 
 const PREDICATE: &str = "agent.resident";
+/// A completed resident run's result TURN. Parts: attempt.
+const RUN_RESULT: &[u8] = b"oneiron:resident-run-result:v1";
+/// The run's answer body, as the result TURN holds it. Parts: result TURN.
+const RUN_RESULT_BODY: &[u8] = b"oneiron:resident-run-result-body:v1";
 
 /// Wake policy changes scheduling only. It conveys no scope or approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +363,122 @@ impl AgentDispatcher<'_> {
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(Some((AgentDispatchStatus { attempt, input }, resident)))
+    }
+}
+
+impl AgentDispatcher<'_> {
+    /// Gives a completed resident run its durable result before the runner
+    /// completes the attempt: one TURN naming the answer of the run's
+    /// finished step, which holds that body for as long as the TURN lives
+    /// (OF-597), set as the attempt's result so the task highway's Done
+    /// resolves it. The TURN's id derives from the attempt, so a replayed
+    /// completion finds the TURN it made.
+    pub fn attach_resident_run_result(
+        &self,
+        attempt: &AttemptRecord,
+        lease_owner: &str,
+        run: &crate::code_run::CodeRunReplayRecord,
+        now: u64,
+    ) -> Result<EntityId> {
+        use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
+        let result_ref = EntityId::derive(RUN_RESULT, &[attempt.id.as_bytes().as_slice()])?;
+        // The finished step's observation, never a marker or a file the run
+        // wrote after it.
+        let answer = run
+            .outputs
+            .iter()
+            .rev()
+            .find(|output| output.complete && output.path.ends_with(".observation.txt"));
+        let field = |key: &str, value: Value| (Value::from(key), value);
+        let artifact = Value::Map(vec![
+            field("kind", Value::from("resident.run_result")),
+            field(
+                "attempt_ref",
+                Value::from(crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())),
+            ),
+            field("run_ref", Value::from(run.run_id.to_hex())),
+            field(
+                "task_ref",
+                attempt.task_ref.clone().map_or(Value::Nil, Value::from),
+            ),
+            field(
+                "answer",
+                answer.map_or(Value::Nil, |output| {
+                    Value::Map(vec![
+                        field("path", Value::from(output.path.clone())),
+                        field("handle", Value::from(output.handle.clone())),
+                        field("bytes", Value::from(output.raw_len)),
+                        field("lines", Value::from(output.lines)),
+                    ])
+                }),
+            ),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &artifact)
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        // An inline body lives in the run's own rows; only a file needs a holder.
+        let held = match answer {
+            Some(output)
+                if self
+                    .vault
+                    .store
+                    .body_dir()?
+                    .open_body(&output.raw_blake3, output.raw_len)?
+                    .is_some() =>
+            {
+                Some(OwnedBody {
+                    owner: result_ref,
+                    occurrence: EntityId::derive(
+                        RUN_RESULT_BODY,
+                        &[result_ref.as_bytes().as_slice()],
+                    )?,
+                    state: BodyState::Complete {
+                        body: BodyRef {
+                            blake3: output.raw_blake3,
+                            bytes: output.raw_len,
+                            location: BodyLocation::File,
+                        },
+                    },
+                })
+            }
+            _ => None,
+        };
+        let mut txn = self.vault.store.env.write_txn()?;
+        if self
+            .vault
+            .get_entity_type_in_txn(&txn, &result_ref)?
+            .is_none()
+        {
+            self.vault
+                .batch_in()
+                .put(
+                    &result_ref,
+                    crate::registry::ENTITY_TYPE_TURN,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &bytes,
+                )
+                .apply(&mut txn)?;
+        }
+        if let Some(held) = &held {
+            crate::provenance::body::publish_body_in_txn(&self.vault.store, &mut txn, held)?;
+        }
+        AttemptQueue::new(self.vault).set_result_in_txn(
+            &mut txn,
+            SetAttemptResult {
+                id: attempt.id,
+                lease_owner: lease_owner.to_owned(),
+                attempt_count: attempt.attempt_count,
+                result_ref: AttemptResultRef::new(result_ref.to_hex())?,
+                now,
+            },
+        )?;
+        txn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(result_ref)
     }
 }
 

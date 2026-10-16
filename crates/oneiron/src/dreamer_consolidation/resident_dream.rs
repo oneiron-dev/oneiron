@@ -140,10 +140,20 @@ impl Vault {
     /// What `resident`'s dreaming has read so far.
     pub fn resident_dream_progress(&self, resident: EntityId) -> Result<ResidentDreamProgress> {
         let txn = self.store.env.read_txn()?;
-        Ok(PROGRESS
-            .get(&self.store, &txn, &resident)?
-            .unwrap_or_default())
+        resident_dream_progress_in_txn(self, &txn, resident)
     }
+}
+
+/// [`Vault::resident_dream_progress`] in the caller's snapshot: the weave
+/// report reads it into the resident's own digest (OF-499).
+pub(crate) fn resident_dream_progress_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    resident: EntityId,
+) -> Result<ResidentDreamProgress> {
+    Ok(PROGRESS
+        .get(&vault.store, txn, &resident)?
+        .unwrap_or_default())
 }
 
 /// The inputs one dreaming reads, and the progress reading them makes.
@@ -469,6 +479,15 @@ pub async fn run_resident_dream(
         progress.entries += 1;
         PROGRESS.put(&ctx.vault.store, txn, &resident_id, &progress)
     })?;
+    // Its own digest renders from its dreaming, read as it, once this
+    // dreaming's progress is committed (OF-499). A refused render leaves the
+    // row to the deadline timer and fails no dreaming.
+    if let Err(error) =
+        ctx.vault
+            .render_scheduled_weave_digest(resident_id, EdgeActorClass::Agent, now)
+    {
+        tracing::warn!(?error, "resident weave digest refused after dreaming");
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
     })

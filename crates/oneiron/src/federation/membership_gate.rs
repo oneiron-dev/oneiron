@@ -208,3 +208,93 @@ impl Vault {
         self.authorize_shared_content_write_in_txn(txn, note, writer)
     }
 }
+
+/// One person's live standing in a shared vault (OF-531), read over the same
+/// grant, activation, expiry and liveness checks the write door applies. A
+/// standing grants nothing and authorizes no write; a room join reads it and
+/// never changes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MembershipStanding {
+    /// A live Owner, Admin, Member or Viewer grant over this vault: roster
+    /// standing.
+    Member {
+        grant: crate::EntityId,
+        role: FederationGrantRole,
+    },
+    /// A live ask-scoped guest grant naming the person. It is not roster
+    /// standing and never becomes one.
+    ScopedGuest { grant: crate::EntityId },
+}
+
+impl Vault {
+    /// `person`'s standing in shared vault `vault_id` in the caller's
+    /// snapshot. A delegate grant is an attenuated read, not membership, and
+    /// is skipped; a deleted vault holds no standing. `None`: no live grant.
+    pub(crate) fn membership_standing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        person: &crate::EntityId,
+    ) -> Result<Option<MembershipStanding>> {
+        if vault_id == 0 || self.shared_vault_deletion_in_txn(txn)?.is_some() {
+            return Ok(None);
+        }
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_root_is_conflicted() {
+            return Err(denied());
+        }
+        let mut guest = None;
+        for entry in self
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
+        {
+            let id = entry?;
+            let raw = self
+                .store
+                .port_entity_record(txn, &id)?
+                .ok_or_else(denied)?
+                .encode();
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
+            {
+                return Err(denied());
+            }
+            if raw.len() == ENTITY_METADATA_HEADER_LEN
+                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
+            {
+                continue;
+            }
+            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if grant.member_ref != *person
+                || grant
+                    .expires_at
+                    .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
+                || matches!(
+                    federation_grant_activation(&fold, &id),
+                    FederationGrantActivation::Inactive(_)
+                )
+            {
+                continue;
+            }
+            match grant.role {
+                FederationGrantRole::Owner
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Member
+                | FederationGrantRole::Viewer
+                | FederationGrantRole::Auditor
+                    if grant.scope == FederationGrantScope::vault(vault_id) =>
+                {
+                    return Ok(Some(MembershipStanding::Member {
+                        grant: id,
+                        role: grant.role,
+                    }));
+                }
+                FederationGrantRole::Guest => {
+                    guest.get_or_insert(MembershipStanding::ScopedGuest { grant: id });
+                }
+                _ => {}
+            }
+        }
+        Ok(guest)
+    }
+}
