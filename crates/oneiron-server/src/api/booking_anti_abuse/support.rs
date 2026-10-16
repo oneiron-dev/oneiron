@@ -8,7 +8,10 @@ impl crate::server::SyncServer {
     pub(super) fn booking_now_secs(&self) -> std::result::Result<u64, ApiError> {
         #[cfg(test)]
         if let Some(now) = self.booking_test_now_secs {
-            return Ok(now);
+            let moved = self
+                .booking_test_clock_from
+                .map_or(0, |from| from.elapsed().as_secs());
+            return Ok(now + moved);
         }
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
