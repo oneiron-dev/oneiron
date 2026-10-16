@@ -8,13 +8,14 @@ use super::store::{
 };
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream,
-    JsResultCall, JsResultRef, SelfDispatchResponse,
+    JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
 };
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
-    CodeRunReplayRecord, CodeRunResultBinding, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
-    RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect,
-    SelfFailedResult, SelfSkillCall, SelfSkillCallResult, agent_verb_rows_of,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
+    CodeRunResultBinding, ExecutorCallSite, ExecutorStorage, GatedActorWrite, ResultFacet,
+    ResultRead, ResultReply, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
+    SelfDurableWait, SelfEffect, SelfFailedResult, SelfSkillCall, SelfSkillCallResult,
+    agent_verb_rows_of, result_card, result_refusal,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -24,12 +25,9 @@ use crate::compaction::output::OutputRef;
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::entity_id::EntityId;
 use crate::error::GateError;
-use crate::secret_rotation::ArtifactTaintState;
+use crate::store::BodySink;
 use crate::{Error, Result};
 use serde_json::json;
-
-/// Live names a refusal for an unknown result lists, newest first.
-const UNKNOWN_HANDLE_LIVE_NAMES: usize = 64;
 
 pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
@@ -433,42 +431,17 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         &self,
         reference: &JsResultRef,
     ) -> Option<(CodeRunRawOutput, Option<String>)> {
-        let live = self.live_bindings();
-        let mut held = self.results.iter().chain(&self.captured);
-        match reference {
-            JsResultRef::Name(name) => {
-                let binding = live.iter().find(|binding| binding.name == *name)?;
-                let output = held.find(|output| output.handle == binding.handle)?;
-                Some((output.clone(), Some(binding.name.clone())))
-            }
-            JsResultRef::Handle(handle) => {
-                let output = held.find(|output| names_result(output, handle))?;
-                let name = live
-                    .iter()
-                    .rev()
-                    .find(|binding| binding.handle == output.handle)
-                    .map(|binding| binding.name.clone());
-                Some((output.clone(), name))
-            }
-        }
+        crate::code_run::resolve_result(
+            self.results.iter().chain(&self.captured),
+            &self.live_bindings(),
+            reference,
+        )
     }
 
     /// The refusal for a reference to no result of this run, with the live
     /// names it could have meant.
     fn unknown_handle(&self) -> serde_json::Value {
-        let live = self.live_bindings();
-        let names: Vec<&str> = live
-            .iter()
-            .rev()
-            .take(UNKNOWN_HANDLE_LIVE_NAMES)
-            .map(|binding| binding.name.as_str())
-            .collect();
-        json!({
-            "denied": "unknown_handle",
-            "reasonCodes": ["unknown_handle"],
-            "live": names,
-            "liveCount": live.len(),
-        })
+        crate::code_run::unknown_handle(&self.live_bindings())
     }
 
     /// Whether the run's results stay on this device for its door's caller
@@ -486,24 +459,6 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .map_err(|refusal| {
                 Error::InvalidConfig(format!("stored result read refused: {}", refusal.code))
             })
-    }
-
-    /// A result's card, from its manifest and taint sidecars, never its
-    /// body: the handle facets, its name, and its taint. A body that is not
-    /// clean shows no preview.
-    fn result_card(
-        storage: &ExecutorStorage<'_>,
-        output: &CodeRunRawOutput,
-        name: Option<&str>,
-    ) -> Result<serde_json::Value> {
-        let (state, secret) = storage.code_run_result_taint(output)?;
-        let mut card = result_handle_json(output);
-        card["name"] = json!(name);
-        card["taint"] = json!({"state": taint_word(state), "secret": secret});
-        if state.is_tainted() {
-            card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
-        }
-        Ok(card)
     }
 
     /// `store(value, name?)`: the value the program just streamed, stored as
@@ -530,6 +485,18 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         {
             return Ok(result_refusal("invalid_result_name"));
         }
+        Ok(json!({"output": self.bind_stored(storage, sink, name)?}))
+    }
+
+    /// Publishes the body `sink` wrote as a stored value of the run, named
+    /// by its digest, and binds it to `name`, or to the next free `r<n>`:
+    /// its card. The same bytes stored twice are one output.
+    fn bind_stored(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+    ) -> Result<serde_json::Value> {
         let path = store_result_output_path(&sink.digest()?);
         let output = storage.publish_code_run_output(path, sink, true, self.run_id)?;
         if !self
@@ -542,23 +509,79 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone());
-        Ok(json!({"output": Self::result_card(storage, &output, Some(name.as_str()))?}))
+        result_card(storage, &output, Some(name.as_str()))
     }
 
-    /// `describe(r)`: the card of one of the run's results, admitted as a
-    /// read of it is, rows and taint re-checked now.
-    fn describe_result(&mut self, reference: &JsResultRef) -> Result<serde_json::Value> {
+    /// The result `target` names, read as every read of a result is:
+    /// resolved in this run, admitted as a read of its recorded outputs, and
+    /// its rows and its taint checked now. A refusal is the reply the guest
+    /// gets in its place.
+    fn checked_result(
+        &mut self,
+        target: &JsResultTarget,
+    ) -> Result<std::result::Result<ResultRead, serde_json::Value>> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        let Some((output, name)) = self.resolve_result(reference) else {
-            return Ok(self.unknown_handle());
+        let Some((output, name)) = self.resolve_result(&target.reference) else {
+            return Ok(Err(self.unknown_handle()));
         };
         self.admit_result_read(storage)?;
         if self.withholds_results()? {
-            return Ok(result_refusal("result_withheld"));
+            return Ok(Err(result_refusal("result_withheld")));
         }
-        Ok(json!({"output": Self::result_card(storage, &output, name.as_deref())?}))
+        ResultRead::new(storage, output, name, target.range)
+    }
+
+    /// `describe(r)`: the card of one of the run's results, or of a range
+    /// of one.
+    fn describe_result(&mut self, target: &JsResultTarget) -> Result<serde_json::Value> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        Ok(match self.checked_result(target)? {
+            Ok(read) => json!({"output": read.card(storage)?}),
+            Err(refused) => refused,
+        })
+    }
+
+    /// One facet of one of the run's results, checked as `describe` is. A
+    /// query whose selection is past one reply is stored as a new result of
+    /// the run, as `store` stores a value, and answered by its card. It is
+    /// read only from a clean body, and its own bytes are scanned for
+    /// secrets as they are stored.
+    fn read_result(
+        &mut self,
+        target: &JsResultTarget,
+        facet: ResultFacet,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        let read = match self.checked_result(target)? {
+            Ok(read) => read,
+            Err(refused) => return Ok(refused),
+        };
+        let mut sink = match facet {
+            ResultFacet::Query => Some(storage.code_run_output_sink()?),
+            _ => None,
+        };
+        Ok(match read.read(storage, facet, input, sink.as_mut())? {
+            ResultReply::Output(output) => json!({"output": output}),
+            ResultReply::Denied(refused) => refused,
+            ResultReply::Spilled { count, next } => {
+                let sink = sink.ok_or(Error::InvariantViolation(
+                    "a result read spilled with no sink",
+                ))?;
+                let card = self.bind_stored(storage, sink, None)?;
+                let mut output = json!({"derived": card, "count": count, "done": next.is_none()});
+                if let Some(next) = next {
+                    output["next"] = next;
+                }
+                json!({"output": output})
+            }
+        })
     }
 
     /// One chunk of a stored result of this run, read by range, while the
@@ -728,10 +751,24 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         ))
     }
 
+    fn store_reply(&mut self, reply: &serde_json::Value) -> Result<Option<serde_json::Value>> {
+        let Some(storage) = self.storage else {
+            return Ok(None);
+        };
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        self.bind_stored(storage, sink, None).map(Some)
+    }
+
     fn result_call(&mut self, call: JsResultCall) -> Result<serde_json::Value> {
         match call {
             JsResultCall::Store { name } => self.store_result(name),
-            JsResultCall::Describe(reference) => self.describe_result(&reference),
+            JsResultCall::Describe(target) => self.describe_result(&target),
+            JsResultCall::Read {
+                target,
+                facet,
+                input,
+            } => self.read_result(&target, facet, input),
         }
     }
 
@@ -745,30 +782,6 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         runtime: &mut dyn JsCodeModeRuntime,
     ) -> Result<SelfDispatchResponse> {
         self.dispatch_call(call, Some(runtime))
-    }
-}
-
-/// A result call's refusal, as the guest's thrown error carries it.
-fn result_refusal(code: &str) -> serde_json::Value {
-    json!({"denied": code, "reasonCodes": [code]})
-}
-
-/// Whether `handle` names `output`: its handle as its card gives it, or its
-/// digest as model context cites it (`output:blake3:<hex>:<len>`).
-fn names_result(output: &CodeRunRawOutput, handle: &str) -> bool {
-    output.handle == handle
-        || handle
-            .strip_prefix("output:blake3:")
-            .and_then(|rest| rest.split(':').next())
-            .is_some_and(|hex| hex == crate::entity_id::bytes_to_hex_lower(&output.raw_blake3))
-}
-
-/// A taint state as a card spells it.
-fn taint_word(state: ArtifactTaintState) -> &'static str {
-    match state {
-        ArtifactTaintState::Clean => "clean",
-        ArtifactTaintState::TaintedLive => "tainted_live",
-        ArtifactTaintState::TaintedStale => "tainted_stale",
     }
 }
 

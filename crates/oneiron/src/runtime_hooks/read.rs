@@ -291,7 +291,10 @@ fn rmpv_to_json(value: &rmpv::Value) -> Value {
                     entries
                         .iter()
                         .map(|(key, value)| {
-                            (key.as_str().unwrap_or_default().to_owned(), rmpv_to_json(value))
+                            (
+                                key.as_str().unwrap_or_default().to_owned(),
+                                rmpv_to_json(value),
+                            )
                         })
                         .collect(),
                 )
@@ -299,7 +302,9 @@ fn rmpv_to_json(value: &rmpv::Value) -> Value {
                 Value::Array(
                     entries
                         .iter()
-                        .map(|(key, value)| Value::Array(vec![rmpv_to_json(key), rmpv_to_json(value)]))
+                        .map(|(key, value)| {
+                            Value::Array(vec![rmpv_to_json(key), rmpv_to_json(value)])
+                        })
                         .collect(),
                 )
             }

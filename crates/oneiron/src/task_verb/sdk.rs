@@ -93,6 +93,34 @@ pub struct RoomClaimRequest {
     pub room_ref: String,
     pub turn_ref: String,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRefRequest {
+    pub project_ref: String,
+}
+/// `vault.projects.goal.dismiss`'s input: the proposal one tradeoff question
+/// made, under the goal claim the caller saw in force.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGoalDismissRequest {
+    pub project_ref: String,
+    pub expected_goal_ref: String,
+    pub question_digest: String,
+}
+/// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
+/// wrote nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectGoalDismissReceipt {
+    pub dismissed: bool,
+}
+/// `vault.projects.route_tradeoff`'s input: the project TASK to ask on and
+/// the skill proposal whose tradeoff question it carries.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectTradeoffRouteRequest {
+    pub task_ref: String,
+    pub proposal_ref: String,
+}
 /// `vault.rooms.host`: the room, and the live session whose participants
 /// count as present beside the caller.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -126,6 +154,26 @@ pub struct WorkCompanionSetRequest {
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
     pub task_ref: String,
+}
+/// `vault.projects.proposals`: the conversation whose project cards to read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectConversationRequest {
+    pub conversation_ref: String,
+}
+/// `vault.projects.dismiss_card`: one host-held project card.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCardRequest {
+    pub card_id: String,
+}
+/// `vault.projects.dismiss_card`'s result: `false` when the card was
+/// dismissed already.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCardDismissal {
+    pub card_id: String,
+    pub dismissed: bool,
 }
 /// `describe`'s one input: the task to describe, a board card's key, or
 /// none for the whole TASKS section.
@@ -211,14 +259,27 @@ pub struct RecallRequest {
 
 pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
 pub use super::sdk_connector::*;
+pub use super::sdk_diary::*;
 pub use super::sdk_host::*;
 pub use super::sdk_self::*;
+pub use super::sdk_shared::*;
 
-/// `vault.receipts`'s one input.
+/// `vault.writes.pending`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
+}
+/// `vault.receipts`'s input: a page size, and the receipt kinds to list as
+/// `ReceiptKind` names them (`gate`, `hook`, `outbound`, ...). With no kinds
+/// it lists the gate decision ledger; an unknown kind is refused.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VaultReceiptsRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<String>,
 }
 /// `inbox.list`'s one input (OF-221): the exclusive entity-ID cursor a
 /// previous page returned as `next_after`, and a page size
@@ -433,9 +494,7 @@ fn render_declarations(
 /// One declaration's type: a verb's call signature, the members it holds, or
 /// both at once.
 fn declaration_type(node: &DeclarationNode, depth: usize) -> String {
-    let call = node
-        .verb
-        .map(|verb| format!("(input: {}) => Promise<unknown>", verb_input_type(verb)));
+    let call = node.verb.map(verb_call_signature);
     if node.children.is_empty() {
         return call.unwrap_or_else(|| "{}".to_owned());
     }
@@ -447,6 +506,18 @@ fn declaration_type(node: &DeclarationNode, depth: usize) -> String {
         Some(call) => format!("({call}) & {members}"),
         None => members,
     }
+}
+
+/// A verb's call signature. `self.fold` is the one positional verb
+/// (ARCH-0067 #folds: `self.fold(span, {note?})`, Docs Q25); every other verb
+/// takes one input object.
+fn verb_call_signature(verb: &str) -> String {
+    if verb == "self.fold" {
+        return "(span: readonly [number, number], options?: { note?: string | null }) => \
+                Promise<unknown>"
+            .to_owned();
+    }
+    format!("(input: {}) => Promise<unknown>", verb_input_type(verb))
 }
 
 fn verb_input_type(verb: &str) -> String {

@@ -666,7 +666,8 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     // takes no slot in a bounded channel. Absence is the boundary, as at the
     // post-fusion clamp, which still sweeps every survivor.
     if let Some(clamp) = filters.disclosure
-        && !clamp.admits(
+        && !crate::context_pack::retained_copies::clamp_admits(
+            clamp,
             store.base(),
             rtxn,
             id,

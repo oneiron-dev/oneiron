@@ -112,7 +112,14 @@ pub trait TaskTypePlacer {
 const SEED_KEYWORDS: [(SeedTaskType, &[&str]); 7] = [
     (
         SeedTaskType::Generate,
-        &["generate", "draft", "write", "create", "compose", "brainstorm"],
+        &[
+            "generate",
+            "draft",
+            "write",
+            "create",
+            "compose",
+            "brainstorm",
+        ],
     ),
     (
         SeedTaskType::Refine,
@@ -124,7 +131,14 @@ const SEED_KEYWORDS: [(SeedTaskType, &[&str]); 7] = [
     ),
     (
         SeedTaskType::Research,
-        &["research", "investigate", "explore", "survey", "find", "search"],
+        &[
+            "research",
+            "investigate",
+            "explore",
+            "survey",
+            "find",
+            "search",
+        ],
     ),
     (
         SeedTaskType::Judge,
@@ -136,7 +150,14 @@ const SEED_KEYWORDS: [(SeedTaskType, &[&str]); 7] = [
     ),
     (
         SeedTaskType::Negotiate,
-        &["negotiate", "persuade", "agree", "settle", "bargain", "convince"],
+        &[
+            "negotiate",
+            "persuade",
+            "agree",
+            "settle",
+            "bargain",
+            "convince",
+        ],
     ),
 ];
 
@@ -147,12 +168,7 @@ const SEED_KEYWORDS: [(SeedTaskType, &[&str]); 7] = [
 pub struct HeuristicPlacer;
 
 impl HeuristicPlacer {
-    fn descend<'a>(
-        &self,
-        tree: &'a TaskTypeTree,
-        seed_node: &'a str,
-        haystack: &str,
-    ) -> &'a str {
+    fn descend<'a>(&self, tree: &'a TaskTypeTree, seed_node: &'a str, haystack: &str) -> &'a str {
         let mut current = seed_node;
         loop {
             let next = tree

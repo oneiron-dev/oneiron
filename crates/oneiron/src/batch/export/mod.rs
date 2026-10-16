@@ -5,7 +5,14 @@ pub use credential_filter::{
     write_door_refuses_claim,
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
+mod archive_read;
+mod archive_types;
+pub(crate) use archive_read::{VaultArchive, read_vault_archive};
+pub use archive_types::*;
 mod export_authority;
+mod export_diary;
+pub use export_diary::EXPORT_DIARY_READ_REASON;
+pub(crate) use export_diary::{ExportDiaryLedger, diary_author};
 mod export_egress;
 mod export_enumerate;
 mod export_manifest;

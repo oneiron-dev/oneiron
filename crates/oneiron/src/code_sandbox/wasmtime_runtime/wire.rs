@@ -3,15 +3,19 @@
 use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
+    MemoryTimeRange, ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome,
+    SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySupersedeClaimCall, SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
     SandboxCredentialCall, SandboxCredentialHandle, SandboxReadFile, SandboxVirtualPath,
 };
+#[cfg(test)]
+use crate::engine_executor::SelfDispatchResponse;
 use crate::engine_executor::{
-    JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef, SelfDispatchResponse,
+    JsCodeModeHost, JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef,
+    JsResultTarget, RESULT_REPLY_INLINE_BYTES,
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
@@ -106,8 +110,8 @@ fn js_f32(value: f64) -> Result<f32> {
 }
 
 /// `bytes` as text when they are UTF-8 and their JSON string is no longer than
-/// the number array other bytes cross the channel as, up to four times their
-/// raw length. Escaped control characters can make the string the longer one.
+/// the base64 other bytes cross the channel as, four bytes for every three.
+/// Escaped control characters can make the string the longer one.
 fn reply_text(bytes: &[u8]) -> Option<&str> {
     let text = std::str::from_utf8(bytes).ok()?;
     let escaped = text
@@ -118,36 +122,35 @@ fn reply_text(bytes: &[u8]) -> Option<&str> {
             _ => 1,
         })
         .sum::<usize>();
-    let array = bytes
-        .iter()
-        .map(|byte| match byte {
-            0..=9 => 2,
-            10..=99 => 3,
-            _ => 4,
-        })
-        .sum::<usize>();
-    (escaped <= array).then_some(text)
+    (escaped <= bytes.len().div_ceil(3) * 4).then_some(text)
 }
 
-/// A file reply: text crosses the channel as a JSON string, other bytes as a
-/// number array.
+/// Bytes as the channel carries them when they are not text.
+fn base64_bytes(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// A file reply: text crosses the channel as a JSON string, other bytes as
+/// base64, never as a number array.
 fn file_reply(path: &str, bytes: &[u8]) -> Value {
     match reply_text(bytes) {
         Some(text) => json!({"path": path, "text": text}),
-        None => json!({"path": path, "bytes": bytes}),
+        None => json!({"path": path, "base64": base64_bytes(bytes)}),
     }
 }
 
 /// Fit a recoverable chunk inside the *encoded* host reply ceiling, cutting
-/// text only at a character boundary. The caller advances by the returned
-/// byte length, never by a guessed cap.
+/// text only at a character boundary; other bytes cross as base64, whose
+/// expansion the measured encoding counts. The caller advances by the
+/// returned byte length, never by a guessed cap.
 fn bounded_recoverable_reply(path: &str, bytes: &[u8], limit: usize) -> Result<String> {
     let text = reply_text(bytes);
     let cut = |count: usize| text.map_or(count, |text| text.floor_char_boundary(count));
     let encode = |count: usize| {
         let reply = match text {
             Some(text) => json!({"path": path, "text": &text[..count]}),
-            None => json!({"path": path, "bytes": &bytes[..count]}),
+            None => json!({"path": path, "base64": base64_bytes(&bytes[..count])}),
         };
         serde_json::to_string(&reply).map_err(|_| failure("recoverable output encoding failed"))
     };
@@ -240,7 +243,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 .checked_add(1)
                 .ok_or(failure("random counter overflow"))?;
             hash.finalize_xof().fill(&mut bytes);
-            Ok(json!({"bytes":bytes}).to_string())
+            Ok(json!({"base64":base64_bytes(&bytes)}).to_string())
         }
         _ => {
             if name == "self.verbs.call"
@@ -255,21 +258,39 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             // A callable skill runs a step of its own while this one waits on
             // the reply (OF-353), on a fresh sibling of this runtime: never
             // on this step's store.
-            if matches!(call, SelfCall::SkillsCall(_)) {
+            let answered = if matches!(call, SelfCall::SkillsCall(_)) {
                 let mut sibling = state.nested.fresh();
-                return response(state.host.dispatch_self_nested(call, &mut sibling)?);
-            }
-            response(state.host.dispatch_self(call)?)
+                state.host.dispatch_self_nested(call, &mut sibling)?
+            } else {
+                state.host.dispatch_self(call)?
+            };
+            let body = fit_reply(state.host, reply_body(&answered.outcome)?)?;
+            Ok(answered.guest_json(body).to_string())
         }
     }
 }
 
-/// A verb-table call the run answers from its own results: `store`, and a
-/// `describe` of a result rather than of a task. `None` for any other call.
+/// A verb-table call the run answers from its own results: `store`, a
+/// `describe` of a result rather than of a task, and the facets that read
+/// one (`slice`, `search`, `query`, `chunks`), whose input names the result
+/// by its `ref`. `None` for any other call.
 fn result_call(input: &str) -> Result<Option<JsResultCall>> {
     let Ok(args) = serde_json::from_str::<VerbCall>(input) else {
         return Ok(None);
     };
+    if let Some(facet) = ResultFacet::from_name(&args.verb) {
+        let Value::Object(mut fields) = args.input else {
+            return Err(failure("result ref must be a name, handle or card"));
+        };
+        let Some(Value::String(reference)) = fields.remove("ref") else {
+            return Err(failure("result ref must be a name, handle or card"));
+        };
+        return Ok(Some(JsResultCall::Read {
+            target: JsResultTarget::parse(&reference),
+            facet,
+            input: Value::Object(fields),
+        }));
+    }
     Ok(match args.verb.as_str() {
         "store" => Some(JsResultCall::Store {
             name: decode::<Store>(args.input)?.name,
@@ -280,9 +301,10 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
 }
 
 /// The result a `describe` input names, when it names one: a string (a bound
-/// name, or a handle, whose colon no name has), a result's card by its
-/// `handle`, or `{name}` with none of a task describe's fields.
-fn result_ref(input: Value) -> Option<JsResultRef> {
+/// name, or a handle, whose colon no name has, either with a range suffix),
+/// a result's card by its `ref` or `handle`, or `{name}` with none of a task
+/// describe's fields.
+fn result_ref(input: Value) -> Option<JsResultTarget> {
     const TASK_FIELDS: [&str; 6] = [
         "task_ref",
         "self",
@@ -292,17 +314,21 @@ fn result_ref(input: Value) -> Option<JsResultRef> {
         "fold",
     ];
     match input {
-        Value::String(text) if text.contains(':') => Some(JsResultRef::Handle(text)),
-        Value::String(text) => Some(JsResultRef::Name(text)),
+        Value::String(text) => Some(JsResultTarget::parse(&text)),
         Value::Object(mut fields) => {
-            if let Some(Value::String(handle)) = fields.remove("handle") {
-                return Some(JsResultRef::Handle(handle));
+            for key in ["ref", "handle"] {
+                if let Some(Value::String(reference)) = fields.remove(key) {
+                    return Some(JsResultTarget::parse(&reference));
+                }
             }
             if TASK_FIELDS.iter().any(|field| fields.contains_key(*field)) {
                 return None;
             }
             match fields.remove("name") {
-                Some(Value::String(name)) => Some(JsResultRef::Name(name)),
+                Some(Value::String(name)) => Some(JsResultTarget {
+                    reference: JsResultRef::Name(name),
+                    range: None,
+                }),
                 _ => None,
             }
         }
@@ -498,8 +524,58 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
     })
 }
 
+/// Bytes `value` takes as JSON, holding none of them.
+fn encoded_len(value: &Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    match serde_json::to_writer(&mut count, value) {
+        Ok(()) => count.0,
+        Err(_) => usize::MAX,
+    }
+}
+
+/// A reply as the guest gets it: one whose JSON is past
+/// `RESULT_REPLY_INLINE_BYTES` is stored as a result of the run, and its
+/// card stands under `output` in place of what was stored (the output, or
+/// the whole reply when it has none). No answer is refused for its size; a
+/// host with no result store sends it as it is, for the message bound to
+/// judge.
+fn fit_reply(host: &mut dyn JsCodeModeHost, mut body: Value) -> Result<Value> {
+    if encoded_len(&body) <= RESULT_REPLY_INLINE_BYTES {
+        return Ok(body);
+    }
+    let has_output = body.get("output").is_some();
+    let stored = if has_output { &body["output"] } else { &body };
+    if let Some(card) = host.store_reply(stored)? {
+        if has_output {
+            body["output"] = card;
+        } else {
+            body = json!({ "output": card });
+        }
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
 fn response(response: SelfDispatchResponse) -> Result<String> {
-    let body = match &response.outcome {
+    Ok(response
+        .guest_json(reply_body(&response.outcome)?)
+        .to_string())
+}
+
+/// One dispatched call's reply body, before its budget envelope.
+fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
+    Ok(match outcome {
         // A run row's answer is its output, framed as every verb's is.
         SelfDispatchOutcome::MemoryWrite(value) => json!({"output":{"id":value.id.to_hex()}}),
         SelfDispatchOutcome::MemoryEdgeWrite(value) => {
@@ -564,8 +640,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
                 "owner policy actions are not linked component imports",
             ));
         }
-    };
-    Ok(response.guest_json(body).to_string())
+    })
 }
 
 fn json_value(value: Value) -> rmpv::Value {
@@ -733,7 +808,12 @@ fn recoverable_reply_respects_encoded_wire_limit_without_losing_bytes() {
             .expect("at least one encoded byte fits");
         assert!(reply.len() <= 300, "the whole framed reply fits");
         let body: serde_json::Value = serde_json::from_str(&reply).expect("wire JSON");
-        let bytes: Vec<u8> = serde_json::from_value(body["bytes"].clone()).expect("byte array");
+        let bytes = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(body["base64"].as_str().expect("base64 field"))
+                .expect("base64 bytes")
+        };
         assert!(!bytes.is_empty());
         restored.extend(bytes);
     }

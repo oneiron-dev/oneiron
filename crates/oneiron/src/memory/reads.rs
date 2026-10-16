@@ -399,6 +399,7 @@ impl Memory<'_> {
             .into_iter()
             .map(|record| MemoryReceipt {
                 receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
+                kind: crate::receipt::ReceiptKind::Gate.as_str().to_owned(),
                 outcome: record.outcome,
                 created_at: record.created_at,
                 reason_codes: record.reason_codes,
@@ -406,8 +407,53 @@ impl Memory<'_> {
                 actor_ref: record.actor_ref,
                 content_kind: record.content_kind,
                 claim_ref: record.claim_id.map(|id| hex_string(&id)),
+                fields: std::collections::BTreeMap::new(),
             })
             .collect())
+    }
+
+    /// `vault.receipts`: with no `kinds`, [`Self::receipts`], the gate
+    /// decision ledger. With kinds (`ReceiptKind` names: `gate`, `hook`,
+    /// `outbound`, ...), the unified receipt family's receipts of those
+    /// kinds, newest first, each in the same shape with its own fields. A
+    /// caller off this device sees none whose trigger is a device-local row.
+    /// An unknown kind is refused.
+    pub fn receipts_of_kinds(
+        &self,
+        limit: usize,
+        kinds: &[String],
+    ) -> MemoryResult<Vec<MemoryReceipt>> {
+        if kinds.is_empty() {
+            return self.receipts(limit);
+        }
+        let mut query = crate::receipt::ReceiptQuery::new(limit);
+        for name in kinds {
+            let kind = crate::receipt::ReceiptKind::parse(name.trim()).ok_or_else(|| {
+                MemoryError::bad_request_with(
+                    format!("unknown receipt kind {name:?}"),
+                    &[
+                        "Use one of: outbound, gate, identity_lifecycle, scoped_read, share, artifact_settle, proposal_outcome, commitment_lifecycle, extraction, served_form, hook.",
+                    ],
+                )
+            })?;
+            query = query.with_kind(kind);
+        }
+        let mut receipts = Vec::new();
+        for record in self.vault.receipts(query)? {
+            let trigger = record.trigger_ref.as_deref().and_then(|reference| {
+                EntityId::from_hex(reference.strip_prefix("claim:").unwrap_or(reference)).ok()
+            });
+            let withheld = match trigger {
+                Some(id) if self.locality == crate::claim::CallerLocality::OffDevice => {
+                    self.vault.device_local_keeps(&id)?
+                }
+                _ => false,
+            };
+            if !withheld {
+                receipts.push(family_receipt(record));
+            }
+        }
+        Ok(receipts)
     }
 
     // ── query verbs (BRIDGE-02) ─────────────────────────────────────────
@@ -531,6 +577,16 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::claim_view`] for a lens that serves claims it admitted
+    /// itself: the weave report (OF-499).
+    pub(crate) fn served_claim_view(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> MemoryResult<ClaimView> {
+        self.claim_view(id, body)
+    }
+
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
         // A claim whose parts read as a secret together serves none of them.
         let secret = crate::batch::export::claim_reads_as_secret(body);
@@ -570,5 +626,48 @@ impl Memory<'_> {
             id_hex: id.to_hex(),
             receipt_ref: format!("put:{}", id.to_hex()),
         })
+    }
+}
+
+/// One unified-family receipt in the `vault.receipts` shape: the gate
+/// fields it carries, its policy trace as reason codes, and every field it
+/// carries with its trigger, job and principal refs.
+fn family_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
+    let crate::receipt::ReceiptRecord {
+        receipt_id,
+        receipt_kind,
+        occurred_at,
+        actor,
+        on_behalf_of,
+        outcome,
+        job_ref,
+        trigger_ref,
+        policy_trace,
+        mut fields,
+    } = record;
+    let claim_ref = trigger_ref
+        .as_deref()
+        .and_then(|reference| reference.strip_prefix("claim:"))
+        .map(str::to_owned);
+    for (key, value) in [
+        ("trigger_ref", trigger_ref),
+        ("job_ref", job_ref),
+        ("on_behalf_of", on_behalf_of),
+    ] {
+        if let Some(value) = value {
+            fields.entry(key.to_owned()).or_insert(value);
+        }
+    }
+    MemoryReceipt {
+        receipt_ref: receipt_id,
+        kind: receipt_kind.as_str().to_owned(),
+        outcome,
+        created_at: occurred_at,
+        reason_codes: policy_trace,
+        actor_class: fields.get("actor_class").cloned().unwrap_or_default(),
+        actor_ref: actor,
+        content_kind: fields.get("content_kind").cloned().unwrap_or_default(),
+        claim_ref,
+        fields,
     }
 }

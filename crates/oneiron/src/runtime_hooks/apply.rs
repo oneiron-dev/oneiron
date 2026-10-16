@@ -86,9 +86,9 @@ fn apply_intent(
     intent: HookIntent,
     report: &mut HookPassReport,
 ) -> Result<()> {
-    let live = bindings
-        .iter()
-        .any(|(id, binding)| *id == intent.binding && binding.enabled && binding.owner == intent.author);
+    let live = bindings.iter().any(|(id, binding)| {
+        *id == intent.binding && binding.enabled && binding.owner == intent.author
+    });
     let refusal = if !enabled {
         Some("hooks are off")
     } else if !live {
@@ -106,7 +106,11 @@ fn apply_intent(
     let _depth = super::verb::HookDepth::enter();
     let memory = vault
         .memory(intent.author, EdgeActorClass::Human)
-        .with_host_origin(HostWriteOrigin::new(hook_envelope(intent.author, intent.binding, key)?));
+        .with_host_origin(HostWriteOrigin::new(hook_envelope(
+            intent.author,
+            intent.binding,
+            key,
+        )?));
     // A note about nothing in particular is proposed about its own binding.
     let binding_ref = intent.binding.to_hex();
     let result = match &outcome {
@@ -197,7 +201,10 @@ fn hook_envelope(author: EntityId, binding: EntityId, key: &RunKey) -> Result<Wr
         ClaimSource::Generated,
         WriteProvenance::new(Value::Map(vec![
             (Value::from("surface"), Value::from("runtime_hooks")),
-            (Value::from("binding"), Value::Binary(binding.as_bytes().to_vec())),
+            (
+                Value::from("binding"),
+                Value::Binary(binding.as_bytes().to_vec()),
+            ),
             (Value::from("run_key"), Value::Binary(key.to_vec())),
         ]))?,
         ClaimApprovalStatus::Proposed,
@@ -261,7 +268,11 @@ fn proposal_input(id: EntityId) -> ClaimInput {
     }
 }
 
-fn land(memory: &Memory<'_>, id: EntityId, input: &ClaimInput) -> std::result::Result<Landed, String> {
+fn land(
+    memory: &Memory<'_>,
+    id: EntityId,
+    input: &ClaimInput,
+) -> std::result::Result<Landed, String> {
     memory
         .claim_propose(input)
         .map(|receipt| Landed {
@@ -284,12 +295,20 @@ fn enqueue_task(
         (Value::from("title"), Value::from(task.title.as_str())),
         (Value::from("body"), Value::from(task.body.as_str())),
         (Value::from("hook"), Value::from(intent.binding.to_hex())),
-        (Value::from("run_key"), Value::from(super::store::receipt_id(key))),
+        (
+            Value::from("run_key"),
+            Value::from(super::store::receipt_id(key)),
+        ),
     ];
     if let Some(due_at) = task.due_at {
         spec_fields.push((Value::from("due_at"), Value::from(due_at)));
     }
-    let mut spec = TaskCreateSpec::new(Value::Map(spec_fields), Some(task.title.clone()), None, None);
+    let mut spec = TaskCreateSpec::new(
+        Value::Map(spec_fields),
+        Some(task.title.clone()),
+        None,
+        None,
+    );
     if let Some(assignee) = task.assignee.as_deref() {
         spec = spec.with_assignee(assignee_for(vault, assignee)?);
     }
@@ -303,7 +322,10 @@ fn enqueue_task(
 
 fn assignee_for(vault: &Vault, assignee: &str) -> std::result::Result<TaskAssignee, String> {
     let id = EntityId::from_hex(assignee).map_err(|error| error.to_string())?;
-    match vault.get_entity_type(&id).map_err(|error| error.to_string())? {
+    match vault
+        .get_entity_type(&id)
+        .map_err(|error| error.to_string())?
+    {
         Some(ENTITY_TYPE_AGENT_DEF) => Ok(TaskAssignee::AgentDef { agent_def_ref: id }),
         Some(ENTITY_TYPE_PERSON) => Ok(TaskAssignee::Human { actor_ref: id }),
         _ => Err("a task assignee is an agent definition or a person".to_owned()),
@@ -324,7 +346,13 @@ fn enqueue_dreamer(
         (Value::from("reason"), Value::from(dreamer.reason.as_str())),
         (
             Value::from("about"),
-            Value::Array(dreamer.about.iter().map(|id| Value::from(id.as_str())).collect()),
+            Value::Array(
+                dreamer
+                    .about
+                    .iter()
+                    .map(|id| Value::from(id.as_str()))
+                    .collect(),
+            ),
         ),
         (Value::from("hook"), Value::from(intent.binding.to_hex())),
     ]);

@@ -533,9 +533,10 @@ pub(crate) fn project_hydrated_short_id(
         Some(bodies) => (bodies.admits(body.len()), Some(bodies)),
         None => (true, None),
     };
-    // A live generated image is served the form `reader` reads (OF-329): its
-    // bytes, or its ASSET_TEXT read through this lane, each body charged to
-    // the same budget; bytes the budget cannot hold are served as the text.
+    // A live generated image is served down its ladder for `reader` (OF-329):
+    // its bytes, its thumbnail beside its ASSET_TEXT, or the text, read
+    // through this lane, each body charged to the same budget; with nothing
+    // left that fits, the body is omitted and the vault asks.
     let served = if decoded
         && matches!(mode, oneiron::memory::ReadMode::Live)
         && entity_type == oneiron::registry::ENTITY_TYPE_ASSET
@@ -549,7 +550,7 @@ pub(crate) fn project_hydrated_short_id(
     } else {
         oneiron::memory::HydratedAsset::Stored
     };
-    let decoded = decoded && !matches!(served, oneiron::memory::HydratedAsset::Omitted);
+    let decoded = decoded && !matches!(served, oneiron::memory::HydratedAsset::Omitted { .. });
     if decoded
         && let Some(observations) = observations
         && let Some(successor) = observations
@@ -572,24 +573,17 @@ pub(crate) fn project_hydrated_short_id(
             entity_type,
             learned_at,
             match &served {
-                oneiron::memory::HydratedAsset::Image { body: form, .. }
-                | oneiron::memory::HydratedAsset::Text { body: form, .. } => form,
+                oneiron::memory::HydratedAsset::Served { body: form, .. } => form,
                 _ => &body,
             },
             view,
         ),
     };
     // A Summary item carries the image's label alone, so it serves no form.
-    if !matches!(view, View::Summary) {
-        match served {
-            oneiron::memory::HydratedAsset::Image { .. } => {
-                served_forms.push(oneiron::receipt::ServedForm::image(id));
-            }
-            oneiron::memory::HydratedAsset::Text { asset_text, .. } => {
-                served_forms.push(oneiron::receipt::ServedForm::text(id, asset_text));
-            }
-            oneiron::memory::HydratedAsset::Stored | oneiron::memory::HydratedAsset::Omitted => {}
-        }
+    if !matches!(view, View::Summary)
+        && let Some(form) = served.served_form()
+    {
+        served_forms.push(form);
     }
     Ok(Some(CoreHydrateResponse {
         narrowing,

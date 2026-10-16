@@ -10,7 +10,7 @@ use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
 /// The authored prompt is separate from generated lens revisions. Key: id16.
-const INTENTS: SideTable<EntityId, LensIntentRecord, Named> =
+pub(super) const INTENTS: SideTable<EntityId, LensIntentRecord, Named> =
     SideTable::new(&side_table::LENS_INTENT);
 /// Bound prompt storage before allocation or dispatch into a model runner.
 pub const LENS_INTENT_MAX_BYTES: usize = 16_384;

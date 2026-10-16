@@ -96,6 +96,8 @@ pub(crate) use gate::{
 };
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, scrub_withdrawn_epoch_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use withdrawn::{is_withdrawn_keyframe, withdrawn_keyframe_envelope};
 
 use crate::entity_id::EntityId;
 use crate::error::{CompactionPacketError, Result};

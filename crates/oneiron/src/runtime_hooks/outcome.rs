@@ -36,8 +36,12 @@ pub enum HookOutcome {
         dreamer: Option<EnqueuedDreamer>,
     },
     /// The draft fields `schedule_outbound` takes.
-    Effect { outbound: Box<OutboundDraftInput> },
-    AddBlock { block: BlockRequest },
+    Effect {
+        outbound: Box<OutboundDraftInput>,
+    },
+    AddBlock {
+        block: BlockRequest,
+    },
     Continue,
     Rewrite {
         #[serde(default)]

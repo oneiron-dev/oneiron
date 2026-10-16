@@ -105,6 +105,25 @@ pub(super) fn execute_code_tool_schema() -> Value {
     )
 }
 
+pub(super) fn read_result_tool_schema() -> Value {
+    tool_schema_root(
+        "https://oneiron.local/schemas/mcp/read_result.args.v1.json",
+        json!({
+            "schema_version": schema_version_property(),
+            "actor": actor_schema(),
+            "consent": consent_schema(),
+            "run_ref": nonblank_string_schema(),
+            "ref": nonblank_string_schema(),
+            "facet": {
+                "type": "string",
+                "enum": ["describe", "slice", "search", "query", "chunks"],
+            },
+            "input": {"type": "object"},
+        }),
+        &["schema_version", "consent", "run_ref", "ref"],
+    )
+}
+
 /// One generated tool's schema, derived from its binding — never hand-listed.
 ///
 /// When the binding has required argument fields, `arguments` itself is

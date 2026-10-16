@@ -76,8 +76,9 @@ impl HttpGmailSendWire {
                 status.as_u16()
             )));
         }
-        let value = read_bounded_json(response)
-            .ok_or_else(|| GmailSendWireError::Uncertain("gmail_send_response_unreadable".into()))?;
+        let value = read_bounded_json(response).ok_or_else(|| {
+            GmailSendWireError::Uncertain("gmail_send_response_unreadable".into())
+        })?;
         let id = value.get("id").and_then(Value::as_str);
         let thread_id = value.get("threadId").and_then(Value::as_str);
         let (Some(id), Some(thread_id)) = (id, thread_id) else {
@@ -95,7 +96,8 @@ impl HttpGmailSendWire {
     /// Reads back the RFC `Message-ID` Gmail kept on the sent message. Best
     /// effort: the send already happened, so a failure keeps the plan's id.
     fn read_rfc_message_id(&self, auth: &HeaderValue, gmail_message_id: &str) -> Option<String> {
-        if gmail_message_id.is_empty() || !gmail_message_id.bytes().all(|b| b.is_ascii_alphanumeric())
+        if gmail_message_id.is_empty()
+            || !gmail_message_id.bytes().all(|b| b.is_ascii_alphanumeric())
         {
             return None;
         }
@@ -162,7 +164,8 @@ impl GmailSendWire for HttpGmailSendWire {
 
 /// The sensitive `Authorization: Bearer` value for one injected credential.
 fn bearer_header(token: &[u8]) -> Result<HeaderValue> {
-    let invalid = || Error::InvalidConfig("gmail credential is not a usable access token".to_owned());
+    let invalid =
+        || Error::InvalidConfig("gmail credential is not a usable access token".to_owned());
     let text = std::str::from_utf8(token).map_err(|_| invalid())?.trim();
     let access_token = if text.starts_with('{') {
         let value: Value = serde_json::from_str(text).map_err(|_| invalid())?;

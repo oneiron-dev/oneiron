@@ -104,7 +104,10 @@ impl GitEndpointSkillHubAdapter {
 }
 impl super::pack_catalog::PackSourceAdapter for GitEndpointSkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<super::pack_catalog::PackSource> {
-        super::pack_catalog::PackSource::from_files(self.fetch_tree(reference)?)
+        Ok(super::pack_catalog::PackSourceAdapter::fetch_pack_tree(self, reference)?.source)
+    }
+    fn fetch_pack_tree(&self, reference: &HubRef) -> Result<super::pack_catalog::PackTree> {
+        super::pack_catalog::PackSource::from_tree(self.fetch_tree(reference)?)
     }
 }
 impl SkillHubAdapter for GitEndpointSkillHubAdapter {
@@ -133,7 +136,14 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
         }
         let root = format!("{}^{{tree}}", self.commit);
         let listing = repo.run(
-            &["--git-dir=repo", "ls-tree", "-r", "-z", "--full-tree", &root],
+            &[
+                "--git-dir=repo",
+                "ls-tree",
+                "-r",
+                "-z",
+                "--full-tree",
+                &root,
+            ],
             16 * 1024 * 1024,
         )?;
         let mut entries = Vec::new();
@@ -145,7 +155,14 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
             };
             let Ok(files) = repo
                 .run(
-                    &["--git-dir=repo", "ls-tree", "-r", "-z", "--full-tree", &object],
+                    &[
+                        "--git-dir=repo",
+                        "ls-tree",
+                        "-r",
+                        "-z",
+                        "--full-tree",
+                        &object,
+                    ],
                     2 * 1024 * 1024,
                 )
                 .and_then(|listing| read_blobs(&repo, &listing))

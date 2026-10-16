@@ -10,7 +10,10 @@
 //!
 //! A browser row (`self.browser.*`) is no tool. The run's own browser
 //! answers it: one guest per run, started on the run's first admitted
-//! browser call and removed when the run's door drops.
+//! browser call and removed when the run's door drops. The vault's
+//! standing action grants set each browser effect class's press for the
+//! run, and the built-in `oneiron.browser` pack must stand installed:
+//! the browser is that connector pack's capability, never the engine's.
 //!
 //! Each call carries its step's invocation, so the row's verb hooks fire once
 //! for it (ARCH-0080 §3): at the one dispatcher a verb row takes, or here for
@@ -26,10 +29,13 @@ use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
+use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
 use oneiron::memory::HostWriteOrigin;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
-use oneiron_browser::{BrowserError, BrowserGuest, BrowserSession};
+use oneiron_browser::{
+    BrowserError, BrowserGuest, BrowserSession, EFFECT_CLASSES, PressMode, SendPolicy,
+};
 use serde_json::Value;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -52,6 +58,46 @@ struct RunBrowser {
     session: Mutex<Option<BrowserSession>>,
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
+}
+
+/// The press policy the vault's standing action grants set for one run's
+/// browser: a grant naming a browser effect class covers it (no press),
+/// and a budgeted grant covers that many sends as one reviewed batch.
+/// No grant leaves the floor: a press per send.
+fn browser_send_policy(server: &SyncServer) -> SendPolicy {
+    let mut policy = SendPolicy::default();
+    let Ok(grants) = server.vault.active_standing_consent_grants() else {
+        return policy;
+    };
+    for grant in &grants {
+        let StandingConsentGrant::Action(_) = grant else {
+            continue;
+        };
+        let bound = grant.bound();
+        let BoundClass::Action(class) = bound.class() else {
+            continue;
+        };
+        let class = class.as_str();
+        if !EFFECT_CLASSES.contains(&class) || SendPolicy::person_only(class) {
+            continue;
+        }
+        let budget = match bound.envelope() {
+            BoundEnvelope::Action(envelope) => envelope.budget(),
+            BoundEnvelope::Disclosure(_) => None,
+        };
+        match budget {
+            Some(count) => {
+                policy.modes.insert(class.to_owned(), PressMode::PerBatch);
+                policy
+                    .batch
+                    .insert(class.to_owned(), u32::try_from(count).unwrap_or(u32::MAX));
+            }
+            None => {
+                policy.modes.insert(class.to_owned(), PressMode::None);
+            }
+        }
+    }
+    policy
 }
 
 impl RunBrowser {
@@ -134,11 +180,15 @@ impl McpCodeModeVerbs {
             actor: actor.clone(),
             runtime: tokio::runtime::Handle::current(),
             served: std::sync::Mutex::new(Vec::new()),
-            browser: server.browser_guest().map(|guest| RunBrowser {
-                guest: guest.clone(),
-                session: Mutex::new(None),
-                vault: Arc::clone(&server.vault),
-                run_id,
+            browser: server.browser_guest().map(|guest| {
+                let mut guest = guest.clone();
+                guest.policy = browser_send_policy(server);
+                RunBrowser {
+                    guest,
+                    session: Mutex::new(None),
+                    vault: Arc::clone(&server.vault),
+                    run_id,
+                }
             }),
         }
     }
@@ -155,6 +205,12 @@ impl McpCodeModeVerbs {
             .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
         {
             return refused(error);
+        }
+        // The browser runs as its connector pack: no installed pack, no browser.
+        if self.server.vault.require_builtin_channel_pack("browser").is_err() {
+            return Ok(Err(AgentVerbRefusal {
+                code: "browser_pack_not_installed".to_owned(),
+            }));
         }
         let browser_refused = |error: BrowserError| {
             tracing::debug!(verb = call.verb.as_str(), %error, "code run browser call refused");
@@ -185,6 +241,13 @@ impl McpCodeModeVerbs {
             Ok(output) => output,
             Err(error) => return Ok(Err(browser_refused(error))),
         };
+        // An effect's answer carries its receipt, naming the page it acted on.
+        if let Some(receipt) = output.get("receipt") {
+            tracing::info!(verb, ?receipt, "browser effect receipt");
+        }
+        if let Some(receipts) = output.get("receipts") {
+            tracing::info!(verb, ?receipts, "browser batch receipts");
+        }
         match oneiron::task_verb::verb_hook_boundary::row_post(&self.server.vault, hooks, output) {
             Ok(output) => Ok(Ok(AgentVerbAnswer {
                 output,

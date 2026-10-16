@@ -30,13 +30,13 @@ use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::conversation::TurnActionAttempt;
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
-use oneiron::session_lifecycle::SessionKey;
 use oneiron::memory::{
     Memory, MemoryError, MessageStreamError, MessageStreamHandle, MessageStreamReceipt,
     MessageWriteMode, StreamCadence, StreamCancelReason, StreamSyncVisibility, WitnessAuthor,
     WitnessMessage, WitnessTurn,
 };
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
+use oneiron::session_lifecycle::SessionKey;
 use oneiron::skill_hub::pack_catalog::HookActorClass;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,

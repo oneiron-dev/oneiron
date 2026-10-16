@@ -89,6 +89,12 @@ pub const MEMORY_CODE_WRONG_ROOT: &str = "WRONG_ROOT";
 /// Distinct from `FORBIDDEN`: nothing was refused, the verb is only waiting,
 /// like a gate's pending write.
 pub const MEMORY_CODE_PENDING_ASK: &str = "PENDING_ASK";
+/// A write named a record ref that does not resolve under its writer's own
+/// scoped read (OF-063): invented, missing and unreadable are this one
+/// refusal. The message names the field pointer, never the ref. The write
+/// never ran, and the refusal was receipted on its own write before this
+/// error left the engine.
+pub const MEMORY_CODE_INVENTED_REFERENCE: &str = "INVENTED_REFERENCE";
 
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one

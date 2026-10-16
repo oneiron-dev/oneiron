@@ -117,6 +117,40 @@ impl Memory<'_> {
         Ok(TaskAskPreflight { recipients })
     }
 
+    /// The rules admission runs on `input` before its first write: the
+    /// asker's own Auto ceiling, the holders, the TASK's class and the
+    /// effective spec. Read-only, so a caller inside its own write may take
+    /// a refusal here and open no ask, with nothing half-written (OF-220).
+    pub(super) fn ask_admits_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+    ) -> MemoryResult<()> {
+        if super::rate_limit::task_actor_ceiling(
+            self.vault(),
+            txn,
+            self.actor(),
+            self.actor_class(),
+        )? != PolicyApprovalCeiling::Auto
+        {
+            return Err(consult_refusal(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "scope ask requires an own auto-ceiling actor",
+                "Propose the ask through the authority surface.",
+            ));
+        }
+        let holders = self.ask_holders_in_txn(txn, input)?;
+        let class = self
+            .ask_class_in_txn(txn, input.task_ref)?
+            .map(|(_, class)| class);
+        input.effective(
+            &holders.iter().copied().collect(),
+            self.vault().store.clock.now_recorded_at(),
+            class,
+        )?;
+        Ok(())
+    }
+
     /// Reads an ask's question and context rows as the ask reads them: each
     /// is listed as a producer of what the call answers, and off this device
     /// one a device-local world keeps reads as no row (DEC-0005).

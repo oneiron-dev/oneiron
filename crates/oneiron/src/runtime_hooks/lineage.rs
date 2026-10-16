@@ -68,7 +68,11 @@ pub struct HookCheck {
 }
 
 /// The chain behind `row`, empty when no hook landed it.
-pub(super) fn chain_of(vault: &Vault, txn: &heed::RoTxn<'_>, row: &EntityId) -> Result<Vec<LineageLink>> {
+pub(super) fn chain_of(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Vec<LineageLink>> {
     Ok(LINEAGE
         .get(&vault.store, txn, row.as_bytes())?
         .map(|lineage| lineage.chain)

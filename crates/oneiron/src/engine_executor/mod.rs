@@ -22,14 +22,18 @@ pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, Win
 pub use self::driver::EngineNativeExecutor;
 #[cfg(test)]
 use self::record::step_state_hash;
-pub(crate) use self::store::RESULT_READ_ROOT;
+pub(crate) use self::store::{
+    RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, is_result_output_path,
+    result_handle_json,
+};
 pub use self::types::{
     ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
     ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
     EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
     EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
     JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    JsCodeModeStream, JsResultCall, JsResultRef, SelfDispatchResponse, guest_response_with_budget,
+    JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
+    guest_response_with_budget,
 };
 
 #[cfg(test)]

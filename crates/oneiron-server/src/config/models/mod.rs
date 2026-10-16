@@ -32,7 +32,9 @@ pub use compaction::CompactionSettings;
 pub use decision_read::{
     DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal,
 };
-pub use decisions::{DecisionsSettings, SeatPickSettings, SystemOneSettings};
+pub use decisions::{
+    BigReply, BigSettings, DecisionsSettings, SeatPickSettings, SystemOneSettings,
+};
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{MediaSeatConfig, MediaSettings};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
@@ -94,6 +96,8 @@ struct DreamerFile {
     pass_budget_units: Option<u64>,
     summary_prompt: Option<String>,
     summary_prompt_file: Option<PathBuf>,
+    resident_prompt: Option<String>,
+    resident_prompt_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -217,6 +221,9 @@ pub struct DreamerSettings {
     /// Without one, summary declarations are refused (ARCH-0006a: only the
     /// Dreamer writes a summary body).
     pub summary_instruction: Option<String>,
+    /// The instruction each resident's own dreaming writes its diary entry
+    /// with (OF-490). Without one, no resident dreams.
+    pub resident_instruction: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -325,6 +332,12 @@ impl ModelsFile {
                 "models.dreamer.summary_prompt",
                 self.dreamer.summary_prompt,
                 self.dreamer.summary_prompt_file,
+                base,
+            )?,
+            resident_instruction: levels::prompt_text(
+                "models.dreamer.resident_prompt",
+                self.dreamer.resident_prompt,
+                self.dreamer.resident_prompt_file,
                 base,
             )?,
         };
@@ -527,6 +540,12 @@ fn validate_ladders(
                     rung.model.provider
                 )
             })?;
+            if provider.kind.speech_only() {
+                anyhow::bail!(
+                    "models.roles.{key}: {} is on a speech provider, which serves [models.media.speech] only",
+                    rung.model
+                );
+            }
             let tagger_role = *role == ModelRole::ExtractionEncoder;
             if tagger_role != (provider.kind == ProviderKind::Oneironer) {
                 anyhow::bail!(

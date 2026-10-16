@@ -8,7 +8,6 @@ mod membership;
 
 use super::FederationGrantRole as Role;
 use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, key};
-use super::record_scope::ScopedRecord;
 use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -143,22 +142,25 @@ pub struct SharedActExecutionReceipt {
     pub completed_at: u64,
 }
 
-/// What an export-first removal exported for `member`: the record count and
-/// a digest over the exported records, never their content.
+/// What an export-first removal exported for `member`: the record count,
+/// the BLAKE3 of the archive (OF-222), never its content, and the diaries
+/// the export read (OF-490).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActExport {
     pub member: String,
     pub records: u64,
     pub digest: String,
+    pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
 }
 
-/// An executed act's receipt, and for an export-first removal the records
-/// the host delivers to the removed Owner.
+/// An executed act's receipt, and for an export-first removal the archive
+/// of what the removed Owner could read, which the host delivers to them:
+/// the whole-vault archive's shape (OF-222), re-importable into a fresh vault.
 #[derive(Debug, Clone)]
 pub struct SharedActExecution {
     pub receipt: SharedActExecutionReceipt,
-    pub export: Vec<ScopedRecord>,
+    pub export: Option<crate::batch::export::WholeVaultExport>,
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -340,7 +342,19 @@ impl Vault {
         act_id: &str,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecution> {
-        let mut export = self.removal_export(act_id)?;
+        let mut export = self
+            .removal_export(act_id)?
+            .map(|(member, records)| {
+                let ids = records.iter().map(|record| record.id).collect();
+                // Its diary reads are the removed owner's, who receives it.
+                let reader = crate::write_envelope::WriteActor::new(
+                    member,
+                    crate::edge::EdgeActorClass::Human,
+                );
+                self.export_records_archive(&ids, reader)
+                    .map(|archive| (member, records.len() as u64, archive))
+            })
+            .transpose()?;
         let mut txn = self.store.env.write_txn()?;
         let actor = executor.revalidate_person_in_txn(self, &txn)?;
         let act = self
@@ -361,7 +375,7 @@ impl Vault {
             return receipt
                 .map(|receipt| SharedActExecution {
                     receipt,
-                    export: Vec::new(),
+                    export: None,
                 })
                 .ok_or(Error::ConcurrentWrite("authority act already executed"));
         }
@@ -437,7 +451,7 @@ impl Vault {
                 let target = hex_id(&plan.target)?;
                 let successor = plan.successor.as_deref().map(hex_id).transpose()?;
                 if plan.v != PLAN_VERSION
-                    || plan.export_first != export.as_ref().is_some_and(|(of, _)| *of == target)
+                    || plan.export_first != export.as_ref().is_some_and(|(of, ..)| *of == target)
                 {
                     return Err(invalid());
                 }
@@ -499,21 +513,16 @@ impl Vault {
                 )?;
             }
         }
-        let export = export.take().map(|(member, records)| {
-            let mut digest = blake3::Hasher::new();
-            for record in &records {
-                digest.update(record.id.as_bytes());
-                digest.update(&(record.bytes.len() as u64).to_be_bytes());
-                digest.update(&record.bytes);
-            }
+        let export = export.take().map(|(member, records, archive)| {
             let summary = SharedActExport {
                 member: member.to_hex(),
-                records: records.len() as u64,
-                digest: digest.finalize().to_hex().to_string(),
+                records,
+                digest: blake3::hash(archive.bytes()).to_hex().to_string(),
+                diary_reads: archive.diary_reads().to_vec(),
             };
-            (summary, records)
+            (summary, archive)
         });
-        let (summary, records) = export.unzip();
+        let (summary, archive) = export.unzip();
         let receipt = self.record_shared_change_in_txn(
             &mut txn,
             receipt_id,
@@ -528,7 +537,7 @@ impl Vault {
         txn.commit()?;
         Ok(SharedActExecution {
             receipt,
-            export: records.unwrap_or_default(),
+            export: archive,
         })
     }
 

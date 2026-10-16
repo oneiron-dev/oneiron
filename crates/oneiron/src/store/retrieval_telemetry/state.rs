@@ -26,6 +26,32 @@ pub struct RetrievalState {
     pub intent_class: u8,
 }
 impl RetrievalState {
+    /// Continuous, bounded coordinates shared by live selection and sleep replay.
+    /// Counts use x/(1+x); outcome fields never enter the policy context.
+    pub fn policy_context(&self) -> [f64; 16] {
+        let bounded = |value: f32| f64::from(value.clamp(0.0, 1.0));
+        let count = |value: u32| f64::from(value) / (1.0 + f64::from(value));
+        [
+            bounded(self.top_score_norm),
+            bounded(self.score_gap_ratio),
+            bounded(self.mean_score_norm),
+            bounded(self.entity_coverage),
+            bounded(self.novelty_vs_prior),
+            count(u32::from(self.signal_agreement)),
+            count(u32::from(self.result_count)),
+            count(u32::from(self.iteration)),
+            count(u32::from(self.budget_remaining)),
+            count(self.frontier_size),
+            bounded(self.avg_edge_weight),
+            count(u32::from(self.graph_degree)),
+            f64::from(self.temporal_spread.max(0.0))
+                / (1.0 + f64::from(self.temporal_spread.max(0.0))),
+            count(u32::from(self.hops)),
+            f64::from(self.last_action.min(5)) / 5.0,
+            f64::from(self.intent_class.min(4)) / 4.0,
+        ]
+    }
+
     /// One-shot Stop decision context. Final scores use one bounded link;
     /// raw channel components are never added together. Iterative callers carry their exact
     /// pre-decision state through `PipelineBuilder::retrieval_state` instead.

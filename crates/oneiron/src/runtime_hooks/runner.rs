@@ -166,8 +166,11 @@ impl FactHookRunner {
                 if *shutdown.borrow() {
                     break;
                 }
-                let (pass_runner, pass_vault, pass_runtime) =
-                    (Arc::clone(&runner), Arc::clone(&vault), Arc::clone(&runtime));
+                let (pass_runner, pass_vault, pass_runtime) = (
+                    Arc::clone(&runner),
+                    Arc::clone(&vault),
+                    Arc::clone(&runtime),
+                );
                 let pass = tokio::task::spawn_blocking(move || {
                     pass_runner.run_pass(&pass_vault, pass_runtime.as_ref(), HOOK_PASS_ENTRIES)
                 })
@@ -376,7 +379,12 @@ impl Pass<'_> {
         seen: &SeenFact,
         body: std::result::Result<String, String>,
     ) -> Result<()> {
-        let now = self.vault.store.clock.now_recorded_at().saturating_mul(1_000);
+        let now = self
+            .vault
+            .store
+            .clock
+            .now_recorded_at()
+            .saturating_mul(1_000);
         let input = input_json(
             run.binding_id,
             run.binding,
@@ -420,10 +428,7 @@ impl Pass<'_> {
         let vault = self.vault;
         let at = vault.store.clock.now_recorded_at();
         let key = run.key;
-        let queued = verdict
-            .outcome
-            .as_ref()
-            .is_some_and(HookOutcome::is_queued);
+        let queued = verdict.outcome.as_ref().is_some_and(HookOutcome::is_queued);
         let proposal = match &verdict.outcome {
             Some(HookOutcome::Propose { .. }) => Some(apply::proposal_id(&key)?),
             _ => None,

@@ -3,18 +3,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    ExportAdapterDescriptor, ExportEdge, ExportManifest, ExportSecretsNulledManifest,
-    WholeVaultExport, whole_vault_export_excludes_entity,
+    ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryHold, ExportDiaryLedger, ExportDiaryRead, ExportEdge,
+    ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
+    whole_vault_export_excludes_entity,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::CallerLocality;
-use crate::context_pack::PackFormat;
-use crate::edge::parse_strict_edge_record;
+use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::vault::live_entity_row_in_txn;
+use crate::write_envelope::WriteActor;
 
 pub(crate) struct ExportSnapshot {
     pub(crate) entities: Vec<ExportSnapshotEntity>,
@@ -29,6 +30,10 @@ pub(crate) struct ExportSnapshot {
     pub(crate) archived_receipts: BTreeMap<EntityId, BTreeMap<String, super::ExportReceiptSource>>,
     pub(crate) run_results: Vec<ExportSnapshotRun>,
     pub(crate) result_bodies: BTreeMap<[u8; 32], ExportSnapshotBody>,
+    pub(crate) diary_reads: Vec<ExportDiaryRead>,
+    pub(crate) diary_holds: Vec<ExportDiaryHold>,
+    pub(crate) secrets: Vec<ArchiveSecretCustody>,
+    pub(crate) secrets_included: bool,
 }
 
 /// One run's result manifests, as its replay record names them.
@@ -52,12 +57,61 @@ pub(crate) struct ExportSnapshotEntity {
 }
 
 impl Vault {
-    /// Exports all live base entities and their graph, not a retrieval selection.
-    /// Live off-record overlay rows, deleted shells, archive tombstones,
-    /// credential custody rows and unpublished LFS chunks are excluded. No
-    /// caller can disable nulling.
-    pub fn export_whole_vault(&self, format: PackFormat) -> Result<WholeVaultExport> {
-        self.export_whole_vault_with_admission(format, CallerLocality::OnDevice, |_| Ok(()))
+    /// Exports all live base entities and their graph as the whole-vault
+    /// archive (OF-222), not a retrieval selection. Live off-record overlay
+    /// rows, deleted shells, archive tombstones, credential custody rows and
+    /// unpublished LFS chunks are excluded. No caller can disable nulling.
+    ///
+    /// The owner's own archive carries custody secret values unless
+    /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
+    /// all your data"); then each custody record goes as its handle only.
+    ///
+    /// Its diary reads are the vault owner's (OF-490).
+    pub fn export_whole_vault(&self, include_secrets: bool) -> Result<WholeVaultExport> {
+        self.export_whole_vault_with_admission(
+            CallerLocality::OnDevice,
+            include_secrets,
+            owner_reader()?,
+            |_| Ok(()),
+        )
+    }
+
+    /// The archive of exactly `records` and the graph between them, for a
+    /// reader off this device: an export-first removal's export (OF-163),
+    /// in the same shape as a whole-vault archive and re-importable alike.
+    /// No run's results go with it; a run names no world to scope it by.
+    /// Its diary reads are `reader`'s, the owner who receives it.
+    pub(crate) fn export_records_archive(
+        &self,
+        records: &BTreeSet<EntityId>,
+        reader: WriteActor,
+    ) -> Result<WholeVaultExport> {
+        self.export_archive_snapshot(
+            CallerLocality::OffDevice,
+            Some(records),
+            ExportCut::Archive,
+            false,
+            reader,
+            |_| Ok(()),
+        )
+    }
+
+    /// "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
+    /// bundle (a ZIP of markdown concepts with YAML frontmatter) for other
+    /// tools. Lossy by design and labelled as not a full copy; it carries no
+    /// custody secret and does not re-import as a vault. The same diary reads
+    /// and credential nulling as the archive apply.
+    pub fn export_okf(&self) -> Result<WholeVaultExport> {
+        self.export_okf_with_admission(CallerLocality::OnDevice, owner_reader()?, |_| Ok(()))
+    }
+
+    pub(crate) fn export_okf_with_admission<E: From<Error>>(
+        &self,
+        locality: CallerLocality,
+        reader: WriteActor,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
+    ) -> std::result::Result<WholeVaultExport, E> {
+        self.export_archive_snapshot(locality, None, ExportCut::Okf, false, reader, admit)
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME
@@ -66,10 +120,31 @@ impl Vault {
     /// For a caller off this device the snapshot holds no row a device-local
     /// world keeps here (DEC-0005), so no edge, package or receipt of one
     /// follows; one whose world cannot be read stays too.
+    /// `reader` is whose diary reads the export makes (OF-490).
     pub(crate) fn export_whole_vault_with_admission<E: From<Error>>(
         &self,
-        format: PackFormat,
         locality: CallerLocality,
+        include_secrets: bool,
+        reader: WriteActor,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
+    ) -> std::result::Result<WholeVaultExport, E> {
+        self.export_archive_snapshot(
+            locality,
+            None,
+            ExportCut::Archive,
+            include_secrets,
+            reader,
+            admit,
+        )
+    }
+
+    fn export_archive_snapshot<E: From<Error>>(
+        &self,
+        locality: CallerLocality,
+        only: Option<&BTreeSet<EntityId>>,
+        cut: ExportCut,
+        include_secrets: bool,
+        reader: WriteActor,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
     ) -> std::result::Result<WholeVaultExport, E> {
         let artifact = self.whole_vault_export_manifest_artifact(
@@ -81,7 +156,10 @@ impl Vault {
         admit(&rtxn)?;
         // A run names no world, so a caller off this device gets no run's
         // results: none of a device-local world's may leave it (DEC-0005).
-        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice {
+        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice
+            && only.is_none()
+            && cut == ExportCut::Archive
+        {
             self.export_run_results_in_txn(&rtxn)?
         } else {
             (Vec::new(), BTreeMap::new())
@@ -93,9 +171,13 @@ impl Vault {
         let mut agent_fork_hashes = BTreeMap::new();
         let mut task_receipts = BTreeMap::new();
         let mut archived_receipts = BTreeMap::new();
+        let mut diaries = ExportDiaryLedger::new(reader)?;
+        let mut secrets = Vec::new();
         for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
             let (id, raw) = entry?;
-            if whole_vault_export_excludes_entity(self, &id)? {
+            if only.is_some_and(|only| !only.contains(&id))
+                || whole_vault_export_excludes_entity(self, &id)?
+            {
                 continue;
             }
             if crate::settings::device_only_withholds_raw(
@@ -113,15 +195,36 @@ impl Vault {
             }
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("whole-vault entity header"))?;
-            // Check the type BEFORE reading or transforming the custody body.
-            if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
-                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
-                    &self.store,
-                    &rtxn,
-                    &id,
-                    header.entity_type,
-                )?
-                || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+            // Owner ruling 2026-10-17: the owner's own archive carries the
+            // custody records, so a re-import keeps every key. A scoped
+            // export (a removed owner's, a contact's, a share's) never does.
+            if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
+                if only.is_none()
+                    && cut == ExportCut::Archive
+                    && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+                {
+                    let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
+                        &self.store,
+                        &rtxn,
+                        &id,
+                    )?
+                    .map(|(name, hash)| format!("{name}:{hash:02x}"));
+                    secrets.extend(archive_custody_secret(
+                        &id,
+                        handle,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                        locality == CallerLocality::OnDevice,
+                        include_secrets,
+                    )?);
+                }
+                continue;
+            }
+            if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                &self.store,
+                &rtxn,
+                &id,
+                header.entity_type,
+            )? || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
             {
                 continue;
             }
@@ -142,6 +245,15 @@ impl Vault {
                     &rtxn,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )?
+            {
+                continue;
+            }
+            // OF-490: a diary goes out only as a read the owner's grant
+            // covers and its agent has not asked to review first.
+            if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && let Some(author) =
+                    note_diary_author(self, &rtxn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])?
+                && !diaries.admit(self, &rtxn, author, id)?
             {
                 continue;
             }
@@ -258,6 +370,14 @@ impl Vault {
             .filter(|(id, _)| included.contains(id))
             .collect();
         drop(rtxn);
+        // The gate logs the reads after the snapshot. An entry whose read
+        // could not be logged leaves the archive, with its edges.
+        let (diary_reads, diary_holds, unlogged) = diaries.finish(self);
+        if !unlogged.is_empty() {
+            let gone: BTreeSet<String> = unlogged.iter().map(EntityId::to_hex).collect();
+            entities.retain(|entity| !unlogged.contains(&entity.id));
+            edges.retain(|edge| !gone.contains(&edge.source) && !gone.contains(&edge.target));
+        }
         crate::serialize::serialize_vault_snapshot(
             ExportSnapshot {
                 entities,
@@ -272,8 +392,12 @@ impl Vault {
                 archived_receipts,
                 run_results,
                 result_bodies,
+                diary_reads,
+                diary_holds,
+                secrets,
+                secrets_included: include_secrets && only.is_none() && cut == ExportCut::Archive,
             },
-            format,
+            cut,
         )
         .map_err(E::from)
     }
@@ -313,4 +437,56 @@ impl Vault {
         }
         Ok((runs, bodies))
     }
+}
+
+/// The author of a NOTE row when it is a diary, read from its committed text.
+fn note_diary_author(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<EntityId>> {
+    #[cfg(feature = "sync")]
+    let body = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, body)?;
+    #[cfg(not(feature = "sync"))]
+    let _ = (vault, rtxn, id);
+    Ok(super::diary_author(&body))
+}
+
+/// A custody record as an archive row. A revoked record is not exported.
+/// The value goes with an active record when secrets are included, and for a
+/// caller off this device (`on_device` false) only when it is portable: a
+/// device-bound value never leaves this device (DEC-0005). Every other live
+/// record goes as its handle, to re-enter after import.
+fn archive_custody_secret(
+    id: &EntityId,
+    handle: Option<String>,
+    body: &[u8],
+    on_device: bool,
+    include_secrets: bool,
+) -> Result<Option<ArchiveSecretCustody>> {
+    use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    use base64::Engine as _;
+    let record = crate::secret_custody::decode_secret_custody_body(body)?;
+    if record.status == SecretCustodyStatus::Revoked {
+        return Ok(None);
+    }
+    let value = include_secrets
+        && record.status == SecretCustodyStatus::Active
+        && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable));
+    Ok(Some(ArchiveSecretCustody {
+        id: id.to_hex(),
+        name: record.name.clone(),
+        handle,
+        metadata: record.metadata(),
+        body: value.then(|| base64::engine::general_purpose::STANDARD.encode(body)),
+    }))
+}
+
+/// The vault owner as a diary reader: the embedded and OKF exports' reader.
+fn owner_reader() -> Result<WriteActor> {
+    Ok(WriteActor::new(
+        crate::vault::embedded_owner_actor_id()?,
+        EdgeActorClass::Human,
+    ))
 }

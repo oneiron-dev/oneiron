@@ -24,217 +24,236 @@ impl Memory<'_> {
         input: &TaskAskSpec,
         effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<TaskAskReceipt> {
-        if input.intent_key.trim().is_empty() || input.intent_key.len() > 256 {
-            return Err(MemoryError::bad_request(
-                "ask intent key must contain 1..=256 bytes",
+        let digest = ask_admission_digest(input)?;
+        self.with_verified_actor_write_txn(|txn| self.admit_ask_in_txn(txn, input, &digest, effect))
+    }
+
+    /// [`Self::tasks_ask_with_txn_effect`] inside a transaction an engine
+    /// writer already holds (OF-220: a runner's report opens its owner ask
+    /// in the runner's own commit). The caller has verified this actor's
+    /// write on `txn`; admission is the one body the public door runs.
+    pub(super) fn tasks_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: &TaskAskSpec,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    ) -> MemoryResult<TaskAskReceipt> {
+        let digest = ask_admission_digest(input)?;
+        self.admit_ask_in_txn(txn, input, &digest, effect)
+    }
+
+    /// One ask's admission in `txn`: replay, the ask rules, the census, the
+    /// member TASKs and the group, then `effect` on a first admission.
+    fn admit_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: &TaskAskSpec,
+        digest: &str,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    ) -> MemoryResult<TaskAskReceipt> {
+        let now = self.vault().store.clock.now_recorded_at();
+        let group_ref = ask_record::group_id(self.vault(), txn, self.actor(), &input.intent_key)?;
+        if let Some(group) = ask_record::read_group(self.vault(), txn, group_ref)? {
+            return replay_receipt(group_ref, group, self.actor(), digest);
+        }
+        // An actor that may not ask is refused before any census runs.
+        if super::rate_limit::task_actor_ceiling(
+            self.vault(),
+            txn,
+            self.actor(),
+            self.actor_class(),
+        )? != PolicyApprovalCeiling::Auto
+        {
+            return Err(consult_refusal(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "scope ask requires an own auto-ceiling actor",
+                "Propose the ask through the authority surface.",
             ));
         }
-        let digest = ask_request_digest(input)?;
-        self.with_verified_actor_write_txn(|txn| {
-            let now = self.vault().store.clock.now_recorded_at();
-            let group_ref =
-                ask_record::group_id(self.vault(), txn, self.actor(), &input.intent_key)?;
-            if let Some(group) = ask_record::read_group(self.vault(), txn, group_ref)? {
-                return replay_receipt(group_ref, group, self.actor(), &digest);
+        // Revocation and admission observe the SAME snapshot.
+        let holders = self.ask_holders_in_txn(txn, input)?;
+        let bound = self.ask_class_in_txn(txn, input.task_ref)?;
+        let context_class = bound.as_ref().map(|(_, class)| class.clone());
+        let effective = input.effective(
+            &holders.iter().copied().collect(),
+            now,
+            context_class.clone(),
+        )?;
+        self.ask_question_in(txn, &effective.what)?;
+        // One ask counts once on the asker's ask window, whatever its
+        // recipients; a replay returned above never counts again.
+        super::rate_limit::record_task_ask(
+            self.vault(),
+            txn,
+            self.actor(),
+            now,
+            super::TaskCreateRateLimit::default(),
+        )?;
+        let mut no_live_route = true;
+        let mut validated = Vec::with_capacity(holders.len());
+        let mut work = Vec::with_capacity(holders.len());
+        for actor in &holders {
+            let kind = self.vault().get_entity_type_in_txn(txn, actor)?;
+            if !matches!(
+                kind,
+                Some(
+                    crate::registry::ENTITY_TYPE_PERSON
+                        | crate::registry::ENTITY_TYPE_AGENT_DEF
+                        | crate::registry::ENTITY_TYPE_MACHINE
+                )
+            ) {
+                return Err(MemoryError::bad_request("ask recipient is not an actor"));
             }
-            // An actor that may not ask is refused before any census runs.
-            if super::rate_limit::task_actor_ceiling(
-                self.vault(),
-                txn,
-                self.actor(),
-                self.actor_class(),
-            )? != PolicyApprovalCeiling::Auto
-            {
-                return Err(consult_refusal(
-                    crate::memory::MEMORY_CODE_FORBIDDEN,
-                    "scope ask requires an own auto-ceiling actor",
-                    "Propose the ask through the authority surface.",
-                ));
-            }
-            // Revocation and admission observe the SAME snapshot.
-            let holders = self.ask_holders_in_txn(txn, input)?;
-            let bound = self.ask_class_in_txn(txn, input.task_ref)?;
-            let context_class = bound.as_ref().map(|(_, class)| class.clone());
-            let effective = input.effective(
-                &holders.iter().copied().collect(),
-                now,
-                context_class.clone(),
-            )?;
-            self.ask_question_in(txn, &effective.what)?;
-            // One ask counts once on the asker's ask window, whatever its
-            // recipients; a replay returned above never counts again.
-            super::rate_limit::record_task_ask(
-                self.vault(),
-                txn,
-                self.actor(),
-                now,
-                super::TaskCreateRateLimit::default(),
-            )?;
-            let mut no_live_route = true;
-            let mut validated = Vec::with_capacity(holders.len());
-            let mut work = Vec::with_capacity(holders.len());
-            for actor in &holders {
-                let kind = self.vault().get_entity_type_in_txn(txn, actor)?;
-                if !matches!(
-                    kind,
-                    Some(
-                        crate::registry::ENTITY_TYPE_PERSON
-                            | crate::registry::ENTITY_TYPE_AGENT_DEF
-                            | crate::registry::ENTITY_TYPE_MACHINE
-                    )
-                ) {
-                    return Err(MemoryError::bad_request("ask recipient is not an actor"));
-                }
-                let assignee = ask_assignee(&effective.who, *actor, kind);
-                work.push(match assignee {
-                    TaskAssignee::Peer { actor_ref } => FanoutWork::PeerConsult { peer: actor_ref },
-                    other => FanoutWork::Task {
-                        assignee: other.entity_ref(),
-                    },
-                });
-                // No contact route is required to QUEUE a question. Human followup
-                // is registered only where the native route actually resolves.
-                let reachable = match assignee {
-                    TaskAssignee::Human { actor_ref } => {
-                        let mut vetoes = Vec::new();
-                        let route = crate::human_task::resolve_native_human_route_for_actor_in(
-                            self.vault(),
-                            txn,
-                            actor_ref,
-                            self.actor(),
-                            &mut vetoes,
-                        );
-                        // A standing veto that took the route decides the hold.
-                        self.produced_from(vetoes);
-                        route.is_ok()
-                    }
-                    TaskAssignee::Dreamer | TaskAssignee::Child { .. } => true,
-                    TaskAssignee::Peer { .. } | TaskAssignee::AgentDef { .. } => false,
-                };
-                no_live_route &= !reachable;
-                for reference in std::iter::once(effective.what.reference)
-                    .chain(effective.what.context_refs.iter().copied())
-                {
-                    crate::llm::decision::questions::validate_task_answer_unit(
+            let assignee = ask_assignee(&effective.who, *actor, kind);
+            work.push(match assignee {
+                TaskAssignee::Peer { actor_ref } => FanoutWork::PeerConsult { peer: actor_ref },
+                other => FanoutWork::Task {
+                    assignee: other.entity_ref(),
+                },
+            });
+            // No contact route is required to QUEUE a question. Human followup
+            // is registered only where the native route actually resolves.
+            let reachable = match assignee {
+                TaskAssignee::Human { actor_ref } => {
+                    let mut vetoes = Vec::new();
+                    let route = crate::human_task::resolve_native_human_route_for_actor_in(
                         self.vault(),
                         txn,
+                        actor_ref,
                         self.actor(),
-                        *actor,
-                        reference.entity_ref(),
-                    )?;
+                        &mut vetoes,
+                    );
+                    // A standing veto that took the route decides the hold.
+                    self.produced_from(vetoes);
+                    route.is_ok()
                 }
-                let spec =
-                    TaskCreateSpec::new(
-                        rmpv::Value::Nil,
-                        effective.what.label.clone(),
-                        None,
-                        Some(now),
-                    )
-                    .with_kind(TaskKind::Consult)
-                    .with_consult(ConsultPayload::question(
-                        effective.what.reference,
-                        effective.what.context_refs.clone(),
-                        group_ref,
-                    ))
-                    .with_assignee(assignee)
-                    .with_ttl(TaskTtl::at(effective.until.ok_or_else(|| {
-                        MemoryError::bad_request("missing effective ask deadline")
-                    })?));
-                validated.push((
-                    validate_task_create_in(self.vault(), txn, &spec, now)?,
-                    reachable,
-                ));
-            }
-            // Stated after the census and before any grant or member TASK.
-            // An ask holds no spend context, so it states no cap; width is a
-            // check on it, never a hold.
-            let mut statement = AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
-                txn,
-                &FanoutCaller::default(),
-                &work,
-                now,
-            )?;
-            super::fanout_check::raise_unheld_width_check(
-                self.vault(),
-                txn,
-                &mut statement,
-                &format!(
-                    "ask:{}:{}",
-                    self.actor().to_hex(),
-                    effective.what.reference.short_ref()
-                ),
-                format!("fanout_check_row:ask:{}", group_ref.to_hex()),
-            )?;
-            let question_digest =
-                super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
-                    .ok_or(crate::Error::EntityNotFound)?;
-            let guest_grants = super::ask_guest::mint_guest_grants(
-                self.vault(),
-                txn,
-                group_ref,
-                self.actor(),
-                &effective,
-                now,
-            )?;
-            let mut members = Vec::with_capacity(holders.len());
-            for (actor, (entry, reachable)) in holders.iter().zip(&validated) {
-                let task_ref = self.mint_task_at_in_txn(
+                TaskAssignee::Dreamer | TaskAssignee::Child { .. } => true,
+                TaskAssignee::Peer { .. } | TaskAssignee::AgentDef { .. } => false,
+            };
+            no_live_route &= !reachable;
+            for reference in std::iter::once(effective.what.reference)
+                .chain(effective.what.context_refs.iter().copied())
+            {
+                crate::llm::decision::questions::validate_task_answer_unit(
+                    self.vault(),
                     txn,
-                    (ask_record::member_id(group_ref, *actor)?, self.actor()),
-                    entry,
-                    effective.what.label.clone(),
-                    &facade_provenance("ask"),
+                    self.actor(),
+                    *actor,
+                    reference.entity_ref(),
+                )?;
+            }
+            let spec = TaskCreateSpec::new(
+                rmpv::Value::Nil,
+                effective.what.label.clone(),
+                None,
+                Some(now),
+            )
+            .with_kind(TaskKind::Consult)
+            .with_consult(ConsultPayload::question(
+                effective.what.reference,
+                effective.what.context_refs.clone(),
+                group_ref,
+            ))
+            .with_assignee(assignee)
+            .with_ttl(TaskTtl::at(
+                effective
+                    .until
+                    .ok_or_else(|| MemoryError::bad_request("missing effective ask deadline"))?,
+            ));
+            validated.push((
+                validate_task_create_in(self.vault(), txn, &spec, now)?,
+                reachable,
+            ));
+        }
+        // Stated after the census and before any grant or member TASK.
+        // An ask holds no spend context, so it states no cap; width is a
+        // check on it, never a hold.
+        let mut statement = AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
+            txn,
+            &FanoutCaller::default(),
+            &work,
+            now,
+        )?;
+        super::fanout_check::raise_unheld_width_check(
+            self.vault(),
+            txn,
+            &mut statement,
+            &format!(
+                "ask:{}:{}",
+                self.actor().to_hex(),
+                effective.what.reference.short_ref()
+            ),
+            format!("fanout_check_row:ask:{}", group_ref.to_hex()),
+        )?;
+        let question_digest =
+            super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
+                .ok_or(crate::Error::EntityNotFound)?;
+        let guest_grants = super::ask_guest::mint_guest_grants(
+            self.vault(),
+            txn,
+            group_ref,
+            self.actor(),
+            &effective,
+            now,
+        )?;
+        let mut members = Vec::with_capacity(holders.len());
+        for (actor, (entry, reachable)) in holders.iter().zip(&validated) {
+            let task_ref = self.mint_task_at_in_txn(
+                txn,
+                (ask_record::member_id(group_ref, *actor)?, self.actor()),
+                entry,
+                effective.what.label.clone(),
+                &facade_provenance("ask"),
+                now,
+            )?;
+            // Local executors use the SAME exhaustive TASK route; remote
+            // mailboxes do not create a local worker. Unknown human routes
+            // stay queued on the asks list rather than aborting the run.
+            if !matches!(entry.assignee, Some(TaskAssignee::Human { .. })) && *reachable {
+                self.route_created_task_in_txn(txn, task_ref, entry, now)?;
+            }
+            members.push(AskMember {
+                task: task_ref.to_hex(),
+                actor: actor.to_hex(),
+            });
+        }
+        let policy_surface =
+            super::ask_policy::confirmation_surface(self.vault(), txn, &effective, &holders)?;
+        let group = AskGroup {
+            base_policy_version: 1,
+            owner: self.actor().to_hex(),
+            request_digest: digest.to_owned(),
+            requested: input.clone(),
+            effective,
+            context_class,
+            governed_task: bound
+                .filter(|_| input.task_ref.is_none())
+                .map(|(task, _)| task),
+            question_digest,
+            link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
+            members,
+            no_live_route,
+            created_at: now,
+            guest_grants,
+            policy_surface,
+            statement,
+        };
+        ask_record::put_group(self.vault(), txn, group_ref, &group)?;
+        for (member, (entry, _)) in group.members.iter().zip(&validated) {
+            if matches!(entry.assignee, Some(TaskAssignee::Human { .. })) {
+                crate::human_task::register_human_followup_in_txn(
+                    self.vault(),
+                    txn,
+                    ask_record::entity(&member.task)?,
+                    ask_record::entity(&member.actor)?,
                     now,
                 )?;
-                // Local executors use the SAME exhaustive TASK route; remote
-                // mailboxes do not create a local worker. Unknown human routes
-                // stay queued on the asks list rather than aborting the run.
-                if !matches!(entry.assignee, Some(TaskAssignee::Human { .. })) && *reachable {
-                    self.route_created_task_in_txn(txn, task_ref, entry, now)?;
-                }
-                members.push(AskMember {
-                    task: task_ref.to_hex(),
-                    actor: actor.to_hex(),
-                });
             }
-            let policy_surface =
-                super::ask_policy::confirmation_surface(self.vault(), txn, &effective, &holders)?;
-            let group = AskGroup {
-                base_policy_version: 1,
-                owner: self.actor().to_hex(),
-                request_digest: digest.clone(),
-                requested: input.clone(),
-                effective,
-                context_class,
-                governed_task: bound
-                    .filter(|_| input.task_ref.is_none())
-                    .map(|(task, _)| task),
-                question_digest,
-                link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
-                members,
-                no_live_route,
-                created_at: now,
-                guest_grants,
-                policy_surface,
-                statement,
-            };
-            ask_record::put_group(self.vault(), txn, group_ref, &group)?;
-            for (member, (entry, _)) in group.members.iter().zip(&validated) {
-                if matches!(entry.assignee, Some(TaskAssignee::Human { .. })) {
-                    crate::human_task::register_human_followup_in_txn(
-                        self.vault(),
-                        txn,
-                        ask_record::entity(&member.task)?,
-                        ask_record::entity(&member.actor)?,
-                        now,
-                    )?;
-                }
-            }
-            let mut receipt = replay_receipt(group_ref, group, self.actor(), &digest)?;
-            effect(txn, group_ref)?;
-            receipt.idempotent_replay = false;
-            Ok(receipt)
-        })
+        }
+        let mut receipt = replay_receipt(group_ref, group, self.actor(), digest)?;
+        effect(txn, group_ref)?;
+        receipt.idempotent_replay = false;
+        Ok(receipt)
     }
 
     pub(super) fn ask_holders_in_txn(
@@ -431,33 +450,34 @@ impl Memory<'_> {
         let group = self
             .ask_group_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
-        if group.owner != self.actor().to_hex()
-            && !group
-                .members
-                .iter()
-                .any(|m| m.actor == self.actor().to_hex())
-        {
-            return Err(consult_refusal(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
-                "ask handle is not addressed to this actor",
-                "Read an ask you own or answer.",
-            ));
-        }
+        require_ask_audience(&group, self.actor())?;
         drop(txn);
-        self.with_verified_actor_write_txn(|txn| {
-            super::ask_settlement::settle_in(
-                self.vault(),
-                txn,
-                handle.group_ref,
-                self.vault().store.clock.now_recorded_at(),
-            )?;
-            Ok(ask_record::status_in(
-                self.vault(),
-                txn,
-                handle.group_ref,
-                &group,
-            )?)
-        })
+        self.with_verified_actor_write_txn(|txn| self.tasks_ask_status_in_txn(txn, handle))
+    }
+
+    /// [`Self::tasks_ask_status`] inside a write transaction the caller
+    /// holds and verified: the same audience check, cut and status read.
+    pub(super) fn tasks_ask_status_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        handle: TaskAskHandle,
+    ) -> MemoryResult<TaskAskStatus> {
+        let group = self
+            .ask_group_in(txn, handle.group_ref)?
+            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        require_ask_audience(&group, self.actor())?;
+        super::ask_settlement::settle_in(
+            self.vault(),
+            txn,
+            handle.group_ref,
+            self.vault().store.clock.now_recorded_at(),
+        )?;
+        Ok(ask_record::status_in(
+            self.vault(),
+            txn,
+            handle.group_ref,
+            &group,
+        )?)
     }
 
     /// Projects a sibling's group winner without replacing that sibling's
@@ -608,6 +628,29 @@ fn replay_receipt(
         idempotent_replay: true,
         statement: Some(group.statement),
     })
+}
+
+/// Owner and admitted responders read an ask; anyone else is refused.
+fn require_ask_audience(group: &AskGroup, actor: EntityId) -> MemoryResult<()> {
+    if group.owner != actor.to_hex() && !group.members.iter().any(|m| m.actor == actor.to_hex()) {
+        return Err(consult_refusal(
+            crate::memory::MEMORY_CODE_FORBIDDEN,
+            "ask handle is not addressed to this actor",
+            "Read an ask you own or answer.",
+        ));
+    }
+    Ok(())
+}
+
+/// The intent-key check every admission runs first, and the request digest
+/// a replay is held to.
+fn ask_admission_digest(input: &TaskAskSpec) -> MemoryResult<String> {
+    if input.intent_key.trim().is_empty() || input.intent_key.len() > 256 {
+        return Err(MemoryError::bad_request(
+            "ask intent key must contain 1..=256 bytes",
+        ));
+    }
+    ask_request_digest(input)
 }
 
 fn ask_request_digest(input: &TaskAskSpec) -> MemoryResult<String> {

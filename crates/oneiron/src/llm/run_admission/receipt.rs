@@ -8,10 +8,10 @@ use serde::Serialize;
 use super::super::{
     BrokerIsolation, BudgetDenied, LlmInputUsage, LlmOutputUsage, ModelId, ModelLocality,
 };
-use crate::EntityId;
 use super::admission::RunDenied;
 use super::declaration::{DeclarationEditor, LeaseUnit};
 use super::host::{AllocationRef, Payer};
+use crate::EntityId;
 
 /// One receipt row, with the run and the declaration revision it ran under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

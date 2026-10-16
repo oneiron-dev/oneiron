@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 const BINDING_PREFIX: &[u8] = b"skill_optimize/project_goal/v1\0";
 const PROPOSAL_PREFIX: &[u8] = b"skill_optimize/project_goal_proposal/v1\0";
+const DISMISSED_PREFIX: &[u8] = b"skill_optimize/project_goal_dismissed/v1\0";
 const LABEL: &str = "skill project goal row";
 /// Bound on the parent walk; a lineage this deep ends at the vault owners.
 const MAX_ROLE_WALK: usize = 64;
@@ -44,6 +45,15 @@ fn binding_key(goal_id: &EntityId) -> Vec<u8> {
 
 fn proposal_key(project: &EntityId, id: &EntityId) -> Vec<u8> {
     [PROPOSAL_PREFIX, project.as_bytes(), id.as_bytes()].concat()
+}
+
+fn dismissed_key(project: &EntityId, question_digest: &str) -> Vec<u8> {
+    [
+        DISMISSED_PREFIX,
+        project.as_bytes(),
+        question_digest.as_bytes(),
+    ]
+    .concat()
 }
 
 fn encode<T: Serialize>(row: &T) -> Result<Vec<u8>> {
@@ -185,9 +195,9 @@ pub(super) fn project_rules(
     rules
 }
 
-/// One rung of the responsible-role chain a tradeoff ask climbs. Only live
-/// people are members: a pick becomes a preference, and preferences are
-/// learned from human picks.
+/// One rung of the responsible-role chain a tradeoff ask climbs. Live people
+/// and live bound agents are members (ROLES-EVERYWHERE): a pick by either
+/// becomes the role's preference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeoffRole {
@@ -228,7 +238,10 @@ fn live_people_in_txn(
 ) -> Result<BTreeSet<EntityId>> {
     let mut people = BTreeSet::new();
     for id in ids {
-        if crate::consent::person_is_live_in_txn(vault, txn, &id)? {
+        let agent = crate::write_envelope::WriteActor::new(id, crate::edge::EdgeActorClass::Agent);
+        if crate::consent::person_is_live_in_txn(vault, txn, &id)?
+            || vault.verify_write_actor_in_txn(txn, &agent).is_ok()
+        {
             people.insert(id);
         }
     }
@@ -310,6 +323,36 @@ pub struct ProjectGoalRevisionProposal {
     pub at: u64,
 }
 
+/// A vault owner set a proposal aside under the goal claim in force. A
+/// separate marker: the proposal row stays as history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectGoalDismissal {
+    goal_claim: EntityId,
+    dismissed_by: EntityId,
+    at: u64,
+}
+
+/// Whether the proposal for `question_digest` was dismissed under `goal_claim`.
+fn dismissed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: &EntityId,
+    goal_claim: &EntityId,
+    question_digest: &str,
+) -> Result<bool> {
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(txn, &dismissed_key(project, question_digest))?
+    else {
+        return Ok(false);
+    };
+    let row: ProjectGoalDismissal =
+        rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex(LABEL))?;
+    Ok(row.goal_claim == *goal_claim)
+}
+
 fn proposals_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -325,8 +368,9 @@ fn proposals_in_txn(
 }
 
 /// Record a learned pick as a proposed preference for the joined project's
-/// goal, unless the record already states it or it is already proposed under
-/// the goal in force.
+/// goal, unless the record already states it, it is already proposed under
+/// the goal in force, or a vault owner dismissed this question's proposal
+/// under that goal.
 pub(super) fn propose_learned_preference_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -352,10 +396,18 @@ pub(super) fn propose_learned_preference_in_txn(
     let same = |stated: &GoalPreference| {
         stated.prefer == preference.prefer && stated.over == preference.over
     };
+    let question_digest = question.digest()?;
     if join.record.preferences.iter().any(same)
         || proposals_in_txn(vault, txn, &join.project)?
             .iter()
             .any(|row| row.goal_claim == join.goal_claim && same(&row.preference))
+        || dismissed_in_txn(
+            vault,
+            txn,
+            &join.project,
+            &join.goal_claim,
+            &question_digest,
+        )?
     {
         return Ok(());
     }
@@ -363,7 +415,7 @@ pub(super) fn propose_learned_preference_in_txn(
         project: join.project,
         goal_claim: join.goal_claim,
         preference,
-        question_digest: question.digest()?,
+        question_digest,
         picked_by,
         at,
     };
@@ -372,8 +424,9 @@ pub(super) fn propose_learned_preference_in_txn(
     Ok(())
 }
 
-/// The preferences the loop proposes for a project's goal in force, oldest
-/// first, for the goal-intake interview to show the human.
+/// The preferences the loop proposes for a project's goal in force and no
+/// vault owner dismissed, oldest first, for the goal-intake interview to show
+/// the human.
 /// # Errors
 /// An unreadable project goal or proposal row, or storage errors.
 pub fn project_goal_revision_proposals(
@@ -381,11 +434,76 @@ pub fn project_goal_revision_proposals(
     project: EntityId,
 ) -> Result<Vec<ProjectGoalRevisionProposal>> {
     let txn = vault.store.env.read_txn()?;
-    let Some((goal_claim, _)) = vault.project_intake_goal_in_txn(&txn, project)? else {
+    project_goal_revision_proposals_in_txn(vault, &txn, project)
+}
+
+/// [`project_goal_revision_proposals`] in the caller's snapshot, for a reader
+/// that reads the goal and its proposals together.
+pub(crate) fn project_goal_revision_proposals_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: EntityId,
+) -> Result<Vec<ProjectGoalRevisionProposal>> {
+    let Some((goal_claim, _)) = vault.project_intake_goal_in_txn(txn, project)? else {
         return Ok(Vec::new());
     };
-    Ok(proposals_in_txn(vault, &txn, &project)?
-        .into_iter()
-        .filter(|row| row.goal_claim == goal_claim)
-        .collect())
+    let mut open = Vec::new();
+    for row in proposals_in_txn(vault, txn, &project)? {
+        if row.goal_claim == goal_claim
+            && !dismissed_in_txn(vault, txn, &project, &goal_claim, &row.question_digest)?
+        {
+            open.push(row);
+        }
+    }
+    Ok(open)
+}
+
+/// Set aside the proposal one tradeoff question made for a project's goal:
+/// the interview no longer shows it, and the loop does not propose it again
+/// under that goal. The proposal stays as history. Only a live vault owner
+/// dismisses, as only one commits the goal record it would revise. The goal
+/// claim is read again in the write; an identical retry writes nothing and
+/// returns `false`.
+/// # Errors
+/// An unauthenticated owner, a goal claim other than the one in force, no
+/// proposal for that question under it, or storage errors.
+pub fn dismiss_project_goal_revision_proposal(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    project: EntityId,
+    expected_goal: EntityId,
+    question_digest: &str,
+    at: u64,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        let actor = owner.revalidate_in_txn(vault, txn)?;
+        let goal_claim = vault
+            .project_intake_goal_in_txn(txn, project)?
+            .map(|(goal_claim, _)| goal_claim);
+        if goal_claim != Some(expected_goal) {
+            return Err(invalid("the project's goal changed before the dismissal"));
+        }
+        if !proposals_in_txn(vault, txn, &project)?
+            .iter()
+            .any(|row| row.goal_claim == expected_goal && row.question_digest == question_digest)
+        {
+            return Err(invalid(
+                "no revision proposal for that question under the goal in force",
+            ));
+        }
+        if dismissed_in_txn(vault, txn, &project, &expected_goal, question_digest)? {
+            return Ok(false);
+        }
+        let row = ProjectGoalDismissal {
+            goal_claim: expected_goal,
+            dismissed_by: actor,
+            at,
+        };
+        vault.store.vault_meta.put(
+            txn,
+            &dismissed_key(&project, question_digest),
+            &encode(&row)?,
+        )?;
+        Ok(true)
+    })
 }
