@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use super::codec::{RECORD, corrupt};
 use super::keys::{
     FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES, FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION,
-    FIELD_BRIEF_REF, FIELD_CONTENT_HASH, FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF,
+    FIELD_BRIEF_REF, FIELD_CONTENT_HASH, FIELD_DECK_HANDOFF, FIELD_DECK_MADE_BY, FIELD_DECK_PARTS,
+    FIELD_DECK_RENDERS, FIELD_DECK_THREAD, FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF,
     FIELD_PROPOSAL_REF, FIELD_QUESTION_VERSION, FIELD_REASON, FIELD_RUN_REF,
     FIELD_SHEET_ANSWER_COUNT, FIELD_SLIDE_JUDGMENTS, FIELD_VERSION,
 };
@@ -131,6 +132,9 @@ pub(super) fn settlement_receipt_record(
                     })?,
                 );
             }
+            if let Some(deck) = &record.deck {
+                insert_deck_fields(&mut fields, deck)?;
+            }
             let drifts = record.anchors.iter().filter(|a| a.drifted).count();
             let moves = record.anchors.len() - drifts;
             fields.insert(FIELD_ANCHOR_MOVES.to_owned(), moves.to_string());
@@ -164,6 +168,52 @@ pub(super) fn settlement_receipt_record(
         policy_trace: Vec::new(),
         fields,
     })
+}
+
+/// A kept deck transaction's receipt: the handoff hash it settled, its actual
+/// part diff, its review renders, and who made it in answer to what.
+fn insert_deck_fields(
+    fields: &mut BTreeMap<String, String>,
+    deck: &crate::edit_roundtrip::DeckSettleEvidence,
+) -> Result<()> {
+    let report: oneiron_docedit::edit::DeckTransactionReport = serde_json::from_str(&deck.report)
+        .map_err(|_| Error::InvariantViolation("deck settle report decoding"))?;
+    fields.insert(
+        FIELD_DECK_HANDOFF.to_owned(),
+        crate::receipt::hex_lower(&deck.handoff),
+    );
+    fields.insert(
+        FIELD_DECK_PARTS.to_owned(),
+        serde_json::to_string(&report.parts)
+            .map_err(|_| Error::InvariantViolation("deck part diff receipt encoding"))?,
+    );
+    if !deck.context.renders.is_empty() {
+        let renders: Vec<_> = deck
+            .context
+            .renders
+            .iter()
+            .map(|render| {
+                serde_json::json!({
+                    "side": render.side,
+                    "slide": render.slide,
+                    "image_hash": crate::receipt::hex_lower(&render.image_hash),
+                    "renderer": render.renderer,
+                })
+            })
+            .collect();
+        fields.insert(
+            FIELD_DECK_RENDERS.to_owned(),
+            serde_json::to_string(&renders)
+                .map_err(|_| Error::InvariantViolation("deck render receipt encoding"))?,
+        );
+    }
+    if let Some(made_by) = deck.context.made_by {
+        fields.insert(FIELD_DECK_MADE_BY.to_owned(), made_by.to_hex());
+    }
+    if let Some(thread) = deck.context.thread {
+        fields.insert(FIELD_DECK_THREAD.to_owned(), thread.to_hex());
+    }
+    Ok(())
 }
 
 pub(super) fn settled_anchors_from_summary(summary: &ReanchorSummary) -> Vec<SettledAnchor> {

@@ -26,6 +26,9 @@ pub enum WarningCode {
     ChartsPresentMinimalMutation,
     MacrosPresentMinimalMutation,
     SessionReported,
+    /// Laid-out deck text changed, or a text frame was resized, with no
+    /// rendered fit proof.
+    FitUnverified,
 }
 
 /// A pipeline warning: a stable code plus human detail.
