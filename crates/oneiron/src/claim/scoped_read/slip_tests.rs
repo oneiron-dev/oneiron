@@ -386,8 +386,10 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
 /// (here one more row than a fusion list holds) and cut to one row after.
 #[test]
 fn a_scoped_text_search_for_one_row_ranks_a_bounded_list() -> Result<()> {
-    let mut config = crate::VaultConfig::default();
-    config.retrieval_telemetry_capture = true;
+    let config = crate::VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..Default::default()
+    };
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let rows = crate::fusion::FUSION_LIST_LENGTH + 1;
     let mut batch = vault.batch();
