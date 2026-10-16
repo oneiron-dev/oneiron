@@ -205,7 +205,8 @@ pub(crate) fn send(
             issuer.sign_cooperative_deletion_request(vault, &pact, worlds, epoch_cutoff, nonce)
         })?
     };
-    let notice = vault.queue_cooperative_deletion_request_as(owner, &signed, &destination, now())?;
+    let notice =
+        vault.queue_cooperative_deletion_request_as(owner, &signed, &destination, now())?;
     Ok(notice.into())
 }
 

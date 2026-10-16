@@ -32,15 +32,9 @@ pub(crate) fn execute(
     if attempt.status.payload.attempt_type != DREAMER_RECIPE_WAKE_ATTEMPT_KIND {
         return Err(invalid());
     }
-    let trigger: WakePolicyTrigger = serde_json::from_str(
-        attempt
-            .status
-            .payload
-            .input
-            .as_str()
-            .ok_or_else(invalid)?,
-    )
-    .map_err(|_| invalid())?;
+    let trigger: WakePolicyTrigger =
+        serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
+            .map_err(|_| invalid())?;
     if trigger.turn_count == 0 && trigger.record_count == 0 && trigger.nightly_count == 0 {
         return Err(invalid());
     }
