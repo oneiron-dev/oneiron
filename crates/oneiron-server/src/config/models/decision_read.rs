@@ -119,9 +119,13 @@ struct RecipeFile {
     tokens: Vec<String>,
     /// The end-of-generation token the read forces.
     eos: String,
-    /// The probabilities the answer lists: enough that every label's is
-    /// among them (the whole vocabulary, as measured).
+    /// The probabilities the answer lists: its top `n_probs`. llama.cpp
+    /// normalizes over the whole vocabulary before it cuts the list, so a
+    /// label among them reads the same as over the vocabulary.
     n_probs: u64,
+    /// The probabilities the one exact retry lists when the top `n_probs`
+    /// miss a label: the whole vocabulary. Without it, such a read is refused.
+    n_probs_full: Option<u64>,
     probe: Option<ProbeFile>,
 }
 
@@ -143,6 +147,7 @@ pub struct DecisionReadRecipe {
     tokens: Vec<String>,
     eos: String,
     n_probs: u64,
+    n_probs_full: Option<u64>,
     probe: Option<ProbeQuestions>,
     fingerprint: String,
 }
@@ -217,7 +222,7 @@ impl DecisionReadRecipe {
         }
         if !tokens_fit(&file) {
             anyhow::bail!(
-                "tokens must be at least 4 distinct non-empty labels, eos one other token, n_probs at least the token count, and yes and no two different words"
+                "tokens must be at least 4 distinct non-empty labels, eos one other token, n_probs at least the token count, n_probs_full above n_probs, and yes and no two different words"
             );
         }
         let probe = file
@@ -238,6 +243,7 @@ impl DecisionReadRecipe {
             tokens: file.tokens,
             eos: file.eos,
             n_probs: file.n_probs,
+            n_probs_full: file.n_probs_full,
             probe,
             fingerprint,
         })
@@ -262,6 +268,13 @@ impl DecisionReadRecipe {
     #[must_use]
     pub fn n_probs(&self) -> u64 {
         self.n_probs
+    }
+
+    /// The exact retry's size, when the recipe retries a read that misses a
+    /// label.
+    #[must_use]
+    pub fn n_probs_full(&self) -> Option<u64> {
+        self.n_probs_full
     }
 
     #[must_use]
@@ -402,6 +415,7 @@ fn tokens_fit(file: &RecipeFile) -> bool {
         && !file.eos.is_empty()
         && !distinct.contains(&file.eos)
         && file.n_probs >= file.tokens.len() as u64
+        && file.n_probs_full.is_none_or(|full| full > file.n_probs)
         && !file.yes.trim().is_empty()
         && !file.no.trim().is_empty()
         && file.yes != file.no

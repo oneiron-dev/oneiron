@@ -9,8 +9,10 @@
 //! thinking?" and, when asked, "ask a person?", from one forward pass. Each
 //! call checks that no text came back and that generation stopped at the
 //! forced end; a read that fails a check is refused, never read as p = 0. This
-//! is the read idle-fold tests 4 and 5 measured (one row, `n_probs` over the
-//! vocabulary, `logit_bias` on the end token, `post_sampling_probs` off).
+//! is the read idle-fold tests 4 to 6 measured (one row, `logit_bias` on the
+//! end token, `post_sampling_probs` off). It lists the top `n_probs` tokens and,
+//! when a label falls below them, retries once over the whole vocabulary:
+//! test 6 read the same label numbers both ways, bit for bit.
 //!
 //! The prompt, the label wording and the verbalizer tokens are the host's
 //! recipe (`[models.decision_read]`); nothing here is prompt text.
@@ -83,25 +85,33 @@ impl DecisionReadDoor {
 
     /// What one read of `request` may reserve: the prompt the recipe renders
     /// for it (no tokenizer makes more tokens than bytes) and the one position
-    /// read. A read the recipe cannot render is refused here, before anything
-    /// is admitted. A host's own reader reserves what the request carries,
-    /// each option once per joint row.
+    /// read, twice when the recipe retries a read. A read the recipe cannot
+    /// render is refused here, before anything is admitted. A host's own
+    /// reader reserves what the request carries, each option once per joint
+    /// row.
     pub fn reserve(&self, request: &LabelReadRequest<'_>) -> LlmResult<u64> {
         let prompt = prompt_of(request);
-        let bytes = match &self.recipe {
-            Some(recipe) => recipe.render(&prompt).map_err(refused)?.len(),
+        let (bytes, calls) = match &self.recipe {
+            Some(recipe) => (
+                recipe.render(&prompt).map_err(refused)?.len(),
+                1 + u64::from(recipe.n_probs_full().is_some()),
+            ),
             None => {
                 let options = prompt
                     .options
                     .map_or(0, |options| options.iter().map(String::len).sum::<usize>());
-                prompt.question.len()
+                let bytes = prompt.question.len()
                     + options.saturating_mul(4)
                     + prompt.paired.len()
                     + prompt.person.map_or(0, str::len)
-                    + prompt.state.to_string().len()
+                    + prompt.state.to_string().len();
+                (bytes, 1)
             }
         };
-        Ok(u64::try_from(bytes).unwrap_or(u64::MAX).saturating_add(1))
+        Ok(u64::try_from(bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1)
+            .saturating_mul(calls))
     }
 
     /// The reader a host fills `DecisionReadProvider` with. Its `read` blocks
@@ -283,14 +293,9 @@ impl DecisionReader {
         }
     }
 
-    async fn read_prompt(
-        &self,
-        prompt: String,
-        rows: usize,
-        options: usize,
-        person: bool,
-    ) -> LlmResult<LabelReadResponse> {
-        let ids = self.ids().await?;
+    /// One completion of `prompt` forced to end at once, listing the top
+    /// `n_probs` tokens.
+    async fn complete(&self, prompt: &str, eos: u64, n_probs: u64) -> LlmResult<JsonValue> {
         let body = json!({
             "prompt": prompt,
             "n_predict": 1,
@@ -299,9 +304,9 @@ impl DecisionReader {
             "id_slot": 0,
             "stop": [],
             "response_fields": RESPONSE_FIELDS,
-            "n_probs": self.recipe.n_probs(),
+            "n_probs": n_probs,
             "post_sampling_probs": false,
-            "logit_bias": [[ids.eos, EOS_BIAS]],
+            "logit_bias": [[eos, EOS_BIAS]],
         });
         let reply = self
             .http
@@ -314,17 +319,42 @@ impl DecisionReader {
             .await
             .map_err(transport)?;
         status(reply.status)?;
-        let logprobs = label_logprobs(
-            &reply.body,
-            &ids.labels[..rows],
-            &self.recipe.tokens()[..rows],
-        )?;
-        let (primary, paired_yes, person_yes) = joint(&logprobs, options, person);
+        Ok(reply.body)
+    }
+
+    async fn read_prompt(
+        &self,
+        prompt: String,
+        rows: usize,
+        options: usize,
+        person: bool,
+    ) -> LlmResult<LabelReadResponse> {
+        let ids = self.ids().await?;
+        let (labels, tokens) = (&ids.labels[..rows], &self.recipe.tokens()[..rows]);
+        let mut reply = self
+            .complete(&prompt, ids.eos, self.recipe.n_probs())
+            .await?;
+        let mut logprobs = label_logprobs(&reply, labels, tokens);
+        let mut spent = None;
+        // A label below the top `n_probs`: the same prompt once more over the
+        // whole vocabulary, its checks and its cost the read's own.
+        if let Some(full) = self.recipe.n_probs_full()
+            && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
+        {
+            spent = Some(usage(&reply)?);
+            reply = self.complete(&prompt, ids.eos, full).await?;
+            logprobs = label_logprobs(&reply, labels, tokens);
+        }
+        let (primary, paired_yes, person_yes) = joint(&logprobs?, options, person);
+        let usage = usage(&reply)?;
         Ok(LabelReadResponse {
             primary,
             paired_yes,
             person_yes,
-            usage: usage(&reply.body)?,
+            usage: match spent {
+                Some(first) => retried(first, usage),
+                None => usage,
+            },
         })
     }
 }
@@ -409,18 +439,18 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
         .ok_or_else(malformed)?;
     let mut found: Vec<Option<f64>> = vec![None; ids.len()];
     for entry in entries {
-        // As measured: a label's id, else a label's spelling.
-        let index = entry
-            .get("id")
-            .and_then(JsonValue::as_u64)
-            .and_then(|id| ids.iter().position(|label| *label == id))
-            .or_else(|| {
-                entry
-                    .get("token")
-                    .or_else(|| entry.get("tok_str"))
-                    .and_then(JsonValue::as_str)
-                    .and_then(|text| tokens.iter().position(|token| token == text))
-            });
+        // As test 6 reads it, a label is its id: another id spelled as a
+        // label is not that label. An older answer without ids, by spelling.
+        let index = match entry.get("id") {
+            Some(id) => id
+                .as_u64()
+                .and_then(|id| ids.iter().position(|label| *label == id)),
+            None => entry
+                .get("token")
+                .or_else(|| entry.get("tok_str"))
+                .and_then(JsonValue::as_str)
+                .and_then(|text| tokens.iter().position(|token| token == text)),
+        };
         let Some(index) = index else {
             continue;
         };
@@ -491,6 +521,22 @@ fn usage(body: &JsonValue) -> LlmResult<LlmUsage> {
     })
 }
 
+/// A retried read's cost: both calls' tokens, and each call's timings.
+fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
+    LlmUsage {
+        input: LlmInputUsage {
+            total: top_k.input.total.saturating_add(full.input.total),
+            ..LlmInputUsage::default()
+        },
+        output: LlmOutputUsage {
+            total: top_k.output.total.saturating_add(full.output.total),
+            text: 0,
+            reasoning: 0,
+        },
+        raw_provider: json!({"top_k": top_k.raw_provider, "full": full.raw_provider}),
+    }
+}
+
 fn failed(failure: LabelReadFailure) -> LlmError {
     FatalLlmError::LabelRead(failure).into()
 }
@@ -503,7 +549,11 @@ fn status(code: u16) -> LlmResult<()> {
     match code {
         200..=299 => Ok(()),
         401 | 403 => Err(FatalLlmError::Auth.into()),
-        429 => Err(RetryableLlmError::RateLimited { retry_after: None }.into()),
+        429 => Err(RetryableLlmError::RateLimited {
+            retry_after: None,
+            resets_at: Vec::new(),
+        }
+        .into()),
         400..=499 => Err(FatalLlmError::InvalidRequest.into()),
         _ => Err(RetryableLlmError::ServerError.into()),
     }
