@@ -689,6 +689,21 @@ The owner can probe the read at `POST /v1/llm/decision_read`
 nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 `[limits] decision_reads` probes wait their turn.
 
+The decision read takes yes/no and choice questions over text. A Box question
+("where is `mug` in `camera`?"), and any question over images, goes only to a
+rung that reads images: a host `DecisionModel` whose `reads_images` is true,
+or the opt-in System One seat (`decide_at_remote_seat`). The ladder skips
+every other rung (`DecisionLadder::run_images`, `run_pack_images`). A Box
+answer is `{top, bottom, left, right}` in 0–1 fractions of the image from its
+top-left corner, edges in order, with its confidence; it is `null` when the
+target is absent. The box centre is the point answer. A call carries at most
+8 named PNG or JPEG images, 10 MiB each and 20 MiB in all. Each fills the
+state field of its name, and each receipt keeps every image's evidence ref
+and body version, never its pixels. The System One seat sends each image as an
+asset, downscaled to a 1,568-pixel long edge (a box in fractions reads the
+same on the smaller copy), with the `TypeSafe-Danger-Zone-Images: true`
+header that Jev 1.14 needs for images and boxes.
+
 ## 10. Media calls (`ai.image`, `ai.video`, `ai.speech`, `ai.transcribe`, `ai.embed`)
 
 Image, video, speech, transcription and embedding calls have their own seats,

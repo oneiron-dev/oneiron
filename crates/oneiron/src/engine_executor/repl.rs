@@ -317,27 +317,31 @@ impl EngineNativeExecutor<'_> {
                 done: step_outcome.done,
                 outputs,
             };
+            // The agent's own refusal declined her TASK (OF-533): the run
+            // ends here, complete, and says nothing more on her behalf.
+            let declined = host.declined.is_some();
             let terminal_status = host
                 .durable_wait
                 .clone()
                 .map(EngineExecutorStatus::Waiting)
                 .or({
-                    if step_outcome.done {
+                    if step_outcome.done || declined {
                         Some(EngineExecutorStatus::Complete)
                     } else {
                         None
                     }
                 });
-            let implicit_speak = matches!(terminal_status, Some(EngineExecutorStatus::Complete))
-                .then(|| {
-                    self.prepare_trailing_speak_fallback(
-                        &record,
-                        &observation,
-                        trailing_speak.as_deref(),
-                    )
-                })
-                .transpose()?
-                .flatten();
+            let implicit_speak = (!declined
+                && matches!(terminal_status, Some(EngineExecutorStatus::Complete)))
+            .then(|| {
+                self.prepare_trailing_speak_fallback(
+                    &record,
+                    &observation,
+                    trailing_speak.as_deref(),
+                )
+            })
+            .transpose()?
+            .flatten();
             if let Some(text) = implicit_speak.as_deref() {
                 // The exact side-effect payload is part of the replay append,
                 // not ephemeral provider state. It is content-addressed like
