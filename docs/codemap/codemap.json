@@ -1906,6 +1906,7 @@
      "purpose": "Quorum-signed authority roster checkpoints, linked to exact signed history",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 7,
       "struct": 1
      }
@@ -2049,6 +2050,21 @@
       "crate-vis": 4,
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityHistoryCoverage",
+      "AuthorityHistoryRequest"
+     ],
+     "path": "src/authority/history_coverage.rs",
+     "purpose": "What authority history this vault holds, and exactly what it lacks (OF-469)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -2264,7 +2280,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 18,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -47389,7 +47405,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 124,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48798,7 +48814,7 @@
    },
    "over_bar": 98,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2942,
+   "source_files": 2943,
    "test_files": 903
   },
   "oneiron-android": {
