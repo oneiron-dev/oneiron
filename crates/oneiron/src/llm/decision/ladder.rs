@@ -5,9 +5,9 @@ use super::policy::{
 };
 use super::types::{invalid, paired_valid};
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung,
-    DecisionTime, HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin, Reasoning,
-    ReasoningCause, StopCause, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
+    DecisionRung, DecisionTime, HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin,
+    Reasoning, ReasoningCause, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
@@ -87,6 +87,9 @@ pub const MAX_DECISION_STATE_BYTES: usize = 65_536;
 pub struct DecisionCall<'a> {
     pub question: &'a DecisionQuestion,
     pub evidence: &'a [EntityId],
+    /// Images the question reads, each filling the state field of its name. Only a
+    /// provider that reads images gets a call with any.
+    pub images: &'a [DecisionImage],
     /// A JSON object of at most [`MAX_DECISION_STATE_BYTES`]; never an implicit vault dump.
     pub state: &'a Value,
     /// A provider with a native deadline gets [`RetrievalDeadline::decision_time_left`], and
@@ -100,6 +103,7 @@ pub struct DecisionCall<'a> {
 pub struct DecisionPack<'a> {
     pub questions: &'a [&'a DecisionQuestion],
     pub evidence: &'a [EntityId],
+    pub images: &'a [DecisionImage],
     pub state: &'a Value,
     pub deadline: &'a RetrievalDeadline,
 }
@@ -110,6 +114,7 @@ impl<'a> DecisionPack<'a> {
         self.questions.get(index).map(|&question| DecisionCall {
             question,
             evidence: self.evidence,
+            images: self.images,
             state: self.state,
             deadline: self.deadline,
         })
@@ -141,8 +146,20 @@ impl ProviderCapability {
             AnswerContract::Noul => true,
             AnswerContract::Choice { options } => options.len() <= self.max_options,
             AnswerContract::Score { .. } => self.score,
+            // A box is found in an image: the ladder also asks the provider whether it
+            // reads images.
+            AnswerContract::Box => true,
         }
     }
+}
+
+/// Whether `provider` can take `question` over `images`.
+fn takes(
+    provider: &dyn DecisionProvider,
+    question: &DecisionQuestion,
+    images: &[DecisionImage],
+) -> bool {
+    provider.capability().takes(question) && (images.is_empty() || provider.reads_images())
 }
 
 /// Providers see only caller-prepared, access-checked evidence references and the state the
@@ -154,6 +171,11 @@ pub trait DecisionProvider: Send + Sync {
     fn pin(&self) -> ProviderPin;
     fn capability(&self) -> ProviderCapability {
         ProviderCapability::default()
+    }
+    /// Whether it reads images. The ladder skips a provider that does not for a call with
+    /// images, and so for every Box question.
+    fn reads_images(&self) -> bool {
+        false
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
@@ -220,6 +242,10 @@ pub trait DecisionModel: Send + Sync {
     fn capability(&self) -> ProviderCapability {
         ProviderCapability::default()
     }
+    /// See [`DecisionProvider::reads_images`].
+    fn reads_images(&self) -> bool {
+        false
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -254,6 +280,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn capability(&self) -> ProviderCapability {
         self.model.capability()
+    }
+    fn reads_images(&self) -> bool {
+        self.model.reads_images()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)
@@ -362,6 +391,38 @@ impl DecisionLadder<'_> {
         Ok(decisions.remove(0))
     }
 
+    /// [`Self::run`] over images the question reads, as in "where is `mug` in
+    /// `camera`?". Only providers that read images take it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's images, state and clock join the question, its scope, the dial and the policy"
+    )]
+    pub fn run_images(
+        &self,
+        question: &DecisionQuestion,
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> Result<TypedDecision> {
+        let mut decisions = self.run_pack_images(
+            &[question],
+            principal,
+            evidence,
+            images,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )?;
+        Ok(decisions.remove(0))
+    }
+
     /// Several typed questions over one state, asked as one pack under one clock. The first
     /// permitted rung reads them in one request (several in turn past the policy's
     /// questions-per-call row), with the person question ("ask a person?")
@@ -389,10 +450,43 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_images(
+            questions,
+            principal,
+            evidence,
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )
+    }
+
+    /// [`Self::run_pack`] over images the questions read. Each image fills the state field
+    /// of its name, and each receipt keeps every image's evidence ref and version, never
+    /// its pixels. A Box question needs at least one image.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's images, state and clock join the questions, their scope, dial and policy"
+    )]
+    pub fn run_pack_images(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> Result<Vec<TypedDecision>> {
         let pack = self.open(
             questions,
             principal,
             evidence,
+            images,
             state,
             dial,
             policy,
@@ -413,6 +507,7 @@ impl DecisionLadder<'_> {
                 let call = DecisionPack {
                     questions: chunk,
                     evidence,
+                    images,
                     state,
                     deadline,
                 };
@@ -429,13 +524,14 @@ impl DecisionLadder<'_> {
     /// A pack's checked routing inputs, before its first read.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the inputs of run_pack, checked once for every first read"
+        reason = "the inputs of run_pack_images, checked once for every first read"
     )]
     pub(super) fn open<'a>(
         &'a self,
         questions: &'a [&'a DecisionQuestion],
         principal: EntityId,
         evidence: &'a [EntityId],
+        images: &'a [DecisionImage],
         state: &'a Value,
         dial: DecisionDial,
         policy: &'a DecisionBandPolicy,
@@ -455,6 +551,14 @@ impl DecisionLadder<'_> {
             }
         }
         validate_state(state)?;
+        DecisionImage::check_call(
+            images,
+            state,
+            questions
+                .iter()
+                .any(|question| question.contract == AnswerContract::Box),
+        )
+        .map_err(|_| invalid("invalid decision images"))?;
         dial.band.validate()?;
         if dial.first > dial.ceiling {
             return Err(invalid("invalid decision dial"));
@@ -480,6 +584,7 @@ impl DecisionLadder<'_> {
             questions,
             principal,
             evidence,
+            images,
             state,
             dial,
             rows,
@@ -509,6 +614,7 @@ impl DecisionLadder<'_> {
                     question,
                     principal: pack.principal,
                     evidence: pack.evidence,
+                    images: pack.images,
                     state: pack.state,
                     dial: pack.dial,
                     row,
@@ -535,6 +641,7 @@ impl DecisionLadder<'_> {
             question,
             principal,
             evidence,
+            images,
             state,
             dial,
             row,
@@ -600,7 +707,7 @@ impl DecisionLadder<'_> {
                 break;
             }
             // A stronger rung, the person's included, starts only while work time is left.
-            match self.next_available(rung, dial.ceiling, question) {
+            match self.next_available(rung, dial.ceiling, question, images) {
                 None => {
                     unavailable = true;
                     if let Some(cause) = cause {
@@ -619,6 +726,7 @@ impl DecisionLadder<'_> {
                     let pack = DecisionPack {
                         questions: &questions,
                         evidence,
+                        images,
                         state,
                         deadline,
                     };
@@ -680,6 +788,7 @@ impl DecisionLadder<'_> {
         };
         // A rung that abstained answered nothing.
         let answered = answered.filter(|_| outcome.answer != DecisionAnswer::Abstain);
+        let evidence_versions = images.iter().map(|image| image.evidence.clone()).collect();
         Ok(TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,
@@ -693,7 +802,7 @@ impl DecisionLadder<'_> {
                 providers: readings.pins,
                 band: row.band,
                 band_version: row.version,
-                evidence_versions: Vec::new(),
+                evidence_versions,
                 cost_per_thousand: None,
                 paired: readings.paired,
                 person: readings.person,
@@ -727,13 +836,14 @@ impl DecisionLadder<'_> {
         mut rung: DecisionRung,
         ceiling: DecisionRung,
         question: &DecisionQuestion,
+        images: &[DecisionImage],
     ) -> Option<DecisionRung> {
         while rung < ceiling {
             rung = next_rung(rung);
             if rung == DecisionRung::Human
                 || self
                     .slot(rung)
-                    .is_some_and(|provider| provider.capability().takes(question))
+                    .is_some_and(|provider| takes(provider, question, images))
             {
                 return Some(rung);
             }
@@ -757,11 +867,10 @@ impl DecisionLadder<'_> {
             .ok_or_else(|| invalid("decision provider unavailable"))?;
         let pin = provider.pin();
         validate_pin(&pin, rung)?;
-        let capability = provider.capability();
         if !pack
             .questions
             .iter()
-            .all(|question| capability.takes(question))
+            .all(|question| takes(provider, question, pack.images))
         {
             return Err(invalid("decision provider cannot take the question"));
         }
@@ -874,6 +983,7 @@ pub(super) struct OpenPack<'a> {
     questions: &'a [&'a DecisionQuestion],
     principal: EntityId,
     evidence: &'a [EntityId],
+    images: &'a [DecisionImage],
     state: &'a Value,
     dial: DecisionDial,
     rows: Vec<LearnedBand>,
@@ -898,6 +1008,7 @@ struct Route<'a> {
     question: &'a DecisionQuestion,
     principal: EntityId,
     evidence: &'a [EntityId],
+    images: &'a [DecisionImage],
     state: &'a Value,
     dial: DecisionDial,
     row: LearnedBand,

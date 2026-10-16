@@ -1,8 +1,13 @@
 //! Bounded on-demand home reads on an independent short-lived authenticated
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 
+mod authority;
 mod index;
+mod sealed;
 pub use index::ResidenceIndexWindow;
+pub use sealed::SealedRelay;
+pub(crate) use authority::catch_up_authority;
+pub(crate) use sealed::relay_sealed_windows;
 
 use std::collections::HashSet;
 use std::time::Duration;

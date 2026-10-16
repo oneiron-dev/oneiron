@@ -43,7 +43,9 @@ pub(super) fn anchor_text(bytes: &[u8], locator: &Locator, limits: &TextLimits) 
         }
         Locator::Pptx { slide, shape_id } => {
             let deck = deck_view(bytes, limits)?;
-            let slide = deck.slides.get(usize::try_from(*slide).ok()?.checked_sub(1)?)?;
+            let slide = deck
+                .slides
+                .get(usize::try_from(*slide).ok()?.checked_sub(1)?)?;
             if shape_id == "slide" {
                 let texts: Vec<String> = slide.shapes.iter().filter_map(shape_text).collect();
                 return (!texts.is_empty()).then(|| texts.join(&PARAGRAPH_SEPARATOR.to_string()));
@@ -85,9 +87,9 @@ pub(super) fn find_text(
                 blocks
                     .iter()
                     .flat_map(|(id, block)| {
-                        char_occurrences(block, text).into_iter().filter_map(|(start, end)| {
-                            Locator::docx(id.clone(), start, end).ok()
-                        })
+                        char_occurrences(block, text)
+                            .into_iter()
+                            .filter_map(|(start, end)| Locator::docx(id.clone(), start, end).ok())
                     })
                     .collect()
             })
@@ -128,7 +130,11 @@ pub(super) fn remap_span(before: &str, after: &str, start: u64, end: u64) -> Opt
         return None;
     }
     let shared = before.len().min(after.len());
-    let prefix = before.iter().zip(&after).take_while(|(a, b)| a == b).count();
+    let prefix = before
+        .iter()
+        .zip(&after)
+        .take_while(|(a, b)| a == b)
+        .count();
     let suffix = before
         .iter()
         .rev()

@@ -180,8 +180,10 @@ fn project(
             continue;
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if !crate::claim::claim_consolidatable(&body)
-            || !crate::claim::claim_evidence_admissible(&body)
+        let reaction_event = crate::reaction::outcome_fact_admissible_in(store, txn, *id, &body)?;
+        if ((!crate::claim::claim_consolidatable(&body)
+            || !crate::claim::claim_evidence_admissible(&body))
+            && !reaction_event)
             || !crate::gate::claim_consolidation_eligible_in_txn(
                 store,
                 txn,
@@ -282,14 +284,18 @@ pub(super) fn evaluate_fact(
 ) -> Result<Option<OutcomeLabel>> {
     record.definition.validate()?;
     let body = fact.body;
+    let reaction_event = crate::reaction::outcome_fact_admissible_in(store, txn, fact.id, body)?;
     if record.schema_version != 1
         || record.definition.question.id != answer.decision.receipt.question
         || record.definition.question.version != answer.decision.receipt.question_version
         || record.principal != answer.decision.receipt.principal
         || !record.definition.learning
         || !record.definition.units.contains(&answer.unit)
-        || !crate::claim::claim_consolidatable(body)
-        || !crate::claim::claim_evidence_admissible(body)
+        || ((!crate::claim::claim_consolidatable(body)
+            || !crate::claim::claim_evidence_admissible(body)) && !reaction_event)
+        // A classifier's interpretation is a noisy outcome for another
+        // question, never a label that corroborates its own prediction.
+        || crate::reaction::outcome_question(body)? == Some(record.definition.question.id)
         || !crate::gate::claim_consolidation_eligible_in_txn(
             store,
             txn,
@@ -340,6 +346,11 @@ pub(super) fn evaluate_fact(
         )?
     {
         return Ok(None);
+    }
+    for source in crate::reaction::outcome_sources(body)? {
+        if !readable(store, txn, policy, &actor, &source)? {
+            return Ok(None);
+        }
     }
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &answer.claim)?
     else {

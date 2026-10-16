@@ -14,6 +14,47 @@ impl ConsolidationExecutor<'_> {
         transcript: &str,
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
+        Self::request_over(
+            call,
+            None,
+            format!(
+                "conversation {}\n{transcript}",
+                bytes_to_hex_lower(partition.conversation_ref.as_bytes())
+            ),
+            scope,
+        )
+    }
+
+    /// The extraction request over one NOTE (OF-073): the same prompt and
+    /// reply contract, with the NOTE's markdown as the only source. Its
+    /// byte ranges count over that markdown, so the review can check each
+    /// one against the exact text it read.
+    pub(in crate::dreamer_consolidation) fn note_request(
+        call: &RoleCall<'_>,
+        note: EntityId,
+        markdown: &str,
+        scope: &crate::llm::Scope,
+    ) -> Result<LlmRequest> {
+        let id = bytes_to_hex_lower(note.as_bytes());
+        Self::request_over(
+            call,
+            Some(format!(
+                "The source is one note, not a conversation. Cite it as \
+                 {{\"source_id\": \"{id}\", \"byte_range\": [start, end]}}, a range of \
+                 UTF-8 bytes of the note's markdown, which starts on the line after its \
+                 header."
+            )),
+            format!("note {id}\n{markdown}"),
+            scope,
+        )
+    }
+
+    fn request_over(
+        call: &RoleCall<'_>,
+        source_rule: Option<String>,
+        source: String,
+        scope: &crate::llm::Scope,
+    ) -> Result<LlmRequest> {
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
@@ -28,13 +69,10 @@ impl ConsolidationExecutor<'_> {
             messages.push(text(LlmMessageRole::User, example.user));
             messages.push(text(LlmMessageRole::Assistant, example.assistant));
         }
-        messages.push(text(
-            LlmMessageRole::User,
-            format!(
-                "conversation {}\n{transcript}",
-                bytes_to_hex_lower(partition.conversation_ref.as_bytes())
-            ),
-        ));
+        if let Some(rule) = source_rule {
+            messages.push(text(LlmMessageRole::System, rule));
+        }
+        messages.push(text(LlmMessageRole::User, source));
         Ok(LlmRequest {
             model: call.model.clone(),
             envelope: CallEnvelope {
@@ -652,7 +690,7 @@ fn prior_topic(scope: Option<&Value>) -> Option<Value> {
         .find_map(|(key, value)| (key.as_str() == Some("topic_key")).then(|| value.clone()))
 }
 
-fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
+pub(in crate::dreamer_consolidation) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
     let hex = hex.trim();
     if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
@@ -726,7 +764,7 @@ pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
     disagreements
 }
 
-fn decode_model_locator(
+pub(in crate::dreamer_consolidation) fn decode_model_locator(
     value: &serde_json::Value,
 ) -> Result<super::super::evidence::EvidenceLocator> {
     let object = value

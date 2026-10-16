@@ -61,11 +61,20 @@ impl TeamShape {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DecidedBy {
-    Leader { actor: EntityId },
-    Chair { actor: EntityId },
-    Vote { tally: BTreeMap<String, u32> },
+    Leader {
+        actor: EntityId,
+    },
+    Chair {
+        actor: EntityId,
+    },
+    Vote {
+        tally: BTreeMap<String, u32>,
+    },
     /// A rule signed before the work: a test suite, a holdout, a pinned judge.
-    Referee { rule: String, signed_at: u64 },
+    Referee {
+        rule: String,
+        signed_at: u64,
+    },
 }
 
 impl DecidedBy {
@@ -138,7 +147,10 @@ impl TeamReceipt {
     ///
     /// [`Error::InvalidClaimBody`] naming the broken rule.
     pub fn validate(&self) -> Result<()> {
-        bounded(&self.team_ref, "a team reference is 1..=256 bytes without NUL")?;
+        bounded(
+            &self.team_ref,
+            "a team reference is 1..=256 bytes without NUL",
+        )?;
         self.type_ref.validate()?;
         if self.models.is_empty() || self.models.len() > MAX_LIST {
             return Err(Error::InvalidClaimBody(
@@ -159,7 +171,10 @@ impl TeamReceipt {
             ));
         }
         if let DecidedBy::Referee { rule, .. } = &self.decided_by {
-            bounded(rule, "a referee rule reference is 1..=256 bytes without NUL")?;
+            bounded(
+                rule,
+                "a referee rule reference is 1..=256 bytes without NUL",
+            )?;
         }
         if let Some(skill) = &self.pattern_skill {
             bounded(&skill.version, "a pattern skill version is 1..=256 bytes")?;
@@ -219,7 +234,10 @@ pub fn settle_team_outcome(
     team_ref: &str,
     outcome: &TeamOutcome,
 ) -> Result<TeamReceipt> {
-    bounded(&outcome.receipt, "an outcome receipt is 1..=256 bytes without NUL")?;
+    bounded(
+        &outcome.receipt,
+        "an outcome receipt is 1..=256 bytes without NUL",
+    )?;
     vault.with_write_txn_grouped(|wtxn| {
         let mut receipt = TEAM_RECEIPT
             .get(&vault.store, wtxn, &team_ref.to_owned())?
@@ -250,6 +268,7 @@ fn feed_pattern_payoff_in_txn(
         judge: None,
         on_judge_model: false,
         outcome_label: None,
+        pack_attribution: None,
     };
     crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, outcome.at)?;
     Ok(())

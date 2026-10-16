@@ -81,16 +81,19 @@ impl DecisionLadder<'_> {
         {
             return Err(invalid("invalid generated rung").into());
         }
-        if questions
-            .iter()
-            .any(|question| matches!(question.contract, AnswerContract::Score { .. }))
-        {
+        if !questions.iter().all(|question| {
+            matches!(
+                question.contract,
+                AnswerContract::Noul | AnswerContract::Choice { .. }
+            )
+        }) {
             return Err(invalid("a generated read takes noul and choice questions").into());
         }
         let pack = self.open(
             questions,
             principal,
             evidence,
+            &[],
             state,
             dial,
             policy,
@@ -108,6 +111,7 @@ impl DecisionLadder<'_> {
             let call = DecisionPack {
                 questions: chunk,
                 evidence,
+                images: &[],
                 state,
                 deadline,
             };

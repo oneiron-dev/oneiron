@@ -540,6 +540,11 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
             return self.run_nightly_merge(attempt, ctx).await;
         }
+        if attempt.status.payload.attempt_type
+            == crate::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
+        {
+            return self.run_note_review(attempt, ctx).await;
+        }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::CONTINUE_ATTEMPT {
             return crate::dreamer_wake::nightly::continue_nightly(attempt, ctx);
         }
