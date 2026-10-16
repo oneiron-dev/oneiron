@@ -137,6 +137,7 @@ declare const vault: {
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
+    reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;
     sharing(input: { room_ref: string }): Promise<unknown>;
     speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
     trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;

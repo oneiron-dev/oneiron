@@ -660,6 +660,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
+        "vault.rooms.reply_strips" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.claim" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -924,6 +925,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("turn_ref") {
                 arguments.insert("turn_ref".to_owned(), value.clone());
             }
+        }
+        "vault.rooms.reply_strips" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.claim" => {
             if let Some(value) = input.get("room_ref") {
@@ -1629,6 +1633,20 @@ async fn execute_agent_verb_listing(
             let output = oneiron::task_verb::sdk::vault_rooms_trunk(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.reply_strips" => {
+            let input: oneiron::conversation_dag::ReplyStripsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_reply_strips(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.groups.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("groups");
             mcp_agent_verb_output(output, source)
         }
         "vault.rooms.claim" => {

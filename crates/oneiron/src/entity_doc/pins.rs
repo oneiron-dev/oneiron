@@ -345,6 +345,72 @@ impl Vault {
     }
 }
 
+impl Vault {
+    /// Pins a quoted span of a MESSAGE that owns a document, inside the
+    /// caller's write transaction: the conversation reply door's quote.
+    /// `start..end` is a half-open range of Unicode scalar values, the index
+    /// space of the document's text API, so it becomes stable cursors at the
+    /// current frontier unconverted and is not kept. The quote is proven
+    /// against that version as [`Self::pin_entity_text`] proves one. A quote
+    /// adds no text operation, so it asks no edit grant: the reply door has
+    /// already admitted `actor` to the message's room.
+    pub(crate) fn pin_message_quote_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        citation: &EntityId,
+        message: &EntityId,
+        start: usize,
+        end: usize,
+        actor: WriteActor,
+    ) -> Result<CitationPin> {
+        super::forks::validate_actor(self, txn, actor)?;
+        let is_message = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, message)?
+            .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE);
+        let h = storage::head(&self.store, txn, message)?;
+        if !is_message || h.field != super::TextField::MapField("content".to_owned()) {
+            return Err(invalid("quote pin requires a MESSAGE document"));
+        }
+        if start >= end {
+            return Err(invalid("quote span is empty"));
+        }
+        let doc = storage::load(&self.store, txn, &h)?;
+        let anchor = super::verbs::make_anchor(&doc, *message, start, end)?;
+        let origin = doc.fork(&anchor.frontier)?;
+        let (from, to) = super::verbs::resolve(&origin, *message, &anchor)?;
+        let quote: String = origin.text().chars().skip(from).take(to - from).collect();
+        if quote.is_empty()
+            || quote != anchor.quote
+            || blake3::hash(quote.as_bytes()).as_bytes() != &anchor.hash
+        {
+            return Err(invalid("citation quote does not match pinned version"));
+        }
+        let key = HexPair(HexId(*message), HexId(*citation));
+        if ENTITY_DOC_PIN.contains(&self.store, txn, &key)? {
+            return Err(invalid("citation pin is immutable"));
+        }
+        let pin = CitationPin {
+            citation: citation.to_hex(),
+            entity: message.to_hex(),
+            document: h.document,
+            anchor,
+            actor: actor.entity_ref().to_hex(),
+        };
+        ENTITY_DOC_PIN.put(&self.store, txn, &key, &pin)?;
+        Ok(pin)
+    }
+
+    /// The citation pin `citation` holds on `message`, in the caller's snapshot.
+    pub(crate) fn message_quote_pin_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        message: &EntityId,
+        citation: &EntityId,
+    ) -> Result<Option<CitationPin>> {
+        ENTITY_DOC_PIN.get(&self.store, txn, &HexPair(HexId(*message), HexId(*citation)))
+    }
+}
+
 fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
     let txn = vault.store.env.read_txn()?;
     Ok(
