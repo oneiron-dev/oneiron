@@ -207,6 +207,39 @@ pub const CORRECTION: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Does this candidate belong to the saved query its owner's rubric describes? Keyed by the
+/// rubric's hash and version.
+pub const SAVED_QUERY_MATCH: QuestionFamily = QuestionFamily {
+    name: "saved_query.match",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does the owner policy's safeguard model find a violation (binary contract), or which
+/// policy row the candidate violates, if any (category contracts)? Keyed by the document
+/// hash, the contract and the option group.
+pub const POLICY_OWNER_VIOLATION: QuestionFamily = QuestionFamily {
+    name: "policy_model.owner_violation",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// The owner question for an attested hosted-legal policy. Keyed as the owner question is,
+/// with the policy version.
+pub const POLICY_HOSTED_VIOLATION: QuestionFamily = QuestionFamily {
+    name: "policy_model.hosted_violation",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Is this booking turn off topic for scheduling (the turn ends with a deflect)? Keyed by
+/// the constraint schema version.
+pub const BOOKING_OFF_TOPIC: QuestionFamily = QuestionFamily {
+    name: "booking.off_topic",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -230,4 +263,8 @@ pub const FAMILIES: &[QuestionFamily] = &[
     CONNECTOR_SLATE_DRAFT,
     CONFLICT_RESOLUTION,
     CORRECTION,
+    SAVED_QUERY_MATCH,
+    POLICY_OWNER_VIOLATION,
+    POLICY_HOSTED_VIOLATION,
+    BOOKING_OFF_TOPIC,
 ];

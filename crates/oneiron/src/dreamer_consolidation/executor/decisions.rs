@@ -10,8 +10,8 @@ use super::*;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::{
     DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung,
-    GeneratedDecisions, GeneratedRung, HeldLadder, ProviderPin, Reversibility, TypedDecision,
-    cut_text, fit_state,
+    GeneratedDecisions, GeneratedRung, GeneratedStep, HeldLadder, ProviderPin, Reversibility,
+    TypedDecision, cut_text, fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
@@ -128,8 +128,10 @@ impl ConsolidationExecutor<'_> {
                 version: call.model.to_string(),
             },
             backend: call.backend,
-            guard: self.guard,
-            step: step_ctx,
+            step: GeneratedStep::Durable {
+                step: step_ctx,
+                guard: self.guard,
+            },
             request: verdict_shell(&call, scope)?,
             seal: &seal,
         };
@@ -161,6 +163,10 @@ impl ConsolidationExecutor<'_> {
                 Ok(Some(decisions))
             }
             GeneratedDecisions::Trapped => Ok(None),
+            GeneratedDecisions::Unread(_) => Err(invalid_consolidation(
+                "a durable decision read came back unread",
+            )
+            .into()),
         }
     }
 }

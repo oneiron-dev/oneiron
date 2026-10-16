@@ -61,7 +61,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 12;
+const BYPASS_CEILING: usize = 7;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -93,36 +93,6 @@ const fn pin(
 
 /// Typed decisions made outside `decide()`. Each one leaves this list when its surface moves.
 const BYPASSES: &[Pin] = &[
-    pin(
-        "crates/oneiron/src/saved_query/evaluator.rs",
-        "generate",
-        ".generate(request, lease)",
-        "saved-query membership judge: match or no_match per candidate",
-    ),
-    pin(
-        "crates/oneiron/src/policy_model/classify.rs",
-        "generate",
-        ".generate(llm_request, lease)",
-        "owner-policy classifier on a lease: violation bit and category, read as allow, warn, block or route to help",
-    ),
-    pin(
-        "crates/oneiron/src/policy_model/classify.rs",
-        "generate",
-        "let response = backend.generate(llm_request, lease.lease()).await;",
-        "owner-policy classifier on a budget: the same question under its own admission",
-    ),
-    pin(
-        "crates/oneiron/src/policy_model/relay/hosted.rs",
-        "generate",
-        ".generate(prompt.llm_request(config), safeguard.lease)",
-        "hosted-policy classifier on the relay: violation bit and category for the hosted policy row",
-    ),
-    pin(
-        "crates/oneiron/src/booking/constraint.rs",
-        "generate",
-        ".generate(",
-        "booking front: constraint or off_topic (off_topic ends the turn), asked with the schedule extraction",
-    ),
     pin(
         "crates/oneiron/src/llm/routing.rs",
         "call_as_step",
@@ -402,6 +372,24 @@ const OUTSIDE: &[Pin] = &[
         "call_as_step",
         "Some(super::call_as_step(ctx, backend, guard, request).await?)",
         "tagger render (extraction)",
+    ),
+    pin(
+        "crates/oneiron/src/policy_model/notes.rs",
+        "generate",
+        "let response = backend.generate(request, lease).await;",
+        "policy rationale notes: rule ids, confidence and rationale beside a decided policy read (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/saved_query/decisions.rs",
+        "generate",
+        ".generate(request, binding.lease)",
+        "saved-query membership note: the why a decided verdict keeps (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/booking/constraint.rs",
+        "generate",
+        ".generate(",
+        "booking front: the schedule extraction for a turn the off-topic question kept (generation)",
     ),
     pin(
         "crates/oneiron/src/critic/review/questions.rs",

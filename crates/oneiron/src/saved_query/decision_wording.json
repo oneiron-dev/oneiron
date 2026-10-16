@@ -1,0 +1,4 @@
+{
+  "membership": "The system message is the saved query's rubric, written by its owner, and the user message is the evidence about one candidate entity. Does the candidate belong to the saved query the rubric describes?",
+  "why": "The verdict on this candidate is decided. In plain language and briefly, why does it hold under the rubric and the evidence?"
+}

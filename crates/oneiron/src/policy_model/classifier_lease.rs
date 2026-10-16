@@ -1,6 +1,7 @@
 //! Cancellation-safe ownership of a stateless classifier's private reservation.
 
-use crate::llm::{BudgetGuard, BudgetLease};
+use crate::error::{Error, Result};
+use crate::llm::{BudgetGuard, BudgetLease, LlmResponse, LlmResult};
 
 /// A started classifier call must spend its estimate if it never returns
 /// terminal usage. The caller may settle actual usage first; settlement of an
@@ -18,6 +19,17 @@ impl<'a> ClassifierLease<'a> {
 
     pub(super) fn lease(&self) -> &BudgetLease {
         &self.lease
+    }
+
+    /// Settles the call on the usage it reported, or on its estimate when it
+    /// returned none.
+    pub(super) fn settle(&self, response: &LlmResult<LlmResponse>) -> Result<()> {
+        let settled = match response {
+            Ok(answer) => self.budget.settle_per_call(&self.lease, &answer.usage),
+            Err(_) => self.budget.settle_reserved(&self.lease),
+        };
+        settled.map_err(|_| Error::InvariantViolation("classifier budget settlement"))?;
+        Ok(())
     }
 }
 

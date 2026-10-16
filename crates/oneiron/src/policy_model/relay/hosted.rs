@@ -6,12 +6,14 @@ use crate::gate;
 
 use super::super::binding::{PolicyContentBinding, content_binding, relay_verify_content_binding};
 use super::super::classify::{pass_audit, wants_model};
+use super::super::decide::{SafeguardModel, safeguard_verdict};
 use super::super::pattern::{CompiledPatternRule, CompiledPatternRules, PolicyPatternRole};
 use super::super::planes::{HostedLegalPolicy, PolicyPlane, hosted_rubric_rows};
-use super::super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_response};
+use super::super::prompt::{AnswerPlane, render_classify_prompt};
 use super::super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::super::verdict::{
-    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyVerdictCategory,
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicySkipReason,
+    PolicyVerdictCategory,
 };
 use super::boundary::malformed_relay_policy_error;
 use super::outcome::{
@@ -222,51 +224,40 @@ impl Vault {
                 true,
             ));
         };
-        let response = match safeguard
-            .backend
-            .generate(prompt.llm_request(config), safeguard.lease)
-            .await
-        {
-            Ok(response) => response,
-            Err(_unavailable) => {
-                return Ok(degraded_hosted_pass(
-                    binding,
-                    config,
-                    audit,
-                    RelayBoundaryDegrade::SafeguardModelUnavailable,
+        let verdict = safeguard_verdict(
+            SafeguardModel::Leased {
+                backend: safeguard.backend,
+                lease: safeguard.lease,
+            },
+            request,
+            &prompt,
+            &AnswerPlane::Hosted(policy),
+            crate::vault::embedded_owner_actor_id()?,
+            binding,
+            config,
+            audit,
+        )
+        .await?;
+        let degrade = match verdict.decision.skip_reason() {
+            None => {
+                return Ok(RelayBoundaryPass::classified(
+                    verdict,
+                    None,
                     true,
+                    RelayResolution::ModelDecided,
                 ));
             }
+            Some(PolicySkipReason::ResponseUnusable) => {
+                RelayBoundaryDegrade::SafeguardModelResponseUnusable
+            }
+            Some(_) => RelayBoundaryDegrade::SafeguardModelUnavailable,
         };
-        let Ok(resolved) =
-            resolve_policy_model_response(&response, &prompt, &AnswerPlane::Hosted(policy))
-        else {
-            return Ok(degraded_hosted_pass(
-                binding,
-                config,
-                audit,
-                RelayBoundaryDegrade::SafeguardModelResponseUnusable,
-                true,
-            ));
-        };
-        let mut audit = audit;
-        audit.model_rule_ids = resolved.answer.rule_ids;
-        audit.model_rule_ids_dropped = resolved.dropped_rule_ids;
-        audit.model_confidence = resolved.answer.confidence;
-        audit.model_rationale = resolved.answer.rationale;
-        Ok(RelayBoundaryPass::classified(
-            PolicyClassifyVerdict::new(
-                resolved.decision,
-                resolved.category,
-                PolicyConfidence::MEDIUM,
-                binding,
-                config,
-                PolicyPlane::HostedLegal,
-            )
-            .with_audit(audit),
-            None,
+        Ok(degraded_hosted_pass(
+            binding,
+            config,
+            verdict.audit.map(|audit| *audit).unwrap_or_default(),
+            degrade,
             true,
-            RelayResolution::ModelDecided,
         ))
     }
 }

@@ -1,0 +1,5 @@
+{
+  "binary": "Does the candidate content, the user message just before this one, violate the policy the system message states?",
+  "category": "Which of this question's labelled policy rows does the candidate content, the user message just before this one, violate under the policy the system message states? Answer with that row's label, or clean when it violates none of them.",
+  "notes": "The policy's answer for the candidate content, the user message just before this one, is decided: answer names the row it violates, or clean. Give the notes the policy asks for on that answer: rule_ids, the policy's own ids for the rules applied; confidence, in the policy's words; rationale, the reason in brief."
+}
