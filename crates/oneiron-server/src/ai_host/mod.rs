@@ -415,7 +415,8 @@ impl AiHost {
         recover_dead_leases(&vault);
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
-        let mut runtime = ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts);
+        let mut runtime =
+            ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts);
         if let Some(account) = account {
             runtime = runtime.with_host_account(account);
         }
@@ -671,6 +672,7 @@ async fn start_dreamer(
         egress,
         status: Arc::clone(status),
         idle,
+        windows: dreamer::dream_windows(models),
     })
     .await
     .map_err(|error| {
@@ -708,6 +710,11 @@ fn start_workflows(
 }
 
 impl AiHandle {
+    /// The model seats this host built: inert ones when `[models]` is unset.
+    pub(crate) fn models(&self) -> &Arc<ModelRuntime> {
+        &self.runtime
+    }
+
     /// The router the raw `/v1/llm` routes call, with its own meter.
     pub(crate) fn decision_read(&self) -> Option<crate::models::DecisionReadDoor> {
         self.runtime.decision_read().cloned()

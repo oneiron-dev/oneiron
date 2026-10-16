@@ -165,10 +165,35 @@ pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Is everything okay past a wire, limit or scan threshold: a bot, or a valid burst
+/// (OF-520)? Keyed by the crossing.
+pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
+    name: "server.wire_health",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Which capability setting one connector grant-slate row drafts (auto, always ask or
 /// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
 pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
     name: "connector.grant_slate.draft",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How a conflicting claim set the Dreamer extracted resolves (merge, supersede, accumulate
+/// or escalate), and which listed candidate's identity a merge keeps. Keyed by `resolution`,
+/// or by `identity` and the option group.
+pub const CONFLICT_RESOLUTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_resolution",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Which listed claim, if any, a candidate the Dreamer extracted corrects. Keyed by the
+/// candidate's position and the option group.
+pub const CORRECTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.correction",
     version: 1,
     class: DecisionClass::Judgment,
 };
@@ -191,5 +216,8 @@ pub const FAMILIES: &[QuestionFamily] = &[
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
+    WIRE_HEALTH,
     CONNECTOR_SLATE_DRAFT,
+    CONFLICT_RESOLUTION,
+    CORRECTION,
 ];

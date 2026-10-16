@@ -43,6 +43,8 @@ pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemet
 
 pub(crate) use oneiron_contracts::serialize::entity_ref;
 mod export_value;
+mod okf_bundle;
+mod vault_archive;
 mod vault_document;
 pub use export_value::{ExportBody, ExportValue};
 pub(crate) use vault_document::serialize_vault_snapshot;
