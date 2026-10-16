@@ -236,6 +236,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_memory_diary_query(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.memory.diary.query")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.memory.diary.query", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "cancel")?;
         let output = py

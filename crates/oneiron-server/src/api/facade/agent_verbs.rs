@@ -6,6 +6,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.memory.diary", post(self_memory_diary))
         .route("/self.memory.diary.reads", post(self_memory_diary_reads))
         .route("/self.memory.diary.review", post(self_memory_diary_review))
+        .route("/self.memory.diary.query", post(self_memory_diary_query))
         .route("/cancel", post(cancel))
         .route("/steer", post(steer))
         .route("/describe", post(describe))
@@ -264,6 +265,21 @@ async fn self_memory_diary_review(
         class,
         "self.memory.diary.review",
         value,
+    )?))
+}
+async fn self_memory_diary_query(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "self.memory.diary.query")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("self.memory.diary.query", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::self_memory_diary_query(&server, &auth, facade_input(value)?).await?,
     )?))
 }
 async fn cancel(

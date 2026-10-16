@@ -134,6 +134,7 @@ export class Oneiron {
       diary: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown), {
         reads: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReads(input) as unknown),
         review: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReview(input) as unknown),
+        query: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as unknown),
       }),
     },
     skills: {

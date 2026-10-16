@@ -49,6 +49,7 @@ declare namespace self {
   const folds: (input: object) => Promise<unknown>;
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
+      query(input: { agent: string; reason: string }): Promise<unknown>;
       reads(input: { limit?: number | null }): Promise<unknown>;
       review(input: { request: string; approve: boolean }): Promise<unknown>;
     };
