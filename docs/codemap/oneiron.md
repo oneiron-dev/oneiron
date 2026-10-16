@@ -347,7 +347,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/put_staging.rs` | src | m | 26 crate-vis | — | Body/index/edge row staging helpers shared by the put and update paths |
 | `src/batch/put_apply/request.rs` | src | s | 12 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
-| `src/batch/secret_scan.rs` | src | m | 1 enum · 26 crate-vis | SecretScanMode | — |
+| `src/batch/secret_scan.rs` | src | L | 1 enum · 27 crate-vis | SecretScanMode | — |
 | `src/batch/secret_scan/shapes.rs` | src | m | 13 crate-vis | — | Credential-shape detection shared by write, serve, and export |
 | `src/batch/secret_scan/tests.rs` | test | m | — | — | — |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 10 crate-vis | — | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
@@ -411,7 +411,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/lifecycle.rs` | src | s | 3 crate-vis | — | Blob artifact delete path: version-chain, head, and asset-ref cleanup |
 | `src/blob_artifact/mod.rs` | src | s | 1 mod · 4 re-export · 9 crate-vis | — | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `src/blob_artifact/provenance.rs` | src | s | 1 enum · 2 fn · 7 crate-vis | BlobVersionProvenance | Blob version provenance: producer enum and claim-envelope value constructors |
-| `src/blob_artifact/references.rs` | src | s | 9 crate-vis | — | Which artifacts hold which version bytes, on every vault (H125) |
+| `src/blob_artifact/references.rs` | src | s | 10 crate-vis | — | Which artifacts hold which version bytes, on every vault (H125) |
 | `src/blob_artifact/references/tests.rs` | test | m | — | — | — |
 | `src/blob_artifact/store_keys.rs` | src | s | 2 const · 10 crate-vis | — | Blob vault_meta key builders and shared MessagePack scalar helpers |
 | `src/blob_artifact/tests.rs` | test | m | — | — | — |
@@ -1170,8 +1170,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/disclosure/vault_context.rs` | src | m | 2 struct · 12 fn · 8 crate-vis | DisclosureAssembly, DisclosureContext | vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block |
 | `src/dispatch_byoa/connector.rs` | src | m | 6 struct · 5 enum · 12 fn · 6 const · 25 crate-vis | ByoEndpointProtocol, ByoEndpointSpec, ByoaAttemptPayload, ByoaConnectorKind, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec +3 | Connector shapes, wire enums, attempt-payload codec, and serde adapters |
 | `src/dispatch_byoa/dispatcher.rs` | src | m | 2 struct · 3 trait · 8 fn · 1 crate-vis | ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor | Dispatcher organ with dispatch, execute, authorize, and capture doors |
-| `src/dispatch_byoa/error.rs` | src | s | 1 enum · 1 type · 38 crate-vis | ByoaError | Error enum, literal refusal reasons, result alias, and the invalid() constructor |
-| `src/dispatch_byoa/exhaust.rs` | src | m | 4 struct · 1 enum · 1 trait · 8 fn · 2 const · 9 crate-vis | ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaTerminalDisposition, ByoaTerminalReceipt, CaptureByoaExhaust | Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers |
+| `src/dispatch_byoa/error.rs` | src | s | 1 enum · 1 type · 40 crate-vis | ByoaError | Error enum, literal refusal reasons, result alias, and the invalid() constructor |
+| `src/dispatch_byoa/exhaust.rs` | src | m | 4 struct · 1 enum · 1 trait · 8 fn · 2 const · 10 crate-vis | ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaTerminalDisposition, ByoaTerminalReceipt, CaptureByoaExhaust | Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers |
 | `src/dispatch_byoa/mod.rs` | src | s | 6 re-export | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
 | `src/dispatch_byoa/provider.rs` | src | s | 5 struct · 1 trait · 3 fn | ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter, DreamerProviderInput, OpenCodeRunner, ProviderAdapterRegistry | Named propose-only Dreamer runners over the existing foreign CLI sandbox |
 | `src/dispatch_byoa/tests.rs` | test | L | — | — | — |
