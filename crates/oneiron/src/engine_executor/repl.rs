@@ -859,6 +859,7 @@ impl EngineNativeExecutor<'_> {
         }
         let mut swapped = false;
         for (seq, view) in views.iter().enumerate() {
+            messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
                 Some(Some(frame)) => {
                     messages.push(frame);
@@ -897,6 +898,7 @@ impl EngineNativeExecutor<'_> {
                 }],
             });
         }
+        messages.extend(self.fold_tail(&epochs, record, views.len())?);
 
         // Past a swap, the run's results are named once more beside the
         // frame that replaced the turns that bound them.

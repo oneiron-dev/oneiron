@@ -18,13 +18,13 @@
 use super::listener::bind_unix_socket;
 use super::vault_gates::read_managed_credentials;
 use oneiron_vault_contract::vm::{
-    VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT, VM_LEDGER_PORT, VmGuestFrame,
-    VmHostFrame, decode_vm_frame, encode_vm_frame, guest_initiated_socket, host_connect_line,
-    MAX_VM_FRAME,
+    MAX_VM_FRAME, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT, VM_LEDGER_PORT,
+    VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame, guest_initiated_socket,
+    host_connect_line,
 };
 use oneiron_vault_contract::{
     CREDENTIALS_LEN, Credentials, CtlRequest, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
-    MAX_CTL_LINE, READY_BYTE, TokenHex, UnixTs, WakeEntry, Schedule, now_ts, valid_vault_name,
+    MAX_CTL_LINE, READY_BYTE, Schedule, TokenHex, UnixTs, WakeEntry, now_ts, valid_vault_name,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -133,7 +133,11 @@ impl VaultVm {
 
     /// Restores the published snapshot if there is one, else boots cold.
     /// Returns once the vault reported ready (cold) or rejoined (restore).
-    pub async fn start(&mut self, credentials: &Credentials, timeout: Duration) -> anyhow::Result<()> {
+    pub async fn start(
+        &mut self,
+        credentials: &Credentials,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
         if self.has_snapshot() {
             self.restore(timeout).await
         } else {
@@ -150,7 +154,8 @@ impl VaultVm {
                 Err(error) => return Err(error.into()),
             }
         }
-        let mut command = tokio::process::Command::from(oneiron_spawn::command(&self.config.firecracker));
+        let mut command =
+            tokio::process::Command::from(oneiron_spawn::command(&self.config.firecracker));
         command
             .env_clear()
             .stdin(Stdio::null())
@@ -162,7 +167,10 @@ impl VaultVm {
         self.child = Some(command.spawn()?);
         let deadline = Instant::now() + API_SOCKET_WAIT;
         while !api.exists() {
-            anyhow::ensure!(Instant::now() < deadline, "firecracker API socket never appeared");
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "firecracker API socket never appeared"
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Ok(())
@@ -201,37 +209,65 @@ impl VaultVm {
             }
             let mut fault = vec![0u8; length.min(4096)];
             reader.read_exact(&mut fault).await?;
-            anyhow::bail!("firecracker {method} {path}: {code} {}", String::from_utf8_lossy(&fault))
+            anyhow::bail!(
+                "firecracker {method} {path}: {code} {}",
+                String::from_utf8_lossy(&fault)
+            )
         };
         tokio::time::timeout(API_TIMEOUT, call).await?
     }
 
-    async fn cold_boot(&mut self, credentials: &Credentials, timeout: Duration) -> anyhow::Result<()> {
+    async fn cold_boot(
+        &mut self,
+        credentials: &Credentials,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
         self.spawn_vmm().await?;
         let config = &self.config;
-        self.api("PUT", "/boot-source", json!({
-            "kernel_image_path": config.kernel, "boot_args": config.boot_args,
-        }))
+        self.api(
+            "PUT",
+            "/boot-source",
+            json!({
+                "kernel_image_path": config.kernel, "boot_args": config.boot_args,
+            }),
+        )
         .await?;
-        self.api("PUT", "/drives/rootfs", json!({
-            "drive_id": "rootfs", "path_on_host": config.rootfs,
-            "is_root_device": true, "is_read_only": true,
-        }))
+        self.api(
+            "PUT",
+            "/drives/rootfs",
+            json!({
+                "drive_id": "rootfs", "path_on_host": config.rootfs,
+                "is_root_device": true, "is_read_only": true,
+            }),
+        )
         .await?;
-        self.api("PUT", "/drives/vault", json!({
-            "drive_id": "vault", "path_on_host": config.vault_disk,
-            "is_root_device": false, "is_read_only": false,
-        }))
+        self.api(
+            "PUT",
+            "/drives/vault",
+            json!({
+                "drive_id": "vault", "path_on_host": config.vault_disk,
+                "is_root_device": false, "is_read_only": false,
+            }),
+        )
         .await?;
-        self.api("PUT", "/machine-config", json!({
-            "vcpu_count": config.vcpus, "mem_size_mib": config.mem_mib, "smt": false,
-        }))
+        self.api(
+            "PUT",
+            "/machine-config",
+            json!({
+                "vcpu_count": config.vcpus, "mem_size_mib": config.mem_mib, "smt": false,
+            }),
+        )
         .await?;
-        self.api("PUT", "/vsock", json!({
-            "guest_cid": VM_GUEST_CID, "uds_path": self.path("vsock.sock"),
-        }))
+        self.api(
+            "PUT",
+            "/vsock",
+            json!({
+                "guest_cid": VM_GUEST_CID, "uds_path": self.path("vsock.sock"),
+            }),
+        )
         .await?;
-        self.api("PUT", "/actions", json!({ "action_type": "InstanceStart" })).await?;
+        self.api("PUT", "/actions", json!({ "action_type": "InstanceStart" }))
+            .await?;
 
         // The credential connection: the frame, a half-close for the guest's
         // EOF check, then the ready byte back.
@@ -327,13 +363,15 @@ impl VaultVm {
     }
 
     pub async fn resume(&mut self) -> anyhow::Result<()> {
-        self.api("PATCH", "/vm", json!({ "state": "Resumed" })).await?;
+        self.api("PATCH", "/vm", json!({ "state": "Resumed" }))
+            .await?;
         self.send(&VmHostFrame::Resumed).await
     }
 
     /// Freezes the vault, asks for its next wake, and snapshots or stops it.
     pub async fn sleep(&mut self, timeout: Duration) -> anyhow::Result<SleepOutcome> {
-        let CtlResponse::PrepareReap { quiescent, .. } = self.ctl(&CtlRequest::PrepareReap).await? else {
+        let CtlResponse::PrepareReap { quiescent, .. } = self.ctl(&CtlRequest::PrepareReap).await?
+        else {
             anyhow::bail!("prepare_reap answered with another verb");
         };
         if !quiescent {
@@ -356,9 +394,13 @@ impl VaultVm {
         }
         self.pause().await?;
         let (snap_tmp, mem_tmp) = (self.path("vm.snap.tmp"), self.path("vm.mem.tmp"));
-        self.api("PUT", "/snapshot/create", json!({
-            "snapshot_type": "Full", "snapshot_path": snap_tmp, "mem_file_path": mem_tmp,
-        }))
+        self.api(
+            "PUT",
+            "/snapshot/create",
+            json!({
+                "snapshot_type": "Full", "snapshot_path": snap_tmp, "mem_file_path": mem_tmp,
+            }),
+        )
         .await?;
         for file in [&mem_tmp, &snap_tmp] {
             std::fs::File::open(file)?.sync_all()?;
@@ -379,11 +421,15 @@ impl VaultVm {
         std::fs::rename(self.path("vm.mem"), &mem)?;
         self.spawn_vmm().await?;
         let loaded = self
-            .api("PUT", "/snapshot/load", json!({
-                "snapshot_path": snap,
-                "mem_backend": { "backend_type": "File", "backend_path": mem },
-                "resume_vm": true,
-            }))
+            .api(
+                "PUT",
+                "/snapshot/load",
+                json!({
+                    "snapshot_path": snap,
+                    "mem_backend": { "backend_type": "File", "backend_path": mem },
+                    "resume_vm": true,
+                }),
+            )
             .await;
         let _ = std::fs::remove_file(&snap);
         loaded?;
@@ -449,16 +495,26 @@ async fn take_ledger_push(
     BufReader::new(reader.take(MAX_CTL_LINE as u64 + 2))
         .read_line(&mut line)
         .await?;
-    let update: anyhow::Result<LedgerUpdate> = serde_json::from_str(line.trim_end_matches(['\r', '\n']))
-        .map_err(anyhow::Error::from)
-        .and_then(|update: LedgerUpdate| {
-            update.validate()?;
-            anyhow::ensure!(update.vault == vault && update.token.ct_eq(token), "foreign ledger push");
-            Ok(update)
-        });
+    let update: anyhow::Result<LedgerUpdate> =
+        serde_json::from_str(line.trim_end_matches(['\r', '\n']))
+            .map_err(anyhow::Error::from)
+            .and_then(|update: LedgerUpdate| {
+                update.validate()?;
+                anyhow::ensure!(
+                    update.vault == vault && update.token.ct_eq(token),
+                    "foreign ledger push"
+                );
+                Ok(update)
+            });
     let ack = match &update {
-        Ok(_) => LedgerAck { ok: true, error: None },
-        Err(error) => LedgerAck { ok: false, error: Some(error.to_string()) },
+        Ok(_) => LedgerAck {
+            ok: true,
+            error: None,
+        },
+        Err(error) => LedgerAck {
+            ok: false,
+            error: Some(error.to_string()),
+        },
     };
     let mut reply = serde_json::to_string(&ack)?;
     reply.push('\n');

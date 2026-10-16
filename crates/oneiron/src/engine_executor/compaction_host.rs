@@ -1,21 +1,23 @@
 //! The executor's side of the compaction host: landing a finished pass,
 //! the token feed, and sealing a window from the durable replay.
 
+use super::compaction::{FoldJob, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
 use super::store::{
-    COMPACTION_OBSERVATION_WINDOW_BYTES, load_context_output, load_observation_window,
-    observation_output_path, script_output_path,
+    COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
+    load_observation_window, observation_output_path, recoverable_chunk_path, script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
-use crate::LlmRequest;
-use crate::code_run::CodeRunReplayRecord;
+use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
+use crate::compaction::{FoldMark, FoldRecord, GatedCompaction, fold_handle};
 use crate::tokenizer::count_context_pack_tokens;
+use crate::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
 impl EngineNativeExecutor<'_> {
-    /// Lands a finished background pass: an accepted summary swaps in as
-    /// this run's next epoch; anything else holds for the turn and leaves
-    /// the window whole.
+    /// Lands a finished background flight: an accepted summary swaps in as
+    /// this run's next epoch, and anything else holds for the turn and leaves
+    /// the window whole; its fold batch lands at once, in one ledger write.
     pub(super) fn land_finished_compaction(&mut self) -> EngineExecutorResult<()> {
         if self
             .compaction
@@ -27,7 +29,12 @@ impl EngineNativeExecutor<'_> {
         let Some(seat) = self.compaction.take() else {
             return Ok(());
         };
-        let landed = match seat.take_finished() {
+        let Some(finished) = seat.take_finished() else {
+            self.compaction = Some(seat);
+            return Ok(());
+        };
+        self.land_folds(finished.folds);
+        let landed = match finished.epoch {
             None => Ok(()),
             Some(Err(suppression)) => {
                 seat.hold(suppression);
@@ -71,7 +78,8 @@ impl EngineNativeExecutor<'_> {
     }
 
     /// The token feed: the assembled request's size reaches the run's
-    /// driver, and a crossing seals the steps up to the watermark.
+    /// driver. A crossing, or the agent's `self.compact` ask, seals the steps
+    /// up to the watermark and every fold mark that applies, in one flight.
     pub(super) fn feed_compaction(
         &mut self,
         config: &EngineExecutorConfig,
@@ -79,22 +87,228 @@ impl EngineNativeExecutor<'_> {
         request: &LlmRequest,
     ) -> EngineExecutorResult<Option<super::compaction::WindowFullReason>> {
         let completed = completed_step_count(record)?;
+        if self.compaction.is_none() {
+            return Ok(None);
+        }
+        let run_id = config.run_id;
+        let ledger = self.storage.code_run_folds(run_id)?;
+        let asked = ledger.compact.as_ref().map(|ask| ask.note.clone());
+        let marks = if ledger.marks.is_empty() {
+            Vec::new()
+        } else {
+            let prefix_end = self
+                .storage
+                .code_run_compaction_coverage(run_id)?
+                .iter()
+                .map(|row| row.last())
+                .max();
+            ledger.applicable(completed, prefix_end, asked.is_some())
+        };
         let Some(seat) = self.compaction.take() else {
             return Ok(None);
         };
+        // A run whose compaction is off folds nothing: its asks end with why,
+        // which `self.folds()` shows.
+        if !seat.is_live()
+            && (asked.is_some() || !marks.is_empty())
+            && let Err(error) = self
+                .storage
+                .update_code_run_folds(run_id, |ledger| {
+                    ledger.refuse_pending("compaction is off for this run")
+                })
+        {
+            self.compaction = Some(seat);
+            return Err(error.into());
+        }
         let used = super::compaction::request_tokens(request);
         let mut refused = None;
-        let reason = seat.feed(used, completed, |driver, watermark| {
-            if let Err(refusal) = self.admit_compaction_read() {
-                refused = Some(refusal);
-                return Ok(None);
-            }
-            self.seal_compaction_window(driver, config, record, watermark)
-        });
+        let reason = seat.feed(
+            used,
+            completed,
+            asked.is_some(),
+            !marks.is_empty(),
+            |driver, watermark| {
+                if let Err(refusal) = self.admit_compaction_read() {
+                    refused = Some(refusal);
+                    return Ok(super::compaction::Flight::default());
+                }
+                let note = asked.clone().flatten();
+                let epoch = match watermark {
+                    Some(watermark) => self.seal_compaction_window(
+                        driver,
+                        config,
+                        record,
+                        watermark,
+                        note.clone(),
+                    )?,
+                    None => None,
+                };
+                let folds = self.seal_folds(driver, config, record, &marks, note.as_deref())?;
+                if asked.is_some() {
+                    self.storage
+                        .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
+                }
+                Ok(super::compaction::Flight { epoch, folds })
+            },
+        );
         self.compaction = Some(seat);
         match refused {
             Some(refusal) => Err(refusal),
             None => Ok(reason),
+        }
+    }
+
+    /// One fold job per mark (ARCH-0067 §2.2): the span's own retained
+    /// turns, its failure pins, the agent's notes, and what its stub lists
+    /// beside the summary. A mark one pass cannot hold keeps why, in one
+    /// ledger write.
+    fn seal_folds(
+        &self,
+        driver: &crate::compaction::CompactionDriver,
+        config: &EngineExecutorConfig,
+        record: &CodeRunReplayRecord,
+        marks: &[FoldMark],
+        asked: Option<&str>,
+    ) -> EngineExecutorResult<Vec<FoldJob>> {
+        let mut jobs = Vec::new();
+        let mut failed = Vec::new();
+        for mark in marks {
+            let note = match (mark.note.as_deref(), asked) {
+                (Some(mark), Some(asked)) => Some(format!("{mark}\n{asked}")),
+                (mark, asked) => mark.or(asked).map(str::to_owned),
+            };
+            match self.seal_fold(driver, config, record, mark, note)? {
+                Ok(job) => jobs.push(job),
+                Err(why) => failed.push((mark.fold, why)),
+            }
+        }
+        if !failed.is_empty() {
+            self.storage
+                .update_code_run_folds(config.run_id, |ledger| ledger.land(Vec::new(), &failed))?;
+        }
+        Ok(jobs)
+    }
+
+    fn seal_fold(
+        &self,
+        driver: &crate::compaction::CompactionDriver,
+        config: &EngineExecutorConfig,
+        record: &CodeRunReplayRecord,
+        mark: &FoldMark,
+        note: Option<String>,
+    ) -> EngineExecutorResult<Result<FoldJob, String>> {
+        let run_id = config.run_id;
+        let run_ref = self.gated_write.run_ref();
+        let session = crate::code_run::executor_compaction_session_id(run_ref, run_id)?;
+        let turn_id = crate::code_run::executor_speech_turn_id_for_run(run_ref, run_id)?;
+        let budget = driver.summary_token_budget();
+        let mut window = Vec::new();
+        let mut handles = Vec::new();
+        let mut reads = std::collections::BTreeSet::new();
+        for seq in mark.from..=mark.through {
+            let message = super::compaction::window_message(
+                super::compaction::step_message_id(run_id, seq),
+                turn_id,
+                seq,
+                load_context_output(&self.storage, record, &script_output_path(seq))?,
+                load_observation_window(
+                    &self.storage,
+                    record,
+                    &observation_output_path(seq),
+                    COMPACTION_OBSERVATION_WINDOW_BYTES,
+                )?,
+            );
+            let path = observation_output_path(seq);
+            if let Some(output) = record.outputs.iter().find(|output| output.path == path) {
+                handles.push(serde_json::to_string(&serde_json::json!({
+                    "step": seq,
+                    "sandbox.fs.read_file": recoverable_chunk_path(seq, output.output_ref(), 0),
+                    "byte_len": output.raw_len,
+                    "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                }))?);
+            }
+            super::compaction::result_reads(&message.content, &mut reads);
+            window.push(message);
+        }
+        for read in reads {
+            handles.push(serde_json::to_string(
+                &serde_json::json!({ "sandbox.fs.read_file": read }),
+            )?);
+        }
+        let pins = super::compaction::window_pins(&window);
+        if count_context_pack_tokens(&pins.join("\n")) as u64 > budget {
+            return Ok(Err(
+                "its failure lines do not fit one summary; fold a shorter span".to_owned(),
+            ));
+        }
+        if let Some(room) = driver.backend().input_token_limit(budget)
+            && crate::compaction::compaction_input_tokens(
+                mark.from,
+                &window,
+                &pins,
+                note.as_deref(),
+                budget,
+            ) > room
+        {
+            return Ok(Err(
+                "the span is longer than the compaction backend takes whole; fold a shorter span"
+                    .to_owned(),
+            ));
+        }
+        let ids = super::compaction::span_ids(&window);
+        let calls = u64::try_from(record.bridge_calls.len())
+            .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
+        let request = driver.fold_request(
+            super::compaction::fold_request_id(run_id, mark.fold),
+            &session,
+            window,
+            pins,
+            note,
+            calls,
+        )?;
+        Ok(Ok(FoldJob {
+            run_id,
+            fold: mark.fold,
+            from: mark.from,
+            through: mark.through,
+            request,
+            ids,
+            handles,
+        }))
+    }
+
+    /// One landed fold batch: every accepted fold becomes visible at once,
+    /// in one ledger write, and each failed mark keeps why. A batch that
+    /// cannot be written leaves its marks pending for the next pass.
+    fn land_folds(&self, folds: Vec<(FoldJob, Result<GatedCompaction, String>)>) {
+        let Some(run_id) = folds.first().map(|(job, _)| job.run_id) else {
+            return;
+        };
+        let mut landed = Vec::new();
+        let mut failed = Vec::new();
+        for (job, answer) in folds {
+            match answer {
+                Ok(gated) => {
+                    let stub = super::compaction::fold_stub(&job, gated.summary_text());
+                    landed.push(FoldRecord {
+                        fold: job.fold,
+                        from: job.from,
+                        through: job.through,
+                        stub,
+                        summary: gated.summary_text().to_owned(),
+                        ids: job.ids,
+                        handles: job.handles,
+                    });
+                }
+                Err(why) => failed.push((job.fold, why)),
+            }
+        }
+        if self
+            .storage
+            .update_code_run_folds(run_id, |ledger| ledger.land(landed, &failed))
+            .is_err()
+        {
+            tracing::warn!("a fold batch did not land");
         }
     }
 
@@ -127,16 +341,14 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         watermark: u64,
+        note: Option<String>,
     ) -> EngineExecutorResult<Option<crate::compaction::CompactionRequest>> {
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
         // The run's position is its coverage rows, withdrawn summaries
         // included: erasing a summary never moves where the next one starts.
         let coverage = self.storage.code_run_compaction_coverage(run_id)?;
-        let newest = coverage
-            .iter()
-            .max_by_key(|row| row.epoch())
-            .copied();
+        let newest = coverage.iter().max_by_key(|row| row.epoch()).copied();
         let prior = newest.map(|row| (row.epoch(), row.last()));
         let start = prior.map_or(0, |(_, last)| last.saturating_add(1));
         if start > watermark {
@@ -193,8 +405,15 @@ impl EngineNativeExecutor<'_> {
             let unpinnable = pinned && pin_lines > budget;
             let mut fits = !unpinnable;
             if fits && let Some(room) = room {
-                let whole =
-                    || crate::compaction::compaction_input_tokens(start, &window, &pins, budget);
+                let whole = || {
+                    crate::compaction::compaction_input_tokens(
+                        start,
+                        &window,
+                        &pins,
+                        note.as_deref(),
+                        budget,
+                    )
+                };
                 let counted = match input.map(|counted: u64| counted.saturating_add(added)) {
                     Some(counted) if counted <= room => counted,
                     _ => whole(),
@@ -224,7 +443,13 @@ impl EngineNativeExecutor<'_> {
         // counted whole once more, and a step it does not hold waits for the
         // next pass.
         while let Some(room) = room
-            && crate::compaction::compaction_input_tokens(start, &window, &pins, budget) > room
+            && crate::compaction::compaction_input_tokens(
+                start,
+                &window,
+                &pins,
+                note.as_deref(),
+                budget,
+            ) > room
         {
             window.pop();
             if window.is_empty() {
@@ -274,18 +499,78 @@ impl EngineNativeExecutor<'_> {
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         Ok(Some(driver.request_for_log(
-            request_id, &session, window, pins, sources, prior, calls,
+            request_id, &session, window, pins, sources, prior, calls, note,
         )?))
     }
 
-    /// This run's swapped epochs with their summaries' prose, where the run's
-    /// rows are: base, or its room's overlay over base.
-    pub(super) fn compaction_epochs(
+    /// This run's swapped epochs with their summaries' prose, and its fold
+    /// ledger, where the run's rows are: base, or its room's overlay over
+    /// base.
+    pub(super) fn compaction_epochs(&self, run_id: crate::EntityId) -> EngineExecutorResult<RunFrames> {
+        Ok(RunFrames {
+            epochs: self.storage.code_run_compaction_epochs(run_id)?,
+            folds: self.storage.code_run_folds(run_id)?,
+        })
+    }
+
+    /// The log at the place just before step `seq` (ARCH-0067 §2.2): each
+    /// fold the agent unfolded there, its raw turns whole and labelled with
+    /// their span. They stay where the end of the log was when it unfolded
+    /// them and never go back in place, so the cached log holds. At the end
+    /// of the log comes the dynamic folds line: handles, spans and pending
+    /// marks only.
+    pub(super) fn fold_tail(
         &self,
-        run_id: crate::EntityId,
-    ) -> EngineExecutorResult<Vec<(crate::code_run::CodeRunCompactionCoverage, Option<String>)>>
-    {
-        Ok(self.storage.code_run_compaction_epochs(run_id)?)
+        frames: &RunFrames,
+        record: &CodeRunReplayRecord,
+        seq: usize,
+    ) -> EngineExecutorResult<Vec<LlmMessage>> {
+        let seq = u64::try_from(seq)
+            .map_err(|_| crate::Error::ArithmeticOverflow("executor step count"))?;
+        let completed = completed_step_count(record)?;
+        let text = |text: String| LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text { text }],
+        };
+        let mut messages = Vec::new();
+        if !frames.hides(record.run_id, seq) {
+            for append in frames.folds.unfolds.iter().filter(|append| append.at == seq) {
+                let Some(fold) = frames.folds.fold(append.fold) else {
+                    continue;
+                };
+                let mut unfolded = format!(
+                    "unfolded from t{}–t{} ({}):",
+                    fold.from,
+                    fold.through,
+                    fold_handle(fold.fold)
+                );
+                for step in fold.from..=fold.through.min(completed.saturating_sub(1)) {
+                    let turn = CodeRunHistoryTurn {
+                        code: load_context_output(
+                            &self.storage,
+                            record,
+                            &script_output_path(step),
+                        )?,
+                        console: load_context_output(
+                            &self.storage,
+                            record,
+                            &observation_output_path(step),
+                        )?,
+                    };
+                    unfolded.push('\n');
+                    unfolded.push_str(&turn.assistant_exec());
+                    unfolded.push('\n');
+                    unfolded.push_str(&turn.user_console(step));
+                }
+                messages.push(text(unfolded));
+            }
+        }
+        if seq >= completed
+            && let Some(line) = frames.folds.board_line()
+        {
+            messages.push(text(line));
+        }
+        Ok(messages)
     }
 
     /// One call's outcome, with the run's seat receipt.
