@@ -1,7 +1,5 @@
 //! Export finalized engine commits through GitWire objects and the origin CAS protocol.
-use super::publication::{
-    OriginPublicationReceipt, OriginPublicationRequest, origin_publication_intent_claim,
-};
+use super::publication::{OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
 use super::tree::OriginTreeFile;
 use crate::Vault;
@@ -237,12 +235,7 @@ impl Vault {
             },
             learned_at: revision.finalized_at,
         };
-        self.put_claim(
-            &intent,
-            &origin_publication_intent_claim(&publication)?,
-            publication.occurred,
-            publication.learned_at,
-        )?;
+        self.put_origin_publication_intent(&publication)?;
         match authority {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),

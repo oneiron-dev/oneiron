@@ -798,6 +798,43 @@ fn model_ensure_never_reclassifies_a_meat_person() -> Result<()> {
     Ok(())
 }
 
+/// An anchor or substrate awaiting its owner's confirm still binds: an ensure
+/// cannot write a different subject or substrate over it. It never names one:
+/// both reads stay empty until the owner answers.
+#[test]
+fn a_held_subject_fact_still_binds_and_never_names_the_subject() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0x61), ENTITY_TYPE_AGENT_DEF);
+    let held = seed(&vault, entity(0x62), ENTITY_TYPE_PERSON);
+    let other = seed(&vault, entity(0x63), ENTITY_TYPE_PERSON);
+    let anchor = anchor_actor_subject(&vault, actor, held, writer(), 100)?;
+    crate::test_util::hold_claim_for_critical_confirm(&vault, anchor, 0x71);
+    assert_eq!(actor_subject_anchor(&vault, &actor, 101)?, None);
+    let claims = vault.claims_for_subject(&actor)?;
+    assert_eq!(
+        ensure_actor_subject(&vault, actor, other, writer(), 101)
+            .expect_err("a held anchor still binds the actor")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert_eq!(vault.claims_for_subject(&actor)?, claims);
+    let person = seed(&vault, entity(0x64), ENTITY_TYPE_PERSON);
+    let meat = set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 100)?;
+    crate::test_util::hold_claim_for_critical_confirm(&vault, meat, 0x72);
+    assert_eq!(person_substrate(&vault, &person, 101)?, None);
+    assert_eq!(
+        ensure_model_person(&vault, person, writer(), 101)
+            .expect_err("a held meat substrate still binds the person")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert_eq!(
+        vault.get_claim(&meat)?.map(|body| body.lifecycle),
+        Some(ClaimLifecycleStatus::Active)
+    );
+    Ok(())
+}
+
 #[test]
 fn concurrent_onboarding_cannot_reanchor_the_same_house() -> Result<()> {
     let (_dir, vault) = test_vault();

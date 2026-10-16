@@ -104,6 +104,8 @@ pub enum LimitRow {
     ResidenceIndexPages,
     /// Bytes one residence index projection holds.
     ResidenceIndexBytes,
+    /// Decision reads the owner's probe route holds at once.
+    DecisionReads,
     /// Booking requests per minute under the owner's slot-list, hold and book
     /// rules: an authenticated caller past one waits for it to open.
     BookingWindows,
@@ -113,7 +115,7 @@ pub enum LimitRow {
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 20 + EngineLimit::ALL.len()] = [
+    pub const ALL: [Self; 21 + EngineLimit::ALL.len()] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -133,6 +135,7 @@ impl LimitRow {
         Self::RetainedMemoryBytes,
         Self::ResidenceIndexPages,
         Self::ResidenceIndexBytes,
+        Self::DecisionReads,
         Self::BookingWindows,
         Self::Engine(EngineLimit::KeyedFilterJsonBytes),
     ];
@@ -160,6 +163,7 @@ impl LimitRow {
             Self::RetainedMemoryBytes => "limits.retained_memory_bytes",
             Self::ResidenceIndexPages => "residence_operation_budgets.max_index_pages",
             Self::ResidenceIndexBytes => "residence_operation_budgets.index_cache_bytes",
+            Self::DecisionReads => "limits.decision_reads",
             Self::BookingWindows => "booking.anti_abuse:per_minute",
             Self::Engine(row) => row.key(),
         }

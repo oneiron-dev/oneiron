@@ -182,11 +182,13 @@ config file, environment variable, or deployment secret store of its own.
 The repository stores the custody name as a reference and nothing else. No key
 component, no value byte, and no credential manifest enters the repository.
 
-The custody contract is pinned by
-`crates/oneiron/tests/it/snapshot_custody_binding.rs`, which registers a
-record built from fixed synthetic bytes and asserts the name resolves, the
-binding grants exactly `put`/`get`/`multipart` at `T1Leased`, and the metadata
-read carries no value field. That test touches no network and no provider.
+`crates/oneiron/tests/it/snapshot_custody_binding.rs` registers a record built
+from fixed synthetic bytes with this name and binding. It asserts only that the
+`sc` prefix resolves to the secret-custody kind, that the first registered
+secret gets handle `sc1`, and that the handle cannot read the custody body. It
+does not assert name resolution, the exact scope grant or the metadata
+projection. It touches no network and no provider; the bucket preflight, key
+mint and live put/get smoke in this runbook are manual steps.
 
 ## 6. Root Credential Retirement
 

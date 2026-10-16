@@ -6,76 +6,8 @@ agents. Each agent has a distinct persisted PERSON principal, a signed v2 token
 with `actor_class=agent`, and one real v8 app-tier WebSocket. No mock server or
 in-memory transport stands in for a held connection.
 
-## First measured fleet baseline (2026-09-19)
-
-MacBook M4 Max, 16 logical CPUs, macOS kernel 27.0.0, optimized opt-3 binary.
-Cinema worktree storage; 20,000 distinct authenticated actors, 4 listeners,
-64 in-flight operations, 4 runtime threads, 1 write/recall round per actor.
-This was a shared Wave host, not an isolated CPU-capacity experiment.
-
-| Phase | Completed | Throughput/s | p99 ms |
-|---|---:|---:|---:|
-| ppr_full | 100 | 13.440 | 234.767 |
-| ppr_prepare | 100 | 16.745 | 212.334 |
-| ppr_resume | 100 | 13.148 | 135.658 |
-| recall_0 | 20,000 | 22.096 | 8,187.406 |
-| socket_open | 20,000 | 18,725.396 | 14.832 |
-| socket_probe_after | 20,000 | 117,658.969 | 1.180 |
-| socket_probe_before | 20,000 | 115,877.485 | 0.667 |
-| write_0 | 20,000 | 16.835 | 8,898.897 |
-
-All 20,000 writes were checked against stored MESSAGE text. All 20,000 recalls
-contained their corresponding committed message. Both socket probes passed,
-with the same 20,000 connections retained for 2,094.427 seconds. The observer
-reported exit 0, 2,172.800 seconds total wall time and 5,594,202,112 peak resident
-bytes. Setup and post-write content verification are not in the phase timings.
-
-The 100 cold/resume PPR pairs produced identical IDs and score bits. However,
-resume achieved only **0.9783x** fresh throughput (0.5480x including preparation).
-That is **not** a demonstrated speedup. The lower resume p99 does not erase the
-mean slowdown. It remains valid measured baseline data: the committed
-[floor](evidence/W7-C10/fleet-macbook-floor.json) permits at most 15% throughput
-loss and 20% p99 increase from each phase. The converter checks the recorded
-ratio and, on a fresh receipt, the samples. A committed floor carries no samples, so
-CI checks its summary numbers for shape only; `verify-floor` recomputes them from the
-archived receipt. It does not confuse a valid baseline with a proven speedup.
-The separate hot-path optimization acceptance is still open.
-
-Full fleet receipts with per-sample arrays are archived off-repo at
-`/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there).
-Each committed floor points to the archived receipt it was made from, by that
-receipt's BLAKE3 over its file bytes. `verify-floor` (see *Explicit measured floors
-and CI*) reads this table by the floor's file name:
-
-| Floor | Archived receipt | Receipt BLAKE3 |
-|---|---|---|
-| `docs/ops/evidence/W7-C10/fleet-macbook-floor.json` | `fleet-macbook-before.json` | `a95a7e3dea6decf82e6b9022a47d978948d6e10c9a3ca5cefabd822bcfa15bec` |
-| `docs/ops/evidence/W7-C10/fleet-arch-floor.json` | `fleet-arch-before.json` | `c9dc7b24d27b272749beebea38fff3a75fe80d3db80d1cb9dbd4bc1f2c222037` |
-
-The [process receipt](evidence/W7-C10/fleet-macbook-before-process.json) is committed. The binary BLAKE3 is
-`a455c0908e1c91b6c1b3fb9fb1bcfe811a44f5ffbc2bd3d0de717ead3dcdabd7`.
-The mirror has no Git metadata; its null revision/dirty fields are retained, not
-replaced with an inferred source revision. This artifact includes the telemetry
-scalar repair, before the later cache-insert optimization and cfg-only cleanup.
-
-The first durable Arch attempt ended with a 120-second operation deadline error
-after 2,003.913 seconds. Its failed receipt does not expose the failing phase or
-successful partial counts, so no throughput is inferred. It is retained as
-[failed evidence](evidence/W7-C10/fleet-arch-timeout.json) with its
-[process outcome](evidence/W7-C10/fleet-arch-timeout-process.json). The next attempt
-keeps 20,000 agents and all assertions, with an explicit 600-second operation
-deadline. This changes the profile budget, not host settings or storage durability.
-
-### RC42 threshold comparison
-
-The current manifest defaults are 50,000,000 calls per verb and 1,000,000 per
-actor in a 60-second window. The measured MacBook aggregate witness and recall rates
-extrapolate to about 1,010 and 1,326 calls/minute respectively. The verb default
-is over 37,000 times the larger rate. Even the 18,725/s connection/auth-bind
-burst extrapolates to about 1.124 million/minute, over 44 times below that default.
-These are observations under this workload, not predicted future capacity.
-The per-actor default remains far above this one-write/one-recall profile.
-Manifest edits still take effect without restart and never refuse a call.
+Build and run the bench on a fleet host such as the Arch box, never on the
+owner's MacBook.
 
 ## Workload and measurement boundaries
 
@@ -112,11 +44,10 @@ Manifest edits still take effect without restart and never refuse a call.
 
 ## Run
 
-Build on the assigned host and target with the normal workspace toolchain:
+Build on the assigned fleet host with the normal workspace toolchain:
 
 ```text
 cargo build --release -p oneiron-bench
-cargo test -p oneiron-bench fleet::tests -- --test-threads=1
 ```
 
 Use a real absolute scratch directory. On macOS, prefer `/private/tmp/...`, not
@@ -231,7 +162,10 @@ The dispatch-only `.github/workflows/fleet-regression.yml` runs it on the select
 approved host, honours `CI_PAUSED`, and retains candidate/comparison artifacts.
 It uses the committed `docs/ops/evidence/W7-C10/fleet-<host>-floor.json`, never a
 floor regenerated from the candidate. The job prepares only the scratch path
-explicitly approved in that floor; workload/host mismatches fail closed.
+explicitly approved in that floor; workload/host mismatches fail closed. Choose
+`arch`. The `macbook` floor was recorded on the owner's MacBook (`Oletybook`),
+and the job runs `cargo build` on the host it checks, so do not dispatch the
+`macbook` choice.
 
 CI checks a committed floor's shape only: the full receipts are off-repo, so no CI
 step can recompute a floor. On a host that holds the archive, recompute it:
@@ -263,28 +197,119 @@ CI floor. It does not start agent sockets or claim fleet throughput. Use it to
 verify the cache-miss scaling acceptance without repeating the unrelated socket
 load at every graph size. A non-sublinear result is reported honestly, not masked.
 
-## Keeping a long profile alive across a writer round
+## Keeping a long profile alive
 
 `python3 scripts/fleet-observe.py --receipt process.json -- <bench command>`
 records the measured process's exit/signal, wall/CPU time and peak resident bytes.
 Its process receipt is not a throughput receipt. `--detach --log profile.log`
 also creates an admission file and a separate POSIX session. This is useful for
-remote macOS jobs, but **setsid and reparenting do not escape a Linux cgroup**.
-A factory that cleans up the seat's session scope can still remove those local
-processes before their terminal receipt is written.
+remote macOS jobs, but **setsid and reparenting do not escape a Linux cgroup**:
+whatever cleans up the launching session's scope can still remove the process
+before its terminal receipt is written.
 
-For a local Linux profile that must outlive its seat, launch the observer as a
-new transient user unit (`systemd-run --user --collect`), not under the seat's
-session scope. Verify the unit's `ControlGroup` differs from the seat's before
-claiming custody. Do not install or restart a service, add a runtime kill clock,
-change shared host settings, or kill another unit. Keep the process-local FD
-limit and all data/log/output paths explicit. Store runtime data under the
-assigned worktree's `target/fleet-*` directories, which the source-sync wrapper
-excludes. This prevents live LMDB files or pending receipts from being copied or
-deleted during source sync. Compile activity during a measurement must still be
-reported as host load, not silently treated as an isolated performance sample.
+For a Linux profile that must outlive its launching session, start the observer
+as a new transient user unit (`systemd-run --user --collect`). Verify the unit's
+`ControlGroup` differs from the launching session's before relying on it. Do not
+install or restart a service, add a runtime kill clock, change shared host
+settings, or kill another unit. Keep the process-local FD limit and all
+data/log/output paths explicit. Report compile activity during a measurement as
+host load; it is not an isolated performance sample.
 
-## Measured residual scaling before cache-insert optimization
+## Measured baselines and receipts
+
+### MacBook fleet baseline (2026-09-19)
+
+MacBook M4 Max, 16 logical CPUs, macOS kernel 27.0.0, optimized opt-3 binary.
+Cinema worktree storage; 20,000 distinct authenticated actors, 4 listeners,
+64 in-flight operations, 4 runtime threads, 1 write/recall round per actor.
+This was a shared host, not an isolated CPU-capacity experiment.
+
+| Phase | Completed | Throughput/s | p99 ms |
+|---|---:|---:|---:|
+| ppr_full | 100 | 13.440 | 234.767 |
+| ppr_prepare | 100 | 16.745 | 212.334 |
+| ppr_resume | 100 | 13.148 | 135.658 |
+| recall_0 | 20,000 | 22.096 | 8,187.406 |
+| socket_open | 20,000 | 18,725.396 | 14.832 |
+| socket_probe_after | 20,000 | 117,658.969 | 1.180 |
+| socket_probe_before | 20,000 | 115,877.485 | 0.667 |
+| write_0 | 20,000 | 16.835 | 8,898.897 |
+
+All 20,000 writes were checked against stored MESSAGE text. All 20,000 recalls
+contained their corresponding committed message. Both socket probes passed,
+with the same 20,000 connections retained for 2,094.427 seconds. The observer
+reported exit 0, 2,172.800 seconds total wall time and 5,594,202,112 peak resident
+bytes. Setup and post-write content verification are not in the phase timings.
+
+The 100 cold/resume PPR pairs produced identical IDs and score bits, but resume
+reached only **0.9783x** fresh throughput (0.5480x including preparation): not a
+speedup. The committed [floor](evidence/W7-C10/fleet-macbook-floor.json) permits
+at most 15% throughput loss and 20% p99 increase from each phase. A committed
+floor carries no samples, so CI checks its summary numbers for shape only;
+`verify-floor` recomputes them from the archived receipt.
+
+Full fleet receipts with per-sample arrays are archived off-repo at
+`/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there).
+Each committed floor points to the archived receipt it was made from, by that
+receipt's BLAKE3 over its file bytes. `verify-floor` (see *Explicit measured floors
+and CI*) reads this table by the floor's file name:
+
+| Floor | Archived receipt | Receipt BLAKE3 |
+|---|---|---|
+| `docs/ops/evidence/W7-C10/fleet-macbook-floor.json` | `fleet-macbook-before.json` | `a95a7e3dea6decf82e6b9022a47d978948d6e10c9a3ca5cefabd822bcfa15bec` |
+| `docs/ops/evidence/W7-C10/fleet-arch-floor.json` | `fleet-arch-before.json` | `c9dc7b24d27b272749beebea38fff3a75fe80d3db80d1cb9dbd4bc1f2c222037` |
+
+The MacBook [process receipt](evidence/W7-C10/fleet-macbook-before-process.json)
+is committed. Its binary BLAKE3 is
+`a455c0908e1c91b6c1b3fb9fb1bcfe811a44f5ffbc2bd3d0de717ead3dcdabd7`. The mirror
+it ran from has no Git metadata, so its revision/dirty fields are null.
+
+### RC42 threshold comparison
+
+The current manifest defaults are 50,000,000 calls per verb and 1,000,000 per
+actor in a 60-second window. The measured MacBook aggregate witness and recall rates
+extrapolate to about 1,010 and 1,326 calls/minute respectively. The verb default
+is over 37,000 times the larger rate. Even the 18,725/s connection/auth-bind
+burst extrapolates to about 1.124 million/minute, over 44 times below that default.
+These are observations under this workload, not predicted future capacity.
+The per-actor default remains far above this one-write/one-recall profile.
+Manifest edits still take effect without restart and never refuse a call.
+
+### Arch fleet baseline (2026-09-19)
+
+Arch Linux kernel 7.0.11-arch1-1, Ryzen 7 8745HS, 16 logical CPUs.
+Optimized opt-3 binary, worktree filesystem, 20,000 authenticated actors,
+4 listeners, concurrency 64, 4 runtime threads, one write/recall round.
+The operation budget is 600 seconds; the workload was not reduced.
+
+| Phase | Completed | Throughput/s | p99 ms |
+|---|---:|---:|---:|
+| ppr_full | 100 | 19.110 | 533.454 |
+| ppr_prepare | 100 | 14.795 | 464.903 |
+| ppr_resume | 100 | 21.165 | 366.054 |
+| recall_0 | 20,000 | 17.840 | 22,543.896 |
+| socket_open | 20,000 | 8,753.748 | 12.374 |
+| socket_probe_after | 20,000 | 19,775.210 | 4.723 |
+| socket_probe_before | 20,000 | 44,424.149 | 1.761 |
+| write_0 | 20,000 | 41.716 | 9,310.103 |
+
+All 20,000 persisted messages and matching recalls passed, as did both socket
+probes. Connections were held for 1,602.789 seconds. The process completed exit 0
+in 1,626.372 seconds with 5,537,247,232 peak resident bytes. Compilation
+overlapped this run, so it is a shared-host baseline, not a maximum-throughput
+claim. An earlier Arch attempt hit the 120-second operation deadline and is kept
+as [failed evidence](evidence/W7-C10/fleet-arch-timeout.json) with its
+[process outcome](evidence/W7-C10/fleet-arch-timeout-process.json).
+
+The 100 exact cold/resume PPR pairs measured **1.1076x** incremental resume
+throughput, and **0.4557x** including the depth-five preparation: resume saves
+work only when that prior state already exists. The
+[process outcome](evidence/W7-C10/fleet-arch-before-process.json) and
+[approved floor](evidence/W7-C10/fleet-arch-floor.json) are committed; the floor
+uses 15% throughput-loss and 20% p99-growth budgets. Binary BLAKE3:
+`67f07c30805cff9c98ed4885003b6fb264108c2ec1c6279cef93f98882573be6`.
+
+### Residual-miss scaling
 
 The same optimized MacBook binary measured 100 bit-exact cold/resume pairs at
 each size. Full and resumed results matched within each graph; graph sizes need
@@ -305,109 +330,11 @@ variation is visible between runs and remains part of the evidence.
 Raw [scaling receipt](evidence/W7-C10/ppr-scaling-macbook-before.json) and
 [terminal outcome](evidence/W7-C10/ppr-scaling-macbook-before-process.json).
 
-## Measured Arch fleet baseline (2026-09-19)
-
-Arch Linux kernel 7.0.11-arch1-1, Ryzen 7 8745HS, 16 logical CPUs.
-Optimized opt-3 binary, worktree filesystem, 20,000 authenticated actors,
-4 listeners, concurrency 64, 4 runtime threads, one write/recall round.
-The operation budget is 600 seconds; the workload was not reduced.
-
-| Phase | Completed | Throughput/s | p99 ms |
-|---|---:|---:|---:|
-| ppr_full | 100 | 19.110 | 533.454 |
-| ppr_prepare | 100 | 14.795 | 464.903 |
-| ppr_resume | 100 | 21.165 | 366.054 |
-| recall_0 | 20,000 | 17.840 | 22,543.896 |
-| socket_open | 20,000 | 8,753.748 | 12.374 |
-| socket_probe_after | 20,000 | 19,775.210 | 4.723 |
-| socket_probe_before | 20,000 | 44,424.149 | 1.761 |
-| write_0 | 20,000 | 41.716 | 9,310.103 |
-
-All 20,000 persisted messages and matching recalls passed, as did both socket
-probes. Connections were held for 1,602.789 seconds. The process completed exit 0
-in 1,626.372 seconds with 5,537,247,232 peak resident bytes. Scoped compilation
-and then a release build overlapped this run. It is a shared-host baseline,
-not an isolated maximum-throughput claim.
-
-The 100 exact cold/resume PPR pairs measured **1.1076x** incremental resume
-throughput. Including the prior depth-five preparation gives **0.4557x**: the
-optimization saves work only when that prior state already exists. Both figures
-are retained. This is a measured residual-resume gain, not proof of the later
-fresh-insert scan optimization.
-
-The full receipt with per-sample arrays is archived off-repo at
-`/Volumes/Cinema/archive/w7-evidence/W7-C10/` (checksums in `SHA256SUMS` there);
-its BLAKE3 is in the receipt pointer table under the first measured baseline.
-The [process outcome](evidence/W7-C10/fleet-arch-before-process.json) and
-[approved floor](evidence/W7-C10/fleet-arch-floor.json) are committed. The floor
-uses explicit 15% throughput-loss and 20% p99-growth regression budgets.
-
-Binary BLAKE3:
-`67f07c30805cff9c98ed4885003b6fb264108c2ec1c6279cef93f98882573be6`.
-This binary predates the telemetry-scalar repair and cache-insert optimization.
-The receipt’s revision/dirty fields describe its runtime checkout, not an
-inferred compilation revision. The artifact remains a baseline, not a claim
-that this was final-head performance. The prior binary copy has SHA-256
-`d958a55adc0e045df8f54283809b3ee4c2a0ea626e92056fab12f23fbbd7e591`.
-
-## Hot-path follow-up tickets
-
-`ONE-2402` is the implemented residual-resume work in this change. The Arch
-profile above demonstrates its incremental benefit with bit-identical results.
-The later fresh-key dependency-scan change is its measured-profile follow-up in
-this same PR; its new timing receipt is separate from the original resume gain.
-
-The following are local follow-up IDs, not claims that external tracker issues
-were created. They describe the next measurements/design work, not completed
-optimizations:
-
-- **ONE-2558/PERF-IO** — Attribute the durable write/recall tails and PPR commit
-  time on a quiet host. PPR cache flush and telemetry currently commit separately.
-  Any later batching must preserve best-effort telemetry isolation and atomic
-  cache/dependency writes. Do not disable durability to improve a benchmark.
-- **ONE-2558/PERF-PHASE** — Retain typed phase/actor context in a failed fleet
-  receipt. The first Arch timeout did not identify its phase, so its cause cannot
-  be assigned to retrieval, socket handling or storage from that receipt alone.
-
-No unmeasured throughput improvement is assigned to either follow-up.
-
-## Final cache-insert measurement — no demonstrated end-to-end gain
-
-The final release binary completed 100 exact pairs at each of 1,024, 4,096 and
-16,384 nodes. All result digests match the corresponding earlier graph-size
-receipts. The 1,024-node phase uses the same plan, host, storage and PPR function
-as the earlier Arch fleet profile, but runs without the preceding wire workload.
-The host was not isolated. Disk waits dominated this run; its process used
-1.246 CPU-user seconds and 0.521 CPU-system seconds over 550.724 wall seconds.
-
-| 1,024-node phase | Before mean ms | After mean ms | Before p99 ms | After p99 ms |
-|---|---:|---:|---:|---:|
-| ppr_full | 52.329 | 434.047 | 533.454 | 5594.652 |
-| ppr_prepare | 67.592 | 444.960 | 464.903 | 6404.892 |
-| ppr_resume | 47.247 | 433.008 | 366.054 | 6835.662 |
-
-These observed latencies are worse, not a measured gain for the fresh-insert
-change. The source removes an unnecessary full dependency scan, but this sample
-does not establish an end-to-end benefit. No floor is silently replaced with
-these slower numbers. The earlier Arch 1.1076x incremental residual-resume gain
-is separate evidence and remains explicitly qualified by preparation cost.
-
-The later phases also show strong host variation:
-
-| Nodes | Full mean ms | Resume mean ms | Resume p99 ms |
-|---|---:|---:|---:|
-| 1,024 | 434.047 | 433.008 | 6835.662 |
-| 4,096 | 908.833 | 1120.656 | 13470.830 |
-| 16,384 | 63.329 | 72.777 | 433.944 |
-
-The final/lower-size cost ratio is 0.1681 despite 16x graph growth. That decrease
-does not establish better asymptotic behavior: it reflects uncontrolled timing
-variation. Its `observed_sublinear` flag was corrected to `false` during review;
-the raw samples remain unchanged. Future receipts require nondecreasing,
-sublinear cost at every measured interval. Use the separately published MacBook scaling run for the stated
-observed sublinear result, and retain this unfavorable run as well.
-
-Final binary BLAKE3:
-`19a34221f48de49083abd1baff5693883efba6162a1f95789e4c1b194d04649e`.
-Raw [after receipt](evidence/W7-C10/ppr-scaling-arch-after.json) and
+A later Arch run of the cache-insert change (binary BLAKE3
+`19a34221f48de49083abd1baff5693883efba6162a1f95789e4c1b194d04649e`) was dominated
+by disk waits on a busy host: the 1,024-node `ppr_full` mean rose from 52.329 to
+434.047 ms, and the size series was not monotonic. It shows no end-to-end gain
+and no scaling result, and no floor was replaced with it. Its
+`observed_sublinear` flag is `false`. Raw
+[receipt](evidence/W7-C10/ppr-scaling-arch-after.json) and
 [terminal outcome](evidence/W7-C10/ppr-scaling-arch-after-process.json).

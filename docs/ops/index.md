@@ -1,7 +1,7 @@
 # Operations Runbooks
 
-Runbooks in this directory are operational response guides for hosted Oneiron
-surfaces. They do not replace counsel review for jurisdiction-specific calls.
+Operator guides for running a vault, its server and the agents connected to it.
+The incident runbooks do not replace counsel review for jurisdiction-specific calls.
 
 - [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
@@ -13,10 +13,6 @@ surfaces. They do not replace counsel review for jurisdiction-specific calls.
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot
   credential.
-- [ONE-208: captured Qodo C09 material repair](one-208-qodo-c09-repair.md) — change record for
-  one captured-review repair, not a response guide.
-- [Wave-6 module-split map](w6-module-split-map.md) — old→new paths for the fifteen 2026-08
-  monolith splits; use it to re-anchor tickets, docs, and tooling.
 - [Connect Claude Code or Codex](connect-an-agent.md) — `oneiron token agent` mints a scoped,
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
