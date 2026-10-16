@@ -198,6 +198,9 @@ export class Oneiron {
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
     },
+    hooks: {
+      replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
+    },
     artifacts: {
       /** One artifact's kind, head and versions, each with its made_by and born-from. */
       view: (request: ArtifactRefRequest): ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as ArtifactView | null; return result === null ? null : result }),
@@ -292,6 +295,7 @@ export class Oneiron {
       poll: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoPoll(input) as unknown),
       cancel: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoCancel(input) as unknown),
     }),
+    verdict: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVerdict(input) as unknown),
   }
   readonly connector = {
     list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorList(input) as unknown),

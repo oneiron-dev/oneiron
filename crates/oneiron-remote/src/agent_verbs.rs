@@ -102,6 +102,9 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.hooks.replay" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::HookReplayRow>,
+                >(client, verb, &input),
                 "vault.artifacts.view" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
                 >(client, verb, &input),
@@ -230,6 +233,9 @@ impl OneironClient {
                 "ai.video.cancel" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AiVideoCancelled,
                 >(client, verb, &input),
+                "ai.verdict" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiVerdict>(
+                    client, verb, &input,
+                ),
                 "connector.list" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::ConnectorEntry>,
                 >(client, verb, &input),
@@ -527,7 +533,10 @@ impl OneironClient {
         &self,
         limit: usize,
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
-        let input = oneiron::task_verb::sdk::ReceiptsRequest { limit: Some(limit) };
+        let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
+            limit: Some(limit),
+            ..Default::default()
+        };
         oneiron::memory::caps::check_limit(
             input
                 .limit
@@ -629,6 +638,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.put", value)
+    }
+    pub fn vault_hooks_replay(
+        &self,
+        input: &oneiron::task_verb::sdk::HooksReplayRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::HookReplayRow>, MemoryError> {
+        input.limit()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.hooks.replay", value)
     }
     /// One artifact's kind, head and versions, each with its made_by and born-from.
     pub fn vault_artifacts_view(
@@ -1144,6 +1166,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.video.cancel", value)
+    }
+    pub fn ai_verdict(
+        &self,
+        input: &oneiron::task_verb::sdk::AiVerdictRequest,
+    ) -> Result<oneiron::task_verb::sdk::AiVerdict, MemoryError> {
+        oneiron::memory::caps::check_batch_len("evidence", input.evidence.len())?;
+        oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.verdict", value)
     }
     pub fn connector_list(
         &self,

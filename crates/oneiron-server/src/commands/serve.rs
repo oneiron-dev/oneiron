@@ -307,11 +307,16 @@ async fn spawn_fact_hooks(
     .await
     .and_then(|built| built);
     match built {
-        Ok(sandbox) => Some(FactHookRunner::spawn(
-            Arc::clone(server.vault()),
-            Arc::new(sandbox),
-            stop,
-        )),
+        Ok(sandbox) => {
+            let runtime: Arc<dyn oneiron::runtime_hooks::HookBodyRuntime> = Arc::new(sandbox);
+            // `vault.hooks.replay` replays on the runner's own sandbox.
+            let _ = server.hook_runtime.set(Arc::clone(&runtime));
+            Some(FactHookRunner::spawn(
+                Arc::clone(server.vault()),
+                runtime,
+                stop,
+            ))
+        }
         Err(error) => {
             tracing::warn!(%error, "hook sandbox did not load; fact hooks are off");
             None

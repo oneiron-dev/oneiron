@@ -32,6 +32,7 @@ pub mod commands;
 pub mod config;
 pub mod control_keys;
 pub mod decision_host;
+mod decision_verdict;
 mod device_local;
 mod embedder;
 pub mod error;

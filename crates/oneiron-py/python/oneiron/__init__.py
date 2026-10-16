@@ -304,6 +304,9 @@ class Oneiron:
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
         @property
+        def hooks(self) -> "Oneiron._VaultHooksVerbs":
+            return Oneiron._VaultHooksVerbs(self._client)
+        @property
         def artifacts(self) -> "Oneiron._VaultArtifactsVerbs":
             return Oneiron._VaultArtifactsVerbs(self._client)
         @property
@@ -392,6 +395,11 @@ class Oneiron:
             self._client = client
         def put(self, spec):
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+    class _VaultHooksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def replay(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -535,6 +543,8 @@ class Oneiron:
         @property
         def video(self) -> "Oneiron._AiVideoVerbs":
             return Oneiron._AiVideoVerbs(self._client)
+        def verdict(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
