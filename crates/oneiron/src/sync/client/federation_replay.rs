@@ -45,9 +45,26 @@ impl SyncClient {
         // The grant and the local claim gate are read again at the actual
         // admission door. Stored raw bytes are not trusted replay authority.
         // Admission authors deterministic local op ids from these exact bytes.
-        let admitted =
-            admit_peer_window_update(&self.vault, &key, &work.payload, role, peer.principal())
-                .map_err(map_federated_admission_err)?;
+        let admitted = match admit_peer_window_update(
+            &self.vault,
+            &key,
+            &work.payload,
+            role,
+            peer.principal(),
+        ) {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                // Refused as the peer's own bytes, as a live update would
+                // be (an agent definition turned off since it was held):
+                // the row settles, so the work behind it drains.
+                let error = map_federated_admission_err(error);
+                if matches!(error, TransportError::InvalidPayload(_)) {
+                    work.reject(&self.vault, &peer)
+                        .map_err(map_federated_admission_err)?;
+                }
+                return Err(error);
+            }
+        };
         self.import_peer_update(&work.window, &key, &admitted, peer.grant())?;
         work.complete(&self.vault, &peer)
             .map_err(map_federated_admission_err)?;

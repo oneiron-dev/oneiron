@@ -151,6 +151,7 @@ pub(super) fn admit_federated_puts(
             let admitted = crate::sync::selector::admit_federated_entity_blob(
                 vault,
                 &policy,
+                wtxn,
                 &id.to_hex(),
                 Some(&blob),
             )?;

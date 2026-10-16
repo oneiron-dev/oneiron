@@ -318,7 +318,9 @@ fn admit_window_update(
 /// source the gate must judge on the import path, so no restamp is repeated.
 ///
 /// Non-claim rows were admitted by identity/kind rules that do not depend on
-/// resolved policy, so they are left alone here.
+/// resolved policy, so they are left alone here, except an agent definition:
+/// it is judged again against the definition stored now, so one turned off
+/// since the stage does not come back on through the confirmation.
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn revalidate_admitted_federated_claims(
     vault: &Vault,
@@ -337,12 +339,17 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
     let policy = vault
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
+    let rtxn = vault.store.env.read_txn()?;
     let mut result = Ok(());
-    map_for_each_value_bytes(&admitted.get_map("entities"), |_, value| {
+    map_for_each_value_bytes(&admitted.get_map("entities"), |key, value| {
         if result.is_err() {
             return;
         }
-        result = recheck_admitted_claim_blob(&vault.store, &policy, value);
+        result = recheck_admitted_claim_blob(&vault.store, &policy, value).and_then(|()| {
+            let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
+            let blob = value.ok_or(Error::InvalidKey)?;
+            refuse_peer_agent_definition_widening(&vault.store, &rtxn, &id, blob)
+        });
     });
     result
 }
@@ -463,12 +470,13 @@ fn copy_admitted_entities(
 ) -> Result<()> {
     let source_entities = source.get_map("entities");
     let target_entities = target.get_map("entities");
+    let rtxn = vault.store.env.read_txn()?;
     let mut result = Ok(());
     map_for_each_value_bytes(&source_entities, |key, value| {
         if result.is_err() {
             return;
         }
-        result = admit_federated_entity_blob(vault, policy, key, value)
+        result = admit_federated_entity_blob(vault, policy, &rtxn, key, value)
             .and_then(|blob| map_insert_bytes(&target_entities, key, &blob));
     });
     result
@@ -478,6 +486,7 @@ fn copy_admitted_entities(
 pub(crate) fn admit_federated_entity_blob(
     vault: &Vault,
     policy: &crate::gate::PolicyManifestResolution,
+    txn: &heed::RoTxn<'_>,
     key: &str,
     value: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
@@ -515,6 +524,7 @@ pub(crate) fn admit_federated_entity_blob(
             header.entity_type,
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
+        refuse_peer_agent_definition_widening(&vault.store, txn, &id, blob)?;
         return Ok(blob.to_vec());
     }
 
@@ -527,6 +537,35 @@ pub(crate) fn admit_federated_entity_blob(
     admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
     admitted.extend_from_slice(&encoded);
     Ok(admitted)
+}
+
+/// Refuses a peer's agent definition that turns the one stored at `id` back
+/// on, read in `txn`. Turning a definition back on is the owner's, and a peer
+/// is not the owner. Typed as the peer's bytes, so the frame quarantines.
+#[cfg(feature = "sync")]
+fn refuse_peer_agent_definition_widening(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    blob: &[u8],
+) -> Result<()> {
+    let header =
+        EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+        && crate::agent_def::agent_definition_put_widens_in_txn(
+            store,
+            txn,
+            id,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?
+    {
+        return Err(Error::Artifact(
+            crate::error::ArtifactError::InvalidAgentDefBody(
+                "a federation peer cannot turn an agent definition back on",
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// ARCH-0043 requires a down-weight but does not prescribe a factor.

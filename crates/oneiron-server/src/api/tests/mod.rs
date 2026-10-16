@@ -1,5 +1,6 @@
 use super::*;
 
+mod agent_definition_doors;
 mod ai_chat;
 mod depth_quality;
 mod memory_reason_repairs;
