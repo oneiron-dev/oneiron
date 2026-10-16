@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use super::codec::{
     doc_from_snapshot, encode, frontier, hash, invalid, path_hash, path_key, validate_path,
 };
-use super::{CodeDocumentFrontier, CodeDocumentSession, CodeEditReceipt, CodeFileEdit};
+use super::{
+    CodeDocumentFrontier, CodeDocumentSession, CodeEditReceipt, CodeFileEdit, CodeOpAttribution,
+    CodeOpProvenance,
+};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -45,25 +48,87 @@ pub(super) struct SnapshotRow {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct HeadRow {
+pub(super) struct HeadRow {
     initial_hash: [u8; 32],
     state: SnapshotRow,
-    receipts: Vec<ReceiptRow>,
+    pub(super) receipts: Vec<ReceiptRow>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ReceiptRow {
+pub(super) struct ReceiptRow {
+    operation: String,
     session: String,
     actor: String,
     actor_class: u8,
+    provenance: ProvenanceRow,
     sequence: u64,
+    pub(super) peer_id: u64,
+    pub(super) counter_start: i32,
+    pub(super) counter_end: i32,
+    pub(super) edit: CodeFileEdit,
+    pub(super) before: CodeDocumentFrontier,
+    pub(super) after: CodeDocumentFrontier,
+}
+
+/// Hex-encoded `CodeOpProvenance`, hashed into the operation's Loro stamp.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProvenanceRow {
+    turn: Option<String>,
+    activity: Option<String>,
+    intent: Option<String>,
+    substrate_ref: Option<String>,
+    reasoning_effort: Option<String>,
+}
+
+impl ProvenanceRow {
+    fn new(provenance: &CodeOpProvenance) -> Result<Self> {
+        if provenance.reasoning_effort.as_ref().is_some_and(|effort| {
+            effort.is_empty() || effort.len() > crate::provenance::REASONING_EFFORT_MAX_BYTES
+        }) {
+            return Err(invalid());
+        }
+        let hex = |id: Option<EntityId>| id.map(|id| id.to_hex());
+        Ok(Self {
+            turn: hex(provenance.turn),
+            activity: hex(provenance.activity),
+            intent: hex(provenance.intent),
+            substrate_ref: hex(provenance.substrate_ref),
+            reasoning_effort: provenance.reasoning_effort.clone(),
+        })
+    }
+
+    fn provenance(&self) -> Result<CodeOpProvenance> {
+        let id = |hex: &Option<String>| hex.as_deref().map(EntityId::from_hex).transpose();
+        Ok(CodeOpProvenance {
+            turn: id(&self.turn)?,
+            activity: id(&self.activity)?,
+            intent: id(&self.intent)?,
+            substrate_ref: id(&self.substrate_ref)?,
+            reasoning_effort: self.reasoning_effort.clone(),
+        })
+    }
+}
+
+/// The Loro commit message of one operation. It binds the ingress identity,
+/// actor, edit and provenance into the document's operation fold.
+#[allow(clippy::too_many_arguments)]
+fn op_stamp(
+    operation: &str,
+    session: &str,
+    actor: &str,
+    actor_class: u8,
     peer_id: u64,
     counter_start: i32,
-    counter_end: i32,
-    edit: CodeFileEdit,
-    before: CodeDocumentFrontier,
-    after: CodeDocumentFrontier,
+    edit: &CodeFileEdit,
+    provenance: &ProvenanceRow,
+) -> Result<String> {
+    Ok(format!(
+        "oneiron.code_document.v2:{operation}:{session}:{actor}:{actor_class}:{peer_id}:{counter_start}:{}:{}",
+        crate::entity_id::bytes_to_hex_lower(&hash(&encode(edit)?)),
+        crate::entity_id::bytes_to_hex_lower(&hash(&encode(provenance)?)),
+    ))
 }
 
 /// A host-approved exact-base ingress item. Cooperative editor sessions use
@@ -78,14 +143,48 @@ pub(crate) struct CodeFileIngress {
 }
 
 impl ReceiptRow {
+    fn actor(&self) -> Result<WriteActor> {
+        Ok(WriteActor::new(
+            EntityId::from_hex(&self.actor)?,
+            EdgeActorClass::try_from_u8(self.actor_class).ok_or_else(invalid)?,
+        ))
+    }
+
+    pub(super) fn attribution(&self) -> Result<CodeOpAttribution> {
+        Ok(CodeOpAttribution {
+            operation: EntityId::from_hex(&self.operation)?,
+            session_id: EntityId::from_hex(&self.session)?,
+            actor: self.actor()?,
+            sequence: self.sequence,
+            provenance: self.provenance.provenance()?,
+        })
+    }
+
+    /// Whether every change of this operation lies in `version`.
+    pub(super) fn within(&self, version: &[(u64, i32)]) -> bool {
+        version
+            .iter()
+            .any(|(peer, counter)| *peer == self.peer_id && *counter >= self.counter_end)
+    }
+
+    /// Whether `version` holds none of this operation's changes.
+    pub(super) fn after_version(&self, version: &[(u64, i32)]) -> bool {
+        !version
+            .iter()
+            .any(|(peer, counter)| *peer == self.peer_id && *counter > self.counter_start)
+    }
+
+    pub(super) fn owns(&self, id: loro::ID) -> bool {
+        id.peer == self.peer_id && self.counter_start <= id.counter && id.counter < self.counter_end
+    }
+
     fn receipt(&self) -> Result<CodeEditReceipt> {
         Ok(CodeEditReceipt {
             document_id: self.after.document_id,
+            operation: EntityId::from_hex(&self.operation)?,
             session_id: EntityId::from_hex(&self.session)?,
-            actor: WriteActor::new(
-                EntityId::from_hex(&self.actor)?,
-                EdgeActorClass::try_from_u8(self.actor_class).ok_or_else(invalid)?,
-            ),
+            actor: self.actor()?,
+            provenance: self.provenance.provenance()?,
             sequence: self.sequence,
             peer_id: self.peer_id,
             counter_start: self.counter_start,
@@ -125,6 +224,7 @@ impl Vault {
                 document_id: id,
                 session_id,
                 initial_hash: row.initial_hash,
+                provenance: CodeOpProvenance::default(),
             });
         }
         // Every not-yet-born session uses identical genesis operations. Peer 0
@@ -146,6 +246,7 @@ impl Vault {
             document_id,
             session_id,
             initial_hash: hash(initial.as_bytes()),
+            provenance: CodeOpProvenance::default(),
         })
     }
 
@@ -168,6 +269,7 @@ impl Vault {
             document_id: tested.document_id,
             session_id,
             initial_hash: head.initial_hash,
+            provenance: CodeOpProvenance::default(),
         })
     }
 
@@ -204,6 +306,7 @@ impl Vault {
             if receipt.document_id != session.document_id
                 || receipt.session_id != session.session_id
                 || receipt.actor != actor
+                || receipt.provenance != session.provenance
                 || receipt.edit != *edit
             {
                 return Err(invalid());
@@ -214,20 +317,8 @@ impl Vault {
         }
         let old_doc = session.doc.clone();
         let result = (|| {
-            let receipt = self.apply_code_file_edit_in_txn(&mut txn, session, edit, actor)?;
-            let row = ReceiptRow {
-                session: receipt.session_id.to_hex(),
-                actor: actor.entity_ref().to_hex(),
-                actor_class: actor.actor_class() as u8,
-                sequence: receipt.sequence,
-                peer_id: receipt.peer_id,
-                counter_start: receipt.counter_start,
-                counter_end: receipt.counter_end,
-                edit: receipt.edit.clone(),
-                before: receipt.before.clone(),
-                after: receipt.after.clone(),
-            };
-            CODE_DOCUMENT_INGRESS.put(&self.store, &mut txn, &operation, &row)?;
+            let receipt =
+                self.apply_code_file_edit_in_txn(&mut txn, operation, session, edit, actor)?;
             txn.commit()?;
             Ok(receipt)
         })();
@@ -271,6 +362,7 @@ impl Vault {
                 if receipt.document_id != item.session.document_id
                     || receipt.session_id != item.session.session_id
                     || receipt.actor != item.actor
+                    || receipt.provenance != item.session.provenance
                     || receipt.edit != item.edit
                     || receipt.before.text_hash != hash(item.expected_text.as_bytes())
                 {
@@ -299,34 +391,29 @@ impl Vault {
                     "document changed since ingress base; no automatic rebase",
                 ));
             }
-            let receipt =
-                self.apply_code_file_edit_in_txn(txn, &mut item.session, &item.edit, item.actor)?;
-            let row = ReceiptRow {
-                session: receipt.session_id.to_hex(),
-                actor: receipt.actor.entity_ref().to_hex(),
-                actor_class: receipt.actor.actor_class() as u8,
-                sequence: receipt.sequence,
-                peer_id: receipt.peer_id,
-                counter_start: receipt.counter_start,
-                counter_end: receipt.counter_end,
-                edit: receipt.edit.clone(),
-                before: receipt.before.clone(),
-                after: receipt.after.clone(),
-            };
-            CODE_DOCUMENT_INGRESS.put(&self.store, txn, &item.operation, &row)?;
+            let receipt = self.apply_code_file_edit_in_txn(
+                txn,
+                item.operation,
+                &mut item.session,
+                &item.edit,
+                item.actor,
+            )?;
             receipts.push(receipt);
         }
         Ok(receipts)
     }
 
+    /// Applies one operation and writes its head and ingress receipts.
     fn apply_code_file_edit_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
+        operation: EntityId,
         session: &mut CodeDocumentSession,
         edit: &CodeFileEdit,
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
         validate_path(&session.repo, &edit.path)?;
+        let provenance = ProvenanceRow::new(&session.provenance)?;
         let before = session.frontier()?;
         if before.path != edit.path {
             return Err(invalid());
@@ -382,16 +469,16 @@ impl Vault {
                     .map_err(|_| invalid())?;
             }
         }
-        let edit_hash = crate::entity_id::bytes_to_hex_lower(&hash(&encode(edit)?));
-        let stamp = format!(
-            "oneiron.code_document.v1:{}:{}:{}:{}:{}:{}",
-            session.session_id.to_hex(),
-            actor.entity_ref().to_hex(),
+        let stamp = op_stamp(
+            &operation.to_hex(),
+            &session.session_id.to_hex(),
+            &actor.entity_ref().to_hex(),
             actor.actor_class() as u8,
             peer_id,
             counter_start,
-            edit_hash
-        );
+            edit,
+            &provenance,
+        )?;
         candidate.commit_with(CommitOptions::new().commit_msg(&stamp));
         let counter_end = candidate.oplog_vv().get(&peer_id).copied().unwrap_or(0);
         if counter_end <= counter_start {
@@ -448,9 +535,11 @@ impl Vault {
             .checked_add(1)
             .ok_or_else(invalid)?;
         let receipt = ReceiptRow {
+            operation: operation.to_hex(),
             session: session.session_id.to_hex(),
             actor: actor.entity_ref().to_hex(),
             actor_class: actor.actor_class() as u8,
+            provenance,
             sequence,
             peer_id,
             counter_start,
@@ -460,6 +549,7 @@ impl Vault {
             after: after.clone(),
         };
         let result = receipt.receipt()?;
+        CODE_DOCUMENT_INGRESS.put(&self.store, wtxn, &operation, &receipt)?;
         receipts.push(receipt);
         let snapshot = merged.export(ExportMode::Snapshot).map_err(|_| invalid())?;
         save_snapshot(&self.store, wtxn, &before, &session.doc)?;
@@ -547,15 +637,16 @@ impl Vault {
             .enumerate()
             .map(|(index, r)| {
                 let receipt = r.receipt()?;
-                let message = format!(
-                    "oneiron.code_document.v1:{}:{}:{}:{}:{}:{}",
-                    r.session,
-                    r.actor,
+                let message = op_stamp(
+                    &r.operation,
+                    &r.session,
+                    &r.actor,
                     r.actor_class,
                     r.peer_id,
                     r.counter_start,
-                    crate::entity_id::bytes_to_hex_lower(&hash(&encode(&r.edit)?))
-                );
+                    &r.edit,
+                    &r.provenance,
+                )?;
                 let change = doc
                     .get_change(loro::ID::new(r.peer_id, r.counter_start))
                     .ok_or_else(invalid)?;
@@ -573,7 +664,11 @@ impl Vault {
     }
 }
 
-fn load_head(store: &Store, txn: &RoTxn<'_>, id: &[u8; 32]) -> Result<Option<HeadRow>> {
+pub(super) fn load_head(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &[u8; 32],
+) -> Result<Option<HeadRow>> {
     let Some(row) = CODE_DOCUMENT_HEAD.get(store, txn, id)? else {
         return Ok(None);
     };
@@ -613,7 +708,11 @@ fn save_snapshot(
     Ok(())
 }
 
-fn load_frontier(store: &Store, txn: &RoTxn<'_>, tested: &CodeDocumentFrontier) -> Result<LoroDoc> {
+pub(super) fn load_frontier(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    tested: &CodeDocumentFrontier,
+) -> Result<LoroDoc> {
     let row = CODE_DOCUMENT_FRONTIER
         .get(store, txn, &(tested.document_id, tested.op_fold))?
         .ok_or_else(invalid)?;
