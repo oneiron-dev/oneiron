@@ -236,6 +236,9 @@ pub(super) async fn serve_with_config(
     if config.hooks {
         workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
     }
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());

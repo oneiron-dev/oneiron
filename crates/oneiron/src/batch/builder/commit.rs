@@ -237,6 +237,9 @@ impl BatchBuilder<'_> {
         vault.store.notify_task_updates(tasks);
         stale_sweep.finish()?;
         while vault.collect_lfs_garbage(32)? != 0 {}
+        // A delete in this batch released the result bodies it owned.
+        #[cfg(unix)]
+        vault.collect_released_result_bodies(256)?;
         // A delete in this batch staged its claim-key retirement.
         vault.finish_gate_decision_retirements_after_commit();
         for decision in staged_gate_decisions {

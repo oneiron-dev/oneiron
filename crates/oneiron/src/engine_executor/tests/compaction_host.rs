@@ -59,11 +59,13 @@ impl crate::code_run::AgentVerbDoor for ShutDoor {
         &self,
         _: &crate::code_run::SelfAgentVerbCall,
         _: &crate::memory::HostWriteOrigin,
-    ) -> std::result::Result<crate::code_run::AgentVerbAnswer, crate::code_run::AgentVerbRefusal>
-    {
-        Err(crate::code_run::AgentVerbRefusal {
+        _: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<
+        std::result::Result<crate::code_run::AgentVerbAnswer, crate::code_run::AgentVerbRefusal>,
+    > {
+        Ok(Err(crate::code_run::AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
-        })
+        }))
     }
 
     fn admit_run_call(

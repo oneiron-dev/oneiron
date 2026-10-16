@@ -414,13 +414,19 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;
-    let export = vault
-        .memory(owner, oneiron::edge::EdgeActorClass::Human)
-        .export(&oneiron::memory::ExportOptions {
+    // The owner's own `vault.export`, so its verb hooks run around it
+    // (ARCH-0080 §3).
+    let memory = vault.memory(owner, oneiron::edge::EdgeActorClass::Human);
+    let export = oneiron::task_verb::verb_hook_boundary::typed_row(
+        &memory,
+        "vault.export",
+        oneiron::memory::ExportOptions {
             format: Some(args.format),
             include_secrets: Some(args.include_secrets),
-        })
-        .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+        },
+        |input| memory.export(&input),
+    )
+    .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let Some(out) = args.out else {
         io::stdout().lock().write_all(&export.archive)?;
         return Ok(());

@@ -37,6 +37,7 @@ fn decode_session_record_rejects_an_unsupported_version() {
         }],
         activity_periods: Vec::new(),
         explicit_end_hint: None,
+        close_hook_stop: None,
     };
     // The `Named` codec has no opinion on `version`: an unsupported version
     // still round-trips through encode/decode cleanly. The rejection is

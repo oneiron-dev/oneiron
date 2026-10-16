@@ -1,4 +1,8 @@
 //! Structural/blob/retrieval/outbound/calendar verbs of the actor surface.
+//!
+//! Each verb that is an SDK row on its row's own input runs the row's verb
+//! hooks around the engine call (ARCH-0080 §3), as every other door to the
+//! row does.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -30,6 +34,8 @@ use super::dtos::{
     NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope, NapiStructuralPutInput,
 };
 use super::numeric::claim_input_to_engine;
+use oneiron::task_verb::sdk::{NeighborsRequest, QueryBm25Request};
+use oneiron::task_verb::verb_hook_boundary::typed_row;
 
 #[napi]
 impl ActorScopedVault {
@@ -46,10 +52,11 @@ impl ActorScopedVault {
         input: NapiStructuralPutInput,
     ) -> napi::Result<NapiEntityRefReceipt> {
         let engine_input = structural_put_to_engine(&input).map_err(boundary_error)?;
-        let receipt = self
-            .facade()?
-            .put_structural(&engine_input)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let receipt = typed_row(&memory, "vault.structural.put", engine_input, |input| {
+            memory.put_structural(&input)
+        })
+        .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
@@ -67,10 +74,11 @@ impl ActorScopedVault {
             occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
         };
-        let receipt = self
-            .facade()?
-            .put_habit_checkin(&engine_input)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let receipt = typed_row(&memory, "vault.habits.checkin", engine_input, |input| {
+            memory.put_habit_checkin(&input)
+        })
+        .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
@@ -91,10 +99,11 @@ impl ActorScopedVault {
             occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
         };
-        let receipt = self
-            .facade()?
-            .admit_imported_claim(&engine_input)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let receipt = typed_row(&memory, "vault.claims.admit", engine_input, |input| {
+            memory.admit_imported_claim(&input)
+        })
+        .map_err(facade_error)?;
         Ok(commit_receipt_from_engine(receipt))
     }
 
@@ -111,10 +120,11 @@ impl ActorScopedVault {
             occurred_at: ts_to_engine(input.occurred_at, "occurred_at").map_err(boundary_error)?,
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
         };
-        let receipt = self
-            .facade()?
-            .put_blob_artifact(&engine_input)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let receipt = typed_row(&memory, "vault.artifacts.put", engine_input, |input| {
+            memory.put_blob_artifact(&input)
+        })
+        .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
@@ -155,10 +165,14 @@ impl ActorScopedVault {
     pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<NapiLexicalHits> {
         crate::validate_query_len(&query).map_err(boundary_error)?;
         let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
-        let hits = self
-            .facade()?
-            .query_bm25(&query, limit)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let hits = typed_row(
+            &memory,
+            "vault.search.bm25",
+            QueryBm25Request { query, limit },
+            |input| memory.query_bm25(&input.query, input.limit),
+        )
+        .map_err(facade_error)?;
         Ok(NapiLexicalHits {
             value: hits
                 .value
@@ -182,21 +196,23 @@ impl ActorScopedVault {
         entity_ref: String,
         opts: NapiNeighborOpts,
     ) -> napi::Result<NapiNeighborHits> {
-        let hits = self
-            .facade()?
-            .neighbors(
-                &entity_ref,
-                &NeighborOpts {
-                    edge_kind: opts.edge_kind,
-                    min_weight: opts
-                        .min_weight
-                        .map(narrow_to_f32)
-                        .transpose()
-                        .map_err(boundary_error)?,
-                    limit: opts.limit as usize,
-                },
-            )
-            .map_err(facade_error)?;
+        let request = NeighborsRequest {
+            entity_ref,
+            opts: NeighborOpts {
+                edge_kind: opts.edge_kind,
+                min_weight: opts
+                    .min_weight
+                    .map(narrow_to_f32)
+                    .transpose()
+                    .map_err(boundary_error)?,
+                limit: opts.limit as usize,
+            },
+        };
+        let memory = self.facade()?;
+        let hits = typed_row(&memory, "vault.neighbors", request, |input| {
+            memory.neighbors(&input.entity_ref, &input.opts)
+        })
+        .map_err(facade_error)?;
         Ok(NapiNeighborHits {
             value: hits
                 .value
@@ -249,8 +265,11 @@ impl ActorScopedVault {
             as_of: None,
             deadline_ms,
         };
-        let pack = oneiron::task_verb::sdk::recall_with_vector(&self.facade()?, request, |_| None)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let pack = typed_row(&memory, "vault.recall", request, |request| {
+            oneiron::task_verb::sdk::recall_with_vector(&memory, request, |_| None)
+        })
+        .map_err(facade_error)?;
         memory_pack_from_engine(pack).map_err(boundary_error)
     }
 

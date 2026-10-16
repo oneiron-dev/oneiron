@@ -551,6 +551,9 @@ side_tables! {
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
+    /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
+    /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
+    HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;

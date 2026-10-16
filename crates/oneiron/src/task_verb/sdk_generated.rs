@@ -2258,7 +2258,13 @@ pub fn invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    match verb {
+    if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) {
+        return Err(
+            wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))
+        );
+    }
+    // The row's one verb-hook boundary (ARCH-0080 §3).
+    crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
         "report" => encode(report(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
@@ -2433,11 +2439,8 @@ pub fn invoke(
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
-        _ => {
-            Err(wrong_root(verb)
-                .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
-        }
-    }
+        _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
+    })
 }
 pub fn invoke_browser(
     driver: &mut dyn oneiron_browser::BrowserDriver,

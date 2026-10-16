@@ -208,11 +208,13 @@ impl FacadeRowDoor {
     }
 }
 
-impl AgentVerbDoor for FacadeRowDoor {
-    fn call(
+impl FacadeRowDoor {
+    /// Posts the row to its facade route. The step's invocation rides as
+    /// `x-oneiron-invocation`, so the route's verb hooks fire once for it.
+    fn post_row(
         &self,
         call: &SelfAgentVerbCall,
-        _origin: &HostWriteOrigin,
+        invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
         let refused = || AgentVerbRefusal {
             code: MEMORY_CODE_INTERNAL.to_owned(),
@@ -223,6 +225,9 @@ impl AgentVerbDoor for FacadeRowDoor {
             .map_err(|_| refused())?;
         *request.headers_mut() = self.headers.clone();
         request.headers_mut().remove(header::CONTENT_LENGTH);
+        if let Ok(value) = HeaderValue::from_str(&invocation.to_hex()) {
+            request.headers_mut().insert("x-oneiron-invocation", value);
+        }
         request.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
@@ -237,6 +242,17 @@ impl AgentVerbDoor for FacadeRowDoor {
         });
         let output = receiver.recv().map_err(|_| refused())??;
         Ok(AgentVerbAnswer { output, rows: None })
+    }
+}
+
+impl AgentVerbDoor for FacadeRowDoor {
+    fn call(
+        &self,
+        call: &SelfAgentVerbCall,
+        _origin: &HostWriteOrigin,
+        invocation: oneiron::runtime_hooks::InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(self.post_row(call, invocation))
     }
 
     /// The typed actions keep their own ceiling and owner proof; this door

@@ -127,6 +127,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         mode,
         request_id: request_id.to_owned(),
         landing,
+        invocation: None,
     })
 }
 

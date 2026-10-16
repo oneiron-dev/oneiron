@@ -786,6 +786,7 @@ fn owner_policy_action_is_unreachable_from_the_guest_imports() {
             weave_recipe_priority: crate::dreamer_wake::WeaveRecipePriority::BeforeConnectorEvent,
         }),
         budget: None,
+        view: None,
     };
     assert!(response(reply).is_err());
 }

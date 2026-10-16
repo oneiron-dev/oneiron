@@ -581,6 +581,7 @@ impl Vault {
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
             result_body_pins: Default::default(),
+            verb_hook_state: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
@@ -643,6 +644,9 @@ impl Vault {
         while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
         while vault.collect_lfs_garbage(32)? != 0 {}
         vault.resume_erases_after_commit();
+        // An erase that committed before a crash released its result bodies.
+        #[cfg(unix)]
+        vault.collect_released_result_bodies(4096)?;
         vault.recover_message_streams().map_err(|error| {
             crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
                 error.to_string(),

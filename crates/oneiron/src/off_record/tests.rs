@@ -1659,8 +1659,8 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
         calls: AtomicUsize,
     }
 
-    impl AgentVerbDoor for RecallDoor {
-        fn call(
+    impl RecallDoor {
+        fn answer(
             &self,
             call: &SelfAgentVerbCall,
             origin: &crate::memory::HostWriteOrigin,
@@ -1685,6 +1685,18 @@ fn a_room_bound_run_forwards_no_verb_once_the_saver_left() -> Result<()> {
                 output: serde_json::json!({"recalled": true}),
                 rows: Some(Vec::new()),
             })
+        }
+    }
+
+    impl AgentVerbDoor for RecallDoor {
+        fn call(
+            &self,
+            call: &SelfAgentVerbCall,
+            origin: &crate::memory::HostWriteOrigin,
+            _: crate::runtime_hooks::InvocationId,
+        ) -> crate::Result<std::result::Result<crate::code_run::AgentVerbAnswer, AgentVerbRefusal>>
+        {
+            Ok(self.answer(call, origin))
         }
 
         fn admit_run_call(
@@ -1783,10 +1795,12 @@ fn a_session_bound_run_refuses_a_search_its_door_narrows() -> Result<()> {
             &self,
             _: &SelfAgentVerbCall,
             _: &crate::memory::HostWriteOrigin,
-        ) -> std::result::Result<crate::code_run::AgentVerbAnswer, AgentVerbRefusal> {
-            Err(AgentVerbRefusal {
+            _: crate::runtime_hooks::InvocationId,
+        ) -> crate::Result<std::result::Result<crate::code_run::AgentVerbAnswer, AgentVerbRefusal>>
+        {
+            Ok(Err(AgentVerbRefusal {
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
-            })
+            }))
         }
 
         fn admit_run_call(

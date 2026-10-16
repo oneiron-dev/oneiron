@@ -12,6 +12,7 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
+use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
@@ -21,6 +22,15 @@ const AGENT_VERB_RECEIPT_DOMAIN: &[u8] = b"oneiron:executor-agent-verb-receipt:v
 /// The reason a receipt's refusal row carries, so that no row read back from
 /// the receipt's answer, a refusal or not, is ever taken for one.
 const KEPT_ANSWER_REFUSED: &str = "kept_answer_refused";
+
+/// The mark a receipt keeps when a verb hook stopped its write before the
+/// write ran (ARCH-0080 §3): nothing was written, so a replay of the step
+/// asks the door again.
+const VERB_HOOK_STOPPED: &str = "verb_hook_stopped";
+
+/// The answer a write's receipt keeps when a verb hook hid its result after
+/// the write ran: kept, so a replay never writes again.
+const VERB_HOOK_HIDDEN: &str = "verb_hook_hidden";
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -56,8 +66,13 @@ impl HostSelfDispatcher<'_> {
         };
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?);
+        // The call's step names the logical verb its hooks fire once for, the
+        // same across replays of the step, and a call a hook's ask parked
+        // keeps its invocation into a later step (ARCH-0080 §3). A hook's
+        // stop goes back to the dispatcher as `Error::VerbHook`.
+        let invocation = self.verb_invocation(&SelfCall::AgentVerb(call.clone()), site)?;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            return Ok(answered(door.call(&call, &origin)));
+            return Ok(answered(door.call(&call, &origin, invocation)?));
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
@@ -66,7 +81,16 @@ impl HostSelfDispatcher<'_> {
         // reaches this door.
         let ordinal = site.earlier.iter().filter(is_write).count() as u64;
         let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
-        if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
+        let kept = self.storage.get_code_run_replay_record(&receipt_id)?;
+        // A hook stopped this write before it ran, so nothing was written:
+        // the door is asked again, under a fresh reservation.
+        let stopped = match &kept {
+            Some(receipt) if receipt.bridge_calls.first().is_some_and(hook_stopped) => {
+                Some(receipt.generation()?)
+            }
+            _ => None,
+        };
+        if let Some(receipt) = kept.filter(|_| stopped.is_none()) {
             let Some(row) = receipt.bridge_calls.first() else {
                 return Err(Error::ConcurrentWrite(
                     "agent verb write is in flight or needs reconciliation",
@@ -105,8 +129,34 @@ impl HostSelfDispatcher<'_> {
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
         let generation = self
             .storage
-            .put_code_run_replay_record_if_generation_with_heal(&receipt, None, None)?;
-        let outcome = answered(door.call(&call, &origin));
+            .put_code_run_replay_record_if_generation_with_heal(&receipt, stopped, None)?;
+        let outcome = match door.call(&call, &origin, invocation) {
+            Ok(answer) => answered(answer),
+            Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
+                answered(Err(AgentVerbRefusal {
+                    code: VERB_HOOK_HIDDEN.to_owned(),
+                }))
+            }
+            // A skip or an ask stopped the write before it ran: the receipt
+            // keeps the stop's mark, and the stop goes to the dispatcher.
+            Err(Error::VerbHook(stop)) => {
+                receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                    0,
+                    &SelfCall::AgentVerb(call),
+                    &hook_stop_mark(),
+                    0,
+                    0,
+                )?);
+                self.storage
+                    .put_code_run_replay_record_if_generation_with_heal(
+                        &receipt,
+                        Some(generation),
+                        None,
+                    )?;
+                return Err(Error::VerbHook(stop));
+            }
+            Err(error) => return Err(error),
+        };
         // A receipt keeps its call's answer as its record's first row.
         receipt.bridge_calls.push(CodeRunBridgeCall::record(
             0,
@@ -260,12 +310,32 @@ fn standing_refusal(receipt: &CodeRunReplayRecord) -> Option<&CodeRunBridgeCall>
 }
 
 /// Whether a write row met its receipt: it is the receipt's call with the
-/// answer the receipt kept, and no refusal of that answer stands.
+/// answer the receipt kept, and no refusal of that answer stands. A write a
+/// hook stopped before it ran meets its mark whatever the run made of the
+/// stop.
 fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
     standing_refusal(receipt).is_none()
         && receipt.bridge_calls.first().is_some_and(|kept| {
-            row_identity(kept) == row_identity(made) && answered_as_kept(kept, made)
+            row_identity(kept) == row_identity(made)
+                && (hook_stopped(kept) || answered_as_kept(kept, made))
         })
+}
+
+/// The mark a write's receipt keeps when a verb hook stopped it before it ran.
+fn hook_stop_mark() -> SelfDispatchOutcome {
+    SelfDispatchOutcome::Denied(SelfDeniedResult {
+        effect: SelfEffect::AgentVerb,
+        outcome: VERB_HOOK_STOPPED.to_owned(),
+        reason_codes: vec![VERB_HOOK_STOPPED.to_owned()],
+    })
+}
+
+/// Whether a receipt's row is [`hook_stop_mark`]: the write never ran.
+fn hook_stopped(row: &CodeRunBridgeCall) -> bool {
+    matches!(
+        decode_self_dispatch_outcome(&row.outcome),
+        Ok(SelfDispatchOutcome::Denied(refused)) if refused.reason_codes == [VERB_HOOK_STOPPED]
+    )
 }
 
 /// The refusal a receipt keeps beside its answer, as the run takes it: one

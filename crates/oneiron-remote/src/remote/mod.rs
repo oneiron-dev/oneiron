@@ -249,7 +249,9 @@ impl RemoteClient {
         );
 
         let status = response.status();
-        if !status.is_success() {
+        // A 202 is a verb hook's pending ask: the verb did not run, and the
+        // body is the refusal naming the ask (ARCH-0080 §3).
+        if !status.is_success() || status == reqwest::StatusCode::ACCEPTED {
             return Err(read_error_envelope(response, status));
         }
         // The ordinary facade has a strict success-body ceiling. Export alone

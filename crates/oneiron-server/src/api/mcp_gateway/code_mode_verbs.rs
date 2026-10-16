@@ -14,6 +14,10 @@
 //! standing action grants set each browser effect class's press for the
 //! run, and the built-in `oneiron.browser` pack must stand installed:
 //! the browser is that connector pack's capability, never the engine's.
+//!
+//! Each call carries its step's invocation, so the row's verb hooks fire once
+//! for it (ARCH-0080 §3): at the one dispatcher a verb row takes, or here for
+//! a browser row. A hook's stop goes back to the run as the typed stop.
 
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb};
@@ -27,6 +31,7 @@ use oneiron::code_run::{
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
 use oneiron::memory::HostWriteOrigin;
+use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
 use oneiron_browser::{
     BrowserError, BrowserGuest, BrowserSession, EFFECT_CLASSES, PressMode, SendPolicy,
@@ -189,52 +194,67 @@ impl McpCodeModeVerbs {
     }
 
     /// A browser row: this connector's binding and live credential at each
-    /// call, then the run's browser. Its answer derives from no vault row.
-    fn call_browser(&self, call: &SelfAgentVerbCall) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
-        let refused = |error: McpGatewayError| AgentVerbRefusal {
-            code: error.kind.to_owned(),
-        };
-        mcp_admit_host_verb(&self.actor, call.verb).map_err(refused)?;
-        mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
+    /// call, the row's verb hooks around the run's browser. Its answer
+    /// derives from no vault row.
+    fn call_browser(
+        &self,
+        call: &SelfAgentVerbCall,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
+            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
+        {
+            return refused(error);
+        }
         // The browser runs as its connector pack: no installed pack, no browser.
-        self.server
-            .vault
-            .require_builtin_channel_pack("browser")
-            .map_err(|_| AgentVerbRefusal {
+        if self.server.vault.require_builtin_channel_pack("browser").is_err() {
+            return Ok(Err(AgentVerbRefusal {
                 code: "browser_pack_not_installed".to_owned(),
-            })?;
+            }));
+        }
         let browser_refused = |error: BrowserError| {
             tracing::debug!(verb = call.verb.as_str(), %error, "code run browser call refused");
             AgentVerbRefusal {
                 code: error.code().to_owned(),
             }
         };
-        let browser = self
-            .browser
-            .as_ref()
-            .ok_or_else(|| browser_refused(BrowserError::Unbound))?;
-        let output = browser
-            .call(call.verb, call.input.clone())
-            .map_err(browser_refused)?;
+        let Some(browser) = self.browser.as_ref() else {
+            return Ok(Err(browser_refused(BrowserError::Unbound)));
+        };
+        let memory = crate::api::credential_memory(
+            &self.server.vault,
+            self.actor.auth.as_ref(),
+            self.actor.actor_ref,
+            self.actor.actor_class,
+        )
+        .with_invocation(invocation);
+        let verb = call.verb.as_str();
+        let hooks = match oneiron::task_verb::verb_hook_boundary::row_pre(
+            &memory,
+            verb,
+            call.input.clone(),
+        ) {
+            Ok(hooks) => hooks,
+            Err(error) => return refused(super::mcp_facade_error(error)),
+        };
+        let output = match browser.call(call.verb, hooks.args.clone()) {
+            Ok(output) => output,
+            Err(error) => return Ok(Err(browser_refused(error))),
+        };
         // An effect's answer carries its receipt, naming the page it acted on.
         if let Some(receipt) = output.get("receipt") {
-            tracing::info!(
-                verb = call.verb.as_str(),
-                ?receipt,
-                "browser effect receipt"
-            );
+            tracing::info!(verb, ?receipt, "browser effect receipt");
         }
         if let Some(receipts) = output.get("receipts") {
-            tracing::info!(
-                verb = call.verb.as_str(),
-                ?receipts,
-                "browser batch receipts"
-            );
+            tracing::info!(verb, ?receipts, "browser batch receipts");
         }
-        Ok(AgentVerbAnswer {
-            output,
-            rows: Some(Vec::new()),
-        })
+        match oneiron::task_verb::verb_hook_boundary::row_post(&self.server.vault, hooks, output) {
+            Ok(output) => Ok(Ok(AgentVerbAnswer {
+                output,
+                rows: Some(Vec::new()),
+            })),
+            Err(error) => refused(super::mcp_facade_error(error)),
+        }
     }
 
     pub(crate) fn manifests(&self) -> Vec<Value> {
@@ -264,38 +284,43 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         &self,
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
-    ) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if call.verb.is_browser() {
             // The run's worker thread holds the call while the guest acts.
-            return self.call_browser(call);
+            return self.call_browser(call, invocation);
         }
         // The run's worker thread drives its own reactor; the verb runs on the
         // server runtime, as a tool call would, and the worker waits for it.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(&self.server);
-        let actor = self.actor.clone();
+        let actor = McpCallContext {
+            invocation: Some(invocation),
+            ..self.actor.clone()
+        };
         let verb = call.verb.as_str();
         let input = call.input.clone();
         let origin = origin.clone();
         self.runtime.spawn(async move {
             let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, origin).await);
         });
-        let (output, listed) = receiver
-            .recv()
-            .map_err(|_| AgentVerbRefusal {
+        let Ok(executed) = receiver.recv() else {
+            return Ok(Err(AgentVerbRefusal {
                 code: "engine_error".to_owned(),
-            })?
-            .map_err(|error| AgentVerbRefusal {
-                code: error.kind.to_owned(),
-            })?;
+            }));
+        };
+        let (output, listed) = match executed {
+            Ok(executed) => executed,
+            Err(error) => return refused(error),
+        };
         self.served
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend(listed.iter().copied());
-        Ok(AgentVerbAnswer {
+        Ok(Ok(AgentVerbAnswer {
             output,
             rows: Some(listed),
-        })
+        }))
     }
 
     /// A call the run serves itself meets this connector's door at each call
@@ -363,6 +388,17 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 code: "engine_error".to_owned(),
             },
         )
+    }
+}
+
+/// A refused call as the run takes it: a verb hook's stop as the typed stop,
+/// any other refusal as its stable code.
+fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, AgentVerbRefusal>> {
+    match error.hook {
+        Some(stop) => Err(oneiron::Error::from(*stop)),
+        None => Ok(Err(AgentVerbRefusal {
+            code: error.kind.to_owned(),
+        })),
     }
 }
 
