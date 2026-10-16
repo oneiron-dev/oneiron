@@ -12,8 +12,7 @@ use super::classify::DEFAULT_MAX_CONSECUTIVE_TRANSIENTS;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureEscalationMode {
-    /// Route to the healer slot; Reserved is a valid explicit result until the
-    /// configured ARCH-0066 healer exists.
+    /// Route to the healer slot; the default slot wakes the Coach.
     Auto,
     Human,
 }
@@ -37,14 +36,14 @@ pub struct FailureScopePolicy {
 }
 
 impl FailureScopePolicy {
-    /// The default policy: N=3, Auto escalation, reserved healer slot.
+    /// The default policy: N=3, Auto escalation that wakes the Coach.
     #[must_use]
     pub const fn auto(scope: FailureScope) -> Self {
         Self {
             scope,
             max_consecutive_transients: DEFAULT_MAX_CONSECUTIVE_TRANSIENTS,
             escalation_mode: FailureEscalationMode::Auto,
-            healer_slot: HealerSlot::Reserved,
+            healer_slot: HealerSlot::Coach,
         }
     }
 }

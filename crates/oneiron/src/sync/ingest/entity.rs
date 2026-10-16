@@ -333,7 +333,7 @@ fn admit(
         )?;
         return Ok(EntityStep::Protected { id, wrote });
     }
-    let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
+    let delete_protected = crate::dreamer_runner::authority::is_base_agent_actor(&id)?
         || crate::registry::is_delete_protected_engine_record(header.entity_type);
     // H125: artifact version bytes fenced here when their last artifact went come back once an
     // artifact live here holds them again. A tombstone naming them still wins.

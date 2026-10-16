@@ -2227,6 +2227,7 @@ fn fabricated_healer_case_requires_a_ladder_minted_failure() -> Result<()> {
         let before = queue.list()?;
         for slot in [
             HealerSlot::Reserved,
+            HealerSlot::Coach,
             HealerSlot::AgentDef {
                 agent_def_ref: healer.to_hex(),
             },

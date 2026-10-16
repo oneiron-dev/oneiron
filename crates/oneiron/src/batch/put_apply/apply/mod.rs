@@ -386,7 +386,7 @@ pub(in crate::batch) fn apply_put(
     // a fence planted at its id before it arrived refuses nothing.
     if replicated
         && !crate::registry::is_delete_protected_engine_record(entity_type)
-        && id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        && !crate::dreamer_runner::authority::is_base_agent_actor(&id)?
         && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
     {
         return Err(Error::InvariantViolation(
