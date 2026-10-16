@@ -21463,7 +21463,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 60,
+      "crate-vis": 61,
       "re-export": 8
      }
     },
@@ -21629,6 +21629,16 @@
       "crate-vis": 3,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/record_references.rs",
+     "purpose": "OF-063: one check that every record a write names resolves for its writer",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -24987,7 +24997,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -25023,6 +25033,22 @@
       "enum": 1,
       "fn": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecordRef",
+      "RecordRefPreview",
+      "ResolveRecordRefRequest"
+     ],
+     "path": "src/lens/record_ref.rs",
+     "purpose": "OF-063: typed, resolvable record refs",
+     "surface": {
+      "const": 3,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -27476,7 +27502,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 2,
-      "re-export": 30
+      "re-export": 32
      }
     },
     {
@@ -33773,7 +33799,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 12
      }
     },
@@ -33819,9 +33845,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/receipt/record.rs",
-     "purpose": "First-class, replicated immutable terminal outbound receipt record, and the served-form receipt record a…",
+     "purpose": "First-class, replicated immutable terminal outbound receipt record, the served-form receipt record a read…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/reference_refusal.rs",
+     "purpose": "Reference-refusal receipts (OF-063): a write was refused because a record ref it named does not resolve for…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -43135,7 +43171,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 120
+      "fn": 121
      }
     },
     {
@@ -47866,7 +47902,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47985,7 +48021,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48251,7 +48287,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48715,7 +48751,7 @@
    },
    "over_bar": 98,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2936,
+   "source_files": 2939,
    "test_files": 903
   },
   "oneiron-android": {
@@ -51740,7 +51776,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -51756,7 +51792,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 12,
+      "const": 13,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -56273,7 +56309,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 102
+      "fn": 103
      }
     },
     {
@@ -57272,7 +57308,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 103
+      "fn": 104
      }
     },
     {
