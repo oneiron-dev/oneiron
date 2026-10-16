@@ -2160,17 +2160,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/evidence.rs` | src | m | 4 struct · 1 fn · 16 crate-vis | ObservedRef, PackStats, ReceivePackOutcome, RefUpdate | Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the… |
 | `src/origin/smart_http/exchange_idle.rs` | src | s | 9 crate-vis | — | An exchange's idle limit: a clock of the last byte it moved in either direction, the request body and… |
 | `src/origin/smart_http/exchange_tests.rs` | test | m | 1 crate-vis | — | One exchange's lifetime: a push whose client is gone before its response begins, or whose exchange unwinds… |
+| `src/origin/smart_http/held.rs` | src | s | 2 struct · 1 trait · 7 fn | AtDiskFloor, HeldBytes, SpillFloor | Bytes of one exchange held whole before they move on: a push's command section, read ahead of the backend to… |
 | `src/origin/smart_http/history_scan_tests.rs` | test | m | — | — | The door scans every blob a push makes reachable, not only the tip diff (H263): a secret one commit adds and… |
 | `src/origin/smart_http/hooks.rs` | src | m | 1 struct · 2 fn · 7 crate-vis | DoorHooksDir | The per-request door-owned hook directory and the vetted pre-receive script it carries |
-| `src/origin/smart_http/intent.rs` | src | m | 1 struct · 1 enum · 1 fn · 13 crate-vis | ReceivePackRefResult, ReceivePackRefStatus | The crash-durable per-ref intent journal and its reconcile/resume path |
+| `src/origin/smart_http/intent.rs` | src | m | 1 struct · 1 enum · 1 fn · 17 crate-vis | ReceivePackRefResult, ReceivePackRefStatus | The crash-durable per-ref intent journal and its reconcile/resume path |
 | `src/origin/smart_http/intent_recovery_tests.rs` | test | m | — | — | Crash/recovery contract: pre-outcome crash, declined effects, partial resume, supersede, delete-only… |
 | `src/origin/smart_http/landing.rs` | src | m | 2 struct · 1 enum · 3 fn | ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding | The single-writer landing: apply path, per-ref publication fan-out, and wire-outcome mapping |
 | `src/origin/smart_http/landing_lfs.rs` | src | s | 3 crate-vis | — | LFS pointer admission and the per-ref tree walk that attaches pointers to the refs that carry them |
 | `src/origin/smart_http/landing_tests.rs` | test | m | — | — | Landing and attribution tests: unauthenticated push, delete-only pin, secret scan, sync-plane silence… |
 | `src/origin/smart_http/maintain.rs` | src | m | 1 struct · 1 fn · 1 const | ServedRepositoryMaintenance | Maintenance of the served repositories |
 | `src/origin/smart_http/maintain_tests.rs` | test | m | — | — | Done-means for served repository maintenance: a repository past git's own threshold is maintained; one a… |
-| `src/origin/smart_http/mod.rs` | src | s | 11 re-export · 1 crate-vis | — | Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908) |
-| `src/origin/smart_http/paths.rs` | src | s | 3 fn · 11 const · 18 crate-vis | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
+| `src/origin/smart_http/mod.rs` | src | s | 12 re-export · 1 crate-vis | — | Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908) |
+| `src/origin/smart_http/paths.rs` | src | s | 4 fn · 11 const · 17 crate-vis | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
 | `src/origin/smart_http/push_cert_tests.rs` | test | s | — | — | Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs… |
 | `src/origin/smart_http/recreate_tests.rs` | test | m | — | — | A ref deleted and pushed again at a tip it was already published at lands on that earlier publication: the… |
 | `src/origin/smart_http/scan_cap_tests.rs` | test | s | — | — | No origin scan refuses for how many rows it reads (rule 5): a repository keeps taking pushes, advertisements… |

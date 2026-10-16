@@ -109,8 +109,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/mod.rs` | src | s | 2 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
-| `src/api/git_http/serve.rs` | src | m | 7 crate-vis | — | Streaming bridge between axum and the blocking smart-HTTP serve plane |
-| `src/api/git_http/status_codec.rs` | src | s | 4 crate-vis | — | Receive-pack status pkt-line codec |
+| `src/api/git_http/serve.rs` | src | m | 6 crate-vis | — | Streaming bridge between axum and the blocking smart-HTTP serve plane |
+| `src/api/git_http/status_codec.rs` | src | m | 5 crate-vis | — | Receive-pack status pkt-line codec |
 | `src/api/git_http/tests_auth.rs` | src | m | — | — | Authentication-gate tests for Git smart-HTTP |
 | `src/api/git_http/tests_lifetime.rs` | src | L | 1 crate-vis | — | The lifetime of one git exchange (C5) and the queue it waits in (the rate law of ARCH-0044 C5), end to end… |
 | `src/api/git_http/tests_push.rs` | src | s | — | — | Push round-trip and status-codec tests for Git smart-HTTP |
