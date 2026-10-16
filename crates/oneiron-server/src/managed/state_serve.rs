@@ -289,6 +289,7 @@ impl ManagedState {
                 contract_version: CONTRACT_VERSION,
             }),
             CtlRequest::Shed { cause, waited_secs } => {
+                self.guard_write()?;
                 super::shed::shed(self.server.vault(), cause, waited_secs)
             }
             CtlRequest::PrepareReap => self.prepare_reap().await,
