@@ -309,4 +309,16 @@ impl NativeClient {
             .agent_verb("vault.rooms.speak", input)
             .map_err(facade_error)
     }
+    #[napi]
+    pub fn vault_rooms_join(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.join", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_consent(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.consent", input)
+            .map_err(facade_error)
+    }
 }

@@ -17,6 +17,7 @@ pub(crate) use deletion::{
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
+pub(crate) use roles::{RoomHost, room_host_in_txn};
 pub use session::{SessionMode, SessionPresence};
 pub(crate) use visibility::{AudienceCache, conversation_summary_covers, room_for_record_in};
 

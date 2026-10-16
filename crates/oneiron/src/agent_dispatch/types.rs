@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 14] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 16] = [
     "schema_version",
     "target",
     "agent_def",
@@ -45,6 +45,8 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 14] = [
     "healer_case",
     "budget",
     "launch",
+    "room",
+    "join",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -68,6 +70,8 @@ pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
 pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
 pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[12];
 pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[13];
+pub(super) const KEY_ROOM: &str = AGENT_DISPATCH_INPUT_KEYS[14];
+pub(super) const KEY_JOIN: &str = AGENT_DISPATCH_INPUT_KEYS[15];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -140,6 +144,10 @@ pub struct AgentDispatchInput {
     /// spend and cap, as the caller saw them. The cost part of the spawn
     /// receipt.
     pub launch: Option<super::LaunchStatement>,
+    /// The room the launch works in (OF-531), as the spawn asked.
+    pub room: Option<crate::workspace_roster::RoomWork>,
+    /// The join receipt the launch re-proved in its own transaction (OF-531).
+    pub join: Option<crate::workspace_roster::JoinReceiptRef>,
 }
 
 impl AgentDispatchInput {
@@ -158,6 +166,8 @@ impl AgentDispatchInput {
             scope: None,
             budget: None,
             launch: None,
+            room: None,
+            join: None,
         }
     }
 }
@@ -186,6 +196,10 @@ pub struct AgentSpawnContext {
     /// A ROOT launch's spend scope. A child spends under its parent's and
     /// never names one. A root without one runs unmetered by any lease tree.
     pub spend: Option<super::SpawnSpend>,
+    /// The room the agent works in (OF-531). Set, the launch re-proves the
+    /// agent's join there before it reserves or enqueues; unset, nothing
+    /// changes.
+    pub room: Option<crate::workspace_roster::RoomWork>,
 }
 
 impl AgentSpawnContext {

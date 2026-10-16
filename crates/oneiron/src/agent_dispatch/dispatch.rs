@@ -35,6 +35,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.scope,
         &spawn.budget,
         &spawn.spend,
+        &spawn.room,
     ))
     .map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -219,6 +220,14 @@ impl<'a> AgentDispatcher<'a> {
             input.now,
         )?;
         dispatch_input.launch = Some(launch.statement.clone());
+        // OF-531: a room-bound launch re-proves its agent's join, before any
+        // reservation or enqueue, under the scope it reserves under.
+        dispatch_input.join = self.require_room_join_in_txn(
+            wtxn,
+            dispatch_input.room.as_ref(),
+            requested_ref,
+            launch.statement.parent_scope.as_ref(),
+        )?;
         let encoded = encode_agent_dispatch_input(&dispatch_input)?;
         let outcome = self.runner.enqueue_with_task_ref_in_txn(
             wtxn,
@@ -393,6 +402,8 @@ impl<'a> AgentDispatcher<'a> {
             scope,
             budget: spawn.budget,
             launch: None,
+            room: spawn.room,
+            join: None,
         })
     }
 

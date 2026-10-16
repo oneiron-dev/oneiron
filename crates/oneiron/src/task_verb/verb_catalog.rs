@@ -32,6 +32,8 @@ pub enum AgentVerb {
     VaultRoomsTrunk,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultRoomsJoin,
+    VaultRoomsConsent,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -75,6 +77,8 @@ impl AgentVerb {
         Self::VaultRoomsTrunk,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultRoomsJoin,
+        Self::VaultRoomsConsent,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -121,6 +125,8 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => "vault.rooms.trunk",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -163,6 +169,8 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -213,6 +221,8 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
         )
     }
     pub const fn is_section(self) -> bool {
@@ -282,6 +292,8 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -311,6 +323,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
@@ -356,6 +370,8 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -400,6 +416,8 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],

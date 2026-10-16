@@ -310,5 +310,9 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+        def join(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
+        def consent(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
 
 # END GENERATED FACADE VERBS

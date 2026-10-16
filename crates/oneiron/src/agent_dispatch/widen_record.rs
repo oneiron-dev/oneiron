@@ -73,6 +73,9 @@ pub(super) struct WidenIntent {
     /// The spawn's `budget` (OF-532), carved at approval like any launch.
     #[serde(default)]
     pub budget: Option<u64>,
+    /// The room the spawn works in (OF-531), re-proved at approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<crate::workspace_roster::RoomWork>,
 }
 
 impl WidenIntent {
@@ -95,6 +98,7 @@ impl WidenIntent {
             scope: spawn.scope.clone(),
             healer_case: spawn.healer_case.clone(),
             budget: spawn.budget,
+            room: spawn.room,
         })
     }
 
@@ -138,6 +142,7 @@ impl WidenIntent {
                 budget: self.budget,
                 // A widen always has a parent, whose scope the child spends under.
                 spend: None,
+                room: self.room,
             },
         ))
     }
