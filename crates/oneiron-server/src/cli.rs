@@ -8,7 +8,8 @@ use crate::config::ServeArgs;
 mod hook_args;
 mod owner_args;
 pub use hook_args::{
-    HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs,
+    HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
+    HookRecallArgs,
 };
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
