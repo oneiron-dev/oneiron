@@ -139,36 +139,7 @@ pub(super) fn bind_actor(
     actor: WriteActor,
     at: u64,
 ) -> Result<()> {
-    use crate::claim::{
-        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-        PREDICATE_ACTOR_PEER_BINDING,
-    };
-    let mut body = ClaimBody::new(
-        PREDICATE_ACTOR_PEER_BINDING,
-        ClaimSubject::Entity(actor.entity_ref()),
-        rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("peer"),
-                rmpv::Value::from(doc.doc.peer_id()),
-            ),
-            (
-                rmpv::Value::from("class"),
-                rmpv::Value::from(crate::edit_distance::actor_class_token(actor.actor_class())),
-            ),
-        ]),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )?;
-    body.valid_from = Some(at);
-    body.source = Some(ClaimSource::Observed);
-    vault.put_reserved_claim_in_txn(
-        txn,
-        &EntityId::now(),
-        &body,
-        crate::temporal::TimeRange { start: at, end: at },
-        at,
-    )
+    crate::typed_body::bind_peer(vault, txn, doc.doc.peer_id(), actor, at)
 }
 
 pub(super) fn owner_in_txn(
