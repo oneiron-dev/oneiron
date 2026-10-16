@@ -55,5 +55,12 @@ pub const CRITIC_REVIEW: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Should this AUTO-mode fan-out start (allow, deny or escalate)? Keyed by the ask's trigger.
+pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
+    name: "fanout.ask",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
-pub const FAMILIES: &[QuestionFamily] = &[TELEMETRY_ANOMALY, CRITIC_REVIEW];
+pub const FAMILIES: &[QuestionFamily] = &[TELEMETRY_ANOMALY, CRITIC_REVIEW, FANOUT_ASK];
