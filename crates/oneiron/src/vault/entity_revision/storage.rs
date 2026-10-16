@@ -458,7 +458,9 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         return Err(crate::secret_custody::reject_secret_custody_byte());
     }
     if header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
-        return Err(crate::world_keys::refused("a world key's pad has no revisions"));
+        return Err(crate::world_keys::refused(
+            "a world key's pad has no revisions",
+        ));
     }
     if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&vault.store, txn, id, header.entity_type)?
         || vault.archive_tombstone_in_txn(txn, id)?.is_some()

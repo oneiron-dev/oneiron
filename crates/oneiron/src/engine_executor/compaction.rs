@@ -499,8 +499,7 @@ pub(super) fn served_sources(
     for id in found {
         if crate::ports::EntityStoreRead::port_entity_record(dbs, rtxn, &id)?.is_some() {
             sources.push(id);
-        } else if crate::ports::TombstoneStoreRead::port_deletion_state(dbs, rtxn, &id)?.deleted
-        {
+        } else if crate::ports::TombstoneStoreRead::port_deletion_state(dbs, rtxn, &id)?.deleted {
             return Err(crate::Error::InvariantViolation(
                 "a record the run was served has been purged",
             ));
@@ -611,9 +610,7 @@ pub(super) fn window_pins(window: &[crate::compaction::CompactionWindowMessage])
 /// A position no call spoke at names none of the run's records, whatever
 /// sits at its id. The trailing fallback speaks only once the run completes,
 /// after its last window. A blocked report's receipt is in its call's outcome.
-pub(super) fn speech_orders(
-    calls: &[CodeRunBridgeCall],
-) -> impl Iterator<Item = u32> + '_ {
+pub(super) fn speech_orders(calls: &[CodeRunBridgeCall]) -> impl Iterator<Item = u32> + '_ {
     calls
         .iter()
         .filter_map(CodeRunBridgeCall::emitted_speech_order)

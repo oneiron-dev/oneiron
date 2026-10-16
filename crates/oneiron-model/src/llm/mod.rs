@@ -45,8 +45,8 @@ pub use failure_policy::{
     parse_failure_rules,
 };
 pub mod image;
-pub mod media;
 mod label_read;
+pub mod media;
 pub use label_read::{LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet};
 mod model_id;
 mod protocol;
