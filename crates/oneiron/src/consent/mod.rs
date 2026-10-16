@@ -81,10 +81,11 @@ pub use self::codec::{
 };
 pub use self::contact_clearance::{
     CONTACT_CLEARANCE_CLASS, CONTACT_CLEARANCE_REVOKE_COMMAND, CONTACT_DISCLOSURE_REASON_NARROWED,
-    CONTACT_DISCLOSURE_REASON_REVOKED, CONTACT_DISCLOSURE_REASON_STANDING,
+    CONTACT_DISCLOSURE_REASON_PRECLEARED, CONTACT_DISCLOSURE_REASON_REVOKED,
+    CONTACT_DISCLOSURE_REASON_STANDING, CONTACT_DISCLOSURE_REASON_USED,
     CONTACT_DISCLOSURE_WIDEN_KIND, ContactClearanceAct, ContactDisclosureOffer,
     ContactDisclosureOutcome, ContactDisclosureProposal, DisclosureConfirmationReceipt,
-    contact_clearance_ref,
+    DisclosureOfferMode, contact_clearance_ref,
 };
 pub use self::doors::{
     AuthenticatedOwner, ConsentEvaluation, bound_catastrophe_class, load_active_standing_grants,
