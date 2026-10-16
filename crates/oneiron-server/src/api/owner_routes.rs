@@ -70,6 +70,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/feedback/send", post(send_feedback))
         .route("/feedback/inbox", get(feedback_inbox))
         .route("/pack-drift", get(pack_drift_repairs))
+        .merge(super::owner_origin::routes())
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
@@ -197,7 +198,7 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
 }
 
 /// Runs blocking vault work (snapshots, restores) off the runtime.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(work)
