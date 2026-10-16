@@ -290,7 +290,7 @@ pub(crate) fn withdrawn_generation_cutoff_in_txn(
     let prefix = [WITHDRAWN_GENERATION_SWEEP_PREFIX, artifact.as_bytes()].concat();
     for row in store.sync_queue.prefix_iter(txn, &prefix)? {
         let (key, _) = row?;
-        let generation = decode_withdrawn_generation_key(key).map_or(u64::MAX, |(_, at)| at);
+        let generation = decode_withdrawn_generation_key(&key).map_or(u64::MAX, |(_, at)| at);
         cutoff = Some(cutoff.map_or(generation, |held| held.max(generation)));
     }
     Ok(cutoff)
@@ -317,7 +317,7 @@ pub(crate) fn withdrawn_generation_cutoffs_in_txn(
         .prefix_iter(txn, WITHDRAWN_GENERATION_SWEEP_PREFIX)?
     {
         let (key, _) = row?;
-        if let Some((id, generation)) = decode_withdrawn_generation_key(key) {
+        if let Some((id, generation)) = decode_withdrawn_generation_key(&key) {
             raise(id, generation);
         }
     }

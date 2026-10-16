@@ -212,7 +212,7 @@ pub(super) fn finalize_withdrawn_job(
         let mut waiting = false;
         for row in vault.store.sync_queue.prefix_iter(&*wtxn, &prefix)? {
             let (key, _) = row?;
-            waiting |= key != job_key;
+            waiting |= *key != *job_key;
         }
         if !waiting {
             crate::ports::retire_withdrawn_in_txn(&vault.store, wtxn, id)?;

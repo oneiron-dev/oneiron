@@ -204,7 +204,7 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
             .prefix_iter(&rtxn, WITHDRAWN_GENERATION_SWEEP_PREFIX)?
         {
             let (key, value) = row?;
-            match decode_withdrawn_generation_row(key, value) {
+            match decode_withdrawn_generation_row(&key, &value) {
                 Ok((id, job)) => withdrawn_jobs.push((key.to_vec(), id, job)),
                 Err(_) => {
                     tracing::error!(
