@@ -5600,9 +5600,10 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "BookingDecisions",
       "BookingError",
       "ConstraintObject",
       "ConstraintParseConfig",
@@ -5626,8 +5627,8 @@
       "const": 2,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 7,
-      "struct": 12,
+      "fn": 8,
+      "struct": 13,
       "trait": 1
      }
     },
@@ -8186,7 +8187,7 @@
      "path": "src/channel_identity_autonomy/autonomy.rs",
      "purpose": "Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 9,
       "fn": 6
      }
     },
@@ -8207,7 +8208,7 @@
      "path": "src/channel_identity_autonomy/envelopes.rs",
      "purpose": "Vault row primitives (owner check, row read/write, content-addressed envelope put) and the owner-only…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 11,
       "fn": 4
      }
     },
@@ -8228,7 +8229,7 @@
      "path": "src/channel_identity_autonomy/mod.rs",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 3
      }
     },
@@ -13250,34 +13251,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AgentLane",
-      "AgentRow",
-      "AgentsSection",
-      "ChildAgentPresence",
-      "PeerPresence"
-     ],
-     "path": "src/context_board/agents.rs",
-     "purpose": "AGENTS section projections — child agents and peer connections",
-     "surface": {
-      "enum": 1,
-      "fn": 6,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/context_board/agents_fanout.rs",
-     "purpose": "AGENTS consult metering rows",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -13287,8 +13260,24 @@
      "path": "src/context_board/capabilities.rs",
      "purpose": "Turn-local capability hits and session-long loaded skill bodies",
      "surface": {
-      "fn": 4,
+      "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChildState",
+      "ForkState"
+     ],
+     "path": "src/context_board/children.rs",
+     "purpose": "The agent's own runs on the board (PEOPLE ruling, ARCH-0067): the children it spawned, whose state rides…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -13332,7 +13321,7 @@
       "const": 7,
       "crate-vis": 1,
       "enum": 4,
-      "fn": 17,
+      "fn": 15,
       "struct": 12
      }
     },
@@ -13483,7 +13472,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 7,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -13523,6 +13512,26 @@
      "purpose": "Read-time own-proposal outcomes and connector changes for one session",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "People",
+      "PeoplePrefix",
+      "PeopleView",
+      "PersonKind",
+      "PersonRow"
+     ],
+     "path": "src/context_board/people.rs",
+     "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 15,
+      "struct": 4
      }
     },
     {
@@ -13782,7 +13791,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BriefPlacement",
@@ -13800,7 +13809,7 @@
      "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
      "surface": {
       "enum": 2,
-      "fn": 8,
+      "fn": 10,
       "struct": 8
      }
     },
@@ -13981,7 +13990,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 7
      }
     },
@@ -15653,6 +15662,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AttendeeIdentityChoice",
+      "AttendeeIdentityResolution",
+      "UnknownAttendeeAsk"
+     ],
+     "path": "src/disclosure/attendee_ask.rs",
+     "purpose": "The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises \"who is this?\" to the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -15675,7 +15702,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
       "crate-vis": 5,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -15727,7 +15754,7 @@
      "path": "src/disclosure/tier_classification.rs",
      "purpose": "Mode/tier classification and disclosure-claim structural validation",
      "surface": {
-      "const": 6,
+      "const": 8,
       "crate-vis": 4,
       "enum": 2,
       "fn": 3
@@ -21215,7 +21242,7 @@
      "path": "src/gate/effect/effect_grants.rs",
      "purpose": "Standing-grant resolution plus scoped-MCP channel check and grant touch",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -25001,7 +25028,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 189,
+      "mod": 190,
       "re-export": 74
      }
     },
@@ -25448,7 +25475,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 22,
+      "const": 26,
       "fn": 1,
       "struct": 1
      }
@@ -25464,16 +25491,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GeneratedDecisions",
-      "GeneratedRung"
+      "GeneratedMiss",
+      "GeneratedRung",
+      "GeneratedStep"
      ],
      "path": "src/llm/decision/generated.rs",
-     "purpose": "The generated read: a typed pack answered by one durable generation on the caller's own backend, for a…",
+     "purpose": "The generated read: a typed pack answered by one generation on the caller's own backend, for a caller…",
      "surface": {
-      "enum": 1,
+      "enum": 3,
       "fn": 1,
       "struct": 1
      }
@@ -30490,6 +30519,7 @@
      "purpose": "Channel-identity consume door with usage accounting",
      "surface": {
       "const": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -30536,7 +30566,7 @@
      "path": "src/outbound_grant/mod.rs",
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -31519,7 +31549,7 @@
      "path": "src/policy_model/classifier_lease.rs",
      "purpose": "Cancellation-safe ownership of a stateless classifier's private reservation",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -31544,31 +31574,31 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "PolicyModelAnswer",
       "PolicyOutputContract"
      ],
      "path": "src/policy_model/contract.rs",
-     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader that turns…",
+     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader of the…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PolicyDecisions"
      ],
      "path": "src/policy_model/decide.rs",
-     "purpose": "Registered owner and hosted policy questions through the shared ladder",
+     "purpose": "Registered owner and hosted policy questions through the shared ladder: a host-selected ladder's row…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -31628,6 +31658,16 @@
      "surface": {
       "crate-vis": 3,
       "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/notes.rs",
+     "purpose": "The audit notes a `rationale_json` pass carries beside its decided verdict",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31792,7 +31832,7 @@
      "path": "src/policy_model/prompt.rs",
      "purpose": "The classify request, and how a safeguard model's answer is routed back to a plane's rows",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 1
      }
@@ -35154,6 +35194,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MembershipDecisions"
+     ],
+     "path": "src/saved_query/decisions.rs",
+     "purpose": "The membership question through the host's ladder: does the candidate belong to the saved query its owner's…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CreateSavedQueryRequest",
       "EvalMode",
       "EvalPolicy",
@@ -35185,7 +35239,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 6,
-      "fn": 3,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -35282,7 +35336,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -36642,7 +36696,7 @@
      "purpose": "Revocable brief read grants",
      "surface": {
       "crate-vis": 13,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -36673,6 +36727,26 @@
      "path": "src/share/tests/recipient_class.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BornWithField",
+      "ExportTravel",
+      "TravelChoice",
+      "TravelKind"
+     ],
+     "path": "src/share_travel.rs",
+     "purpose": "What travels with a body when it leaves the vault (OF-491)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 7,
+      "struct": 2,
+      "type": 1
+     }
     },
     {
      "bucket": "s",
@@ -42221,14 +42295,16 @@
       "ConsultFanOutPause",
       "ConsultFanOutPolicy",
       "ConsultFanOutRate",
-      "ConsultFanOutScope"
+      "ConsultFanOutScope",
+      "FanoutMeterRow"
      ],
      "path": "src/task_verb/consult_fanout_types.rs",
      "purpose": "Public fan-out governance inputs and observable outcomes",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "re-export": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -46999,7 +47075,7 @@
     "booking": {
      "files": 78,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-generic booking module"
     },
@@ -47333,7 +47409,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47823,7 +47899,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47977,7 +48053,7 @@
      "purpose": "Runtime hooks (ARCH-0080), slice 1: fact hooks that run after a write commits, on their own runner"
     },
     "saved_query": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48073,6 +48149,13 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Revocable brief read grants"
+    },
+    "share_travel": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
      "files": 10,
@@ -48355,9 +48438,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 90,
+   "over_bar": 91,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2915,
+   "source_files": 2919,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58245,6 +58328,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/local_vision.rs",
+     "purpose": "The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -58254,7 +58347,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 19,
       "re-export": 1,
       "struct": 2
@@ -58419,7 +58512,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/vision.rs",
@@ -58855,7 +58948,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/board.rs",
-     "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM…",
+     "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX…",
      "surface": {
       "crate-vis": 11
      }
@@ -63133,9 +63226,9 @@
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -63264,7 +63357,7 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 5,
-      "fn": 16,
+      "fn": 17,
       "re-export": 12,
       "struct": 2
      }
@@ -63444,7 +63537,7 @@
      "path": "src/models/walk.rs",
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -64831,7 +64924,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65127,7 +65220,7 @@
    },
    "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 448,
+   "source_files": 449,
    "test_files": 182
   },
   "oneiron-spawn": {

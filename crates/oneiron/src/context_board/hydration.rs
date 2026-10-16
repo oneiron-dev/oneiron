@@ -97,14 +97,17 @@ impl AssembledContext {
         read_set: &super::SessionReadSet,
         session: &mut super::self_brief::SelfBriefSession,
         placement: super::self_brief::BriefPlacement,
+        people: Option<&super::People>,
     ) -> crate::Result<Self> {
         self.self_brief = Some(match placement {
             super::self_brief::BriefPlacement::TurnOne => {
-                session.turn_one(vault, state, read_set)?
+                session.turn_one(vault, state, read_set, people)?
             }
-            super::self_brief::BriefPlacement::Fold => session.fold(vault, state, read_set)?,
+            super::self_brief::BriefPlacement::Fold => {
+                session.fold(vault, state, read_set, people)?
+            }
             super::self_brief::BriefPlacement::MidRun => {
-                session.describe_self(vault, state, read_set)?
+                session.describe_self(vault, state, read_set, people)?
             }
         });
         Ok(self)
