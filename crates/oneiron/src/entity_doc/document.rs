@@ -91,9 +91,11 @@ impl EntityDoc {
         let bytes =
             rmp_serde::to_vec_named(&birth).map_err(|_| invalid("document birth encoding"))?;
         map_insert_bytes(&doc.get_map("meta"), BIRTH, &bytes)?;
-        doc.get_text(BODY)
-            .insert(0, text)
-            .map_err(|_| invalid("document recovery text"))?;
+        if !text.is_empty() {
+            doc.get_text(BODY)
+                .insert(0, text)
+                .map_err(|_| invalid("document recovery text"))?;
+        }
         doc.commit();
         Ok(Self { doc, birth })
     }
