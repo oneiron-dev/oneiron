@@ -1,17 +1,14 @@
 //! A review's typed questions: each lens asks its verdict, severity, scope and (when the lens has
-//! one) hard check through the shared decision path. Optional notes text is separate generation.
+//! one) hard check through the shared decision path, as one pack. Optional notes text is
+//! separate generation.
 use super::*;
-use crate::entity_id::derived_domains::DECISION_QUESTION;
+use crate::llm::decision::catalogue::CRITIC_REVIEW;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionLadder, DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use std::time::{Duration, Instant};
-
-/// The registered question family every lens asks.
-const QUESTION: &str = "critic.review";
-const QUESTION_VERSION: u32 = 1;
 
 const VERDICTS: [(&str, CritiqueVerdict); 3] = [
     ("accept", CritiqueVerdict::Accept),
@@ -88,15 +85,17 @@ pub trait ReviewNotes {
 }
 
 /// The shared decision path a review's questions go through: the host's ladder, the principal
-/// the answers are for, the dial and learned bands, each question's anytime budget, the wording,
-/// and optional notes. The target reaches a provider only as an evidence id; run and attempt ids
-/// stay host metadata.
+/// the answers are for, the dial and learned bands, the bounded state the host built from the
+/// artifact, each lens's anytime budget, the wording, and optional notes. The target reaches a
+/// provider as an evidence id and that state; run and attempt ids stay host metadata.
 pub struct ReviewDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
     pub bands: DecisionBandPolicy,
-    /// Each question's one clock, from when it is asked.
+    /// A JSON object of at most `MAX_DECISION_STATE_BYTES`, read by every provider.
+    pub state: &'a serde_json::Value,
+    /// Each lens's one clock, from when its pack is asked.
     pub budget: Duration,
     pub wording: ReviewWording,
     pub notes: Option<&'a dyn ReviewNotes>,
@@ -146,27 +145,33 @@ impl ReviewDecisions<'_> {
         let mut meta = Vec::with_capacity(inputs.len());
         let mut receipts = Vec::new();
         for input in inputs {
-            let evidence = [input.target];
-            let question = self.question(input, Field::Verdict)?;
-            let decision = self.ask(&question, &evidence)?;
-            let verdict = label(&decision, &VERDICTS)?;
-            let id = format!("review_{}", question.id.to_hex());
-            meta.push((id, provenance_of(&input.lens, &decision)?));
-            receipts.push(decision.receipt);
-            let decision = self.ask(&self.question(input, Field::Severity)?, &evidence)?;
-            let severity = label(&decision, &SEVERITIES)?;
-            receipts.push(decision.receipt);
+            let fields: &[Field] = if input.lens.hard_check {
+                &[
+                    Field::Verdict,
+                    Field::Severity,
+                    Field::HardCheck,
+                    Field::OutOfScope,
+                ]
+            } else {
+                &[Field::Verdict, Field::Severity, Field::OutOfScope]
+            };
+            let questions = fields
+                .iter()
+                .map(|&field| self.question(input, field))
+                .collect::<Result<Vec<_>>>()?;
+            // One answer per question, in order.
+            let decisions = self.ask(&questions, &[input.target])?;
+            let verdict = label(&decisions[0], &VERDICTS)?;
+            let id = format!("review_{}", questions[0].id.to_hex());
+            meta.push((id, provenance_of(&input.lens, &decisions[0])?));
+            let severity = label(&decisions[1], &SEVERITIES)?;
             let hard_check_passed = if input.lens.hard_check {
-                let decision = self.ask(&self.question(input, Field::HardCheck)?, &evidence)?;
-                let passed = noul(&decision)?;
-                receipts.push(decision.receipt);
-                Some(passed)
+                Some(noul(&decisions[2])?)
             } else {
                 None
             };
-            let decision = self.ask(&self.question(input, Field::OutOfScope)?, &evidence)?;
-            let out_of_scope = noul(&decision)?;
-            receipts.push(decision.receipt);
+            let out_of_scope = noul(&decisions[fields.len() - 1])?;
+            receipts.extend(decisions.into_iter().map(|decision| decision.receipt));
             findings.push(ReviewFinding {
                 input: input.clone(),
                 verdict,
@@ -180,7 +185,9 @@ impl ReviewDecisions<'_> {
             None => vec![ReviewNote::default(); findings.len()],
         };
         if notes.len() != findings.len() {
-            return Err(invalid_critic_config("review notes must cover every finding"));
+            return Err(invalid_critic_config(
+                "review notes must cover every finding",
+            ));
         }
         let mut artifacts = Vec::with_capacity(inputs.len());
         for ((finding, note), (id, provenance)) in findings.into_iter().zip(notes).zip(meta) {
@@ -215,42 +222,43 @@ impl ReviewDecisions<'_> {
             Field::OutOfScope => (&self.wording.out_of_scope, AnswerContract::Noul),
         };
         let text = format!("{}\n\n{wording}", input.lens.prompt_contract);
-        let id = EntityId::derive(
-            DECISION_QUESTION,
+        CRITIC_REVIEW.question(
             &[
-                QUESTION.as_bytes(),
                 field.token().as_bytes(),
                 input.kind.token().as_bytes(),
                 input.lens.domain.as_bytes(),
                 input.lens.id.as_bytes(),
-                text.as_bytes(),
             ],
-        )?;
-        Ok(DecisionQuestion {
-            id,
-            version: QUESTION_VERSION,
             text,
-            class: DecisionClass::Judgment,
             contract,
-            accept_type: false,
-        })
+        )
     }
 
-    /// Abstaining fails the whole review, as a failed critic call did.
-    fn ask(&self, question: &DecisionQuestion, evidence: &[EntityId]) -> Result<TypedDecision> {
-        let decision = self.ladder.run(
-            question,
+    /// One lens's questions as one pack over the shared state, under one clock. Any abstaining
+    /// answer fails the whole review, as a failed critic call did.
+    fn ask(
+        &self,
+        questions: &[DecisionQuestion],
+        evidence: &[EntityId],
+    ) -> Result<Vec<TypedDecision>> {
+        let questions = questions.iter().collect::<Vec<_>>();
+        let decisions = self.ladder.run_pack(
+            &questions,
             self.principal,
             evidence,
+            self.state,
             self.dial,
             &self.bands,
             Reversibility::ReversibleRead,
             &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
-        if matches!(decision.answer, DecisionAnswer::Abstain) {
+        if decisions
+            .iter()
+            .any(|decision| matches!(decision.answer, DecisionAnswer::Abstain))
+        {
             return Err(invalid_critic_config("review question abstained"));
         }
-        Ok(decision)
+        Ok(decisions)
     }
 }
 

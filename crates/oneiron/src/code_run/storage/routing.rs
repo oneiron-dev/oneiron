@@ -11,12 +11,15 @@ use super::super::codec::validate_raw_output;
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    MODEL_HEAL_COUNTS, RAW_OUTPUTS, REPLAY_RECORDS, lend_raw_output, next_additive_heal_count,
-    replay_generation_matches,
+    MODEL_HEAL_COUNTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output, load_whole_body,
+    next_additive_heal_count, read_body_row_range, replay_generation_matches,
 };
 use super::speech_identity::{
     canonical_witness_executor_turn, executor_speech_message_id_for_run, executor_speech_turn_id,
 };
+use crate::limit_ask::{EngineLimit, LimitWatch};
+use crate::result_memory::ResultShare;
+use crate::store::BodySink;
 
 #[cfg(test)]
 use super::records::CodeRunModelHealCount;
@@ -181,47 +184,69 @@ impl SessionBinding<'_> {
         })
     }
 
+    /// A writer for one result body: into the session's own body directory
+    /// while the room is off record, the vault's `bodies/` once on record.
+    fn output_sink(&self) -> Result<BodySink> {
+        let dir = self.answered(|| self.session.body_dir(self.route.target()))?;
+        Ok(BodySink::new(
+            dir,
+            self.session
+                .limit_watch()
+                .bound(EngineLimit::CodeResultInlineBytes),
+        ))
+    }
+
+    fn publish_output(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+    ) -> Result<CodeRunRawOutput> {
+        let (output, body) = finish_output(path, sink, complete, self.session.limit_watch())?;
+        self.answered(|| {
+            self.session
+                .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &body)
+        })?;
+        Ok(output)
+    }
+
     fn put_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
-        if CodeRunRawOutput::from_bytes(output.path.clone(), raw)? != *output {
+        let mut sink = self.output_sink()?;
+        sink.write(raw)?;
+        let (stored, body) =
+            finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
+        if stored != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
         self.answered(|| {
-            self.session.side_table_put_routed(
-                &self.route,
-                &RAW_OUTPUTS,
-                &output.handle,
-                &raw.to_vec(),
-            )
+            self.session
+                .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &body)
         })
     }
 
     fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
-        let Some(raw) =
+        let Some(body) =
             self.answered(|| self.session.side_table_get(&RAW_OUTPUTS, &output.handle))?
         else {
             return Ok(None);
         };
-        if CodeRunRawOutput::from_bytes(output.path.clone(), &raw)? != *output {
-            return Err(invalid_code_run_replay(
-                "stored raw output bytes drifted from metadata",
-            ));
-        }
-        Ok(Some(raw))
+        load_whole_body(output, body, || self.session.body_dirs()).map(Some)
     }
 
-    fn with_raw_output_bytes<R>(
+    fn read_raw_output_range(
         &self,
         output: &CodeRunRawOutput,
-        read: impl FnOnce(&[u8]) -> Result<R>,
-    ) -> Result<Option<R>> {
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         self.answered(|| {
             self.session
-                .side_table_read_bytes(&RAW_OUTPUTS, &output.handle, |raw| {
-                    lend_raw_output(output, raw, read)
+                .side_table_read_bytes(&RAW_OUTPUTS, &output.handle, |row| {
+                    read_body_row_range(output, row, offset, len, || self.session.body_dirs())
                 })
         })
     }
@@ -524,15 +549,53 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// See [`Vault::with_code_run_raw_output_bytes`].
-    pub(crate) fn with_code_run_raw_output_bytes<R>(
+    /// See [`Vault::read_code_run_raw_output_range`].
+    pub(crate) fn read_code_run_raw_output_range(
         &self,
         output: &CodeRunRawOutput,
-        read: impl FnOnce(&[u8]) -> Result<R>,
-    ) -> Result<Option<R>> {
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<Vec<u8>>> {
         match self {
-            Self::Canonical(vault) => vault.with_code_run_raw_output_bytes(output, read),
-            Self::Session(binding) => binding.with_raw_output_bytes(output, read),
+            Self::Canonical(vault) => vault.read_code_run_raw_output_range(output, offset, len),
+            Self::Session(binding) => binding.read_raw_output_range(output, offset, len),
+        }
+    }
+
+    /// A writer for one result body, where this run's bodies go.
+    pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_output_sink(),
+            Self::Session(binding) => binding.output_sink(),
+        }
+    }
+
+    /// Publishes the body `sink` wrote as this run's output at `path`.
+    pub(crate) fn publish_code_run_output(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+    ) -> Result<CodeRunRawOutput> {
+        match self {
+            Self::Canonical(vault) => vault.publish_code_run_output(path, sink, complete),
+            Self::Session(binding) => binding.publish_output(path, sink, complete),
+        }
+    }
+
+    /// The `[limits]` rows of the vault this run's storage is on.
+    pub(crate) fn limit_watch(&self) -> &LimitWatch {
+        match self {
+            Self::Canonical(vault) => vault.limit_watch(),
+            Self::Session(binding) => binding.session.limit_watch(),
+        }
+    }
+
+    /// A share of the result-memory pool for this run.
+    pub(crate) fn result_share(&self) -> ResultShare {
+        match self {
+            Self::Canonical(vault) => vault.result_share(),
+            Self::Session(binding) => binding.session.result_share(),
         }
     }
 }

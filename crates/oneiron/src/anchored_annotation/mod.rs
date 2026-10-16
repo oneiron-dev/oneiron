@@ -55,6 +55,7 @@ mod pptx_settle;
 mod pptx_tests;
 mod reanchor;
 mod threads;
+pub(crate) use threads::thread_brief_ref;
 
 pub(crate) use self::codec::{decode_locator, encode_locator};
 pub use self::model::{
