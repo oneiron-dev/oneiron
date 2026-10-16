@@ -35,6 +35,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_people_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.people.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_people_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.people.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_message(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.message", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_grants_ask(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.grants.ask", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_memory_diary_query(
         &self,
         input: serde_json::Value,
@@ -287,6 +311,24 @@ impl NativeClient {
     pub fn vault_packs_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.packs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_authority_audit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.audit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_inspection_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.inspection.resolve", input)
             .map_err(facade_error)
     }
     #[napi]

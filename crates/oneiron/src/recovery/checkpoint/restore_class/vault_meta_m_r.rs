@@ -97,6 +97,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_PACK_SKILL_ALIAS, CONTENT),
     (&t::SKILL_HUB_PACK_SOURCE_ALIAS, CONTENT),
     (&t::PACK_BYTE_MAP_LOCAL_HEAD, CONTENT),
+    (&t::PEOPLE_ABOUT, CONTENT),
     (&t::POLICY_HOLD_QUEUE, CONTENT),
     (&t::PORTS_CHANGE, CONTENT),
     (&t::PORTS_CHANGE_BY_ACTOR, CONTENT),

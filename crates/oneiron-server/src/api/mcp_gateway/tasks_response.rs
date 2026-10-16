@@ -533,6 +533,10 @@ fn mcp_agent_verb_input(
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.people.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.people.get" => a.spec.clone().ok_or_else(invalid),
+        "self.message" => a.spec.clone().ok_or_else(invalid),
+        "self.grants.ask" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.query" => a.spec.clone().ok_or_else(invalid),
         "cancel" => {
             let mut map = serde_json::Map::new();
@@ -596,6 +600,8 @@ fn mcp_agent_verb_input(
         "vault.weave.report" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.digest" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.authority.audit" => a.spec.clone().ok_or_else(invalid),
+        "vault.inspection.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_delete" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_transfer" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_remove_owner" => a.spec.clone().ok_or_else(invalid),
@@ -847,6 +853,18 @@ pub(crate) fn mcp_agent_verb_arguments(
         "self.memory.diary.review" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.people.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.people.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.message" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.grants.ask" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "self.memory.diary.query" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -931,6 +949,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.packs.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.authority.audit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.inspection.resolve" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shared.propose_delete" => {
@@ -1440,6 +1464,41 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.people.list" => {
+            let input: oneiron::memory::PeopleListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_people_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.people.get" => {
+            let input: oneiron::memory::PersonRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_people_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.message" => {
+            let input: oneiron::memory::MessagePersonRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::self_message(&memory, input).map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.grants.ask" => {
+            let input: oneiron::memory::GrantAskRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_grants_ask(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "self.memory.diary.query" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("self.memory.diary.query", &input)
@@ -1709,6 +1768,26 @@ async fn execute_agent_verb_listing(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::vault_packs_put(server, auth, input)
                 .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.authority.audit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.authority.audit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::AuthorityAuditQuery =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_authority_audit(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.inspection.resolve" => {
+            let input: oneiron::lens::InspectionResolveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_inspection_resolve(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
