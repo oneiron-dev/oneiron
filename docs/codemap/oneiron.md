@@ -1708,7 +1708,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
 | `src/gate/mail_policy.rs` | src | s | 10 crate-vis | — | Vault-resident native-mail posture and CID-5 graduation policy rows |
 | `src/gate/manifest_authenticity.rs` | src | m | 1 struct · 5 fn · 11 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
-| `src/gate/mod.rs` | src | s | 8 re-export · 60 crate-vis | — | DEC-0005 Gate policy manifest resolver |
+| `src/gate/mod.rs` | src | s | 8 re-export · 61 crate-vis | — | DEC-0005 Gate policy manifest resolver |
 | `src/gate/operational_policy.rs` | src | m | 4 struct · 7 fn · 13 crate-vis | LinearMirrorPolicy, LinearSyncBudget, ProviderCooldownPolicy, WaveHandoffPolicy | Vault-resident operational schedules and per-pass limits (DEC-0005) |
 | `src/gate/owner_answer.rs` | src | s | 8 crate-vis | — | The owner-answer obligation: a critical claim's durable hold, which only its owner's answer closes… |
 | `src/gate/owner_policy_mutation.rs` | src | m | 4 enum · 2 fn · 1 crate-vis | PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource | Authenticated, exact-key edits to the owner-policy table in the default manifest |
@@ -1723,6 +1723,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/project_depth/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/gate/project_depth/write.rs` | src | m | 1 fn · 4 crate-vis | — | Transaction-bound project-policy birth and owner edit doors |
 | `src/gate/proposal_observation.rs` | src | s | 3 struct · 3 fn · 1 const · 3 crate-vis | ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
+| `src/gate/record_references.rs` | src | s | 6 crate-vis | — | OF-063: one check that every record a write names resolves for its writer |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | s | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
 | `src/gate/replicated_confirm.rs` | src | s | 2 crate-vis | — | Device-local confirmation for a newly materialized critical claim revision |
@@ -1992,9 +1993,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/mediation/mediation_scope.rs` | src | s | 4 fn | — | Ordinary world-id and repository membership clamps on every frame-bound read |
 | `src/lens/mediation/mod.rs` | src | s | 5 re-export | — | Host mediation — the lens security chokepoint |
 | `src/lens/mediation/surface_dispatch.rs` | src | s | 1 fn | — | Native SurfaceEvent adapter into the existing frame-validated write plan |
-| `src/lens/mod.rs` | src | s | 14 re-export | — | Closed generated-lens atom vocabulary |
+| `src/lens/mod.rs` | src | s | 15 re-export | — | Closed generated-lens atom vocabulary |
 | `src/lens/mount.rs` | src | s | 1 enum · 2 fn · 1 crate-vis | LensMount | Pack-aware lens mount decision, evaluated against the live vault on each render |
 | `src/lens/proposal.rs` | src | m | 5 struct · 1 enum · 2 fn · 2 const · 11 crate-vis | LensListPage, LensListRequest, LensListRow, LensProposalState, LensProposeRequest, LensSlot | Pack lens proposals (OF-250): one frozen compiled tree bound to an installed pack's skill, with its authored… |
+| `src/lens/record_ref.rs` | src | s | 3 struct · 2 fn · 3 const | RecordRef, RecordRefPreview, ResolveRecordRefRequest | OF-063: typed, resolvable record refs |
 | `src/lens/sdk.rs` | src | m | 2 struct · 1 fn · 1 const | LensDefaultRequest, LensDossierSource | `vault.lenses.default` (OF-250): the default vault projection over the caller's own read key |
 | `src/lens/self_ui.rs` | src | m | 8 struct · 2 enum · 1 fn · 5 crate-vis | ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption, SelfUiValue, SliderControl +2 | The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value… |
 | `src/lens/tests/atom_fuzz.rs` | test | s | — | — | Corpus-driven, sustained mutation fuzzing of the atom wire and escaped renderer |
@@ -2173,7 +2175,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/key_value/writes.rs` | src | s | 2 fn | — | Key mutations compose the existing claim gate and lifecycle door in ONE transaction |
 | `src/memory/locality.rs` | src | s | 1 struct · 3 fn · 4 crate-vis | ProducerRows | Where a [`Memory`] caller sits, and the rows its reads derive an answer from, for a host that judges that… |
 | `src/memory/machine_write.rs` | src | s | 1 crate-vis | — | Machine-author claim stamping after the facade resolves its final approval |
-| `src/memory/mod.rs` | src | s | 2 mod · 30 re-export · 13 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 2 mod · 32 re-export · 13 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/outbound/calendar.rs` | src | s | 1 struct · 4 fn · 1 type | CalendarFreebusyIntervalDto | Calendar scoped-read surface (read/search/freebusy) plus the invite entry point |
 | `src/memory/outbound/dedupe.rs` | src | s | 7 crate-vis | — | Idempotent-replay receipts, retry-lineage walk, and gate-binding side index |
@@ -2716,10 +2718,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 12 fn · 6 const · 93 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 15 crate-vis | — | — |
 | `src/receipt/lens.rs` | src | s | 2 struct · 2 enum | LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision | The receipts of the pack lens lifecycle (OF-250): a proposal, and the owner's selection or clearing of a… |
-| `src/receipt/mod.rs` | src | s | 12 re-export · 17 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
+| `src/receipt/mod.rs` | src | s | 12 re-export · 18 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/pack_attribution.rs` | src | s | 6 struct · 1 fn · 4 crate-vis | ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution, UsedProvenanceEdge | Frozen execution and actual-use facts on an attempt's pack receipt |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
-| `src/receipt/record.rs` | src | m | 12 crate-vis | — | First-class, replicated immutable terminal outbound receipt record, and the served-form receipt record a… |
+| `src/receipt/record.rs` | src | m | 14 crate-vis | — | First-class, replicated immutable terminal outbound receipt record, the served-form receipt record a read… |
+| `src/receipt/reference_refusal.rs` | src | s | 4 crate-vis | — | Reference-refusal receipts (OF-063): a write was refused because a record ref it named does not resolve for… |
 | `src/receipt/send_receipt_txn.rs` | src | s | 2 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
 | `src/receipt/served_form.rs` | src | s | 1 struct · 2 enum · 8 fn · 2 crate-vis | PixelPull, ServedForm, ServedRung | Served-form receipts (OF-329): which rung of the lazy-image ladder a read served an ASSET at, to which… |
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |
@@ -3480,7 +3483,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
 | `src/task_verb/sdk.rs` | src | L | 28 struct · 1 enum · 6 fn · 5 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest, ProjectGoalDismissReceipt +21 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_connector.rs` | src | s | 5 struct · 3 fn | ConnectorEntry, ConnectorListRequest, ConnectorNameRequest, ConnectorView, OutboundScheduleRequest | The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 120 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 121 fn · 2 const | — | — |
 | `src/task_verb/sdk_host.rs` | src | m | 14 struct · 5 enum · 8 fn · 3 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +11 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_memory.rs` | src | s | 14 struct · 1 enum · 3 crate-vis | AppendBlobVersionRequest, BlobContent, ClaimRefRequest, CommitRequest, CreateNoteFromEntityRequest, CreateNoteRequest, EditNoteRequest, EntityRequest +7 | Typed inputs for the public memory verbs in the SDK inventory |
 | `src/task_verb/sdk_self.rs` | src | s | 4 struct · 2 fn | DiaryEntryReceipt, DiaryEntryRequest, SteerReceipt, SteerRequest | The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one… |
