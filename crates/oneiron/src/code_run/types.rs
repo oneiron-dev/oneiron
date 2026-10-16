@@ -64,6 +64,9 @@ pub enum SelfCall {
     WakePolicyWrite(SelfWakePolicyWriteCall),
     /// A verb at its SDK path (`vault.recall(input)`): one row of the SDK verb table.
     AgentVerb(SelfAgentVerbCall),
+    /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
+    /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
+    Fold(crate::compaction::SelfFoldCall),
 }
 
 impl SelfCall {
@@ -92,6 +95,7 @@ impl SelfCall {
             Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
+            Self::Fold(_) => SelfEffect::Fold,
         }
     }
 
@@ -154,6 +158,8 @@ pub enum SelfEffect {
     WakePolicyWrite,
     /// One SDK verb-table call, run by the host's bound verb door.
     AgentVerb,
+    /// A fold verb on the run's own log, answered by its fold ledger.
+    Fold,
 }
 
 impl SelfEffect {
@@ -183,6 +189,7 @@ impl SelfEffect {
             Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
+            Self::Fold => "self.fold",
         }
     }
 
@@ -215,7 +222,7 @@ impl SelfEffect {
             | Self::ReportBlocked
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
-            Self::WakePolicyWrite | Self::AgentVerb => None,
+            Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
         }
     }
 
@@ -536,6 +543,8 @@ pub enum SelfDispatchOutcome {
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
     /// The verb's answer: its JSON output and the rows that produced it.
     AgentVerb(AgentVerbAnswer),
+    /// A fold verb's answer, as JSON.
+    Fold(String),
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.
