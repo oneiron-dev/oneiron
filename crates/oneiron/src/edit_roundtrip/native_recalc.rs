@@ -13,8 +13,9 @@ use crate::error::{ArtifactError, Error, Result};
 /// The [`RecalcPolicy::NativeFirst`](super::RecalcPolicy::NativeFirst) wrap.
 /// It keeps the host's narrow editor, recalculates supported local workbooks
 /// in process on the session's clock ([`EditSession::recalc_clock`], else the
-/// host's clock at recalc time), and uses the host's recalc as the precision
-/// fallback.
+/// host's clock at recalc time) and at the session's location
+/// ([`EditSession::recalc_location`]), and uses the host's recalc as the
+/// precision fallback.
 ///
 /// The host must preserve external-link parts. Every host output is checked
 /// against its input before the pipeline can propose it. A destructive
@@ -68,9 +69,10 @@ impl<S: EditSession> EditSession for NativeFirst<'_, S> {
             return Err(failed("native formula recalc requires XLSX"));
         }
         let clock = self.host.recalc_clock().unwrap_or_else(RecalcClock::system);
+        let location = self.host.recalc_location();
         match self
             .engine
-            .recalculate_xlsx(&doc.bytes, self.limits, &clock)
+            .recalculate_xlsx(&doc.bytes, self.limits, &clock, location.as_ref())
         {
             Ok(report) => {
                 let stamp = CalcEngineStamp::new(report.engine.engine, report.engine.version)?;
