@@ -5,9 +5,10 @@
 
 use std::collections::BTreeSet;
 
+use crate::llm::decision::{DecisionQuestion, TypedDecision};
 use crate::skill_optimize::{
-    BlindPreference, GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase,
-    HeldOutReplayScorer, JevTradeoffVerdict, SkillTradeoffQuestion,
+    GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayScorer,
+    SkillOptimizeDecisions, SkillReplayPair,
 };
 use crate::workspace_roster::GoalRecord;
 use crate::{EntityId, Error, Result};
@@ -60,11 +61,23 @@ impl CoverageReplay {
     fn matches(&self, case: &HeldOutReplayCase<'_>) -> bool {
         let mut receipts = case.held_out_receipts.to_vec();
         receipts.sort();
+        self.matches_body(case) && self.held_out_receipts == receipts
+    }
+
+    fn matches_body(&self, case: &HeldOutReplayCase<'_>) -> bool {
         self.skill == case.skill
             && self.skill_id == case.skill_id
             && self.version == case.version
             && self.instructions_digest == instructions_digest(case.instructions)
-            && self.held_out_receipts == receipts
+    }
+
+    fn matches_replay(&self, case: &HeldOutReplayCase<'_>) -> bool {
+        self.matches_body(case)
+            && !case.held_out_receipts.is_empty()
+            && case
+                .held_out_receipts
+                .iter()
+                .all(|receipt| self.held_out_receipts.binary_search(receipt).is_ok())
     }
 }
 
@@ -170,7 +183,8 @@ impl CoverageFloorComparison {
 /// Decorates the existing admission scorer with measured output coverage.
 /// The authenticated goal must ALREADY declare `coverage` as a floor; this
 /// adapter cannot rewrite that goal, mint a preference or bypass the gate.
-/// All non-coverage scores and judge audits retain their existing executor.
+/// Measured coverage loss refuses scoring. All scores and judge audits use
+/// the inner scorer's shared typed-decision path.
 pub struct CoverageFloorScorer<'a> {
     inner: &'a dyn HeldOutReplayScorer,
     comparison: &'a CoverageFloorComparison,
@@ -193,8 +207,41 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         self.inner.judge_revision()
     }
 
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        self.inner.score(case)
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+        self.inner.decisions()
+    }
+
+    fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<serde_json::Value> {
+        // Task-success judgments replay one reserved receipt at a time.
+        if !self.comparison.before.matches_replay(case)
+            && !self.comparison.after.matches_replay(case)
+        {
+            return Err(Error::InvalidConfig(
+                "coverage evidence does not match the skill body and held-out replay".into(),
+            ));
+        }
+        if !self.comparison.preserves_coverage() {
+            return Err(Error::InvalidConfig(
+                "held-out replay loses required output coverage".into(),
+            ));
+        }
+        Ok(serde_json::json!({
+            "replay": self.inner.replay_state(case)?,
+            "coverage_floor": self.comparison.goal_axis_score(),
+        }))
+    }
+
+    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
+        self.inner.blind_pairs(task, receipts)
+    }
+
+    fn record_decision(
+        &self,
+        question: &DecisionQuestion,
+        decision: &TypedDecision,
+        state: &serde_json::Value,
+    ) -> Result<()> {
+        self.inner.record_decision(question, decision, state)
     }
 
     fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
@@ -209,41 +256,6 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
             ));
         }
         Ok(axes)
-    }
-
-    fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
-        if axis.name == "coverage" {
-            if axis.kind != GoalAxisKind::Floor {
-                return Err(Error::InvalidConfig("coverage is a floor axis".into()));
-            }
-            self.comparison.score_case(case)
-        } else {
-            self.inner.score_goal_axis(case, axis)
-        }
-    }
-
-    fn jev_tradeoff(&self, question: &SkillTradeoffQuestion) -> Result<Option<JevTradeoffVerdict>> {
-        self.inner.jev_tradeoff(question)
-    }
-
-    fn structural_audit(&self, task: &str, instructions: &str) -> Result<f32> {
-        self.inner.structural_audit(task, instructions)
-    }
-
-    fn blind_preference(&self, task: &str, receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        self.inner.blind_preference(task, receipts)
-    }
-
-    fn contrastive_audit(
-        &self,
-        case: &HeldOutReplayCase<'_>,
-        blind: &[BlindPreference],
-    ) -> Result<f32> {
-        self.inner.contrastive_audit(case, blind)
-    }
-
-    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        self.inner.predict_task_success(case)
     }
 }
 
