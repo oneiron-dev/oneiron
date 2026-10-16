@@ -284,9 +284,13 @@ impl DiaryReadGate {
     ) -> Result<&mut AgentRead> {
         Ok(match self.agents.entry(agent) {
             Entry::Occupied(state) => state.into_mut(),
-            Entry::Vacant(slot) => {
-                slot.insert(AgentRead::load(vault, txn, self.reader, &self.reason, agent)?)
-            }
+            Entry::Vacant(slot) => slot.insert(AgentRead::load(
+                vault,
+                txn,
+                self.reader,
+                &self.reason,
+                agent,
+            )?),
         })
     }
 
@@ -557,7 +561,10 @@ impl Memory<'_> {
             }
             let receipt = gate.finish_in_txn(self.vault, txn)?;
             let Some(read) = receipt.agents.into_iter().next() else {
-                return Ok(DiaryReadOutcome::Granted { read: None, entries });
+                return Ok(DiaryReadOutcome::Granted {
+                    read: None,
+                    entries,
+                });
             };
             let held = |hold| read.held.iter().any(|(held, _)| *held == hold);
             Ok(match read.request {
@@ -620,7 +627,9 @@ impl Memory<'_> {
                 .get(&self.vault.store, txn, &key)?
                 .ok_or_else(|| MemoryError::not_found("no review request of this diary"))?;
             if row.state == DiaryReviewState::Used {
-                return Err(MemoryError::bad_request("this yes already admitted its read"));
+                return Err(MemoryError::bad_request(
+                    "this yes already admitted its read",
+                ));
             }
             row.state = if input.approve {
                 DiaryReviewState::Approved
@@ -664,9 +673,10 @@ impl Memory<'_> {
                 action_bound(self.vault, txn, reader, DIARY_READ_VERB, agent)?
             } else {
                 for entry in entries {
-                    let ours = live_note_in_txn(self.vault, txn, entry)?.is_some_and(|(note, _)| {
-                        note.kind == NoteKind::Diary && note.author_ref == agent
-                    });
+                    let ours =
+                        live_note_in_txn(self.vault, txn, entry)?.is_some_and(|(note, _)| {
+                            note.kind == NoteKind::Diary && note.author_ref == agent
+                        });
                     if !ours {
                         return Err(MemoryError::bad_request(format!(
                             "{} is not a live diary entry of this agent",

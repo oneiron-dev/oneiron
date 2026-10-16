@@ -136,7 +136,14 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
         }
         let root = format!("{}^{{tree}}", self.commit);
         let listing = repo.run(
-            &["--git-dir=repo", "ls-tree", "-r", "-z", "--full-tree", &root],
+            &[
+                "--git-dir=repo",
+                "ls-tree",
+                "-r",
+                "-z",
+                "--full-tree",
+                &root,
+            ],
             16 * 1024 * 1024,
         )?;
         let mut entries = Vec::new();
@@ -148,7 +155,14 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
             };
             let Ok(files) = repo
                 .run(
-                    &["--git-dir=repo", "ls-tree", "-r", "-z", "--full-tree", &object],
+                    &[
+                        "--git-dir=repo",
+                        "ls-tree",
+                        "-r",
+                        "-z",
+                        "--full-tree",
+                        &object,
+                    ],
                     2 * 1024 * 1024,
                 )
                 .and_then(|listing| read_blobs(&repo, &listing))

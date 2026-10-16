@@ -48,13 +48,7 @@ pub(super) async fn poll(
             .iter()
             .filter_map(|wake| oneiron::EntityId::from_hex(&wake.task_ref).ok())
             .collect();
-        super::device_release::mcp_release_result(
-            &server,
-            &actor,
-            &rows,
-            false,
-            json!(delivery),
-        )
+        super::device_release::mcp_release_result(&server, &actor, &rows, false, json!(delivery))
     })
     .await
     .map_err(|_| McpGatewayError::new(-32603, "engine_error", "wake read did not finish"))?

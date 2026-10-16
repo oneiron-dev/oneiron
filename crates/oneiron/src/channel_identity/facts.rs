@@ -5,7 +5,9 @@
 //! local row: claims carry facts, never send authority.
 use std::collections::BTreeMap;
 
-use super::codec::{decode_binding, decode_optional_entity_ref, is_channel_identity_claim_predicate};
+use super::codec::{
+    decode_binding, decode_optional_entity_ref, is_channel_identity_claim_predicate,
+};
 use super::keys::*;
 use super::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState};
 use crate::Vault;
@@ -52,11 +54,20 @@ pub(crate) fn channel_identity_facts_in_txn(
     if heads.is_empty() {
         return Ok(None);
     }
-    let value = |predicate: &str| heads.get(predicate).map(|(_, body)| &body.value).ok_or_else(corrupt);
-    let text = |predicate: &str| -> Result<String> {
-        value(predicate)?.as_str().map(str::to_owned).ok_or_else(corrupt)
+    let value = |predicate: &str| {
+        heads
+            .get(predicate)
+            .map(|(_, body)| &body.value)
+            .ok_or_else(corrupt)
     };
-    let facet_ref = decode_optional_entity_ref(value(PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF)?)?;
+    let text = |predicate: &str| -> Result<String> {
+        value(predicate)?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(corrupt)
+    };
+    let facet_ref =
+        decode_optional_entity_ref(value(PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF)?)?;
     Ok(Some(ChannelIdentityFacts {
         channel: text(PREDICATE_CHANNEL_IDENTITY_CHANNEL)?,
         auth_mode: text(PREDICATE_CHANNEL_IDENTITY_AUTH_MODE)?,
@@ -81,7 +92,9 @@ pub(crate) fn channel_identity_facts_in_txn(
             Value::Nil => None,
             other => Some(other.as_u64().ok_or_else(corrupt)?),
         },
-        reputation_ref: decode_optional_entity_ref(value(PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF)?)?,
+        reputation_ref: decode_optional_entity_ref(value(
+            PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF,
+        )?)?,
         manifest_ref: decode_optional_entity_ref(value(PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF)?)?,
     }))
 }
@@ -128,7 +141,10 @@ fn live_heads_in_txn(
 
 impl Vault {
     /// The identity's facts, read from its `channel_identity.*` heads.
-    pub fn channel_identity_facts(&self, identity_ref: &EntityId) -> Result<Option<ChannelIdentityFacts>> {
+    pub fn channel_identity_facts(
+        &self,
+        identity_ref: &EntityId,
+    ) -> Result<Option<ChannelIdentityFacts>> {
         let txn = self.store.env.read_txn()?;
         channel_identity_facts_in_txn(&self.store, &txn, identity_ref)
     }

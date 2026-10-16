@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    ArchiveSecretCustody, ExportAdapterDescriptor, ExportDiaryHold, ExportDiaryLedger, ExportDiaryRead, ExportEdge,
-    ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
+    ArchiveSecretCustody, ExportAdapterDescriptor, ExportDiaryHold, ExportDiaryLedger,
+    ExportDiaryRead, ExportEdge, ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
     whole_vault_export_excludes_entity,
 };
 use crate::Vault;
@@ -65,9 +65,11 @@ impl Vault {
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
     /// all your data"); then each custody record goes as its handle only.
     pub fn export_whole_vault(&self, include_secrets: bool) -> Result<WholeVaultExport> {
-        self.export_whole_vault_with_admission(CallerLocality::OnDevice, include_secrets, |_| {
-            Ok(())
-        })
+        self.export_whole_vault_with_admission(
+            CallerLocality::OnDevice,
+            include_secrets,
+            |_| Ok(()),
+        )
     }
 
     /// The archive of exactly `records` and the graph between them, for a
@@ -78,9 +80,7 @@ impl Vault {
         &self,
         records: &BTreeSet<EntityId>,
     ) -> Result<WholeVaultExport> {
-        self.export_archive_snapshot(CallerLocality::OffDevice, Some(records), false, |_| {
-            Ok(())
-        })
+        self.export_archive_snapshot(CallerLocality::OffDevice, Some(records), false, |_| Ok(()))
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME

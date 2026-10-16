@@ -1,8 +1,8 @@
 //! One provider entry: how to reach a model server, as data.
 use std::collections::BTreeMap;
 
-use oneiron::{LlmCapability, ModelLocality};
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
+use oneiron::{LlmCapability, ModelLocality};
 use serde::Deserialize;
 
 /// How the server talks to a provider. Every kind is reached over HTTP; none
@@ -242,7 +242,9 @@ impl ProviderFile {
         }
         for rate in &self.rates {
             if rate.per == 0 || LeaseUnit::new(rate.unit.as_str()).is_err() {
-                anyhow::bail!("models.providers.{name}.rates requires a valid unit and nonzero per");
+                anyhow::bail!(
+                    "models.providers.{name}.rates requires a valid unit and nonzero per"
+                );
             }
         }
         let payer = self.payer.unwrap_or_else(|| {
