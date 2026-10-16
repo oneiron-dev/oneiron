@@ -15,6 +15,7 @@
 //! - `validate` — cross-cutting validators and the surface compiler.
 //! - `proposal`, `activation` — pack lens proposals and the owner's slot
 //!   selection (`vault.lenses.*`); `sdk` — the default vault projection verb.
+//! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
 mod activation;
 mod atom;
@@ -43,6 +44,11 @@ pub use proposal::{
 };
 mod sdk;
 pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};
+mod record_ref;
+pub use record_ref::{
+    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordRef,
+    RecordRefPreview, ResolveRecordRefRequest,
+};
 mod self_ui;
 mod validate;
 mod wire_ids;

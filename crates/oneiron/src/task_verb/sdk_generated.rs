@@ -457,6 +457,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EntityRequest>(),
             ),
             (
+                "vault.refs.resolve",
+                crate::code_run::vault_read::request_schema::<crate::lens::ResolveRecordRefRequest>(
+                ),
+            ),
+            (
                 "vault.search.bm25",
                 crate::code_run::vault_read::request_schema::<QueryBm25Request>(),
             ),
@@ -1240,6 +1245,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.refs.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.search.bm25" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1669,6 +1681,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.get" => {
             let _input: EntityRequest = decode(value.clone())?;
         }
+        "vault.refs.resolve" => {
+            let _input: crate::lens::ResolveRecordRefRequest = decode(value.clone())?;
+        }
         "vault.search.bm25" => {
             let input: QueryBm25Request = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
@@ -1838,6 +1853,7 @@ pub fn invoke(
         "vault.writes.pending" => encode(vault_writes_pending(memory, decode(value)?)?),
         "vault.hydrate" => encode(vault_hydrate(memory, decode(value)?)?),
         "vault.get" => encode(vault_get(memory, decode(value)?)?),
+        "vault.refs.resolve" => encode(vault_refs_resolve(memory, decode(value)?)?),
         "vault.search.bm25" => encode(vault_search_bm25(memory, decode(value)?)?),
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
@@ -2037,6 +2053,12 @@ pub fn vault_claims_upsert(
     input: crate::memory::ClaimInput,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
     crate::memory::caps::check_claim_input(&input)?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.claims.upsert",
+        &input,
+        &["/subject_ref", "/world_ref", "/relationship_ref"],
+    )?;
     memory.claim_upsert(&input)
 }
 pub fn vault_recall(
@@ -2212,12 +2234,35 @@ pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,
     input: crate::blob_artifact::DeckProposeRequest,
 ) -> MemoryResult<crate::blob_artifact::DeckProposeOutcome> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.propose_deck",
+        &input,
+        &[
+            "/context/thread",
+            "/made_by/inputs/*/row",
+            "/made_by/trigger/task",
+            "/made_by/trigger/ask",
+            "/made_by/trigger/skill",
+        ],
+    )?;
     memory.artifacts_propose_deck(&input)
 }
 pub fn vault_artifacts_propose_output(
     memory: &Memory<'_>,
     input: crate::blob_artifact::NativeOutputRequest,
 ) -> MemoryResult<crate::edit_settle::PendingProposalView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.propose_output",
+        &input,
+        &[
+            "/made_by/inputs/*/row",
+            "/made_by/trigger/task",
+            "/made_by/trigger/ask",
+            "/made_by/trigger/skill",
+        ],
+    )?;
     memory.artifacts_propose_output(&input)
 }
 pub fn vault_artifacts_keep(
@@ -2254,6 +2299,17 @@ pub fn ask(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAskRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "ask",
+        &input,
+        &[
+            "/what/reference/claim",
+            "/what/reference/turn",
+            "/what/context_refs/*/claim",
+            "/what/context_refs/*/turn",
+        ],
+    )?;
     memory.tasks_ask(&input.into_spec()?)
 }
 pub fn wait(
@@ -2266,6 +2322,15 @@ pub fn tasks_answer(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskAnswerRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskAnswer> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.answer",
+        &input,
+        &[
+            "/word/provenance_refs/*/claim",
+            "/word/provenance_refs/*/turn",
+        ],
+    )?;
     memory.tasks_answer(&input.handle, &input.word)
 }
 pub fn tasks_outcomes(
@@ -2600,6 +2665,16 @@ pub fn vault_commit(
     for claim in &input.claims {
         crate::memory::caps::check_claim_input(claim)?;
     }
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.commit",
+        &input,
+        &[
+            "/claims/*/subject_ref",
+            "/claims/*/world_ref",
+            "/claims/*/relationship_ref",
+        ],
+    )?;
     memory.commit(&input.claims)
 }
 pub fn vault_remember(
@@ -2607,6 +2682,12 @@ pub fn vault_remember(
     input: crate::memory::ClaimInput,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
     crate::memory::caps::check_claim_input(&input)?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.remember",
+        &input,
+        &["/subject_ref", "/world_ref", "/relationship_ref"],
+    )?;
     memory.claim_upsert(&input)
 }
 pub fn vault_claims_retract(
@@ -2668,6 +2749,12 @@ pub fn vault_get(
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>> {
     memory.get_entity(&input.entity_ref)
 }
+pub fn vault_refs_resolve(
+    memory: &Memory<'_>,
+    input: crate::lens::ResolveRecordRefRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>> {
+    memory.resolve_record_ref(&input)
+}
 pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
@@ -2687,18 +2774,36 @@ pub fn vault_structural_put(
     memory: &Memory<'_>,
     input: crate::memory::StructuralPutInput,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.structural.put",
+        &input,
+        &["/edges/*/target_ref"],
+    )?;
     memory.put_structural(&input)
 }
 pub fn vault_habits_checkin(
     memory: &Memory<'_>,
     input: crate::memory::HabitCheckinInput,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.habits.checkin",
+        &input,
+        &["/habit_ref"],
+    )?;
     memory.put_habit_checkin(&input)
 }
 pub fn vault_claims_admit(
     memory: &Memory<'_>,
     input: crate::memory::AdmitImportedClaimInput,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.claims.admit",
+        &input,
+        &["/subject_ref"],
+    )?;
     memory.admit_imported_claim(&input)
 }
 pub fn vault_artifacts_put(
@@ -2728,6 +2833,12 @@ pub fn connector_outbound_schedule(
     memory: &Memory<'_>,
     input: OutboundScheduleRequest,
 ) -> MemoryResult<crate::memory::OutboundIntentReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "connector.outbound.schedule",
+        &input,
+        &["/content_ref"],
+    )?;
     crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)
 }
 pub fn vault_notes_create(
@@ -2740,6 +2851,12 @@ pub fn vault_notes_from_entity(
     memory: &Memory<'_>,
     input: CreateNoteFromEntityRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.from_entity",
+        &input,
+        &["/source_ref"],
+    )?;
     memory.create_note_from_entity(&input.source_ref, &input.kind)
 }
 pub fn vault_notes_edit(

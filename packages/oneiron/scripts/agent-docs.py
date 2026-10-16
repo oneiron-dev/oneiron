@@ -25,6 +25,7 @@ def artifacts():
         "OFF_RECORD_SESSION_DOOR": "Use the owning off-record session handle. The canonical witness door is not that handle.",
         "OWNER_BINDING_REQUIRED": "An owner device must bind this human actor in the authority log. Scope changes do not grant ownership.",
         "VAULT_LOCKED_SINGLE_WRITER": "Connect to the process that owns this vault. Do not remove lock files or open a second writer.",
+        "INVENTED_REFERENCE": "Name only records this writer can read, by the ref the engine issued. The write was refused and receipted.",
     }
     if set(codes) != remedies.keys():
         raise ValueError("Document remediation for each added/removed SDK error code")

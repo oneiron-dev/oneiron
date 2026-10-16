@@ -1,11 +1,13 @@
-//! First-class, replicated immutable terminal outbound receipt record, and
-//! the served-form receipt record a read writes ([`super::served_form`]).
+//! First-class, replicated immutable terminal outbound receipt record, the
+//! served-form receipt record a read writes ([`super::served_form`]), and the
+//! reference-refusal record a refused write leaves ([`super::reference_refusal`]).
 //!
 //! The effect ledger remains device-local send authority. The record is
 //! synced audit evidence, never a permit to execute a transport.
 
 use serde::{Deserialize, Serialize};
 
+use super::reference_refusal::{self, ReferenceRefusalFacts};
 use super::served_form::{self, ServedForm};
 use super::{
     MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan,
@@ -90,6 +92,12 @@ fn decode(id: EntityId, body: &[u8]) -> Result<ReceiptRecordEnvelope> {
     if asset.receipt.receipt_kind == ReceiptKind::ServedForm {
         if asset.intent_id.is_some() || !served_form::binds(&id, &asset.receipt) {
             return Err(Error::CorruptedIndex("served form record binding"));
+        }
+        return Ok(asset);
+    }
+    if asset.receipt.receipt_kind == ReceiptKind::ReferenceRefusal {
+        if asset.intent_id.is_some() || !reference_refusal::binds(&id, &asset.receipt) {
+            return Err(Error::CorruptedIndex("reference refusal record binding"));
         }
         return Ok(asset);
     }
@@ -414,6 +422,34 @@ pub(crate) fn put_served_form_in_txn(
     put_carrier_in_txn(vault, txn, id, body, at)
 }
 
+/// Writes one reference-refusal receipt record (OF-063) at the fresh `id`,
+/// in the caller's transaction: `facts`, refused at `at`. Like a served-form
+/// record it takes no intent, no dedupe and no index row of its own. A record
+/// its own decoder would refuse is never written.
+pub(super) fn put_reference_refusal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    facts: &ReferenceRefusalFacts,
+    at: u64,
+) -> Result<()> {
+    if vault.store.port_entity_record(txn, &id)?.is_some() {
+        return Err(Error::CorruptedIndex(
+            "reference refusal record id occupied",
+        ));
+    }
+    let receipt = reference_refusal::reference_refusal_receipt(&id, facts, at);
+    if !reference_refusal::binds(&id, &receipt) {
+        return Err(Error::InvariantViolation("reference refusal record shape"));
+    }
+    let body = rmp_serde::to_vec_named(&ReceiptRecordEnvelope {
+        intent_id: None,
+        receipt,
+    })
+    .map_err(|_| Error::InvariantViolation("reference refusal record encode"))?;
+    put_carrier_in_txn(vault, txn, id, body, at)
+}
+
 pub(crate) fn suppression_for_intent(vault: &Vault, intent_id: &IntentId) -> Result<ReceiptRecord> {
     let id = record_id(intent_id)?;
     let txn = vault.store.env.read_txn()?;
@@ -508,6 +544,41 @@ pub(super) fn served_form_receipts(
             .ok_or(Error::CorruptedIndex("served form record type index"))?;
         let receipt = decode(id, &stored.body)?.receipt;
         if receipt.receipt_kind == ReceiptKind::ServedForm && query.matches(&receipt) {
+            retain_newest_receipt(&mut receipts, receipt, query.limit);
+        }
+    }
+    count.finish(vault);
+    Ok(receipts)
+}
+
+/// The reference-refusal receipts (OF-063) `query` matches, newest first up
+/// to its limit, read from every RECEIPT_RECORD in the type index under
+/// `txn`, the way [`served_form_receipts`] reads its own kind.
+pub(super) fn reference_refusal_receipts(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let mut count = ScanCount::start(
+        &vault.store,
+        txn,
+        EngineScan::TypeIndexRows,
+        &[ENTITY_TYPE_RECEIPT_RECORD],
+    )?;
+    let mut receipts = Vec::new();
+    for id in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_RECEIPT_RECORD, None)?
+    {
+        count.row();
+        let id = id?;
+        let stored = vault
+            .store
+            .port_entity_record(txn, &id)?
+            .filter(|row| row.entity_type == ENTITY_TYPE_RECEIPT_RECORD)
+            .ok_or(Error::CorruptedIndex("reference refusal record type index"))?;
+        let receipt = decode(id, &stored.body)?.receipt;
+        if receipt.receipt_kind == ReceiptKind::ReferenceRefusal && query.matches(&receipt) {
             retain_newest_receipt(&mut receipts, receipt, query.limit);
         }
     }

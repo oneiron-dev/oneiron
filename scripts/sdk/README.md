@@ -24,6 +24,15 @@ preflight; `unrestricted_record_scope` requires an unrestricted HTTP credential.
 propose-only). Every other write takes effect at once and needs `core:write`.
 `lands_turn` marks a `Write` row that lands a conversation turn: its generated HTTP
 facade handler wakes the Dreamer's turn producer after the write (ARCH-0026 RD-26).
+`refs` (OF-063) lists a row's typed record-ref slots as JSON pointers into its input,
+`*` taking every item of an array (`"refs": ["/edges/*/target_ref"]`). The row's
+generated engine fn calls `gate::record_references::admit_row_references` before the
+engine call: every ref named there must resolve under the writer's own scoped read, or
+the write is refused with `INVENTED_REFERENCE` (the field pointer, never the ref) and a
+`reference_refusal` receipt is written on its own write first. Every door that reaches
+the row (HTTP facade, MCP, code mode, SDK) meets the check once. Declare citation slots
+only: a write's own target and create-or-get ids are the engine's own lookup, and free
+text is never parsed for refs. Only a plain memory row takes `refs`.
 `vault.witness` and `vault.claims.upsert` retain their size checks. `vault.recall`
 and `vault.receipts` need the scope restriction as well as query/limit validation. Their shared SDK
 request DTOs preserve the wire defaults. Language-specific DTO conversion stays

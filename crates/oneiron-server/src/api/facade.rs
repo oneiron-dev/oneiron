@@ -667,6 +667,11 @@ impl From<MemoryError> for FacadeApiError {
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            // OF-063: the write named a record its writer cannot resolve. The
+            // request was well formed and refused, so it is the caller's
+            // to correct, and a missing record and an unreadable one are this
+            // same status.
+            oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => StatusCode::UNPROCESSABLE_ENTITY,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

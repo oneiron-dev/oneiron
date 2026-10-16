@@ -81,6 +81,13 @@ pub const MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER: &str = "VAULT_LOCKED_SINGLE_WR
 /// `replacement` the error carries (EIRI-ARCH-0002 §The contract).
 pub const MEMORY_CODE_WRONG_ROOT: &str = "WRONG_ROOT";
 
+/// A write named a record ref that does not resolve under its writer's own
+/// scoped read (OF-063): invented, missing and unreadable are this one
+/// refusal. The message names the field pointer, never the ref. The write
+/// never ran, and the refusal was receipted on its own write before this
+/// error left the engine.
+pub const MEMORY_CODE_INVENTED_REFERENCE: &str = "INVENTED_REFERENCE";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.
