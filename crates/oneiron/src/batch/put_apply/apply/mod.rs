@@ -36,14 +36,6 @@ mod claim;
 use self::authority::observe_authority_put;
 use self::claim::reconcile_replicated_critical_confirm;
 
-fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
-    if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
-    } else {
-        None
-    }
-}
-
 // One door stages every effect of a put inside its write transaction.
 #[allow(clippy::too_many_lines)]
 pub(in crate::batch) fn apply_put(
@@ -83,7 +75,7 @@ pub(in crate::batch) fn apply_put(
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
-    let normalized_policy = normalized_policy_scope(entity_type, data);
+    let normalized_policy = super::put_staging::normalized_policy_scope(entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
     let project = stage_project_put(store, wtxn, id, entity_type, data, replicated, posture)?;
     let data = project.as_deref().unwrap_or(data);
@@ -96,6 +88,8 @@ pub(in crate::batch) fn apply_put(
         posture,
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
+    let project_revisions =
+        crate::workspace_roster::capture_project_put(store, wtxn, id, entity_type, data)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     super::put_staging::validate_source_carriers(
         store,
@@ -171,6 +165,7 @@ pub(in crate::batch) fn apply_put(
     // and acted on only at the pre-write site: see the eviction comment there
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
+    let mut revision_put = None;
     // H215: an id that has been an agent stays one, across a delete too.
     crate::agent_def::refuse_agent_id_retype_in_txn(store, wtxn, &id, entity_type)?;
     if let Some(body) = incoming_claim_body {
@@ -282,6 +277,10 @@ pub(in crate::batch) fn apply_put(
         }
         authority_entry_hash_pin = Some(entry_hash);
         authority_entry_observation = Some(entry);
+    } else if crate::workspace_roster::is_project_revision_type(store, entity_type) {
+        revision_put = Some(crate::workspace_roster::check_revision_put(
+            store, wtxn, id, data, replicated, posture,
+        )?);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
@@ -386,6 +385,7 @@ pub(in crate::batch) fn apply_put(
     // a fence planted at its id before it arrived refuses nothing.
     if replicated
         && !crate::registry::is_delete_protected_engine_record(entity_type)
+        && revision_put.is_none()
         && !crate::dreamer_runner::authority::is_base_agent_actor(&id)?
         && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
     {
@@ -393,7 +393,9 @@ pub(in crate::batch) fn apply_put(
             "a replicated put cannot restore an entity deleted here",
         ));
     }
-    let evicted_shell_sources = if authority_dominates_key_squatter {
+    let evicted_shell_sources = if authority_dominates_key_squatter
+        || revision_put.as_ref().is_some_and(|put| put.squatter)
+    {
         evict_authority_log_store_key_squatter(store, wtxn, &id)?
     } else {
         BTreeSet::new()
@@ -763,6 +765,14 @@ pub(in crate::batch) fn apply_put(
         crate::authority::advance_authority_cache_generation(store, wtxn)?;
     }
 
+    let touched_projects = crate::workspace_roster::projects_touched_by_put(
+        store,
+        wtxn,
+        (id, entity_type),
+        revision_put.as_ref(),
+        authority_entry_observation.as_ref(),
+    )?;
+
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
     crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
     if entity_type == crate::registry::ENTITY_TYPE_PERSON {
@@ -790,6 +800,8 @@ pub(in crate::batch) fn apply_put(
     )?;
     Ok(AppliedPut {
         portable_agent_source,
+        project_revisions,
+        touched_projects,
         pending_embedding_token: embedding.pending_embedding_token,
         cleared_pending_embedding: embedding.cleared_pending_embedding,
         had_vector_mutation: embedding.had_vector_mutation,

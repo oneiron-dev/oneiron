@@ -12,6 +12,8 @@ pub enum DecisionRung {
     Rule,
     Local,
     SystemOne,
+    /// The house model in decision-read mode, between the precision rung and the big model.
+    Escalation,
     Big,
     Human,
 }
@@ -193,6 +195,56 @@ pub struct DecisionReceipt {
     /// Provider-reported cost at the answered rung, when known.
     #[serde(default)]
     pub cost_per_thousand: Option<f64>,
+    /// One row per measurement that read the paired question. A measurement without one
+    /// has no row; a missing reading never stands for P(yes) = 0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paired: Vec<PairedReading>,
+}
+
+/// The paired "does this need more thinking?" reading, bound by the engine to the
+/// provider that measured it with its answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedReading {
+    pub provider: ProviderPin,
+    #[serde(with = "super::codec::entity")]
+    pub question: EntityId,
+    pub question_version: u32,
+    /// P(yes).
+    pub probability: f64,
+}
+
+impl PairedReading {
+    /// Rows a host hands in: at most one per measuring provider, each bound to one of
+    /// the answer's own providers.
+    pub(crate) fn rows_valid(rows: &[Self], answered: EntityId, providers: &[ProviderPin]) -> bool {
+        rows.iter().enumerate().all(|(index, row)| {
+            providers.contains(&row.provider)
+                && rows[..index]
+                    .iter()
+                    .all(|earlier| earlier.provider != row.provider)
+                && paired_valid(
+                    answered,
+                    row.question,
+                    row.question_version,
+                    row.probability,
+                )
+        })
+    }
+}
+
+/// A paired reading reads another question than the one answered, at a real version,
+/// as a probability.
+pub(crate) fn paired_valid(
+    answered: EntityId,
+    question: EntityId,
+    question_version: u32,
+    probability: f64,
+) -> bool {
+    question != answered
+        && question_version != 0
+        && probability.is_finite()
+        && (0.0..=1.0).contains(&probability)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

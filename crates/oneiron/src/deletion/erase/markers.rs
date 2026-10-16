@@ -30,6 +30,7 @@ impl Vault {
     ) -> Result<bool> {
         if !crate::dreamer_runner::authority::is_base_agent_actor(id)?
             && !crate::registry::is_delete_protected_engine_record(entity_type)
+            && !crate::workspace_roster::is_project_revision_type(&self.store, entity_type)
         {
             return Err(Error::InvariantViolation(
                 "dt: poison neutralization requires a delete-protected engine record",

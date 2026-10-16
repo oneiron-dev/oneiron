@@ -8,7 +8,7 @@ use super::slide::PML;
 use super::{CheckFault, EmitError, EmittedSlide, FitTrace, REL, Unit};
 use crate::deck::{DeckView, ShapeKind, ShapeView};
 use crate::design_plan::{Cell, Content, DesignPlan, Destination, Rect};
-use crate::native_patch::{Sequence, chart_data, header, number};
+use crate::native_patch::{Sequence, chart_data, header, number, serial};
 use crate::ooxml::{CONTENT_TYPES, Node, XmlTree};
 use crate::retained_opc::{Package, rels_name};
 use std::collections::BTreeSet;
@@ -284,7 +284,8 @@ fn native_data(
         .into_iter()
         .map(|cell| match cell {
             Cell::Number(value) => Cell::Text(number(value)),
-            Cell::Date(text) => Cell::Text(text),
+            // Creation refused a date without a serial.
+            Cell::Date(date) => serial(&date, false).map_or(Cell::Missing, Cell::Number),
             cell => cell,
         })
         .collect();

@@ -23,12 +23,12 @@ fn layer_write_persists_and_rereads_world_layer() -> Result<()> {
     Ok(())
 }
 
-/// Sol R5 F6: discovery counts each type from one capped scan of its index.
-/// Off this device a row a device-local world keeps never counts toward the
-/// cap: such rows alone never overflow it, and the scan names only the rest.
-/// On this device they still fill it.
+/// Sol R5 F6: discovery counts each type from one scan of its index. Off
+/// this device the scan names only rows no device-local world keeps; on this
+/// device it names them all. Past the type's threshold row neither refuses
+/// (rule 5): the owner-local check is raised once and the scan reads on.
 #[test]
-fn a_type_scan_off_this_device_never_overflows_on_device_local_rows() -> Result<()> {
+fn a_type_scan_off_this_device_names_no_device_local_row() -> Result<()> {
     use crate::claim::CallerLocality;
     let (_dir, vault) = open_test_vault();
     let at = crate::temporal::TimeRange { start: 1, end: 1 };
@@ -55,7 +55,7 @@ fn a_type_scan_off_this_device_never_overflows_on_device_local_rows() -> Result<
         vault.put_claim(&id, &body, at, 1)?;
         Ok(id)
     };
-    // The cap fits the claims the vault opened with and one more.
+    // The threshold row fits the claims the vault opened with and one more.
     let mut portable = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
     portable.push(claim(None)?);
     for _ in 0..2 {
@@ -63,20 +63,20 @@ fn a_type_scan_off_this_device_never_overflows_on_device_local_rows() -> Result<
     }
     vault.keep_world_on_this_machine_for_test(world, true)?;
 
-    let claims = |locality| {
-        vault.entities_by_type_at_with_cap(
-            crate::registry::ENTITY_TYPE_CLAIM,
-            locality,
-            portable.len(),
-        )
-    };
-    assert!(matches!(
-        claims(CallerLocality::OnDevice),
-        Err(Error::IndexOverflow(_))
-    ));
+    let scan = crate::scan_check::EngineScan::TypeIndexRows;
+    vault.set_scan_threshold(scan, u64::try_from(portable.len()).expect("fits"))?;
+    let claims = |locality| vault.entities_by_type_at(crate::registry::ENTITY_TYPE_CLAIM, locality);
+    assert_eq!(claims(CallerLocality::OnDevice)?.len(), portable.len() + 2);
     let mut off = claims(CallerLocality::OffDevice)?;
     off.sort();
     portable.sort();
     assert_eq!(off, portable);
+    let checks = vault.scan_checks()?;
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].scan, scan.code());
+    assert_eq!(
+        checks[0].scope.as_deref(),
+        Some(crate::entity_id::bytes_to_hex_lower(&[crate::registry::ENTITY_TYPE_CLAIM]).as_str())
+    );
     Ok(())
 }

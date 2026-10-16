@@ -168,6 +168,7 @@ fn project_empty_context(empty: &EmptyContext) -> CoreContextPackEmpty {
             EmptyReason::NoData => CoreContextPackEmptyReason::NoData,
             EmptyReason::AllActivated => CoreContextPackEmptyReason::AllActivated,
             EmptyReason::BelowThreshold => CoreContextPackEmptyReason::BelowThreshold,
+            EmptyReason::SkippedByProfile => CoreContextPackEmptyReason::SkippedByProfile,
         },
         total_in_scope: empty.total_in_scope,
         hint: empty.hint.clone(),
@@ -195,6 +196,7 @@ pub(super) fn project_context_pack(
         neighbors: pack.neighbors.iter().map(project_context_entity).collect(),
         stats: project_pack_stats(&pack.stats),
         empty: pack.empty.as_ref().map(project_empty_context),
+        limit_clamped: false,
     }
 }
 

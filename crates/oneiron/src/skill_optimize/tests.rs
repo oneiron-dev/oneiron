@@ -4952,6 +4952,7 @@ fn axes_with_minutes_floor() -> Vec<GoalAxisSpec> {
 /// gain and the cost axis loses; `inverted` swaps them.
 struct LadderScorer {
     jev: Option<(f64, bool)>, // confidence, corrupt question binding
+    jev_rung: crate::llm::decision::DecisionRung,
     choice: TradeoffChoice,
     baseline: &'static str,
     inverted: bool,
@@ -4965,6 +4966,7 @@ impl LadderScorer {
     fn new(jev: Option<(f64, bool)>) -> Self {
         Self {
             jev,
+            jev_rung: crate::llm::decision::DecisionRung::SystemOne,
             choice: TradeoffChoice::Approve,
             baseline: TARGET_DESC,
             inverted: false,
@@ -5046,7 +5048,7 @@ impl HeldOutReplayScorer for LadderScorer {
                     choice: self.choice,
                     probability,
                     pin: crate::llm::decision::ProviderPin {
-                        rung: crate::llm::decision::DecisionRung::SystemOne,
+                        rung: self.jev_rung,
                         model: "jev".into(),
                         version: "pinned-1".into(),
                     },
@@ -5102,6 +5104,36 @@ fn jev_band_is_bound_and_only_outside_band_settles() -> Result<()> {
             .contains_key("skill_edit_tradeoff_jev")
     );
     assert!(skill_tradeoff_ask(&vault, &proposal)?.is_none());
+    Ok(())
+}
+
+/// PR B2 acceptance: the house model's decision read settles a tradeoff above the
+/// band like System One.
+#[test]
+fn house_read_verdict_above_the_band_settles_the_tradeoff() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.read");
+    let owner = tradeoff_owner(&vault);
+    ladder_goal(&vault, &owner, &skill, Vec::new())?;
+    let mut house = LadderScorer::new(Some((0.95, false)));
+    house.jev_rung = crate::llm::decision::DecisionRung::Escalation;
+    let decided = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &house,
+        wake(&vault, "tradeoff-read", 20),
+        901,
+    )?;
+    assert_eq!(decided.disposition, SkillEditDisposition::AcceptedTradeoff);
+    assert_eq!(
+        decided.tradeoff_jev.as_ref().unwrap().pin.rung,
+        crate::llm::decision::DecisionRung::Escalation
+    );
+    assert_eq!(
+        skill_edit_verdict(&vault, &proposal)?.unwrap(),
+        decided,
+        "the house read round-trips through the ledger"
+    );
     Ok(())
 }
 

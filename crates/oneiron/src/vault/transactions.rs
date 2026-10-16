@@ -1,7 +1,6 @@
 //! Vault maintenance, learned-at range scans, transaction helpers and sync state.
 
 use super::Vault;
-use super::entities::MAX_LEARNED_RANGE_RESULTS;
 use crate::TimeRange;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
@@ -26,7 +25,10 @@ const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// they edit the record of which identity-topology seals this vault wrote and
 /// whose it last counted: only the seal writes it (H161). Nor the record of
 /// which author carriers it wrote: only the carrier write and its scrub touch
-/// it (H161 sidecars).
+/// it (H161 sidecars). Nor a delete's fence, hard-delete marker or topology
+/// reservation: only the delete doors write them. Nor a federation world's
+/// registration or stale stamp: only the registration and the stale sweep
+/// write them.
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
@@ -42,6 +44,27 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("it:authored:") {
         return Err(Error::InvalidConfig(
             "identity-topology authorship is written only by its carrier".to_owned(),
+        ));
+    }
+    if [
+        crate::side_table::DELETION_ROW_FENCE.prefix,
+        crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
+        crate::side_table::DELETION_TOPOLOGY_DELETE_INTENT.prefix,
+    ]
+    .iter()
+    .any(|prefix| key.as_bytes().starts_with(prefix))
+    {
+        return Err(Error::InvalidConfig(
+            "deletion fences, markers and topology reservations are written only by the delete doors"
+                .to_owned(),
+        ));
+    }
+    if key.starts_with(crate::federation::FEDERATION_WORLD_KEY_PREFIX)
+        || key.starts_with(crate::federation::FEDERATION_STALE_KEY_PREFIX)
+    {
+        return Err(Error::InvalidConfig(
+            "federation world registrations and stale stamps are written only by the engine"
+                .to_owned(),
         ));
     }
     Ok(())
@@ -171,12 +194,20 @@ impl Vault {
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
     ///
     /// Range-seeks the `temporal_learned` index by timestamp prefix.
-    /// Returns an empty result when `start >= end`.
+    /// Returns an empty result when `start >= end`. Every row is read: past
+    /// the window's threshold row the scan raises one check and reads on.
     pub fn entities_in_learned_range(&self, start: u64, end: u64) -> Result<Vec<EntityId>> {
         if start >= end {
             return Ok(Vec::new());
         }
         let txn = self.store.env.read_txn()?;
+        let window = [start.to_be_bytes(), end.to_be_bytes()].concat();
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::LearnedRangeRows,
+            &window,
+        )?;
         let query = crate::ports::TimelineQuery {
             start: std::ops::Bound::Included(start),
             end: std::ops::Bound::Excluded(end),
@@ -184,11 +215,11 @@ impl Vault {
         };
         let mut ids = Vec::new();
         for row in self.store.port_entity_timeline(&txn, query)? {
-            if ids.len() >= MAX_LEARNED_RANGE_RESULTS {
-                return Err(Error::IndexOverflow("entities_in_learned_range"));
-            }
+            count.row();
             ids.push(row?.id);
         }
+        drop(txn);
+        count.finish(self);
         Ok(ids)
     }
 
@@ -400,6 +431,11 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        // Scan checks raised since the last write are kept first, in a write
+        // of their own (no scan opens one). It takes the writer where this
+        // write is about to, holding nothing more: no answer exists yet to
+        // carry a permit another write waits on.
+        self.keep_waiting_scan_checks();
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
