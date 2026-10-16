@@ -15,6 +15,7 @@ mod grant;
 mod identity_kind;
 mod kernel;
 mod ledgers;
+mod lens;
 mod pack_attribution;
 mod projection;
 mod record;
@@ -45,6 +46,7 @@ pub use self::kernel::{
     ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView,
 };
 pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
+pub use self::lens::{LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision};
 pub use self::pack_attribution::{
     ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
     SkillContribution, UsedProvenanceEdge,
@@ -58,7 +60,7 @@ pub use self::projection::{
     ReceiptProjectionIntent, ReceiptProjectionRun, project_receipts_by_brief,
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
-pub use self::served_form::ServedForm;
+pub use self::served_form::{PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;

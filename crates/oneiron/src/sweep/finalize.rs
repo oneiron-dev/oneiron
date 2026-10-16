@@ -8,8 +8,10 @@ use super::run::{INJECT_UW_ROW_BEFORE_FINALIZE, RACE_BENIGN_MARKER};
 use super::run::{RETRY_BACKOFF_BASE_SECS, RETRY_BACKOFF_CAP_SECS};
 use crate::Vault;
 use crate::deletion::{
-    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
+    HARD_ERASE_SWEEP_PREFIX, HardEraseRetryState, HardEraseSweepJob,
+    WITHDRAWN_GENERATION_SWEEP_PREFIX, WithdrawnGenerationSweepJob, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, decode_redaction_audit_receipt, encode_hard_erase_sweep_job_value,
+    encode_withdrawn_generation_job_value, raise_withdrawn_generation_fence_in_txn,
     validate_redaction_receipt_body,
 };
 use crate::entity_id::EntityId;
@@ -175,6 +177,52 @@ pub(super) fn finalize_job(
     Ok(finalized)
 }
 
+/// Finalizes one withdrawn-generation job (OF-013): raise the artifact's
+/// fence to the generation, retire its withdrawn-worlds record once no other
+/// `hw:` row of it waits, and delete the `hw:` row LAST, in ONE transaction
+/// behind the same in-txn carrier fence as [`finalize_job`]. No receipt
+/// changes: a withdrawal writes none. `false` when the fence deferred it
+/// (no mutation, no retry consumed).
+pub(super) fn finalize_withdrawn_job(
+    vault: &Vault,
+    job_key: &[u8],
+    id: &EntityId,
+    job: &WithdrawnGenerationSweepJob,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|wtxn| {
+        if UPDATE_CARRIERS
+            .iter_raw_from(&vault.store, wtxn, &[])?
+            .next()
+            .transpose()?
+            .is_some()
+        {
+            tracing::warn!(
+                entity = %id.to_hex(),
+                "sweep: u:w: carrier arrived after compaction, before finalize — \
+                 hw: obligation kept, job deferred (fail closed, no retry consumed)"
+            );
+            return Ok(false);
+        }
+        // Ingest keeps refusing the withdrawn body once this row is gone.
+        raise_withdrawn_generation_fence_in_txn(&vault.store, wtxn, id, job.scope.generation)?;
+        // The words have left every window, and what the artifact was
+        // withdrawn for retires with them, unless another generation of it
+        // still waits.
+        let prefix = [WITHDRAWN_GENERATION_SWEEP_PREFIX, id.as_bytes()].concat();
+        let mut waiting = false;
+        for row in vault.store.sync_queue.prefix_iter(&*wtxn, &prefix)? {
+            let (key, _) = row?;
+            waiting |= *key != *job_key;
+        }
+        if !waiting {
+            crate::ports::retire_withdrawn_in_txn(&vault.store, wtxn, id)?;
+        }
+        // Obligation row deletion LAST, same txn (crash-safe ordering).
+        vault.store.sync_queue.delete(wtxn, job_key)?;
+        Ok(true)
+    })
+}
+
 /// Test-only seam — see [`INJECT_UW_ROW_BEFORE_FINALIZE`]. When armed with a
 /// window label, appends a fresh, VALID higher-seq `u:w:{window}:*` update
 /// row (built from the window's own lineage so a clean re-run imports it
@@ -229,18 +277,41 @@ pub(super) fn rewrite_job_for_retry(
     error_code: &str,
 ) -> Result<()> {
     let mut updated = job.clone();
-    updated.retry_state.attempt_count = updated.retry_state.attempt_count.saturating_add(1);
-    let exp = updated.retry_state.attempt_count.min(20);
-    let backoff = RETRY_BACKOFF_BASE_SECS
-        .saturating_mul(1u64 << exp)
-        .min(RETRY_BACKOFF_CAP_SECS);
-    updated.retry_state.next_attempt_at = now.saturating_add(backoff);
-    updated.retry_state.last_error_code = Some(error_code.to_owned());
+    retry_later(&mut updated.retry_state, now, error_code);
     let value = encode_hard_erase_sweep_job_value(&updated)?;
     vault.with_write_txn_grouped(|wtxn| {
         vault.store.sync_queue.put(wtxn, job_key, &value)?;
         Ok(())
     })
+}
+
+/// [`rewrite_job_for_retry`] for a `hw:` withdrawn-generation job.
+pub(super) fn rewrite_withdrawn_job_for_retry(
+    vault: &Vault,
+    job_key: &[u8],
+    job: &WithdrawnGenerationSweepJob,
+    now: u64,
+    error_code: &str,
+) -> Result<()> {
+    let mut updated = job.clone();
+    retry_later(&mut updated.retry_state, now, error_code);
+    let value = encode_withdrawn_generation_job_value(&updated)?;
+    vault.with_write_txn_grouped(|wtxn| {
+        vault.store.sync_queue.put(wtxn, job_key, &value)?;
+        Ok(())
+    })
+}
+
+/// One more failed attempt: exponential backoff capped at 24 h, the failing
+/// `ErrorKind` name kept, the SLA clock untouched.
+fn retry_later(state: &mut HardEraseRetryState, now: u64, error_code: &str) {
+    state.attempt_count = state.attempt_count.saturating_add(1);
+    let exp = state.attempt_count.min(20);
+    let backoff = RETRY_BACKOFF_BASE_SECS
+        .saturating_mul(1u64 << exp)
+        .min(RETRY_BACKOFF_CAP_SECS);
+    state.next_attempt_at = now.saturating_add(backoff);
+    state.last_error_code = Some(error_code.to_owned());
 }
 
 /// ONE-1091 audit: a receipt whose sweep was queued but never completed

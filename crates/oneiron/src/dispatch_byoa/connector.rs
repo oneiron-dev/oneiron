@@ -15,6 +15,7 @@ use super::error::{
     ByoaError, ByoaResult, ERR_ATTACH_KIND, ERR_ENDPOINT_PROTOCOL, ERR_PAYLOAD_DECODE,
     ERR_PAYLOAD_ENCODE, ERR_PAYLOAD_SCHEMA, ERR_UNKNOWN_MODEL_SLUG,
 };
+use super::official_seats::OfficialSeatStamp;
 use super::validate::validate_connector;
 use crate::error::ArtifactError;
 /// Wire version of every connector payload this module encodes.
@@ -389,6 +390,10 @@ pub struct ByoaAttemptPayload {
     /// The attempt that asked for this one, when there was one.
     #[serde(default)]
     pub parent_attempt: Option<[u8; 16]>,
+    /// The official seat this attempt runs on, when it is one (OF-375).
+    /// Labels and choices only; never credential material.
+    #[serde(default)]
+    pub official_seat: Option<OfficialSeatStamp>,
 }
 
 /// Encodes a connector payload in its canonical form.

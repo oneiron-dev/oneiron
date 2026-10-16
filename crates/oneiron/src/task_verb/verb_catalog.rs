@@ -6,6 +6,8 @@ pub enum AgentVerb {
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
     SelfMemoryDiary,
+    SelfMemoryDiaryReads,
+    SelfMemoryDiaryReview,
     Cancel,
     Steer,
     Describe,
@@ -16,6 +18,7 @@ pub enum AgentVerb {
     VaultRecall,
     VaultExport,
     VaultReceipts,
+    VaultImagesView,
     VaultReceiptsGet,
     VaultKvGet,
     VaultKvPut,
@@ -23,10 +26,18 @@ pub enum AgentVerb {
     VaultKvSearch,
     VaultKvNamespaces,
     VaultPacksPut,
+    VaultLensesPropose,
+    VaultLensesActivate,
+    VaultLensesDeactivate,
+    VaultLensesList,
+    VaultLensesDefault,
+    VaultHooksReplay,
     VaultArtifactsView,
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
+    VaultArtifactsWaits,
+    VaultArtifactsReleaseWait,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -65,6 +76,7 @@ pub enum AgentVerb {
     AiVideo,
     AiVideoPoll,
     AiVideoCancel,
+    AiVerdict,
     ConnectorList,
     ConnectorStatus,
     SelfBrowserOpen,
@@ -106,6 +118,8 @@ impl AgentVerb {
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
         Self::SelfMemoryDiary,
+        Self::SelfMemoryDiaryReads,
+        Self::SelfMemoryDiaryReview,
         Self::Cancel,
         Self::Steer,
         Self::Describe,
@@ -116,6 +130,7 @@ impl AgentVerb {
         Self::VaultRecall,
         Self::VaultExport,
         Self::VaultReceipts,
+        Self::VaultImagesView,
         Self::VaultReceiptsGet,
         Self::VaultKvGet,
         Self::VaultKvPut,
@@ -123,10 +138,18 @@ impl AgentVerb {
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
         Self::VaultPacksPut,
+        Self::VaultLensesPropose,
+        Self::VaultLensesActivate,
+        Self::VaultLensesDeactivate,
+        Self::VaultLensesList,
+        Self::VaultLensesDefault,
+        Self::VaultHooksReplay,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
+        Self::VaultArtifactsWaits,
+        Self::VaultArtifactsReleaseWait,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -165,6 +188,7 @@ impl AgentVerb {
         Self::AiVideo,
         Self::AiVideoPoll,
         Self::AiVideoCancel,
+        Self::AiVerdict,
         Self::ConnectorList,
         Self::ConnectorStatus,
         Self::SelfBrowserOpen,
@@ -209,6 +233,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
             Self::SelfMemoryDiary => "self.memory.diary",
+            Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
+            Self::SelfMemoryDiaryReview => "self.memory.diary.review",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
             Self::Describe => "describe",
@@ -219,6 +245,7 @@ impl AgentVerb {
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
             Self::VaultReceipts => "vault.receipts",
+            Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
             Self::VaultKvGet => "vault.kv.get",
             Self::VaultKvPut => "vault.kv.put",
@@ -226,10 +253,18 @@ impl AgentVerb {
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultLensesPropose => "vault.lenses.propose",
+            Self::VaultLensesActivate => "vault.lenses.activate",
+            Self::VaultLensesDeactivate => "vault.lenses.deactivate",
+            Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesDefault => "vault.lenses.default",
+            Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
+            Self::VaultArtifactsWaits => "vault.artifacts.waits",
+            Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -268,6 +303,7 @@ impl AgentVerb {
             Self::AiVideo => "ai.video",
             Self::AiVideoPoll => "ai.video.poll",
             Self::AiVideoCancel => "ai.video.cancel",
+            Self::AiVerdict => "ai.verdict",
             Self::ConnectorList => "connector.list",
             Self::ConnectorStatus => "connector.status",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -308,6 +344,8 @@ impl AgentVerb {
             self,
             Self::Report
                 | Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReads
+                | Self::SelfMemoryDiaryReview
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -318,6 +356,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -325,10 +364,18 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
+                | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -367,6 +414,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::AiVerdict
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -415,6 +463,8 @@ impl AgentVerb {
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
                 | Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReads
+                | Self::SelfMemoryDiaryReview
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -425,6 +475,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -432,10 +483,18 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
+                | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -474,6 +533,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::AiVerdict
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -523,7 +583,9 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultHooksReplay
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
                 | Self::Peek
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
@@ -558,12 +620,15 @@ impl AgentVerb {
         matches!(
             self,
             Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReads
+                | Self::SelfMemoryDiaryReview
                 | Self::Steer
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -571,10 +636,18 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
+                | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsWaits
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -613,6 +686,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::AiVerdict
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::SelfBrowserOpen
@@ -649,6 +723,7 @@ impl AgentVerb {
         matches!(
             self,
             Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReview
                 | Self::Cancel
                 | Self::Steer
                 | Self::TasksCreate
@@ -658,6 +733,10 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -705,6 +784,7 @@ impl AgentVerb {
             Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
+                | Self::VaultLensesPropose
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
@@ -717,6 +797,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
             Self::SelfMemoryDiary => &["spec"],
+            Self::SelfMemoryDiaryReads => &["spec"],
+            Self::SelfMemoryDiaryReview => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
@@ -727,6 +809,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
@@ -734,10 +817,18 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesActivate => &["spec"],
+            Self::VaultLensesDeactivate => &["spec"],
+            Self::VaultLensesList => &["spec"],
+            Self::VaultLensesDefault => &["spec"],
+            Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsWaits => &["spec"],
+            Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -776,6 +867,7 @@ impl AgentVerb {
             Self::AiVideo => &["spec"],
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
+            Self::AiVerdict => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -818,6 +910,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
             Self::SelfMemoryDiary => &["spec"],
+            Self::SelfMemoryDiaryReads => &["spec"],
+            Self::SelfMemoryDiaryReview => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &[],
@@ -828,6 +922,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
@@ -835,10 +930,18 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesActivate => &["spec"],
+            Self::VaultLensesDeactivate => &["spec"],
+            Self::VaultLensesList => &["spec"],
+            Self::VaultLensesDefault => &["spec"],
+            Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsWaits => &["spec"],
+            Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -877,6 +980,7 @@ impl AgentVerb {
             Self::AiVideo => &["spec"],
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
+            Self::AiVerdict => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
