@@ -51,6 +51,7 @@ mod adapters;
 mod ask_holders;
 mod bound;
 mod codec;
+mod contact_clearance;
 mod doors;
 mod effect;
 mod grant;
@@ -77,6 +78,14 @@ pub use self::bypass::{BypassActive, BypassExtent, BypassGrantWarning, BypassSco
 pub use self::codec::{
     CONSENT_GRANT_BODY_KEYS, CONSENT_GRANT_SCHEMA_VERSION, decode_consent_grant_row,
     encode_consent_grant_row,
+};
+pub use self::contact_clearance::{
+    CONTACT_CLEARANCE_CLASS, CONTACT_CLEARANCE_REVOKE_COMMAND, CONTACT_DISCLOSURE_REASON_NARROWED,
+    CONTACT_DISCLOSURE_REASON_PRECLEARED, CONTACT_DISCLOSURE_REASON_REVOKED,
+    CONTACT_DISCLOSURE_REASON_STANDING, CONTACT_DISCLOSURE_REASON_USED,
+    CONTACT_DISCLOSURE_WIDEN_KIND, ContactClearanceAct, ContactDisclosureOffer,
+    ContactDisclosureOutcome, ContactDisclosureProposal, DisclosureConfirmationReceipt,
+    DisclosureOfferMode, contact_clearance_ref,
 };
 pub use self::doors::{
     AuthenticatedOwner, ConsentEvaluation, bound_catastrophe_class, load_active_standing_grants,

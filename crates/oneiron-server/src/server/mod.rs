@@ -1,5 +1,6 @@
 //! Sync server state and maintenance jobs, split by concern.
 mod board_publisher;
+mod connector_events;
 mod cooperative_deletion;
 mod core;
 mod embedding;
@@ -13,6 +14,7 @@ mod presence;
 mod read_shape;
 mod recall;
 mod recall_rerank;
+mod resident_pump;
 mod tagging;
 mod windows;
 

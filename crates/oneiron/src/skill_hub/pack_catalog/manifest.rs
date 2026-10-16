@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::migrations::PackMigration;
+use super::setup::PackSetup;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
 use crate::saved_query::PackMigrationMap;
@@ -41,13 +42,24 @@ pub struct PackManifest {
     /// Runtime structural shapes, by global name; handles are local, never in PACK.md.
     pub kinds: BTreeSet<String>,
     pub requested_grants: BTreeSet<String>,
+    /// Effect classes this pack's actions can fall in, by their engine
+    /// action-class names (`browser.send`, `browser.pay`, ...). The vault's
+    /// grant for a class sets its press; declaring a class grants nothing.
+    pub effects: BTreeSet<String>,
     pub wake_subscriptions: BTreeSet<String>,
     /// Hook folders under `hooks/`, by name (ARCH-0053 §7, PACK-HOOKS = A).
     /// Install binds each one; the runner is L11's.
     pub hooks: BTreeSet<String>,
+    /// Organ folders under `organs/`, by name (ARCH-0075 §9, OF-575). Each
+    /// pins its builds by platform; the builds travel as blob assets.
+    pub organs: BTreeSet<String>,
     /// Predicate migration maps this source ships for moves from earlier
     /// sources of the pack (ARCH-0059 §4, rung 1).
     pub migrations: Vec<PackMigration>,
+    /// The accounts, connections, permissions and credential names the
+    /// pack's guided setup walks the owner through (OF-378). Declaration
+    /// only; it grants nothing.
+    pub setup: Option<PackSetup>,
 }
 
 impl PackManifest {
@@ -171,9 +183,12 @@ impl PackManifest {
                     "predicates",
                     "kinds",
                     "grants",
+                    "effects",
                     "wakes",
                     "hooks",
+                    "organs",
                     "migrations",
+                    "setup",
                 ]
                 .iter()
                 .any(|key| fields.contains_key(key))
@@ -207,15 +222,31 @@ impl PackManifest {
         if predicates.iter().any(|name| kinds.contains(name)) {
             return Err(invalid("predicate and structural names must be disjoint"));
         }
+        let effects = list("effects")?;
+        for effect in &effects {
+            validate_name(effect)?;
+        }
         let hooks = list("hooks")?;
         for hook in &hooks {
             super::hooks::validate_hook_name(hook)?;
+        }
+        let organs = list("organs")?;
+        if organs.len() > 32 {
+            return Err(invalid("too many organs"));
+        }
+        for organ in &organs {
+            super::organs::validate_organ_name(organ)?;
         }
         let migrations = fields
             .get("migrations")
             .map(|line| super::migrations::parse(line, &name, &version, &predicates))
             .transpose()?
             .unwrap_or_default();
+        let requested_grants = list("grants")?;
+        let setup = fields
+            .get("setup")
+            .map(|value| PackSetup::parse(value, kind, &requested_grants))
+            .transpose()?;
         Ok(Self {
             name,
             description,
@@ -230,10 +261,13 @@ impl PackManifest {
             agent_facets,
             predicates,
             kinds,
-            requested_grants: list("grants")?,
+            requested_grants,
+            effects,
             wake_subscriptions: list("wakes")?,
             hooks,
+            organs,
             migrations,
+            setup,
         })
     }
 }
@@ -264,10 +298,13 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "predicates"
                 | "kinds"
                 | "grants"
+                | "effects"
                 | "wakes"
                 | "hooks"
+                | "organs"
                 | "facets"
                 | "migrations"
+                | "setup"
         ) {
             return Err(invalid("unknown PACK.md field"));
         }

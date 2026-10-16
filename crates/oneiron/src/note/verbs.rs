@@ -9,6 +9,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::memory::MemoryResult;
 use crate::ports::{EdgeStoreRead, EntityStore};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_NOTE};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -42,7 +44,18 @@ impl Vault {
                             at,
                             &body,
                         )
-                        .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0),
+                        .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
+                        .made_by(
+                            &id,
+                            RowBirth::written(
+                                actor,
+                                MadeByClass::of_writer(actor.actor_class()),
+                                "note.create",
+                                &[],
+                                &[],
+                                at,
+                            ),
+                        ),
                 )?;
                 content.update_note(id, |txn| {
                     let doc = super::document_store::load(self, txn, id)?;
@@ -94,17 +107,27 @@ impl Vault {
                                 invalid("NOTE fork requires its author or the owner").into()
                             );
                         }
+                        let markdown = super::documents::live_doc(self, txn, origin)?.text();
+                        let birth = RowBirth::written(
+                            actor,
+                            MadeByClass::of_writer(actor.actor_class()),
+                            "note.fork_to_facet",
+                            &[origin],
+                            &[markdown.as_bytes()],
+                            at,
+                        );
                         let body = encode_note_body(&NoteBody {
                             source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
                             kind: core.kind,
                             author_ref: actor.entity_ref(),
-                            markdown: super::documents::live_doc(self, txn, origin)?.text(),
+                            markdown,
                         })?;
                         fork_links(
                             self.batch_in()
                                 .mask(Some(facet))
                                 .put_authored_note(&fork, &actor.entity_ref(), occurred, at, &body)
-                                .edge(&fork, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0),
+                                .edge(&fork, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
+                                .made_by(&fork, birth),
                             fork,
                             origin,
                             supersede,
@@ -120,14 +143,22 @@ impl Vault {
                         let raw = self
                             .get_raw_in(txn, &origin)?
                             .ok_or(crate::Error::EntityNotFound)?;
+                        let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
                         fork_links(
-                            self.batch_in().mask(Some(facet)).put(
-                                &fork,
-                                ENTITY_TYPE_ASSET,
-                                occurred,
-                                at,
-                                &raw[ENTITY_METADATA_HEADER_LEN..],
-                            ),
+                            self.batch_in()
+                                .mask(Some(facet))
+                                .put(&fork, ENTITY_TYPE_ASSET, occurred, at, bytes)
+                                .made_by(
+                                    &fork,
+                                    RowBirth::written(
+                                        actor,
+                                        MadeByClass::of_writer(actor.actor_class()),
+                                        "note.fork_to_facet",
+                                        &[origin],
+                                        &[bytes],
+                                        at,
+                                    ),
+                                ),
                             fork,
                             origin,
                             supersede,
@@ -235,7 +266,8 @@ impl Vault {
                     crate::claim::ClaimApprovalStatus::Proposed,
                     crate::claim::ClaimLifecycleStatus::Active,
                 )?;
-                body.source = Some(crate::claim::ClaimSource::Inferred);
+                let source = crate::claim::ClaimSource::Inferred;
+                body.source = Some(source);
                 body.scope_facet = origin_facet;
                 self.put_claim_in_txn(
                     txn,
@@ -244,6 +276,22 @@ impl Vault {
                     TimeRange { start: at, end: at },
                     at,
                 )?;
+                // The suggestion is made from the origin's facet stamp.
+                if let Some(birth) = RowBirth::written(
+                    actor,
+                    MadeByClass::of_source(source),
+                    "note.suggest_facet_fork",
+                    &[origin],
+                    &[origin_facet.as_bytes().as_slice()],
+                    at,
+                ) {
+                    crate::provenance::birth::stamp_row_birth_in_txn(
+                        &self.store,
+                        txn,
+                        &suggestion,
+                        &birth,
+                    )?;
+                }
                 Ok(suggestion)
             })
     }
@@ -426,6 +474,15 @@ fn create_from_text_in_txn(
     };
     let id = vault.store.clock.entity_id()?;
     let at = mutation_recorded_at;
+    // The copy is made from the text it read and the row it cites.
+    let birth = RowBirth::written(
+        actor,
+        MadeByClass::of_writer(actor.actor_class()),
+        "note.create_from_entity",
+        &[source, citation],
+        &[text.as_bytes()],
+        at,
+    );
     let body = encode_note_body(&NoteBody {
         source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
         kind,
@@ -443,7 +500,8 @@ fn create_from_text_in_txn(
                 &body,
             )
             .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
-            .edge(&id, EdgeKind::DerivedFrom, &citation, 1.0),
+            .edge(&id, EdgeKind::DerivedFrom, &citation, 1.0)
+            .made_by(&id, birth),
     )?;
     Ok(id)
 }

@@ -243,8 +243,18 @@ class Oneiron:
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def diary(self, spec):
+        @property
+        def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs":
+            return Oneiron._SelfMemoryDiaryVerbs(self._client)
+    class _SelfMemoryDiaryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
             return json.loads(_translate(lambda: self._client.self_memory_diary(json.dumps(spec))))
+        def reads(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary_reads(json.dumps(spec))))
+        def review(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -298,8 +308,14 @@ class Oneiron:
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs":
             return Oneiron._VaultReceiptsVerbs(self._client)
         @property
+        def images(self) -> "Oneiron._VaultImagesVerbs":
+            return Oneiron._VaultImagesVerbs(self._client)
+        @property
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
+        @property
+        def weave(self) -> "Oneiron._VaultWeaveVerbs":
+            return Oneiron._VaultWeaveVerbs(self._client)
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
@@ -313,11 +329,20 @@ class Oneiron:
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
+        def lenses(self) -> "Oneiron._VaultLensesVerbs":
+            return Oneiron._VaultLensesVerbs(self._client)
+        @property
+        def hooks(self) -> "Oneiron._VaultHooksVerbs":
+            return Oneiron._VaultHooksVerbs(self._client)
+        @property
         def artifacts(self) -> "Oneiron._VaultArtifactsVerbs":
             return Oneiron._VaultArtifactsVerbs(self._client)
         @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
+        @property
+        def projects(self) -> "Oneiron._VaultProjectsVerbs":
+            return Oneiron._VaultProjectsVerbs(self._client)
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs":
             return Oneiron._VaultConversationsVerbs(self._client)
@@ -342,6 +367,9 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_hydrate(json.dumps(input, allow_nan=False))))
         def get(self, input: dict[str, Any]) -> Any:
             return json.loads(_translate(lambda: self._client.vault_get(json.dumps(input, allow_nan=False))))
+        @property
+        def refs(self) -> "Oneiron._VaultRefsVerbs":
+            return Oneiron._VaultRefsVerbs(self._client)
         @property
         def search(self) -> "Oneiron._VaultSearchVerbs":
             return Oneiron._VaultSearchVerbs(self._client)
@@ -378,6 +406,12 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
         def get(self, spec):
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
+    class _VaultImagesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def view(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull."""
+            return json.loads(_translate(lambda: self._client.vault_images_view(json.dumps(request, allow_nan=False))))
     class _VaultKvVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -396,6 +430,13 @@ class Oneiron:
         def namespaces(self, request: dict[str, Any]) -> list[list[str]]:
             """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
             return json.loads(_translate(lambda: self._client.vault_kv_namespaces(json.dumps(request, allow_nan=False))))
+    class _VaultWeaveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def report(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
+        def digest(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -442,6 +483,24 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms(json.dumps(spec))))
         def acknowledge(self, spec):
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultLensesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def propose(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
+        def activate(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_activate(json.dumps(spec))))
+        def deactivate(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_deactivate(json.dumps(spec))))
+        def list(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
+        def default(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
+    class _VaultHooksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def replay(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -457,6 +516,15 @@ class Oneiron:
         def proposals(self, request: dict[str, Any]) -> list[dict[str, Any]]:
             """The proposals waiting beside one artifact for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_proposals(json.dumps(request, allow_nan=False))))
+        def waits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+            """The organ calls held beside one artifact until one of your nodes can run them, each with why it waits."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_waits(json.dumps(request, allow_nan=False))))
+        def release_wait(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Lets one held organ call go, by its run ref, under the consent a Discard needs."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_release_wait(json.dumps(request, allow_nan=False))))
+        def review_slides(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_review_slides(json.dumps(request, allow_nan=False))))
         def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
             """Runs one native deck transaction over the head and holds the proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))
@@ -499,10 +567,29 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+        def join(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
+        def consent(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
         def host(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
         def sharing(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultProjectsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def goal(self) -> "Oneiron._VaultProjectsGoalVerbs":
+            return Oneiron._VaultProjectsGoalVerbs(self._client)
+        def route_tradeoff(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_route_tradeoff(json.dumps(spec))))
+    class _VaultProjectsGoalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def revisions(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_revisions(json.dumps(spec))))
+        def dismiss(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_dismiss(json.dumps(spec))))
     class _VaultConversationsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -545,6 +632,11 @@ class Oneiron:
             self._client = client
         def pending(self, input: dict[str, Any]) -> Any:
             return json.loads(_translate(lambda: self._client.vault_writes_pending(json.dumps(input, allow_nan=False))))
+    class _VaultRefsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def resolve(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_refs_resolve(json.dumps(spec))))
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -585,6 +677,8 @@ class Oneiron:
         @property
         def video(self) -> "Oneiron._AiVideoVerbs":
             return Oneiron._AiVideoVerbs(self._client)
+        def verdict(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

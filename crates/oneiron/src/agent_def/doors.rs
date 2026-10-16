@@ -190,6 +190,15 @@ impl Vault {
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
         wtxn.commit()?;
+        crate::context_board::ensure_agent_person(
+            self,
+            *id,
+            definition
+                .display_name
+                .as_deref()
+                .unwrap_or(&definition.agent_id),
+            learned_at,
+        )?;
         Ok(disposition)
     }
 
@@ -203,7 +212,14 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let data = encode_agent_definition(def)?;
-        self.put_entity(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)
+        self.put_entity(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)?;
+        // PEOPLE (ARCH-0067): every agent is a person with a `pr` handle.
+        crate::context_board::ensure_agent_person(
+            self,
+            *id,
+            def.display_name.as_deref().unwrap_or(&def.agent_id),
+            learned_at,
+        )
     }
 
     /// Discoverability alias for `put_agent_definition` so the registry verb

@@ -1,5 +1,6 @@
 //! The host doors of the verb-table rows only a server's own state answers:
-//! the owner's `vault.packs.put` and the `ai.*` model calls past text. The
+//! the owner's `vault.packs.put` and `vault.hooks.replay`, the `ai.*` model
+//! calls past text, and `ai.verdict` through the host's decision ladder. The
 //! generated HTTP facade handler and the MCP dispatcher both call these, so
 //! a tool call, a code-mode call and an SDK call meet one admission.
 //!
@@ -15,13 +16,17 @@ use oneiron::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::task_verb::sdk::{
-    AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVideoCancelled, AiVideoJob,
-    AiVideoJobRequest, AiVideoTicket, PackPutReceipt, PackPutRequest,
+    AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVerdict, AiVerdictRequest,
+    AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
+    HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
 use oneiron::{
-    CallClass, CallEnvelope, CallPurpose, FatalLlmError, LlmError, ModelId, ModelTierRef,
-    ResponseFormat, RetryableLlmError, TierPrecedence,
+    CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
+    ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
 };
+
+use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
+use oneiron::receipt::LensActivationReceipt;
 
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -50,6 +55,39 @@ pub(crate) async fn vault_packs_put(
     })
     .await
     .map_err(|_| internal("vault.packs.put"))?
+}
+
+/// `vault.artifacts.review_slides`: reviews an artifact's head through the
+/// host's decide() ladder as the bound actor, from the host's starting dial
+/// and bands, and holds the proposal for Keep or Discard. The ladder runs on
+/// a blocking thread, one call per unit.
+pub(crate) async fn vault_artifacts_review_slides(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::blob_artifact::SlideReviewSubmit,
+) -> MemoryResult<oneiron::blob_artifact::SlideReviewOutcome> {
+    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a slide review binds its proposal to an authenticated principal",
+            &["Present a slip paired from a link created with --principal-ref."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality());
+        let host = server.decision_host();
+        memory.artifacts_review_slides_through(
+            &input,
+            &server.decision_ladder().ladder(),
+            host.dial(oneiron::llm::decision::DecisionRung::Big),
+            &host.bands(),
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.artifacts.review_slides"))?
 }
 
 /// `ai.options`: the rows a call could use, where each runs, what it takes,
@@ -202,6 +240,90 @@ pub(crate) async fn ai_video_cancel(
     Ok(AiVideoCancelled { job: input.job })
 }
 
+/// `ai.verdict`: the caller's own typed question through the host's
+/// decision ladder, asked for the caller: the slip's principal, or the
+/// vault's own owner for an owner-grade credential that names none. Its
+/// evidence is read under the caller's own scoped read
+/// ([`crate::decision_verdict::run_verdict`]).
+pub(crate) async fn ai_verdict(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AiVerdictRequest,
+) -> MemoryResult<AiVerdict> {
+    let (principal, class) = asking(auth, server)?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let reader = crate::api::credential_memory(&server.vault, Some(&auth), principal, class)
+            .at(auth.locality());
+        crate::decision_verdict::run_verdict(&server, principal, &reader, &input)
+    })
+    .await
+    .map_err(|_| internal("ai.verdict"))?
+}
+
+/// `vault.hooks.replay`: the owner replays a fact hook over past facts, under
+/// the proof `/v1/owner` takes from the request, on the hook sandbox serve
+/// runs its fact hooks on. A dry run: nothing lands.
+pub(crate) async fn vault_hooks_replay(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HooksReplayRequest,
+) -> MemoryResult<Vec<HookReplayRow>> {
+    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "vault.hooks.replay is the vault owner's",
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })?;
+    let Some(runtime) = server.hook_runtime.get().cloned() else {
+        return Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "no hook sandbox runs on this server",
+            &["Serve with fact hooks on (no --no-hooks), on a build with the code sandbox."],
+        ));
+    };
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::replay_hooks_as_owner(
+            server.vault(),
+            &owner,
+            runtime.as_ref(),
+            &input,
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.hooks.replay"))?
+}
+
+/// Whom a host-door question is asked for: the slip's principal, or the
+/// vault's own owner for an owner-grade credential that names none, as a
+/// chat turn's writer is.
+fn asking(auth: &CoreAuth, server: &SyncServer) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "ai.verdict is asked for an authenticated principal",
+            &["Present a slip that names its principal, or the owner's own credential."],
+        )
+    };
+    let actor = match auth.principal_ref() {
+        Some(reference) => EntityId::from_hex(reference).map_err(|_| refused())?,
+        None if auth.is_owner_grade() => server
+            .vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| refused())?,
+        None => return Err(refused()),
+    };
+    let class = match auth.actor_class() {
+        Some("agent") => EdgeActorClass::Agent,
+        Some("system") => EdgeActorClass::System,
+        _ => EdgeActorClass::Human,
+    };
+    Ok((actor, class))
+}
+
 fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
     if auth.is_owner_grade() {
         return Ok(());
@@ -287,6 +409,7 @@ fn admit(
         parts,
         references,
         params: input.params,
+        voice: None,
     };
     if let Some(key) = request.admission_request().route_selector_override() {
         return Err(MemoryError::bad_request(format!(
@@ -340,4 +463,49 @@ fn failure(operation: AiOperation, error: &LlmError) -> MemoryError {
         format!("ai.{}: {error} {detail}", operation.as_str()),
         &[suggestion],
     )
+}
+
+/// The owner's proof for a `vault.lenses.*` slot decision, from the request,
+/// as `/v1/owner` takes it.
+fn lens_owner(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    verb: &str,
+) -> MemoryResult<oneiron::consent::AuthenticatedOwner> {
+    crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is the vault owner's"),
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })
+}
+
+/// `vault.lenses.activate`: the owner selects a proposed lens revision for
+/// its pack slot, under the proof `/v1/owner` takes from the request. The
+/// owner's confirmation is the consent; an agent can only propose.
+pub(crate) async fn vault_lenses_activate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LensActivateRequest,
+) -> MemoryResult<LensActivationReceipt> {
+    let owner = lens_owner(auth, server, "vault.lenses.activate")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || server.vault().activate_lens(&owner, input))
+        .await
+        .map_err(|_| internal("vault.lenses.activate"))?
+}
+
+/// `vault.lenses.deactivate`: the owner clears a pack slot's selected lens,
+/// under the same proof. The pack, its skill and the proposal stay.
+pub(crate) async fn vault_lenses_deactivate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LensDeactivateRequest,
+) -> MemoryResult<LensActivationReceipt> {
+    let owner = lens_owner(auth, server, "vault.lenses.deactivate")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || server.vault().deactivate_lens(&owner, input))
+        .await
+        .map_err(|_| internal("vault.lenses.deactivate"))?
 }

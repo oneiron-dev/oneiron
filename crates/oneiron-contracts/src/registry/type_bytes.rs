@@ -105,7 +105,7 @@ pub const ENTITY_TYPE_MODEL: u8 = 90;
 /// every wrap of that key is sealed against. It replicates with the base rows
 /// and is hard-deleted with its world; public puts are rejected with
 /// `MaintenanceKindNotWritable`.
-pub const ENTITY_TYPE_WORLD_KEY_PAD: u8 = 70;
+pub const ENTITY_TYPE_WORLD_KEY_PAD: u8 = 69;
 
 /// AUTHORITY_LOG entry (ONE-1324). Engine-authored maintenance kind for the
 /// fold-verified vault authority roster; public puts are rejected with

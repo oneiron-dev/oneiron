@@ -25,6 +25,7 @@ use super::codec::{
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
     DREAMER_NOTE_REVIEW_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
+    DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
     DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
     DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
@@ -235,6 +236,19 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(DREAMER_NOTE_REVIEW_ATTEMPT_KIND, input)
+    }
+
+    /// Atomically admits the next queued resident dreaming (OF-490). No home
+    /// gate: each child writes only its own resident's diary.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_resident_dream(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, input)
     }
 
     /// Atomically admits the next queued Coach heal attempt for a host Coach.
@@ -489,6 +503,9 @@ impl DreamerRunnerStore<'_> {
         if let Some(milestone) = input.started_milestone {
             apply_milestone_claim_in_txn(self.vault, wtxn, &attempt, milestone)?;
         }
+
+        // OF-220: the TASK this try realizes is taken on the task highway.
+        crate::task_verb::highway_runner::accept_leased_task_in_txn(self.vault, wtxn, &attempt)?;
 
         let status = decode_dreamer_attempt_status(attempt)?;
 

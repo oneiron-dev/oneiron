@@ -34,6 +34,21 @@ export type RoomClaimRequest = {
   room_ref: string
   turn_ref: string
 }
+export type ProjectRefRequest = {
+  project_ref: string
+}
+export type ProjectGoalDismissRequest = {
+  project_ref: string
+  expected_goal_ref: string
+  question_digest: string
+}
+export type ProjectGoalDismissReceipt = {
+  dismissed: boolean
+}
+export type ProjectTradeoffRouteRequest = {
+  task_ref: string
+  proposal_ref: string
+}
 export type RoomHostRequest = {
   room_ref: string
   session_ref?: string | null
@@ -85,6 +100,10 @@ export type RecallRequest = {
 }
 export type ReceiptsRequest = {
   limit?: number | null
+}
+export type VaultReceiptsRequest = {
+  limit?: number | null
+  kinds?: (string)[]
 }
 export type InboxListRequest = {
   after?: string | null
@@ -184,6 +203,7 @@ export type PendingWrite = {
 }
 export type MemoryReceipt = {
   receipt_ref: string
+  kind: string
   outcome: string
   created_at: number
   reason_codes: (string)[]
@@ -191,6 +211,7 @@ export type MemoryReceipt = {
   actor_ref?: string | null
   content_kind: string
   claim_ref?: string | null
+  fields?: unknown
 }
 export type EntityView = {
   id_hex: string
@@ -310,7 +331,7 @@ export type ExportReceipt = {
 }
 export type MemoryExport = {
   format: string
-  archive: (number)[]
+  archive: string
   digest: string
 }
 export type WitnessMessage = {

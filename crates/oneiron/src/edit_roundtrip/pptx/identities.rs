@@ -5,6 +5,8 @@ use super::limits::PptxOperationalLimits;
 use super::package::*;
 use super::xml::Xml;
 use crate::anchored_annotation::{Locator, ReanchorOutcome};
+use oneiron_docedit::deck::DeckView;
+use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Reads identities without creating missing ones or changing any package byte.
@@ -15,7 +17,54 @@ pub(crate) fn inspect_pptx_with_limits(
     bytes: &[u8],
     limits: &PptxOperationalLimits,
 ) -> Result<PptxInspection, PptxError> {
-    inspect_parts(&Archive::read(bytes)?.parts, limits)
+    let archive = Archive::read(bytes)?;
+    let mut inspection = inspect_parts(&archive.parts, limits)?;
+    resolve_positions(bytes, &archive.parts, &mut inspection, limits);
+    Ok(inspection)
+}
+
+/// Shape positions from the deck resolver over the same bytes: group
+/// transforms, rotation, flips and inherited placeholder geometry compose to
+/// the verified slide-space top-left of the shape (ARCH-0077). A shape whose
+/// geometry stays unresolved, or whose id is not unique on its slide, gets
+/// none, so its unit refuses and offers the slide. A package the resolver
+/// cannot read keeps the own-transform positions the inspector found.
+pub(super) fn resolve_positions(
+    bytes: &[u8],
+    parts: &BTreeMap<String, Vec<u8>>,
+    inspection: &mut PptxInspection,
+    limits: &PptxOperationalLimits,
+) {
+    // The archive already expanded these parts; its own size is the budget.
+    let package_limits = Limits {
+        archive_bytes: bytes.len().max(1),
+        entries: parts.len().max(1),
+        part_bytes: parts.values().map(Vec::len).max().unwrap_or(0).max(1),
+        expanded_bytes: parts.values().map(Vec::len).sum::<usize>().max(1),
+        xml: XmlLimits {
+            max_depth: limits.max_xml_depth,
+            max_nodes: limits.max_xml_nodes,
+        },
+    };
+    let Ok(package) = Package::open(bytes, package_limits) else {
+        return;
+    };
+    let Ok(view) = DeckView::read(&package) else {
+        return;
+    };
+    for slide in &mut inspection.slides {
+        let deck = view.slides.iter().find(|deck| deck.sld_id == slide.sld_id);
+        for shape in &mut slide.shapes {
+            let mut found = deck
+                .into_iter()
+                .flat_map(|deck| &deck.shapes)
+                .filter(|view| view.id == Some(shape.shape_id));
+            shape.position = match (found.next(), found.next()) {
+                (Some(view), None) => view.geometry.slide_space_top_left(),
+                _ => None,
+            };
+        }
+    }
 }
 pub(super) fn text<'a>(parts: &'a BTreeMap<String, Vec<u8>>, name: &str) -> PatchResult<&'a str> {
     std::str::from_utf8(parts.get(name).ok_or(PptxError::InvalidReference)?)

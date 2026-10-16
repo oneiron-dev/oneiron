@@ -73,6 +73,21 @@ impl ConnState {
         vault.peer_machine_stands(self.proven_machine)
     }
 
+    /// This socket's peer as a world-privacy destination: the machine it
+    /// proved, re-judged against the fold, or unknown. Destination-aware
+    /// doors (the sealed relay) read world settings against it.
+    pub(super) fn destination(
+        &self,
+        vault: &oneiron::Vault,
+    ) -> oneiron::authority::Destination {
+        match self.peer_machine(vault) {
+            oneiron::authority::PeerMachine::Proven { machine, .. } => {
+                oneiron::authority::Destination::Machine(machine)
+            }
+            oneiron::authority::PeerMachine::Unknown => oneiron::authority::Destination::Unknown,
+        }
+    }
+
     /// Pushes `key`'s changes to this socket from now on, after a valid version exchange. Only an
     /// owner-lane socket is pushed windows, so no other keeps a subscription. Past `bound` a
     /// socket whose peer takes `WINDOW_INVALIDATE` forgets its least recently requested window;

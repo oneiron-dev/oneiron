@@ -1,16 +1,20 @@
-//! OF-490: a vault export is a read of agent diaries. It reads the diaries
-//! the exporting owner's grant covers, logs each read with the reason
-//! `export`, and holds out the diaries of an agent that reviews each read
-//! first, recording that pending review in the manifest; the export itself
-//! is never blocked (export is never gated). L07-A's diary-read door, which
-//! owns the per-agent review setting, takes over [`export_diary_admission`]'s
-//! body when it lands.
-use std::collections::BTreeMap;
+//! OF-490: a vault export is a read of agent diaries, made through the diary
+//! door's [`DiaryReadGate`] with the reason `export`. Each diary entry in the
+//! snapshot is admitted inside the snapshot's read transaction: the reader's
+//! `diary.read` Grant decides what is covered, and an agent that reviews each
+//! read first (on for Eiri) holds its entries until it answers. After the
+//! snapshot the gate logs the reads where each agent sees them, spends the
+//! yes they used and opens pending reviews. Held entries stay out of the
+//! archive and the manifest's `diary_holds` names them; the export itself is
+//! never blocked (export is never gated).
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{ExportDiaryHold, ExportDiaryHoldReason, ExportDiaryRead};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::memory::{DiaryEntryAdmission, DiaryReadGate, DiaryReadHold};
+use crate::write_envelope::WriteActor;
 
 /// The reason every export's diary read states.
 pub const EXPORT_DIARY_READ_REASON: &str = "export";
@@ -23,59 +27,85 @@ pub(crate) fn diary_author(body: &[u8]) -> Option<EntityId> {
         .map(|note| note.author_ref)
 }
 
-/// Whether this export reads `author`'s diary, or why it holds it out: THE
-/// one call L07-A's OF-490 diary-read door replaces. The exporting owner's
-/// grant covers every live agent of this vault. The per-agent review setting
-/// is that door's (on for Eiri); until it lands no agent reviews first, and
-/// an agent that does is held as `AgentReviewPending`.
-pub(crate) fn export_diary_admission(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    author: &EntityId,
-) -> Result<Option<ExportDiaryHoldReason>> {
-    if !crate::vault::live_entity_row_in_txn(&vault.store, rtxn, author)?.is_live() {
-        return Ok(Some(ExportDiaryHoldReason::NotCoveredByGrant));
-    }
-    Ok(None)
-}
-
-/// Each agent's diaries this export read and held, counted.
-#[derive(Debug, Default)]
+/// One export's diary reads: the gate, the entries it admitted, and the
+/// entries it held, by agent.
 pub(crate) struct ExportDiaryLedger {
-    read: BTreeMap<EntityId, u64>,
+    gate: DiaryReadGate,
+    read: BTreeMap<EntityId, BTreeSet<EntityId>>,
     held: BTreeMap<(EntityId, ExportDiaryHoldReason), u64>,
 }
 
 impl ExportDiaryLedger {
-    /// Admits one diary by `author`: true when it is read.
+    /// The ledger of `reader`'s export: the owner who exports, or for an
+    /// export-first removal the owner who receives it.
+    pub(crate) fn new(reader: WriteActor) -> Result<Self> {
+        Ok(Self {
+            gate: DiaryReadGate::new(reader, EXPORT_DIARY_READ_REASON)?,
+            read: BTreeMap::new(),
+            held: BTreeMap::new(),
+        })
+    }
+
+    /// Admits `entry`, a diary entry by `agent`: true when it is read.
     pub(crate) fn admit(
         &mut self,
         vault: &Vault,
         rtxn: &heed::RoTxn<'_>,
-        author: EntityId,
+        agent: EntityId,
+        entry: EntityId,
     ) -> Result<bool> {
-        match export_diary_admission(vault, rtxn, &author)? {
-            None => {
-                *self.read.entry(author).or_default() += 1;
+        match self.gate.admit(vault, rtxn, agent, entry)? {
+            DiaryEntryAdmission::Read => {
+                self.read.entry(agent).or_default().insert(entry);
                 Ok(true)
             }
-            Some(reason) => {
-                *self.held.entry((author, reason)).or_default() += 1;
+            DiaryEntryAdmission::Held(hold) => {
+                let reason = match hold {
+                    DiaryReadHold::PendingReview => ExportDiaryHoldReason::AgentReviewPending,
+                    DiaryReadHold::Declined => ExportDiaryHoldReason::Declined,
+                    DiaryReadHold::NotCovered => ExportDiaryHoldReason::NotCoveredByGrant,
+                };
+                *self.held.entry((agent, reason)).or_default() += 1;
                 Ok(false)
             }
         }
     }
 
-    pub(crate) fn finish(self) -> (Vec<ExportDiaryRead>, Vec<ExportDiaryHold>) {
-        let reads = self
-            .read
-            .into_iter()
-            .map(|(agent, diaries)| ExportDiaryRead {
-                agent: agent.to_hex(),
-                diaries,
-                reason: EXPORT_DIARY_READ_REASON.to_owned(),
-            })
-            .collect();
+    /// Logs the reads through the gate, after the snapshot. Returns the reads
+    /// for the receipt, the holds for the manifest, and the entries to leave
+    /// out: when the read log cannot be written, no admitted entry leaves
+    /// unlogged, and the export goes on without them.
+    pub(crate) fn finish(
+        mut self,
+        vault: &Vault,
+    ) -> (Vec<ExportDiaryRead>, Vec<ExportDiaryHold>, BTreeSet<EntityId>) {
+        let mut unlogged = BTreeSet::new();
+        let reads = match self.gate.finish(vault) {
+            Ok(receipt) => {
+                let reason = receipt.reason;
+                receipt
+                    .agents
+                    .into_iter()
+                    .filter(|agent| agent.entries > 0)
+                    .map(|agent| ExportDiaryRead {
+                        agent: agent.agent.to_hex(),
+                        diaries: agent.entries,
+                        reason: reason.clone(),
+                    })
+                    .collect()
+            }
+            Err(error) => {
+                tracing::warn!(%error, "export diary read log unwritable; diaries held out");
+                for (agent, entries) in std::mem::take(&mut self.read) {
+                    *self
+                        .held
+                        .entry((agent, ExportDiaryHoldReason::ReadLogUnavailable))
+                        .or_default() += entries.len() as u64;
+                    unlogged.extend(entries);
+                }
+                Vec::new()
+            }
+        };
         let holds = self
             .held
             .into_iter()
@@ -85,6 +115,6 @@ impl ExportDiaryLedger {
                 reason,
             })
             .collect();
-        (reads, holds)
+        (reads, holds, unlogged)
     }
 }

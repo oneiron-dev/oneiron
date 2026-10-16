@@ -8,14 +8,18 @@
 //! the wake policy's one quiet timer and pushed session hints. A sitting
 //! ends on the idle floor, the hard ceiling or an explicit end, and its turns
 //! are enqueued for consolidation atomically with the end.
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron::ModelId;
+use oneiron::agent_def::DreamingMode;
 use oneiron::dreamer_consolidation::{
-    DREAMER_EXTRACTION_ROLE, DREAMER_ROLES, RoleBackend, RoleBackends,
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, ResidentDreamModel,
+    RoleBackend, RoleBackends, resident_of_dream_input, run_resident_dream,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
-use oneiron::llm::HostInferenceBinding;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, Vault, WakeAttemptContext, WriteActor,
@@ -29,7 +33,7 @@ use oneiron_driver::{
 
 use super::policy::extraction_egress;
 use super::status::{StatusCell, WorkState, WorkStatus};
-use crate::config::models::{DreamerSettings, role_key};
+use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::models::{ModelRuntime, RoleRefusal, RoleRoute, RunBackend, Seat};
 
 /// Stamped on every admission and park this server makes.
@@ -54,6 +58,34 @@ pub(super) struct DreamerStart {
     pub(super) status: Arc<StatusCell>,
     /// The host's liveness for the wake policy's idle recipes.
     pub(super) idle: IdleSample,
+    /// The input each served model's window holds, for residents' dreaming.
+    pub(super) windows: BTreeMap<ModelId, u64>,
+}
+
+/// The input each model a role's rungs name may fill: its provider's context
+/// less the output it reserves, the smallest where several rungs name it.
+pub(super) fn dream_windows(models: &ModelsConfig) -> BTreeMap<ModelId, u64> {
+    let mut windows = BTreeMap::new();
+    for rungs in models.roles.values() {
+        for rung in rungs {
+            let Some(provider) = models.providers.get(&rung.model.provider) else {
+                continue;
+            };
+            let Ok(model) = rung.model.engine_id(&provider.revision) else {
+                continue;
+            };
+            let output = provider
+                .max_output_tokens
+                .filter(|output| *output < provider.context_tokens)
+                .unwrap_or(0);
+            let room = provider.context_tokens - output;
+            windows
+                .entry(model)
+                .and_modify(|held: &mut u64| *held = (*held).min(room))
+                .or_insert(room);
+        }
+    }
+    windows
 }
 
 impl DreamerHost {
@@ -125,6 +157,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         egress,
         status,
         idle,
+        windows,
     } = start;
     // Stewardship follow-up drafts ride this thread and stop with it.
     tokio::spawn(super::stewardship::draft_loop(
@@ -152,6 +185,10 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             actor: vault.dreamer_authority()?,
             egress,
             summary_instruction: settings.summary_instruction.clone(),
+            resident_instruction: settings.resident_instruction.clone(),
+            windows,
+            weaver: None,
+            line: None,
             inner: None,
             status: Arc::clone(&status),
         };
@@ -256,6 +293,14 @@ struct ObservedFactory {
     egress: bool,
     /// Declared scope summaries are written with this (ARCH-0006a).
     summary_instruction: Option<String>,
+    /// Each resident's own dreaming is written with this (OF-490).
+    resident_instruction: Option<String>,
+    windows: BTreeMap<ModelId, u64>,
+    /// The weaver's narrative route: the model and window a resident that
+    /// inherits dreams on, never its diary.
+    weaver: Option<RoleBackend>,
+    /// The pass's budget line, which a resident's own model also runs on.
+    line: Option<oneiron::BudgetGuard>,
     inner: Option<ConsolidationExecutorFactory>,
     status: Arc<StatusCell>,
 }
@@ -308,6 +353,8 @@ impl ObservedFactory {
                 },
             );
         }
+        self.weaver = roles.get(DREAMER_NARRATIVE_ROLE).cloned();
+        self.line = Some(line.clone());
         let extraction = roles
             .get(DREAMER_EXTRACTION_ROLE)
             .cloned()
@@ -345,6 +392,19 @@ impl PassExecutorFactory for ObservedFactory {
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
         self.prepare(guard)?;
+        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+            (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
+                vault: &self.vault,
+                runtime: &self.runtime,
+                weaver,
+                line,
+                guard,
+                egress: self.egress,
+                instruction,
+                windows: &self.windows,
+            }),
+            _ => None,
+        };
         Ok(ObservedExecutor {
             inner: self
                 .inner
@@ -352,6 +412,7 @@ impl PassExecutorFactory for ObservedFactory {
                 .expect("prepared factory")
                 .executor(guard)?,
             status: &self.status,
+            resident,
         })
     }
 
@@ -362,6 +423,19 @@ impl PassExecutorFactory for ObservedFactory {
     ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
         self.prepare(guard)?;
         let status = self.status.as_ref();
+        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+            (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
+                vault: &self.vault,
+                runtime: &self.runtime,
+                weaver,
+                line,
+                guard,
+                egress: self.egress,
+                instruction,
+                windows: &self.windows,
+            }),
+            _ => None,
+        };
         self.inner
             .as_mut()
             .expect("prepared factory")
@@ -369,7 +443,11 @@ impl PassExecutorFactory for ObservedFactory {
             .map(|executors| {
                 executors
                     .into_iter()
-                    .map(|inner| ObservedExecutor { inner, status })
+                    .map(|inner| ObservedExecutor {
+                        inner,
+                        status,
+                        resident,
+                    })
                     .collect()
             })
     }
@@ -382,6 +460,91 @@ impl PassExecutorFactory for ObservedFactory {
 struct ObservedExecutor<'p, E> {
     inner: E,
     status: &'p StatusCell,
+    /// What a resident's own dreaming borrows; none without an instruction.
+    resident: Option<ResidentLend<'p>>,
+}
+
+/// The host's loan to one resident's dreaming (OF-490): its own model when
+/// it dreams on its own and this server serves that model, else the
+/// weaver's narrative route and window. The diary stays its own.
+#[derive(Clone, Copy)]
+struct ResidentLend<'p> {
+    vault: &'p Vault,
+    runtime: &'p ModelRuntime,
+    weaver: &'p RoleBackend,
+    line: &'p oneiron::BudgetGuard,
+    guard: &'p oneiron::BudgetGuard,
+    egress: bool,
+    instruction: &'p str,
+    windows: &'p BTreeMap<ModelId, u64>,
+}
+
+impl ResidentLend<'_> {
+    async fn dream(
+        self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+    ) -> oneiron::Result<DreamerAttemptExecution> {
+        let resident = resident_of_dream_input(&attempt.status.payload.input)?;
+        let own = self
+            .vault
+            .get_agent_definition(&resident)?
+            .filter(|definition| definition.dreaming_mode() == DreamingMode::Own)
+            .and_then(|definition| definition.dreaming_model.or(definition.model_tier))
+            .and_then(|slot| ModelId::new(slot.0).ok())
+            .and_then(|model| {
+                let (locality, ladder) = self.runtime.router()?.served(&model)?;
+                Some((model, locality, ladder))
+            });
+        if let Some((model, locality, ladder)) = own {
+            let backend = RunBackend::new(
+                ladder,
+                self.runtime
+                    .undeclared_run(format!("{DREAMER_PASS_RUN}/resident"), self.line.clone()),
+            );
+            let egress = self
+                .egress
+                .then(|| extraction_egress(BTreeSet::from([model.clone()])));
+            let window_tokens = self.windows.get(&model).copied();
+            return run_resident_dream(
+                attempt,
+                ctx,
+                ResidentDreamModel {
+                    backend: &backend,
+                    guard: self.guard,
+                    model: model.clone(),
+                    inference: HostInferenceContext {
+                        binding: HostInferenceBinding::Advertised { model, locality },
+                        extraction_egress: egress.as_deref(),
+                    },
+                    role: None,
+                    instruction: self.instruction,
+                    window_tokens,
+                },
+            )
+            .await;
+        }
+        let egress = self
+            .egress
+            .then(|| extraction_egress(BTreeSet::from([self.weaver.model.clone()])));
+        run_resident_dream(
+            attempt,
+            ctx,
+            ResidentDreamModel {
+                backend: self.weaver.backend.as_ref(),
+                guard: self.guard,
+                model: self.weaver.model.clone(),
+                inference: HostInferenceContext {
+                    binding: self.weaver.binding.clone(),
+                    extraction_egress: egress.as_deref(),
+                },
+                role: Some(DREAMER_NARRATIVE_ROLE),
+                instruction: self.instruction,
+                window_tokens: self.windows.get(&self.weaver.model).copied(),
+            },
+        )
+        .await
+    }
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
@@ -394,7 +557,17 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             status.dreamer.state = WorkState::Working;
             status.dreamer.started += 1;
         });
-        let outcome = self.inner.execute(attempt, ctx).await;
+        let outcome = if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        {
+            match self.resident {
+                Some(lend) => lend.dream(attempt, ctx).await,
+                // Without the host's instruction no resident dreams tonight.
+                None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            }
+        } else {
+            self.inner.execute(attempt, ctx).await
+        };
         self.status.update(|status| {
             status.dreamer.state = WorkState::Waiting;
             match &outcome {

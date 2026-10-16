@@ -12,7 +12,8 @@ impl AttemptQueue<'_> {
     /// row's placed worker, readiness at the smaller of the caller's and the
     /// recorded clock, task dispatch readiness and task symbols. The lease is
     /// stamped with the recorded clock. A row this owner may not take yet is
-    /// `Empty`.
+    /// `Empty`; so is a row whose TASK waits on an unattached comment, which
+    /// the claim pauses for that hold (OF-368).
     pub(crate) fn claim_id_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -52,6 +53,10 @@ impl AttemptQueue<'_> {
                 input.now,
             )?
         {
+            return Ok(ClaimOutcome::Empty);
+        }
+        if let Some(hold) = self.annotation_hold_for_row_in_txn(&*txn, &row)? {
+            self.hold_for_annotation_in_txn(txn, id, hold, input.now)?;
             return Ok(ClaimOutcome::Empty);
         }
         crate::task_verb::acquire_task_symbols(
