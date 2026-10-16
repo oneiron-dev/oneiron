@@ -168,7 +168,13 @@ pub(crate) fn fold_cell_in_txn(
         {
             w /= rate;
         }
-        let (observation, converted) = convert(&ev.observation, ev.judge.as_deref(), &conversions);
+        let (observation, converted) = if row.cell.predicate == LearningPredicate::Reliability
+            || ev.observation.form() != EstimateForm::Beta
+        {
+            convert(&ev.observation, ev.judge.as_deref(), &conversions)
+        } else {
+            (ev.observation.clone(), false)
+        };
         match (&mut tally, &observation) {
             (OwnTally::Beta { wins, losses }, Observation::Success(ok)) => {
                 if *ok {
@@ -176,6 +182,13 @@ pub(crate) fn fold_cell_in_txn(
                 } else {
                     *losses += w;
                 }
+            }
+            // A converted binary score is fractional success mass, not a
+            // newly observed run. The original receipt still holds its bool.
+            (OwnTally::Beta { wins, losses }, Observation::Magnitude(score)) => {
+                let score = score.clamp(0.0, 1.0);
+                *wins += w * score;
+                *losses += w * (1.0 - score);
             }
             (
                 OwnTally::Mean {
@@ -230,15 +243,26 @@ pub(crate) fn fold_cell_in_txn(
     ))
 }
 
-/// Follows a score through the judge-swap conversions in force. A magnitude
-/// maps through each overlap score map; a pass/fail judgment is kept as it was.
+/// Follows a score through the judge-swap maps. Converted binary scores
+/// become fractional Beta mass while retaining their original run weight.
 fn convert<'a>(
     observation: &Observation,
     judge: Option<&'a str>,
     conversions: &'a BTreeMap<String, JudgeConversion>,
 ) -> (Observation, bool) {
-    let (Observation::Magnitude(mut x), Some(mut judge)) = (observation.clone(), judge) else {
+    let Some(mut judge) = judge else {
         return (observation.clone(), false);
+    };
+    let mut x = match observation {
+        Observation::Magnitude(x) => *x,
+        Observation::Success(ok) => {
+            if *ok {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        Observation::Category(_) => return (observation.clone(), false),
     };
     let mut converted = false;
     for _ in 0..MAX_CONVERSION_HOPS {
@@ -249,7 +273,11 @@ fn convert<'a>(
         judge = &conversion.to_judge;
         converted = true;
     }
-    (Observation::Magnitude(x), converted)
+    if converted {
+        (Observation::Magnitude(x), true)
+    } else {
+        (observation.clone(), false)
+    }
 }
 
 /// Re-projects one cell and writes its head: a new superseding claim when the
@@ -329,6 +357,7 @@ pub(crate) fn project_cell_in_txn(
 ///
 /// Storage errors; the first failing cell aborts the sweep.
 pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
+    crate::critic::review::project_all_review_dissent(vault, now)?;
     let digests: Vec<[u8; 32]> = {
         let rtxn = vault.store.env.read_txn()?;
         CELL.scan_keys(&vault.store, &rtxn, &[])?

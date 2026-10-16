@@ -338,10 +338,10 @@ const OUTSIDE: &[Pin] = &[
         "foreign-agent transcript for a dispatched run",
     ),
     pin(
-        "crates/oneiron/src/dreamer_consolidation/executor.rs",
+        "crates/oneiron/src/dreamer_consolidation/parallel.rs",
         "call_as_step_checked",
-        "let outcome = call_as_step_checked(",
-        "Dreamer extraction: candidates, values, people and evidence (the claim each corrects is decided after it)",
+        "call_as_step_checked(",
+        "Dreamer extraction, one child per slice: candidates, values, people and evidence (the claim each corrects is decided after it)",
     ),
     pin(
         "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs",

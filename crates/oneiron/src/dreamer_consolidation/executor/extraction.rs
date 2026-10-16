@@ -8,7 +8,7 @@ use crate::llm::decision::AnswerContract;
 use crate::llm::decision::catalogue::CORRECTION;
 
 impl ConsolidationExecutor<'_> {
-    pub(super) fn extraction_request(
+    pub(in crate::dreamer_consolidation) fn extraction_request(
         call: &RoleCall<'_>,
         partition: &ConsolidationPartitionKey,
         transcript: &str,
@@ -65,15 +65,17 @@ impl ConsolidationExecutor<'_> {
         })
     }
 
-    /// The candidates the branch can take from `response`, before the claim
-    /// each corrects is decided, and how many it cannot. Decode never fails
-    /// the partition over one candidate: one it cannot take (a candidate
-    /// breaking a rule such as the evidence rules, or one in a reply stored
-    /// before the step checked candidates) is not written, and is counted.
-    pub(super) fn parse_candidates(
+    /// The candidates one child's `scope` can take from `response`, before
+    /// the claim each corrects is decided, and how many it cannot. Decode
+    /// never fails the partition over one candidate: one it cannot take (a
+    /// candidate breaking a rule such as the evidence rules, or one in a reply
+    /// stored before the step checked candidates) is not written, and is
+    /// counted.
+    pub(in crate::dreamer_consolidation) fn parse_candidates<'s>(
         response: &LlmResponse,
         resources: &BranchResources<'_>,
-    ) -> Result<(Vec<ParsedCandidate>, usize)> {
+        scope: &'s crate::llm::Scope,
+    ) -> Result<(Vec<ParsedCandidate<'s>>, usize)> {
         let items = extraction_reply(response)?.candidates;
         let items = items.as_slice();
         // A child hash is not part of the return contract. If a model still
@@ -90,7 +92,7 @@ impl ConsolidationExecutor<'_> {
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
-            match parse_candidate(item, resources) {
+            match parse_candidate(item, resources, scope) {
                 Ok(candidate) => parsed.push(candidate),
                 Err(reason) => {
                     skipped += 1;
@@ -106,15 +108,15 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// Which listed claim each parsed candidate corrects, in order. A
-    /// candidate whose subject the listing shows claims about gets one
-    /// question over `none` and those claims' ids, all candidates in one
-    /// pack; one with no such claim, or no answer, corrects none. None when
-    /// the step trapped.
-    pub(super) async fn decide_corrections(
+    /// candidate whose subject the listing shows claims about, that its child
+    /// may read and write, gets one question over `none` and those claims'
+    /// ids, all candidates in one pack; one with no such claim, or no answer,
+    /// corrects none. None when the step trapped.
+    pub(in crate::dreamer_consolidation) async fn decide_corrections(
         &self,
         step_ctx: &DurableStepContext<'_>,
         pass: &crate::dreamer_wake::WakePassDeadline,
-        parsed: &[ParsedCandidate],
+        parsed: &[ParsedCandidate<'_>],
         resources: &BranchResources<'_>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<Vec<Option<EntityId>>>> {
@@ -126,7 +128,13 @@ impl ConsolidationExecutor<'_> {
             let shown: Vec<_> = resources
                 .known()
                 .shown_about(candidate.subject)
-                .filter(|(claim, ..)| resources.prior(*claim).is_ok())
+                .filter(|(claim, ..)| {
+                    resources.prior(*claim).is_ok()
+                        && resources.source_version(claim).is_ok_and(|version| {
+                            candidate.scope.allows_read(&version)
+                                && candidate.scope.allows_write(&version)
+                        })
+                })
                 .collect();
             let ids: Vec<EntityId> = shown.iter().map(|(claim, ..)| *claim).collect();
             for (group, options) in id_options(&ids, true).into_iter().enumerate() {
@@ -171,25 +179,18 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// The candidates the branch takes, each bound to the claim it corrects.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the parsed candidates and their corrections join the branch's binding"
-    )]
-    pub(super) fn build_candidates(
-        parsed: Vec<ParsedCandidate>,
+    pub(in crate::dreamer_consolidation) fn build_candidates(
+        parsed: Vec<ParsedCandidate<'_>>,
         corrects: &[Option<EntityId>],
         mut skipped: usize,
         partition: &ConsolidationPartitionKey,
         resources: &BranchResources<'_>,
-        scope: &crate::llm::Scope,
         attempt_id: crate::attempt_queue::AttemptId,
         now_ms: u64,
     ) -> Vec<super::super::evidence::ExtractedCandidate> {
         let mut candidates = Vec::new();
         for (candidate, corrects) in parsed.into_iter().zip(corrects) {
-            match build_candidate(
-                candidate, *corrects, partition, resources, scope, attempt_id, now_ms,
-            ) {
+            match build_candidate(candidate, *corrects, partition, resources, attempt_id, now_ms) {
                 Ok(candidate) => candidates.push(candidate),
                 Err(reason) => {
                     skipped += 1;
@@ -213,8 +214,10 @@ impl ConsolidationExecutor<'_> {
     }
 }
 
-/// One extracted candidate as the reply states it, its evidence checked.
-pub(super) struct ParsedCandidate {
+/// One extracted candidate as the reply states it, its evidence checked
+/// against its child's scope.
+pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
+    scope: &'s crate::llm::Scope,
     subject: EntityId,
     /// Its own predicate, when that meets the claim grammar.
     predicate: Option<String>,
@@ -229,10 +232,11 @@ pub(super) struct ParsedCandidate {
 
 /// One candidate's reading of the reply and of the branch's pinned
 /// resources, or why it is not written; an error is this candidate's alone.
-fn parse_candidate(
+fn parse_candidate<'s>(
     item: &serde_json::Value,
     resources: &BranchResources<'_>,
-) -> Result<ParsedCandidate> {
+    scope: &'s crate::llm::Scope,
+) -> Result<ParsedCandidate<'s>> {
     // A candidate that names no value carries no claim.
     let value = item
         .get("value")
@@ -265,6 +269,13 @@ fn parse_candidate(
     let mut evidence_turn_refs: Vec<_> = locators.iter().map(|entry| entry.source_id()).collect();
     evidence_turn_refs.sort_unstable();
     evidence_turn_refs.dedup();
+    for id in &evidence_turn_refs {
+        if !scope.allows_read(&resources.source_version(id)?) {
+            return Err(invalid_consolidation(
+                "extracted evidence crossed its child slice",
+            ));
+        }
+    }
     // A claim drawn from two projects' turns has no one audience, and a
     // project-bound branch writes only its own project's.
     let project = resources
@@ -273,6 +284,7 @@ fn parse_candidate(
             invalid_consolidation("extracted candidate's sources share no one branch project")
         })?;
     Ok(ParsedCandidate {
+        scope,
         subject,
         predicate,
         value,
@@ -289,7 +301,7 @@ fn parse_candidate(
 /// each candidate with its questions, subject, predicate and value, each
 /// value as its JSON text, cut shorter (halving) until the whole fits.
 fn correction_state(
-    parsed: &[ParsedCandidate],
+    parsed: &[ParsedCandidate<'_>],
     asks: &[Vec<usize>],
     questions: &[crate::llm::decision::DecisionQuestion],
     listed: &[(EntityId, EntityId, &str, &str)],
@@ -347,14 +359,14 @@ fn correction_state(
 /// predicate, relationship and topic, so it routes to the head through the
 /// conflict and grant doors, and the verdict skips it.
 fn build_candidate(
-    parsed: ParsedCandidate,
+    parsed: ParsedCandidate<'_>,
     corrects: Option<EntityId>,
     partition: &ConsolidationPartitionKey,
     resources: &BranchResources<'_>,
-    scope: &crate::llm::Scope,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<super::super::evidence::ExtractedCandidate> {
+    let scope = parsed.scope;
     let corrects = corrects.map(|claim| resources.prior(claim)).transpose()?;
     let (subject, predicate) = match corrects {
         Some(prior) => {

@@ -441,6 +441,37 @@ pub(crate) fn enqueue_partition_plans_in_txn(
     Ok(outcomes)
 }
 
+/// Enqueues already-selected interest topics as children of one recipe
+/// receipt. The interest queue has done selection; running the statistical
+/// prefilter again here would consume work without giving it a child.
+pub(crate) fn enqueue_parented_partition_plans_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    plans: &[ConsolidationPartitionPlan],
+    parent: crate::attempt_queue::AttemptId,
+    run_id: Option<&str>,
+    now: u64,
+) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
+    let store = DreamerRunnerStore::new(vault);
+    let mut outcomes = Vec::with_capacity(plans.len());
+    for plan in plans {
+        let carried = plan
+            .turns
+            .iter()
+            .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
+            .collect();
+        let mut input =
+            partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now);
+        input.parent_attempt = Some(parent);
+        input.dedupe_key = input
+            .dedupe_key
+            .map(|key| format!("{}:{key}", bytes_to_hex_lower(parent.as_bytes())));
+        outcomes.push((plan.key, store.enqueue_consolidation_in_txn(txn, input)?));
+    }
+    Ok(outcomes)
+}
+
 /// Plans what a session end plans (Meso rounds over every turn dirty since
 /// the round watermark) for turns no sitting will end, such as the ones an
 /// import lands. Each round's plan, enqueue and watermark advance commit
