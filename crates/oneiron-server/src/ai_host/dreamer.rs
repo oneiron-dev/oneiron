@@ -382,7 +382,12 @@ impl ObservedFactory {
             self.egress.then(|| extraction_egress(selected.collect())),
             Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
         )
-        .with_role_backends(roles);
+        .with_role_backends(roles)
+        // A fired commitment proposes its reminder where the vault already
+        // reaches the obligor; the owner approves it in run review (OF-187).
+        .with_commitment_wake_planner(Box::new(
+            oneiron::commitment_wake::CommitmentReminderPlanner,
+        ))?;
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }

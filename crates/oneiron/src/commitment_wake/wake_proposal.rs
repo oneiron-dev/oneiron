@@ -83,6 +83,23 @@ pub trait CommitmentWakeProposalPlanner {
         event: &CommitmentWakeEvent,
         commitment: &CommitmentRecord,
     ) -> Result<CommitmentWakeProposalDraft>;
+
+    /// [`Self::plan`] with the vault in hand, for a planner that routes
+    /// through what the vault already knows. `Ok(None)`: no route, so the wake
+    /// completes without a proposal. Still synchronous and deterministic.
+    ///
+    /// # Errors
+    ///
+    /// Any typed reason the host cannot propose a delivery.
+    fn plan_in_vault(
+        &mut self,
+        vault: &Vault,
+        event: &CommitmentWakeEvent,
+        commitment: &CommitmentRecord,
+    ) -> Result<Option<CommitmentWakeProposalDraft>> {
+        let _ = vault;
+        self.plan(event, commitment).map(Some)
+    }
 }
 
 /// Why a tagged attempt completed without writing a proposal. Every arm is a
@@ -98,6 +115,8 @@ pub enum CommitmentWakeProposalSkip {
     MissingInstance,
     /// The instance is closed or no longer `Commitment` strength.
     IneligibleInstance,
+    /// The planner knows no route to the obligor.
+    NoRoute,
 }
 
 impl CommitmentWakeProposalSkip {
@@ -106,6 +125,7 @@ impl CommitmentWakeProposalSkip {
             Self::NoPlannerConfigured => "no_planner_configured",
             Self::MissingInstance => "missing_instance",
             Self::IneligibleInstance => "ineligible_instance",
+            Self::NoRoute => "no_route",
         }
     }
 }
@@ -243,7 +263,13 @@ impl<E> CommitmentWakeExecutor<'_, E> {
                 "commitment wake planner system actor is not the vault Dreamer",
             ));
         }
-        let draft = planner.plan(event, &record)?;
+        let Some(draft) = planner.plan_in_vault(ctx.vault, event, &record)? else {
+            return Ok(skip_completion(
+                CommitmentWakeProposalSkip::NoRoute,
+                event,
+                attempt_id,
+            ));
+        };
         draft.validate()?;
         write_commitment_wake_proposal(
             ctx.vault,

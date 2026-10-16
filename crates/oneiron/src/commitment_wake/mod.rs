@@ -32,11 +32,15 @@
 //! approval and an actor binding, reaches
 //! [`crate::memory::Memory::schedule_outbound`].
 
+mod reminder;
 mod wake_approval;
 mod wake_event;
 mod wake_fire;
 mod wake_proposal;
 
+pub use self::reminder::{
+    COMMITMENT_REMINDER_CONTENT_PREFIX, CommitmentReminderPlanner, CommitmentReminderRoute,
+};
 pub(crate) use self::wake_approval::scheduled_commitment_wake_authorised;
 pub use self::wake_approval::{
     ApprovedCommitmentWake, approved_commitment_wake, schedule_approved_commitment_wake,

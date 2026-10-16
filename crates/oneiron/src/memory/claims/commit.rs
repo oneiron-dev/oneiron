@@ -211,6 +211,13 @@ impl Memory<'_> {
                     }
                     let publication_write =
                         input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
+                    // OF-187: a promise recorded here owes its reminders, so a
+                    // commitment series is indexed in this same transaction.
+                    let commitment_write =
+                        input.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD;
+                    if commitment_write {
+                        content.stage_claim_support(id, |_| Ok(()))?;
+                    }
                     if publication_write {
                         content.stage_claim_support(id, |txn| {
                             super::booking_publication::stage_publication_write(self.vault, txn, id)
@@ -253,6 +260,12 @@ impl Memory<'_> {
                                 &closure_envelope,
                                 learned_at,
                             )
+                        })?;
+                    }
+                    if commitment_write {
+                        content.finish_claim_support(id, |txn| {
+                            self.vault
+                                .index_landed_commitment_series_in_txn(txn, &id, now)
                         })?;
                     }
                     if publication_write {
