@@ -15,6 +15,5 @@ pub mod change_index;
 pub mod conflict_tree;
 pub mod export;
 pub mod residence;
-pub mod scan_check;
 pub mod secret_manifest;
 pub mod tree;
