@@ -7993,6 +7993,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
+ "image",
  "oneiron-container",
  "schemars 0.8.22",
  "serde",
@@ -8337,6 +8338,7 @@ dependencies = [
 name = "oneiron-organ-host"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "cms",
  "const-oid 0.9.6",
@@ -8348,9 +8350,11 @@ dependencies = [
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
+ "p256",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
+ "rsa",
  "serde",
  "sha2 0.10.9",
  "tempfile",
