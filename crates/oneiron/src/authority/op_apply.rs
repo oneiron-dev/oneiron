@@ -32,8 +32,7 @@ pub(super) fn apply_op(
         AuthorityOp::RevokeDevice { revoked_key } => {
             revoke_key(state, revoked_key);
         }
-        AuthorityOp::RetiredCeiling { .. }
-        | AuthorityOp::SlipMint(_)
+        AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. } => {}
         AuthorityOp::FederationConfirm(action) => {

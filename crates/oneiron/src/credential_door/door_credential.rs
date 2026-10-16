@@ -156,15 +156,16 @@ impl DoorCredential {
         if channel.is_empty() || !self.channels.contains(channel) {
             return deny(DoorDenyReason::ChannelOutsideSlip);
         }
-        // The Scope verb axis holds class names. Resolve each class against the
-        // live registry instead of comparing a minted list of verb strings.
-        let admits = match &self.scope().verbs {
-            crate::federation::ScopeAxis::Bottom => false,
-            crate::federation::ScopeAxis::All => super::verb_class::class_for_verb(verb).is_some(),
-            crate::federation::ScopeAxis::Some(classes) => classes
-                .iter()
-                .any(|class| super::verb_class::contains(class, verb)),
-        };
+        // The Scope verb axis holds class names. Resolve the verb against the
+        // live registry and let the one evaluator judge each class it is in:
+        // the operation sits at that class's preset, the record and channel
+        // strings above binding its position. An unregistered verb has no
+        // class and is admitted by none.
+        let scope = self.scope();
+        let admits = super::verb_class::classes_for_verb(verb).any(|class| {
+            super::verb_class::preset(class)
+                .is_some_and(|operation| scope.admits(class, &operation, &operation))
+        });
         if !admits {
             return deny(DoorDenyReason::VerbNotInSlip);
         }

@@ -67,7 +67,6 @@ pub const OP_KEY_KIND: &str = "kind";
 pub const OP_KIND_GENESIS: &str = "genesis";
 pub const OP_KIND_ENROLL_DEVICE: &str = "enroll_device";
 pub const OP_KIND_REVOKE_DEVICE: &str = "revoke_device";
-pub const OP_KIND_RETIRED_CEILING: &str = "set_ceiling";
 pub const OP_KIND_ROTATE_KEY: &str = "rotate_key";
 pub const OP_KIND_SET_TIER_FLOOR: &str = "set_tier_floor";
 pub const OP_KIND_RE_ROOT: &str = "re_root";
@@ -81,7 +80,7 @@ pub const OP_KIND_REVOKE_ACTOR: &str = "revoke_actor";
 
 /// The EXACT actor-class vocabulary a binding tuple may name (ONE-1604-D2).
 ///
-/// Deliberately narrower than `RetiredCeiling`'s free-form class string: an
+/// Deliberately exact: an
 /// approximate class is the ESB-C defect, so anything outside this list fails
 /// closed at `validate_op`. Mirrors `EdgeActorClass::gate_actor_class`.
 pub const ACTOR_CLASS_HUMAN: &str = "human";
@@ -108,7 +107,6 @@ pub const MAX_PACT_SCOPE_BYTES: usize = 4096;
 pub const MAX_PARENTS: usize = 32;
 pub const MAX_COSIGNS: usize = 8;
 pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 4096;
-pub const MAX_ACTOR_CLASS_BYTES: usize = 64;
 
 /// Lower bound (24h) accepted for the legacy signed
 /// `Genesis.pending_widen_delay_secs` field.

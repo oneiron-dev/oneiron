@@ -127,14 +127,14 @@ fn resolve_world_authority_admitting(
         };
         *fold = Some(match fold.take() {
             None => granted,
-            Some(folded) => folded.intersect(&granted),
+            Some(folded) => folded.meet(&granted),
         });
         allowed_claim_ids.push(row.id);
     }
     // No qualifying owner row is the EMPTY authority, never `All`. A held
     // grant only narrows a settled one; alone it grants nothing.
     let allowed_set = match (folded_allowed, held_allowed) {
-        (Some(settled), Some(held)) => settled.intersect(&held),
+        (Some(settled), Some(held)) => settled.meet(&held),
         (Some(settled), None) => settled,
         (None, _) => {
             allowed_claim_ids.clear();
@@ -163,7 +163,7 @@ fn resolve_world_authority_admitting(
     let (default_subset, default_claim_id) = match newest_default {
         Some((row, held)) if row.held => (
             newest_settled_default.map_or_else(WorldAuthoritySet::default, |(_, settled)| {
-                settled.intersect(&held)
+                settled.meet(&held)
             }),
             Some(row.id),
         ),

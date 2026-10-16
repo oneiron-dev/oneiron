@@ -662,6 +662,20 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
     }
+    // P7 at candidate generation: a row the pack's audience may not read
+    // takes no slot in a bounded channel. Absence is the boundary, as at the
+    // post-fusion clamp, which still sweeps every survivor.
+    if let Some(clamp) = filters.disclosure
+        && !clamp.admits(
+            store.base(),
+            rtxn,
+            id,
+            meta.entity_type,
+            claim_gate.decisions.get(id).and_then(Option::as_ref),
+        )?
+    {
+        return Ok(false);
+    }
 
     if !pipeline_candidate_matches_facet_filter(
         store,
