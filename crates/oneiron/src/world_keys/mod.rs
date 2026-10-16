@@ -45,7 +45,10 @@ pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recip
 pub use self::machine::{machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
-pub(crate) use self::pads::{destroy_world_keys_in_txn, validate_pad_put_in_txn};
+pub(crate) use self::pads::{
+    destroy_world_keys_in_txn, late_pad_in_txn, pad_body_world, validate_pad_put_in_txn,
+    world_keys_destroyed_in_txn,
+};
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
