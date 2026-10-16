@@ -274,7 +274,9 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             if verb == AgentVerb::Describe
                 && let Some(fold) = args.input.get("fold").filter(|fold| !fold.is_null())
             {
-                let fold = fold.as_str().ok_or_else(|| failure("invalid fold handle"))?;
+                let fold = fold
+                    .as_str()
+                    .ok_or_else(|| failure("invalid fold handle"))?;
                 return Ok(SelfCall::Fold(crate::compaction::SelfFoldCall::Describe {
                     fold: crate::compaction::parse_fold_handle(fold)?,
                 }));
@@ -400,6 +402,26 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
             let _: crate::compaction::FoldsInput = decode(input)?;
             SelfCall::Fold(crate::compaction::SelfFoldCall::List)
         }
+        RunVerb::TasksRefuse => {
+            let args: crate::code_run::TaskRefuseInput = decode(input)?;
+            SelfCall::TasksRefuse(crate::code_run::SelfTaskRefuseCall {
+                task_ref: args
+                    .task_ref
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()?,
+                domain: match args.domain {
+                    crate::code_run::TaskRefuseDomain::Bond => {
+                        crate::agent_def::RefusalDomain::Bond
+                    }
+                    crate::code_run::TaskRefuseDomain::Logistics => {
+                        crate::agent_def::RefusalDomain::Logistics
+                    }
+                },
+                reason_ref: args.reason_ref,
+                at: args.at.map_or(Ok(now), js_time)?,
+            })
+        }
     })
 }
 
@@ -415,6 +437,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"id":hit.id.to_hex(),"score":hit.score})).collect::<Vec<_>>()}})
         }
         SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
+        SelfDispatchOutcome::TaskRefusal(value) => {
+            json!({"output":{"task":value.task_ref.to_hex(),"level":value.level.as_str(),"outcome":value.outcome_word(),"replay":value.replay}})
+        }
         SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})

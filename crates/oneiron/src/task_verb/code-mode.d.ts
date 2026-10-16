@@ -29,6 +29,7 @@ declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
+  refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { task_ref: string }): Promise<unknown>;
 };
 declare const vault: {
