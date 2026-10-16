@@ -877,3 +877,340 @@ fn the_check_refuses_a_write_outside_the_declared_elements() {
         EditRefusal::PartDiffOutsideTransaction(SECOND.into())
     );
 }
+
+/// A pinned PPTArena pair, acquired locally with `deck_oracle.py acquire`
+/// (never committed): the original and its ground truth.
+fn pptarena(case: &str) -> (Package, Package) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(case);
+    let open =
+        |name: &str| Package::open(&std::fs::read(dir.join(name)).unwrap(), limits()).unwrap();
+    (open("original.pptx"), open("ground_truth.pptx"))
+}
+
+/// A shape's text body as `set_text` takes it.
+fn body_text(package: &Package, part: &str, id: u32) -> Option<String> {
+    let (_, tree) = xml::read(package, part).unwrap();
+    let body = xml::child(&tree, find_shape(&tree, id)?, xml::P, "txBody")?;
+    let lines: Vec<String> = text::paragraphs(&tree, body)
+        .iter()
+        .map(|p| p.text.iter().collect())
+        .collect();
+    Some(lines.join("\n"))
+}
+
+/// Lines between paragraph ends and `a:br`s, and the separators.
+fn lines(text: &str) -> (Vec<&str>, Vec<char>) {
+    let separators = text.chars().filter(|&c| matches!(c, '\n' | text::BREAK));
+    (
+        text.split(['\n', text::BREAK]).collect(),
+        separators.collect(),
+    )
+}
+
+fn joined(lines: &[&str], separators: &[char]) -> String {
+    let mut text = lines[0].to_owned();
+    for (line, separator) in lines[1..].iter().zip(separators) {
+        text.push(*separator);
+        text.push_str(line);
+    }
+    text
+}
+
+fn runs(package: &Package, part: &str, id: u32) -> Vec<Vec<String>> {
+    let view = DeckView::read(package).unwrap();
+    let slide = view.slides.iter().find(|s| s.part == part).unwrap();
+    let shape = slide.shapes.iter().find(|s| s.id == Some(id)).unwrap();
+    let paragraphs = &shape.text.as_ref().unwrap().paragraphs;
+    paragraphs
+        .iter()
+        .map(|p| p.runs.iter().map(|r| r.text.clone()).collect())
+        .collect()
+}
+
+/// Bring one shape to the ground truth with the narrowest verbs: one
+/// `replace_run_text` per changed run where the runs align, else one
+/// `set_text` per changed line. Returns the refusal for text it may not write.
+fn translate(deck: &mut Package, part: &str, id: u32, truth: &Package) -> Option<EditRefusal> {
+    let (old, new) = (runs(deck, part, id), runs(truth, part, id));
+    let aligned = old.len() == new.len() && old.iter().zip(&new).all(|(o, n)| o.len() == n.len());
+    if aligned {
+        for (paragraph, (o, n)) in old.iter().zip(&new).enumerate() {
+            for (run, (expected, text)) in o.iter().zip(n).enumerate().filter(|(_, (o, n))| o != n)
+            {
+                let target = target(deck, part, id);
+                let op = ValueEdit::ReplaceRunText {
+                    target,
+                    paragraph,
+                    run,
+                    expected,
+                    text,
+                };
+                assert_eq!(changed(&edit(deck, &op).unwrap()), [part]);
+            }
+        }
+        return None;
+    }
+    let (old, new) = (
+        body_text(deck, part, id).unwrap(),
+        body_text(truth, part, id).unwrap(),
+    );
+    let ((mut current, separators), (want, more)) = (lines(&old), lines(&new));
+    assert!(
+        more.starts_with(&separators),
+        "{part} #{id}: line structure differs"
+    );
+    for (k, line) in want.iter().enumerate().take(current.len()) {
+        if current[k] != *line {
+            current[k] = line;
+            let text = joined(&current, &separators);
+            let op = ValueEdit::SetText {
+                target: target(deck, part, id),
+                text: &text,
+            };
+            let report = edit(deck, &op).unwrap();
+            assert_eq!(changed(&report), [part]);
+            assert!(report.fit.is_err(), "changed text is never fit-proven");
+        }
+    }
+    (more.len() > separators.len()).then(|| {
+        let op = ValueEdit::SetText {
+            target: target(deck, part, id),
+            text: &new,
+        };
+        edit(deck, &op).unwrap_err()
+    })
+}
+
+/// The `p:cNvPr` ids of shapes with a text body, per slide part.
+fn text_shapes(package: &Package) -> Vec<(String, u32)> {
+    let view = DeckView::read(package).unwrap();
+    let mut shapes = Vec::new();
+    for slide in &view.slides {
+        for shape in slide.shapes.iter().filter(|s| s.text.is_some()) {
+            shapes.extend(shape.id.map(|id| (slide.part.clone(), id)));
+        }
+    }
+    shapes
+}
+
+/// Parts whose bytes differ between two packages with the same names.
+fn diff(before: &Package, after: &Package) -> Vec<String> {
+    assert!(before.names().eq(after.names()), "the part list changed");
+    let differs = |name: &&str| before.part(name).unwrap() != after.part(name).unwrap();
+    before.names().filter(differs).map(str::to_owned).collect()
+}
+
+#[test]
+#[ignore = "requires locally acquired pinned PPTArena-001 pair"]
+fn pptarena_001_translates_text_and_keeps_the_french() {
+    let (input, truth) = pptarena("pptarena-001");
+    let mut deck = input.clone();
+    let mut edited = Vec::new();
+    let mut refused = Vec::new();
+    for (part, id) in text_shapes(&input) {
+        if body_text(&input, &part, id) == body_text(&truth, &part, id) {
+            continue;
+        }
+        if let Some(refusal) = translate(&mut deck, &part, id, &truth) {
+            refused.push((part.clone(), id, refusal));
+        }
+        if !edited.contains(&part) {
+            edited.push(part);
+        }
+    }
+    // The ground truth ends slide 6's list with one more `a:br`; new line
+    // breaks are refused by the text mapping, so that one stays unwritten.
+    let slide6 = "ppt/slides/slide6.xml".to_owned();
+    let refusal = EditRefusal::TextMapping("new text holds a line break");
+    assert_eq!(refused, [(slide6.clone(), 2, refusal)]);
+    for (part, id) in text_shapes(&input) {
+        let mut got = body_text(&deck, &part, id).unwrap();
+        if (part.as_str(), id) == (slide6.as_str(), 2) {
+            got.push(text::BREAK);
+        }
+        assert_eq!(Some(got), body_text(&truth, &part, id), "{part} #{id}");
+    }
+    let mut changed = diff(&input, &deck);
+    changed.sort_unstable();
+    edited.sort_unstable();
+    assert_eq!(changed, edited, "only the translated slides change");
+    // Every French run on an edited slide keeps its bytes.
+    let mut french = 0;
+    for part in &edited {
+        let (old, tree) = xml::read(&input, part).unwrap();
+        let (new, _) = xml::read(&deck, part).unwrap();
+        for (at, node) in tree
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.is(xml::A, "r"))
+        {
+            let lang =
+                xml::child(&tree, at, xml::A, "rPr").and_then(|p| tree.nodes[p].attr("lang"));
+            if lang.is_some_and(|lang| lang.starts_with("fr")) {
+                let run = &old[node.span.clone()];
+                assert!(
+                    new.windows(run.len()).any(|w| w == run),
+                    "{part}: French run changed"
+                );
+                french += 1;
+            }
+        }
+    }
+    assert!(french > 0, "the edited slides hold French runs");
+}
+
+/// The notes text of a slide, `None` when it has no notes slide.
+fn notes_of(package: &Package, slide: &str) -> Option<String> {
+    let part = media::related(package, slide, "notesSlide").unwrap()?;
+    let (_, tree) = xml::read(package, &part).unwrap();
+    let (_, body) = media::notes_body(&tree).unwrap();
+    Some(media::notes_text(&tree, body))
+}
+
+#[test]
+#[ignore = "requires locally acquired pinned PPTArena-036 pair"]
+fn pptarena_036_writes_the_ground_truth_speaker_notes() {
+    let (input, truth) = pptarena("pptarena-036");
+    let (before, after) = (
+        DeckView::read(&input).unwrap(),
+        DeckView::read(&truth).unwrap(),
+    );
+    let mut deck = input.clone();
+    let (mut notes, mut unmatched) = (Vec::new(), Vec::new());
+    for slide in &before.slides {
+        // Slides match by `p:sldId`: the ground truth renumbers the parts.
+        let Some(other) = after.slides.iter().find(|s| s.sld_id == slide.sld_id) else {
+            unmatched.push(slide.sld_id);
+            continue;
+        };
+        let (old, new) = (notes_of(&input, &slide.part), notes_of(&truth, &other.part));
+        let new = new.unwrap_or_default();
+        if old.as_deref().unwrap_or_default() == new {
+            continue;
+        }
+        let op = ValueEdit::SetNotes {
+            slide: &slide.part,
+            expected: old.as_deref(),
+            text: &new,
+        };
+        let report = edit(&mut deck, &op).unwrap();
+        let part = media::related(&deck, &slide.part, "notesSlide")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            changed(&report),
+            [part.as_str()],
+            "existing notes change alone"
+        );
+        assert_eq!(notes_of(&deck, &slide.part), Some(new));
+        notes.push(part);
+    }
+    assert_eq!(
+        notes.len(),
+        8,
+        "the ground truth adds notes to eight slides"
+    );
+    // The ground truth also deletes the slide that held the notes as text
+    // boxes; slide deletion is not a value or structure verb.
+    assert_eq!(unmatched, [265]);
+    let mut changed = diff(&input, &deck);
+    changed.sort_unstable();
+    notes.sort_unstable();
+    assert_eq!(changed, notes, "only the notes parts change");
+}
+
+const NOTES_MASTER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notesMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg" idx="2"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="1143000" y="685800"/><a:ext cx="4572000" cy="3429000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="12700"><a:solidFill><a:prstClr val="black"/></a:solidFill></a:ln></p:spPr></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" sz="quarter" idx="3"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="685800" y="4400550"/><a:ext cx="5486400" cy="3600450"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr vert="horz" lIns="91440" tIns="45720" rIns="91440" bIns="45720" rtlCol="0"/><a:lstStyle/><a:p><a:pPr lvl="0"/><a:r><a:rPr lang="en-GB"/><a:t>Notes</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:notesStyle><a:lvl1pPr marL="0" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" latinLnBrk="0" hangingPunct="1"><a:defRPr sz="1200" kern="1200"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill><a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr></a:lvl1pPr></p:notesStyle></p:notesMaster>"#;
+
+/// Give a deck without notes a notes master on its own copy of the theme,
+/// as PowerPoint writes one.
+fn with_notes_master(deck: &mut Package) {
+    let (master, theme) = ("ppt/notesMasters/notesMaster1.xml", "ppt/theme/theme2.xml");
+    let presentation = "ppt/presentation.xml";
+    let kind = |name: &str| format!("{}/{name}", xml::R);
+    let types = "application/vnd.openxmlformats-officedocument";
+    let copy = deck.part("ppt/theme/theme1.xml").unwrap().unwrap();
+    deck.add_part(theme, &format!("{types}.theme+xml"), copy)
+        .unwrap();
+    let master_type = format!("{types}.presentationml.notesMaster+xml");
+    deck.add_part(master, &master_type, NOTES_MASTER.into())
+        .unwrap();
+    deck.relate(master, &kind("theme"), theme).unwrap();
+    let id = deck
+        .relate(presentation, &kind("notesMaster"), master)
+        .unwrap();
+    let list = format!(
+        r#"</p:sldMasterIdLst><p:notesMasterIdLst><p:notesMasterId r:id="{id}"/></p:notesMasterIdLst>"#
+    );
+    let source = part(deck, presentation).replacen("</p:sldMasterIdLst>", &list, 1);
+    deck.replace_xml_part(presentation, source.into_bytes())
+        .unwrap();
+}
+
+/// The emitted oracle deck with a notes master, then each verb once.
+#[test]
+#[ignore = "writes the Office-oracle candidate to $ONEIRON_EDIT_CANDIDATE"]
+fn office_oracle_candidate() {
+    let base = crate::emit::tests::oracle_deck().bytes;
+    let mut deck = Package::open(&base, limits()).unwrap();
+    with_notes_master(&mut deck);
+    let slide = |n: u32| format!("ppt/slides/slide{n}.xml");
+    let (one, two, four, eight, nine) = (slide(1), slide(2), slide(4), slide(8), slide(9));
+    let op = ValueEdit::SetText {
+        target: target(&deck, &one, 2),
+        text: "Revenue more than doubled",
+    };
+    edit(&mut deck, &op).unwrap();
+    let op = ValueEdit::ReplaceRunText {
+        target: target(&deck, &two, 3),
+        paragraph: 0,
+        run: 0,
+        expected: "Margins held.",
+        text: "Margins rose.",
+    };
+    edit(&mut deck, &op).unwrap();
+    let xfrm = Xfrm {
+        rotation: Some(600_000),
+        ..Xfrm::default()
+    };
+    let op = ValueEdit::SetXfrm {
+        target: target(&deck, &four, 4),
+        xfrm,
+    };
+    edit(&mut deck, &op).unwrap();
+    let op = ValueEdit::MoveInSlideSpace {
+        target: target(&deck, &nine, 4),
+        by: (457_200, 228_600),
+    };
+    edit(&mut deck, &op).unwrap();
+    let bytes = png(64, 48, [0xC0, 0x50, 0x4D]);
+    let record = photo(&bytes, MediaType::Png);
+    let op = ValueEdit::SetPicture {
+        target: target(&deck, &eight, 3),
+        picture: Picture {
+            record: &record,
+            bytes: &bytes,
+            requested: AssetKind::Factual,
+            limits: GraphicLimits::default(),
+        },
+    };
+    edit(&mut deck, &op).unwrap();
+    let said = "Say the number slowly.";
+    for (expected, text) in [
+        (None, said),
+        (Some(said), "Say the number slowly.\nThen pause."),
+    ] {
+        let op = ValueEdit::SetNotes {
+            slide: &one,
+            expected,
+            text,
+        };
+        edit(&mut deck, &op).unwrap();
+    }
+    let path = std::env::var("ONEIRON_EDIT_CANDIDATE").unwrap();
+    std::fs::write(format!("{path}.base"), &base).unwrap();
+    std::fs::write(&path, deck.export().unwrap()).unwrap();
+}

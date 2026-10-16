@@ -673,9 +673,9 @@ fn oracle_template() -> Package {
     Package::open(&bytes, limits()).unwrap()
 }
 
-#[test]
-#[ignore = "writes the Office-oracle candidate to $ONEIRON_EMIT_CANDIDATE"]
-fn office_oracle_candidate() {
+/// The deck the Office oracle opened clean (run b13a-2536-3); the ONE-2528
+/// oracle candidate edits it.
+pub(crate) fn oracle_deck() -> Candidate {
     // Three regions: the 4:3 template's table room holds no more.
     let mut brief = the_brief();
     let regions = &mut brief["datasets"][2];
@@ -686,7 +686,13 @@ fn office_oracle_candidate() {
     }
     let fixture = Fixture::new(oracle_template(), &brief);
     let plan = fixture.plan();
-    let candidate = fixture.emit(&plan);
+    fixture.emit(&plan)
+}
+
+#[test]
+#[ignore = "writes the Office-oracle candidate to $ONEIRON_EMIT_CANDIDATE"]
+fn office_oracle_candidate() {
+    let candidate = oracle_deck();
     assert!(candidate.fit.is_err());
     let path = std::env::var("ONEIRON_EMIT_CANDIDATE").unwrap();
     std::fs::write(&path, &candidate.bytes).unwrap();
