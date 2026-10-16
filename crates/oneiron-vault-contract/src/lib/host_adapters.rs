@@ -24,6 +24,25 @@ mod vsock;
 #[cfg(target_os = "linux")]
 pub use vsock::{FirecrackerGuest, GuestLink, VsockListener, VsockStream, connect_blocking};
 
+/// What a live model run holds while it runs: the host's wake assertion,
+/// set once by the process that owns it (Docs Q18). A pass keeps the machine
+/// awake through its scheduler; a run keeps it awake through each admitted
+/// call.
+type RunHold = Box<dyn Fn() -> Box<dyn Send> + Send + Sync>;
+static RUN_AWAKE: std::sync::OnceLock<RunHold> = std::sync::OnceLock::new();
+
+/// Sets the hold every live run takes; the first setting stands.
+pub fn hold_awake_for_runs(hold: impl Fn() -> Box<dyn Send> + Send + Sync + 'static) {
+    let _ = RUN_AWAKE.set(Box::new(hold));
+}
+
+/// A live run's hold on the host's wake assertion, released when it drops;
+/// `None` when no host set one.
+#[must_use]
+pub fn run_awake() -> Option<Box<dyn Send>> {
+    RUN_AWAKE.get().map(|hold| hold())
+}
+
 /// The embedding WASM runtime supplies only its sandbox capabilities. It may
 /// implement sleep with a browser timer or WASI poll; it must not exit on idle.
 pub trait SandboxBackend {
