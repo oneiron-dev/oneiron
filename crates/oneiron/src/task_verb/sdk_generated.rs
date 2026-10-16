@@ -140,6 +140,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "vault.projects.goal.revisions",
+                crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
+            ),
+            (
+                "vault.projects.goal.dismiss",
+                crate::code_run::vault_read::request_schema::<ProjectGoalDismissRequest>(),
+            ),
+            (
+                "vault.projects.route_tradeoff",
+                crate::code_run::vault_read::request_schema::<ProjectTradeoffRouteRequest>(),
+            ),
+            (
                 "self.browser.open",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
             ),
@@ -474,6 +486,27 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.projects.goal.revisions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.goal.dismiss" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.route_tradeoff" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -590,6 +623,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
+        "vault.projects.goal.revisions" => {
+            let _input: ProjectRefRequest = decode(value.clone())?;
+        }
+        "vault.projects.goal.dismiss" => {
+            let _input: ProjectGoalDismissRequest = decode(value.clone())?;
+        }
+        "vault.projects.route_tradeoff" => {
+            let _input: ProjectTradeoffRouteRequest = decode(value.clone())?;
+        }
         "self.browser.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
         }
@@ -658,6 +700,15 @@ pub fn invoke(
         "vault.rooms.trunk" => encode(vault_rooms_trunk(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "vault.projects.goal.revisions" => {
+            encode(vault_projects_goal_revisions(memory, decode(value)?)?)
+        }
+        "vault.projects.goal.dismiss" => {
+            encode(vault_projects_goal_dismiss(memory, decode(value)?)?)
+        }
+        "vault.projects.route_tradeoff" => {
+            encode(vault_projects_route_tradeoff(memory, decode(value)?)?)
+        }
         _ => {
             Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
@@ -995,6 +1046,33 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn vault_projects_goal_revisions(
+    memory: &Memory<'_>,
+    input: ProjectRefRequest,
+) -> MemoryResult<Vec<crate::skill_optimize::ProjectGoalRevisionProposal>> {
+    memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)
+}
+pub fn vault_projects_goal_dismiss(
+    memory: &Memory<'_>,
+    input: ProjectGoalDismissRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProjectGoalDismissReceipt> {
+    Ok(ProjectGoalDismissReceipt {
+        dismissed: memory.projects_goal_dismiss(
+            crate::EntityId::from_hex(&input.project_ref)?,
+            crate::EntityId::from_hex(&input.expected_goal_ref)?,
+            &input.question_digest,
+        )?,
+    })
+}
+pub fn vault_projects_route_tradeoff(
+    memory: &Memory<'_>,
+    input: ProjectTradeoffRouteRequest,
+) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
+    memory.tasks_route_project_tradeoff(
+        crate::EntityId::from_hex(&input.task_ref)?,
+        crate::EntityId::from_hex(&input.proposal_ref)?,
+    )
 }
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,

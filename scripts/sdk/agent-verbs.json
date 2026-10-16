@@ -692,6 +692,38 @@
       "section": false
     },
     {
+      "name": "vault.projects.goal.revisions",
+      "input": "ProjectRefRequest",
+      "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
+      "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.dismiss",
+      "input": "ProjectGoalDismissRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
+      "call": "ProjectGoalDismissReceipt { dismissed: memory.projects_goal_dismiss(crate::EntityId::from_hex(&input.project_ref)?, crate::EntityId::from_hex(&input.expected_goal_ref)?, &input.question_digest)? }",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.route_tradeoff",
+      "input": "ProjectTradeoffRouteRequest",
+      "output": "crate::task_verb::TaskAskReceipt",
+      "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "self.browser.open",
       "input": "oneiron_browser::OpenInput",
       "output": "oneiron_browser::Observation",

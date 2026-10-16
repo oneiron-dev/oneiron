@@ -439,6 +439,33 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_projects_goal_revisions(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.goal.revisions")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.projects.goal.revisions", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_projects_goal_dismiss(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.goal.dismiss")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.projects.goal.dismiss", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_projects_route_tradeoff(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.projects.route_tradeoff")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.projects.route_tradeoff", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
 
     // END GENERATED AGENT VERBS
 }

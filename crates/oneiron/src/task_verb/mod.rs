@@ -42,6 +42,7 @@ mod presence_diagnostics;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
+mod project_tradeoff;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;

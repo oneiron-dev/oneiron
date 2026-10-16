@@ -661,6 +661,9 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.projects.goal.revisions" => a.spec.clone().ok_or_else(invalid),
+        "vault.projects.goal.dismiss" => a.spec.clone().ok_or_else(invalid),
+        "vault.projects.route_tradeoff" => a.spec.clone().ok_or_else(invalid),
         _ => Err(invalid()),
     }
 }
@@ -828,6 +831,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("conversation_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
+        }
+        "vault.projects.goal.revisions" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.projects.goal.dismiss" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.projects.route_tradeoff" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         _ => return Err(invalid()),
     }
@@ -1274,6 +1286,33 @@ async fn execute_agent_verb_listing(
             let input: oneiron::memory::WitnessTurn =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_speak(&memory, input)
+                .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.goal.revisions" => {
+            let input: oneiron::task_verb::sdk::ProjectRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_goal_revisions(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.goal.dismiss" => {
+            let input: oneiron::task_verb::sdk::ProjectGoalDismissRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_goal_dismiss(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.route_tradeoff" => {
+            let input: oneiron::task_verb::sdk::ProjectTradeoffRouteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_route_tradeoff(&memory, input)
                 .map_err(mcp_facade_error)?;
             server
                 .ai
