@@ -5,6 +5,7 @@ use super::{ANSWER, ANSWER_RECEIPT_PREFIX};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 // ---------------------------------------------------------------------------
@@ -24,62 +25,29 @@ pub fn is_graduation_answer_receipt(record: &ReceiptRecord) -> bool {
 /// in `receipt::collect_receipt_records`: the ramp's receipt families share one
 /// registration and one transaction rather than opening a second, nested one.
 ///
-/// Walks the family NEWEST-FIRST under [`crate::receipt::MAX_RECEIPT_QUERY_SCAN`],
-/// as `receipt::attempt_pack_receipts` does and for the same reason. Direction
-/// is the whole point of the cap: these rows never drain — [`unpin_scope`]
-/// appends unconditionally and the log is the state — so an oldest-first cap
-/// would permanently hide the owner's RECENT decisions behind their oldest
-/// ones, which is the opposite of what any receipt query wants. The key is
-/// scope-major and time-minor, so this is newest-first within each scope, with
-/// the bound spent on the scopes at the far end of the digest order.
-///
-/// Above the cap the answer is a bounded prefix of the family rather than the
-/// family, which [`note_answer_scan_capped`] says out loud instead of
-/// truncating in silence.
+/// Walks the whole family, newest-first within each scope: these rows never
+/// drain ([`unpin_scope`] appends unconditionally and the log is the state),
+/// and the key is scope-major, so any prefix of the walk could hide the
+/// owner's newest decision in another scope. Past the family's threshold row
+/// the walk raises one check and reads on; the query's limit applies after
+/// the caller's global sort.
 pub(crate) fn answer_receipts_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
+    let mut rows = ScanCount::start(store, txn, EngineScan::AnswerReceiptRows, &[])?;
     let mut out = Vec::new();
-    // One row PAST the cap is reached (and its decode is wasted rather than
-    // meaningful): it is what separates a log holding exactly the cap from
-    // one the cap truncated.
-    for (scanned, entry) in ANSWER
-        .iter_rev_from(store, txn, &[])?
-        .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1)
-        .enumerate()
-    {
-        if scanned == crate::receipt::MAX_RECEIPT_QUERY_SCAN {
-            note_answer_scan_capped();
-            break;
-        }
+    for entry in ANSWER.iter_rev_from(store, txn, &[])? {
         let ((_, id), row) = entry?;
+        rows.row();
         let receipt = answer_receipt_record(&id, &row);
         if query.matches(&receipt) {
             out.push(receipt);
         }
     }
+    rows.defer(store);
     Ok(out)
-}
-
-/// Surfaces an answer-log scan that stopped at the work cap.
-///
-/// The discarded remainder is unbounded by construction, so it is never
-/// counted — the signal is that the cap FIRED, which is the fact an operator
-/// (or a test) needs to know the query answered from a prefix.
-fn note_answer_scan_capped() {
-    tracing::warn!(
-        scan_cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        "graduation answer scan hit the receipt-family work cap; older rows were not projected"
-    );
-    #[cfg(test)]
-    ANSWER_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
-}
-
-#[cfg(test)]
-thread_local! {
-    static ANSWER_SCAN_CAPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn answer_receipt_record(id: &EntityId, row: &StoredAnswer) -> ReceiptRecord {
