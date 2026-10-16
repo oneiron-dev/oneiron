@@ -32,6 +32,17 @@ declare const tasks: {
   update(input: { task_ref: string }): Promise<unknown>;
 };
 declare const vault: {
+  artifacts: {
+    born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
+    discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
+    keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    proposals(input: { artifact_ref: string }): Promise<unknown>;
+    propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;
+    propose_output(input: { artifact_ref: string; content_base64: string; made_by?: unknown; media_type: string; name: string; report?: unknown; run_ref: string }): Promise<unknown>;
+    undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    view(input: { artifact_ref: string }): Promise<unknown>;
+  };
   claims: {
     put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
