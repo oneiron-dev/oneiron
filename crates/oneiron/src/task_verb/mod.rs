@@ -74,7 +74,6 @@ pub use consult_result::{
     ConsultResultInput, ConsultResultKind, TaskResultReceipt,
 };
 pub use create_spec::{TaskCreateRateLimit, TaskCreateSpec};
-pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub use create_validation::check_task_label;
 pub use dormant_magistrate::{
     apply_magistrate_verdict, decide_magistrate, decode_human_verdict, enqueue_magistrate,
@@ -82,6 +81,7 @@ pub use dormant_magistrate::{
     record_magistrate_overturn,
 };
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
+pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub(crate) use room_thread::thread_tasks as room_thread_tasks;
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
@@ -161,6 +161,9 @@ pub(crate) use symbol_lease::forget_symbols;
 
 mod recall_door;
 pub mod sdk;
+mod sdk_connector;
+mod sdk_host;
+mod sdk_self;
 
 #[cfg(test)]
 mod ask_outcome_tests;

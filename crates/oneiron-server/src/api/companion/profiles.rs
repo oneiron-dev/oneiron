@@ -22,8 +22,9 @@ use axum::extract::rejection::BytesRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
-use oneiron::ErrorKind;
-use oneiron::psych_profile::MAX_PSYCH_PROFILE_SOURCE_REVISIONS;
+use oneiron::psych_profile::{
+    MAX_PSYCH_PROFILE_SOURCE_REVISIONS, PsychProfileKey, psych_profile_entity_id,
+};
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -41,9 +42,13 @@ pub(crate) struct CompanionProfileQuery {
     /// bind `principal_ref`; arbitrary overrides require admin auth.
     #[param(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
     principal_ref: Option<String>,
-    /// Person scope for the companion profile.
-    #[param(example = "11111111111111111111111111111111")]
-    person_ref: String,
+    /// FACET whose profile is read. Absent reads the PERSON's unfaceted
+    /// profile, which only a person-wide grant covers.
+    #[param(example = "22222222222222222222222222222222")]
+    facet_ref: Option<String>,
+    /// WORLD whose profile is read. Absent reads the world-free profile.
+    #[param(example = "44444444444444444444444444444444")]
+    world_ref: Option<String>,
     /// Optional comma-separated source revisions to check freshness against.
     #[serde(rename = "sourceRevisionIds", alias = "source_revision_ids")]
     #[param(example = "cccccccccccccccccccccccccccccccc,dddddddddddddddddddddddddddddddd")]
@@ -59,7 +64,7 @@ pub(crate) struct CompanionProfileAccess {
     /// Principal authorized by the grant.
     #[schema(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
     principal_ref: String,
-    /// Exact scope authorized by the grant.
+    /// PERSON and FACET this read was admitted at.
     scope: CompanionAccessGrantScopePayload,
 }
 
@@ -223,12 +228,18 @@ where
 /// Companion profile access response.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub(crate) struct CompanionProfileResponse {
-    /// Persona/profile entity id.
-    #[schema(example = "22222222222222222222222222222222")]
-    persona_ref: String,
-    /// Person scope for this profile.
+    /// PERSON the profile describes.
     #[schema(example = "11111111111111111111111111111111")]
     person_ref: String,
+    /// FACET the profile is read at, when one was named.
+    #[schema(example = "22222222222222222222222222222222")]
+    facet_ref: Option<String>,
+    /// WORLD the profile is read in, when one was named.
+    #[schema(example = "44444444444444444444444444444444")]
+    world_ref: Option<String>,
+    /// PSYCH_PROFILE id derived from PERSON x FACET x WORLD.
+    #[schema(example = "55555555555555555555555555555555")]
+    profile_ref: String,
     /// Grant evidence for the access decision.
     access: CompanionProfileAccess,
     /// Typed profile state: `missing`, `fresh`, or `stale`.
@@ -267,9 +278,9 @@ pub(crate) fn optional_companion_profile_refresh_request(
 /// Read a companion profile when an active matching AccessGrant exists.
 #[utoipa::path(
     get,
-    path = "/v1/companion/profiles/{persona_ref}",
+    path = "/v1/companion/profiles/{person_ref}",
     params(
-        ("persona_ref" = String, Path, description = "Persona/profile entity id."),
+        ("person_ref" = String, Path, description = "PERSON whose companion profile is read."),
         CompanionProfileQuery
     ),
     responses(
@@ -283,12 +294,12 @@ pub(crate) fn optional_companion_profile_refresh_request(
 pub(crate) async fn get_companion_profile(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    Path(persona_ref): Path<String>,
+    Path(person_ref): Path<String>,
     query: Result<Query<CompanionProfileQuery>, QueryRejection>,
 ) -> Result<Json<CompanionProfileResponse>, EnvelopedApiError> {
     require_companion_profile_read(&auth)?;
     let params = query_params(query)?;
-    let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
+    let key = companion_profile_key(&person_ref, &params)?;
     let selected_source_revision_ids =
         parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
     let requested_principal_ref = params
@@ -297,13 +308,11 @@ pub(crate) async fn get_companion_profile(
         .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
         .transpose()?;
     let principal_ref = companion_profile_principal_ref(&auth, requested_principal_ref)?;
-    let person_ref = parse_entity_id_param(&params.person_ref, "person_ref")?;
 
-    let access = companion_profile_access(&server, &principal_ref, &person_ref, &persona_ref)?;
+    let access = companion_profile_access(&server, &principal_ref, &key)?;
     let state = companion_profile_response_state(
         &server,
-        &persona_ref,
-        &person_ref,
+        &key,
         access,
         selected_source_revision_ids.as_deref(),
     )?;
@@ -313,9 +322,9 @@ pub(crate) async fn get_companion_profile(
 /// Plan a companion profile refresh while preserving persisted sourceRevisionIds.
 #[utoipa::path(
     post,
-    path = "/v1/companion/profiles/{persona_ref}",
+    path = "/v1/companion/profiles/{person_ref}",
     params(
-        ("persona_ref" = String, Path, description = "Persona/profile entity id."),
+        ("person_ref" = String, Path, description = "PERSON whose companion profile is read."),
         CompanionProfileQuery
     ),
     request_body(content = CompanionProfileRefreshRequest, content_type = "application/json"),
@@ -330,7 +339,7 @@ pub(crate) async fn get_companion_profile(
 pub(crate) async fn refresh_companion_profile(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    Path(persona_ref): Path<String>,
+    Path(person_ref): Path<String>,
     query: Result<Query<CompanionProfileQuery>, QueryRejection>,
     headers: HeaderMap,
     payload: Result<Bytes, BytesRejection>,
@@ -338,7 +347,7 @@ pub(crate) async fn refresh_companion_profile(
     require_companion_profile_read(&auth)?;
     let params = query_params(query)?;
     let req = optional_companion_profile_refresh_request(&headers, payload)?;
-    let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
+    let key = companion_profile_key(&person_ref, &params)?;
     let query_source_revision_ids =
         parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
     let body_source_revision_ids = parse_source_revision_ids_body(req.source_revision_ids)?;
@@ -350,41 +359,56 @@ pub(crate) async fn refresh_companion_profile(
         .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
         .transpose()?;
     let principal_ref = companion_profile_principal_ref(&auth, requested_principal_ref)?;
-    let person_ref = parse_entity_id_param(&params.person_ref, "person_ref")?;
 
-    let access = companion_profile_access(&server, &principal_ref, &person_ref, &persona_ref)?;
+    let access = companion_profile_access(&server, &principal_ref, &key)?;
     let state = companion_profile_response_state(
         &server,
-        &persona_ref,
-        &person_ref,
+        &key,
         access,
         selected_source_revision_ids.as_deref(),
     )?;
     Ok(Json(state))
 }
 
+/// The PERSON x FACET x WORLD address a profile request names. The grant
+/// is judged on the PERSON and FACET; the PSYCH_PROFILE id is derived.
+fn companion_profile_key(
+    person_ref: &str,
+    params: &CompanionProfileQuery,
+) -> Result<PsychProfileKey, ApiError> {
+    let optional = |value: Option<&str>, field| {
+        value
+            .map(|value| parse_entity_id_param(value, field))
+            .transpose()
+    };
+    Ok(PsychProfileKey {
+        person: parse_entity_id_param(person_ref, "person_ref")?,
+        facet: optional(params.facet_ref.as_deref(), "facet_ref")?,
+        world: optional(params.world_ref.as_deref(), "world_ref")?,
+    })
+}
+
 pub(crate) fn companion_profile_access(
     server: &SyncServer,
     principal_ref: &oneiron::EntityId,
-    person_ref: &oneiron::EntityId,
-    persona_ref: &oneiron::EntityId,
+    key: &PsychProfileKey,
 ) -> Result<CompanionProfileAccess, EnvelopedApiError> {
     let grant_id = server
         .vault
-        .companion_profile_access_grant(principal_ref, person_ref, persona_ref)
+        .companion_profile_access_grant(principal_ref, &key.person, key.facet.as_ref())
         .map_err(|error| {
             tracing::error!(
                 error = %error,
                 principal_ref = %principal_ref.to_hex(),
-                person_ref = %person_ref.to_hex(),
-                persona_ref = %persona_ref.to_hex(),
+                person_ref = %key.person.to_hex(),
+                facet_ref = ?key.facet.map(|facet| facet.to_hex()),
                 "companion profile grant lookup failed"
             );
             companion_engine_error("companion profile grant lookup failed", error)
         })?
         .ok_or_else(companion_access_denied)?;
 
-    let scope = companion_scope_response(person_ref, persona_ref);
+    let scope = companion_scope_response(&key.person, key.facet.as_ref());
     Ok(CompanionProfileAccess {
         grant_id: grant_id.to_hex(),
         principal_ref: principal_ref.to_hex(),
@@ -394,23 +418,20 @@ pub(crate) fn companion_profile_access(
 
 pub(crate) fn companion_profile_response_state(
     server: &SyncServer,
-    persona_ref: &oneiron::EntityId,
-    person_ref: &oneiron::EntityId,
+    key: &PsychProfileKey,
     access: CompanionProfileAccess,
     selected_source_revision_ids: Option<&[oneiron::EntityId]>,
 ) -> Result<CompanionProfileResponse, EnvelopedApiError> {
+    let profile_ref = psych_profile_entity_id(key);
     let state = match server
         .vault
-        .psych_profile_state(persona_ref, selected_source_revision_ids)
+        .psych_profile_state(&profile_ref, selected_source_revision_ids)
     {
         Ok(state) => state,
-        Err(error) if error.kind() == ErrorKind::InvalidEntityType => {
-            oneiron::PsychProfileState::Missing
-        }
         Err(error) => {
             tracing::error!(
                 error = %error,
-                persona_ref = %persona_ref.to_hex(),
+                profile_ref = %profile_ref.to_hex(),
                 "psych profile lookup failed"
             );
             return Err(companion_engine_error("psych profile lookup failed", error));
@@ -430,8 +451,10 @@ pub(crate) fn companion_profile_response_state(
                 drift_anchors: drift_anchors.clone(),
             });
             CompanionProfileResponse {
-                persona_ref: persona_ref.to_hex(),
-                person_ref: person_ref.to_hex(),
+                person_ref: key.person.to_hex(),
+                facet_ref: key.facet.map(|facet| facet.to_hex()),
+                world_ref: key.world.map(|world| world.to_hex()),
+                profile_ref: profile_ref.to_hex(),
                 access,
                 state: "missing".to_owned(),
                 profile: None,
@@ -447,8 +470,10 @@ pub(crate) fn companion_profile_response_state(
                 })
                 .unwrap_or_default();
             CompanionProfileResponse {
-                persona_ref: persona_ref.to_hex(),
-                person_ref: person_ref.to_hex(),
+                person_ref: key.person.to_hex(),
+                facet_ref: key.facet.map(|facet| facet.to_hex()),
+                world_ref: key.world.map(|world| world.to_hex()),
+                profile_ref: profile_ref.to_hex(),
                 access,
                 state: "fresh".to_owned(),
                 profile: Some(companion_profile_payload(&profile)),
@@ -475,8 +500,10 @@ pub(crate) fn companion_profile_response_state(
                 drift_anchors: drift_anchors.clone(),
             });
             CompanionProfileResponse {
-                persona_ref: persona_ref.to_hex(),
-                person_ref: person_ref.to_hex(),
+                person_ref: key.person.to_hex(),
+                facet_ref: key.facet.map(|facet| facet.to_hex()),
+                world_ref: key.world.map(|world| world.to_hex()),
+                profile_ref: profile_ref.to_hex(),
                 access,
                 state: "stale".to_owned(),
                 profile: Some(companion_profile_payload(&profile)),

@@ -46,7 +46,10 @@ const FILES: [(&str, &str); 5] = [
         include_str!("../../../../skills/goal-intake/SKILL.md"),
     ),
     ("wake", include_str!("../../../../skills/wake/SKILL.md")),
-    ("team-lead", include_str!("../../../../skills/team-lead/SKILL.md")),
+    (
+        "team-lead",
+        include_str!("../../../../skills/team-lead/SKILL.md"),
+    ),
 ];
 
 fn stable_id(name: &str) -> Result<EntityId> {

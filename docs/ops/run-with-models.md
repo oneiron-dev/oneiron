@@ -689,6 +689,21 @@ The owner can probe the read at `POST /v1/llm/decision_read`
 nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 `[limits] decision_reads` probes wait their turn.
 
+The decision read takes yes/no and choice questions over text. A Box question
+("where is `mug` in `camera`?"), and any question over images, goes only to a
+rung that reads images: a host `DecisionModel` whose `reads_images` is true,
+or the opt-in System One seat (`decide_at_remote_seat`). The ladder skips
+every other rung (`DecisionLadder::run_images`, `run_pack_images`). A Box
+answer is `{top, bottom, left, right}` in 0–1 fractions of the image from its
+top-left corner, edges in order, with its confidence; it is `null` when the
+target is absent. The box centre is the point answer. A call carries at most
+8 named PNG or JPEG images, 10 MiB each and 20 MiB in all. Each fills the
+state field of its name, and each receipt keeps every image's evidence ref
+and body version, never its pixels. The System One seat sends each image as an
+asset, downscaled to a 1,568-pixel long edge (a box in fractions reads the
+same on the smaller copy), with the `TypeSafe-Danger-Zone-Images: true`
+header that Jev 1.14 needs for images and boxes.
+
 ## 10. Media calls (`ai.image`, `ai.video`, `ai.speech`, `ai.transcribe`, `ai.embed`)
 
 Image, video, speech, transcription and embedding calls have their own seats,
@@ -771,7 +786,41 @@ spent, the reset if any, and the choices). Answer it with
 `top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
 `add_account` close the question and leave the offer parked until its reset.
 
-## 12. The decision ladder
+## 12. Batch GPU pods (`[gpu]`)
+
+Re-embeds and backfills are retry-tolerant, so they may run on rented GPU
+pods, spot capacity included (ARCH-0019 §5). Queries never do: they stay on
+the configured `[embedder]` endpoint. Name one region's pods:
+
+```toml
+[gpu]
+region = "tokyo"
+# Optional: the pods' bearer key. The endpoint's own key never goes to a pod.
+api_key_env = "ONEIRON_GPU_POD_KEY"
+# Defaults: health_path = "/health", ready_path = "/v1/models", poll_seconds = 15.
+
+[[gpu.pods]]
+id = "pod-a"
+url = "https://pod-a.example:8000/v1"
+capacity = 4
+```
+
+`serve` polls each pod at start and then every `poll_seconds`. A pod is
+healthy when it answers at all (transport), answers `health_path` with a 2xx
+(app), and answers `ready_path` with a 2xx (inference). Both paths resolve
+against the pod's origin, so `/health` on `https://pod-a.example:8000/v1` is
+`https://pod-a.example:8000/health`. Each document batch
+of the endpoint embedder takes a lease on one healthy pod, picked from two at
+random by load. The lease renews every 60 s and ends when the batch does. A
+lease that lapses mid-batch (the pod was preempted or failed a poll) drops
+that batch's answer, and the worker sends it again. With no healthy pod, the
+batch goes to the `[embedder]` endpoint. Pods must serve the endpoint's model:
+an answer that names another model, or makes vectors another way, is refused
+as the endpoint's would be. On a vault bound to an account, each pod's answer
+is sealed to that account before it is read. Pod URLs follow the endpoint's
+rules: HTTPS unless loopback, and no credential or query in the URL.
+
+## 13. The decision ladder
 
 Every typed decision the server asks (decide()) goes through one ladder,
 built when the server starts and lent to each caller

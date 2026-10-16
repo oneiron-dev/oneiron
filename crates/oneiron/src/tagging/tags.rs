@@ -217,11 +217,12 @@ impl TurnTags {
     /// The gate's surprise of this set beside `before`, the set it replaces.
     #[must_use]
     pub fn surprise_since(&self, before: &Self) -> f32 {
-        let identity_changed = self.entities() != before.entities()
-            || self.coreference() != before.coreference();
+        let identity_changed =
+            self.entities() != before.entities() || self.coreference() != before.coreference();
         let affect = |tags: &Self| {
-            tags.mood
-                .map_or([0.0; 3], |mood| [mood.valence, mood.arousal, mood.dominance])
+            tags.mood.map_or([0.0; 3], |mood| {
+                [mood.valence, mood.arousal, mood.dominance]
+            })
         };
         crate::llm::tagger::delta_surprise(identity_changed, affect(before), affect(self))
     }
