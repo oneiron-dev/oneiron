@@ -66,6 +66,11 @@ pub struct EsignRecipient {
     /// Subject/principal identity, not a compiled persona.
     pub principal_ref: Option<String>,
     pub automated: bool,
+    /// The law that keeps this recipient's signature with a natural person,
+    /// when one does (ARCH-0076 #roles-everywhere). Such a recipient is never
+    /// automated, so no dial, rung or escalated role signs for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub natural_person: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -278,6 +283,16 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
             || r.expires_at > doc.expires_at
         {
             return Err(invalid("invalid recipient"));
+        }
+        if let Some(basis) = &r.natural_person
+            && (basis.trim().is_empty()
+                || basis.len() > 1024
+                || !matches!(r.role, RecipientRole::Signer | RecipientRole::Approver))
+        {
+            return Err(invalid("invalid natural-person requirement"));
+        }
+        if r.natural_person.is_some() && r.automated {
+            return Err(invalid("the law keeps this signature with a natural person"));
         }
     }
     let mut fields = BTreeSet::new();
