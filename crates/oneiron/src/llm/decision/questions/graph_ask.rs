@@ -75,7 +75,7 @@ pub struct GraphAskFailure {
 }
 
 impl GraphAskFailure {
-    fn before_units(error: Error) -> Self {
+    pub(super) fn before_units(error: Error) -> Self {
         Self {
             failed_unit: None,
             error: Box::new(error),
@@ -158,7 +158,7 @@ fn asker_reader(vault: &Vault, principal: EntityId) -> Result<ScopedReadActorKey
     asker_reader_in_txn(vault, &txn, principal)
 }
 
-fn asker_reader_in_txn(
+pub(super) fn asker_reader_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: EntityId,
@@ -183,7 +183,7 @@ fn asker_reader_in_txn(
         .ok_or(Error::InvariantViolation("canonical ask principal"))
 }
 
-fn kind_is_graph_evidence(kind: u8) -> bool {
+pub(super) fn kind_is_graph_evidence(kind: u8) -> bool {
     kind == crate::registry::ENTITY_TYPE_CLAIM || !(64..100).contains(&kind)
 }
 
@@ -469,7 +469,10 @@ fn source(id: EntityId, entity_type: u8, body: Vec<u8>) -> GraphContextSource {
     }
 }
 
-fn validate_prediction(question: &DecisionQuestion, prediction: &GraphPrediction) -> Result<()> {
+pub(super) fn validate_prediction(
+    question: &DecisionQuestion,
+    prediction: &GraphPrediction,
+) -> Result<()> {
     if !question.contract.accepts(&prediction.answer)
         || !prediction.probability.is_finite()
         || !(0.0..=1.0).contains(&prediction.probability)

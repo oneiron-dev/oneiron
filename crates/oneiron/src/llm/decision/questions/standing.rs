@@ -118,6 +118,7 @@ fn sources_in_txn(
     actor: WriteActor,
     unit: EntityId,
     evidence: &[EntityId],
+    proposals: &[AnswerRecord],
 ) -> Result<([u8; 32], Vec<Source>)> {
     if evidence.len() > 4096 {
         return Err(invalid("too many standing answer sources"));
@@ -127,12 +128,7 @@ fn sources_in_txn(
     // for both reads: the writer's own grant never widens what the
     // principal's answer may rest on. The vault's live owner reads its
     // relationships' rows as it does on every lane.
-    let reader = ScopedReadActorKey::with_actor_class(
-        principal.to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or(Error::InvariantViolation("canonical question principal"))?
-    .exempt_while_owner(principal);
+    let reader = super::graph_ask::asker_reader_in_txn(vault, txn, principal)?;
     let holder = ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
@@ -142,13 +138,23 @@ fn sources_in_txn(
     let mut hasher = blake3::Hasher::new();
     let mut sources = Vec::with_capacity(evidence.len() + 1);
     for id in std::iter::once(&unit).chain(evidence.iter()) {
-        if !vault
-            .scoped_read(reader.clone())
-            .is_entity_readable_with_policy_in(txn, &policy, id)?
-            || !vault
-                .scoped_read(holder.clone())
+        let proposal = proposals
+            .iter()
+            .find(|answer| answer.claim == *id && *id != unit);
+        let reader_lane = vault.scoped_read(reader.clone());
+        let readable = if proposal.is_some() {
+            // Only results already returned to this workflow may feed its next
+            // proposal. They remain private to the asker and are never kept here.
+            reader_lane
+                .recorded_lane()?
                 .is_entity_readable_with_policy_in(txn, &policy, id)?
-        {
+        } else {
+            reader_lane.is_entity_readable_with_policy_in(txn, &policy, id)?
+                && vault
+                    .scoped_read(holder.clone())
+                    .is_entity_readable_with_policy_in(txn, &policy, id)?
+        };
+        if !readable {
             return Err(Error::EntityNotFound);
         }
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
@@ -167,6 +173,24 @@ fn sources_in_txn(
                 )?)
         {
             return Err(Error::EntityNotFound);
+        }
+        if let Some(answer) = proposal {
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                return Err(Error::EntityNotFound);
+            }
+            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let value = rmpv::decode::read_value(&mut encode(answer)?.as_slice())
+                .map_err(|_| Error::CorruptedIndex("workflow answer encoding"))?;
+            if answer.decision.receipt.principal != principal
+                || body.predicate != "judgment.answer"
+                || body.subject != ClaimSubject::Entity(answer.unit)
+                || body.value != value
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || body.approval == ClaimApprovalStatus::Rejected
+                || body.stale
+            {
+                return Err(Error::EntityNotFound);
+            }
         }
         hasher.update(id.as_bytes());
         hasher.update(&(raw.len() as u64).to_be_bytes());
@@ -246,7 +270,7 @@ pub fn standing_source_frontier(
     if !record.definition.units.contains(&unit) {
         return Err(Error::EntityNotFound);
     }
-    Ok(sources_in_txn(vault, &txn, principal, actor, unit, evidence)?.0)
+    Ok(sources_in_txn(vault, &txn, principal, actor, unit, evidence, &[])?.0)
 }
 
 /// Keep a graph answer and its immutable-version receipt atomically. Repeated
@@ -259,6 +283,145 @@ pub fn backfill_standing_answer(
     expected_version: u32,
     actor: WriteActor,
     input: StandingAnswer,
+    now: u64,
+) -> Result<AnswerRecord> {
+    backfill_answer(
+        vault,
+        principal,
+        question,
+        expected_version,
+        actor,
+        input,
+        None,
+        &[],
+        now,
+    )
+}
+
+/// Read an explicit recipe and pin every source in the same authorized snapshot.
+pub(super) fn prepare_graph_answer(
+    vault: &Vault,
+    principal: EntityId,
+    reference: super::GraphQuestionRef,
+    actor: WriteActor,
+    input: &super::GraphQuestionInput,
+    proposals: &[AnswerRecord],
+) -> Result<(QuestionRecord, super::GraphUnitContext, [u8; 32])> {
+    vault.store.authorization_now()?;
+    let txn = vault.store.env.read_txn()?;
+    let (_, record) = standing_record(vault, &txn, principal, reference.id, reference.version)?;
+    if !record.definition.units.contains(&input.unit) {
+        return Err(Error::EntityNotFound);
+    }
+    let (frontier, _) = sources_in_txn(
+        vault,
+        &txn,
+        principal,
+        actor,
+        input.unit,
+        &input.evidence,
+        proposals,
+    )?;
+    let scoped = vault.scoped_read(super::graph_ask::asker_reader_in_txn(
+        vault, &txn, principal,
+    )?);
+    let mut sources = Vec::with_capacity(input.evidence.len() + 1);
+    for id in std::iter::once(&input.unit).chain(input.evidence.iter()) {
+        let lane = if proposals
+            .iter()
+            .any(|answer| answer.claim == *id && *id != input.unit)
+        {
+            scoped.recorded_lane()?
+        } else {
+            vault.scoped_read(super::graph_ask::asker_reader_in_txn(
+                vault, &txn, principal,
+            )?)
+        };
+        let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
+            return Err(Error::EntityNotFound);
+        };
+        if !super::graph_ask::kind_is_graph_evidence(kind)
+            || body.is_empty()
+            || body.len() > 1_048_576
+        {
+            return Err(Error::EntityNotFound);
+        }
+        sources.push(super::GraphContextSource {
+            id: *id,
+            entity_type: kind,
+            hash: *blake3::hash(&body).as_bytes(),
+            body,
+        });
+    }
+    Ok((
+        record,
+        super::GraphUnitContext {
+            unit: input.unit,
+            sources,
+        },
+        frontier,
+    ))
+}
+
+pub(super) fn backfill_graph_answer(
+    vault: &Vault,
+    principal: EntityId,
+    reference: super::GraphQuestionRef,
+    actor: WriteActor,
+    context: super::GraphUnitContext,
+    frontier: [u8; 32],
+    prediction: super::GraphPrediction,
+    proposals: &[AnswerRecord],
+    now: u64,
+) -> Result<AnswerRecord> {
+    let versions = context
+        .sources
+        .iter()
+        .map(|source| crate::llm::decision::EvidenceVersion {
+            id: source.id,
+            body_hash: source.hash,
+        })
+        .collect();
+    let input = StandingAnswer {
+        unit: context.unit,
+        answer: prediction.answer,
+        probability: Some(prediction.probability),
+        evidence: context
+            .sources
+            .iter()
+            .skip(1)
+            .map(|source| source.id)
+            .collect(),
+        providers: vec![prediction.provider.clone()],
+        paired: prediction
+            .paired
+            .map(|reading| reading.bind(prediction.provider))
+            .into_iter()
+            .collect(),
+        source_frontier: frontier,
+    };
+    backfill_answer(
+        vault,
+        principal,
+        reference.id,
+        reference.version,
+        actor,
+        input,
+        Some((versions, prediction.cost_per_thousand)),
+        proposals,
+        now,
+    )
+}
+
+fn backfill_answer(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+    expected_version: u32,
+    actor: WriteActor,
+    input: StandingAnswer,
+    measurement: Option<(Vec<crate::llm::decision::EvidenceVersion>, f64)>,
+    proposals: &[AnswerRecord],
     now: u64,
 ) -> Result<AnswerRecord> {
     vault.store.authorization_now()?;
@@ -284,8 +447,15 @@ pub fn backfill_standing_answer(
         {
             return Err(invalid("invalid standing answer"));
         }
-        let (frontier, sources) =
-            sources_in_txn(vault, txn, principal, actor, input.unit, &input.evidence)?;
+        let (frontier, sources) = sources_in_txn(
+            vault,
+            txn,
+            principal,
+            actor,
+            input.unit,
+            &input.evidence,
+            proposals,
+        )?;
         if frontier != input.source_frontier {
             return Err(Error::ConcurrentWrite("standing source changed"));
         }
@@ -370,8 +540,10 @@ pub fn backfill_standing_answer(
                     providers: input.providers,
                     band: record.definition.dial.band,
                     band_version: 0,
-                    evidence_versions: Vec::new(),
-                    cost_per_thousand: None,
+                    evidence_versions: measurement
+                        .as_ref()
+                        .map_or_else(Vec::new, |(versions, _)| versions.clone()),
+                    cost_per_thousand: measurement.as_ref().map(|(_, cost)| *cost),
                     paired: input.paired,
                     person: Vec::new(),
                     time: None,

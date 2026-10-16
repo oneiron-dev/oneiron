@@ -319,6 +319,7 @@ pub trait HeldOutReplayScorer {
     }
 
     /// Engine-projected coverage evidence, not a host-supplied scalar score.
+    /// The comparison binds both replay bodies to one pinned output archive.
     fn coverage_floor(
         &self,
     ) -> Option<&crate::autoreason_campaign::coverage::CoverageFloorComparison> {

@@ -26,6 +26,10 @@ use crate::registry::{
 /// `comm.jurisdiction` predicates.
 pub mod claims;
 
+/// Membership/variant context joins for resident-authored judgment workflows.
+/// Questions, rollups and selection policy live in the workflow skill.
+pub mod judgments;
+
 /// CA-03's leader-only enrollment consequence writer: home-node designation,
 /// the `campaign.enrollment.macro` attempt kind, and the membership/outbound
 /// legs that turn a detected SAVED_QUERY transition into durable effects.
