@@ -8673,7 +8673,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 5,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 1
      }
     },
@@ -8737,6 +8737,19 @@
       "crate-vis": 2,
       "fn": 3,
       "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResidenceReadContext"
+     ],
+     "path": "src/claim/scoped_read/residence.rs",
+     "purpose": "One residence read's admission for the machine at the other end of the connection",
+     "surface": {
+      "fn": 4,
       "struct": 1
      }
     },
@@ -9626,7 +9639,7 @@
      "purpose": "—",
      "surface": {
       "const": 7,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 18,
       "struct": 10
@@ -9687,7 +9700,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 9,
       "struct": 1
      }
@@ -17981,6 +17994,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -18012,7 +18026,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 36
      }
     },
     {
@@ -25015,7 +25029,7 @@
      "path": "src/memory/credential_key.rs",
      "purpose": "The read key a verified credential reads under",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -43011,7 +43025,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44238,7 +44252,7 @@
    },
    "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2652,
+   "source_files": 2653,
    "test_files": 903
   },
   "oneiron-android": {
