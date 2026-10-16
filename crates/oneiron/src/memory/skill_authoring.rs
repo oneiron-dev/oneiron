@@ -66,6 +66,22 @@ pub(crate) fn skill_author_proof_is_live_in_txn(
     Ok(named_author_proof(&stored).is_ok_and(|proof| proof == receipt.decision_id.to_hex()))
 }
 
+/// The agent or person whose durable author receipt a skill's provenance
+/// names, or `None` for a skill with no authorship proof (an import, a
+/// conversion, an owner fork). The callable-helper gate reads it so a
+/// helper's author never supplies its own promotion cases.
+pub(crate) fn skill_author_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    record: &SkillRecord,
+) -> Result<Option<EntityId>, Error> {
+    if named_author_proof(record).is_err() {
+        return Ok(None);
+    }
+    author_proof(vault, txn, *id, record).map(|(author, _)| Some(author))
+}
+
 fn author_proof(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -279,6 +295,10 @@ impl Memory<'_> {
                 ]),
             );
             record.forked_from = Some(parent);
+            // A fork of a callable helper is still a callable helper: its
+            // source keeps the call frontmatter, so the record keeps it too.
+            record.role = stored.role;
+            record.call = stored.call.clone();
             let package =
                 self.vault
                     .fork_skill_package_in_txn(txn, &parent, &stored, &mut record)?;
