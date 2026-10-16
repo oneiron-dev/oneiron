@@ -1,0 +1,199 @@
+//! Explain receipts (OF-278): GET /v1/core/explain/memory/{entity} answers
+//! why a memory appeared in the caller's session, and GET
+//! /v1/core/explain/gate/{receipt} why a write needed approval. Each answer
+//! carries only what the caller may read; anything else is a 404, the same
+//! as an unknown id.
+
+use std::sync::Arc;
+
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+
+use super::super::{
+    CoreContextPackScoreEvidence, core_context_pack_score_evidence, core_engine_error,
+    parse_entity_id_param, scoped_read_for_core_auth,
+};
+use super::{resolved_session_id, session_read_set};
+use crate::auth::{CoreAuth, CoreScope};
+use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
+use crate::server::SyncServer;
+
+/// The session a memory explanation reads.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ExplainMemoryQuery {
+    /// The board or pack session that was served the memory. Defaults to
+    /// the caller's active session.
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+/// Why one memory appeared in the caller's session.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ExplainMemoryResponse {
+    /// Hex entity id.
+    id: String,
+    /// Hex retrieval run that served it, when that run's telemetry persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
+    /// 1-based place among the run's primary results.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rank: Option<u32>,
+    /// Reached as a graph neighbor of a result, not ranked itself.
+    neighbor: bool,
+    /// The MEMORIES tier a board rendered it at: pinned, snippet or index_only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tier: Option<String>,
+    /// `<pack>/<hook>` when a hook block pinned it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook: Option<String>,
+    /// The run's score breakdown for this row alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    score: Option<CoreContextPackScoreEvidence>,
+}
+
+/// One system notice a gate decision raised.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ExplainGateNotice {
+    /// Notice type token.
+    notice_type: String,
+    /// Opaque reference to the policy row it cites.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    row_ref: Option<String>,
+}
+
+/// Why a write needed approval: one gate decision as the caller may see it.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ExplainGateResponse {
+    /// `gate:<hex>` receipt id.
+    receipt_id: String,
+    /// When the gate decided, Unix seconds.
+    decided_at: u64,
+    /// allow, pending or deny.
+    outcome: String,
+    /// Engine reason codes.
+    reason_codes: Vec<String>,
+    /// The policy rows and checks behind the outcome, by opaque reference.
+    receipt_reasons: Vec<String>,
+    /// System notices the decision raised.
+    notices: Vec<ExplainGateNotice>,
+    /// The writer's actor class.
+    actor_class: String,
+    /// Hex writer, when the caller is it, is the owner, or may read it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_ref: Option<String>,
+    /// What kind of write it was.
+    content_kind: String,
+    /// The policy manifest version it was decided under.
+    policy_manifest_version: String,
+    /// Hex claim the write proposed, when the caller may read it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim_ref: Option<String>,
+}
+
+/// Why a memory appeared in the caller's session: the run that served it and
+/// its place there, the board tier it rode, and the run's score breakdown
+/// for it. Only a memory the session was served and the caller still reads.
+#[utoipa::path(
+    get,
+    path = "/v1/core/explain/memory/{entity}",
+    params(
+        ("entity" = String, Path, description = "Hex entity id of the memory"),
+        ExplainMemoryQuery
+    ),
+    responses(
+        (status = 200, description = "Why the memory appeared.", body = ExplainMemoryResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed entity or session id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "The session was not served this memory, or the caller cannot read it.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Explanation failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+pub(crate) async fn core_explain_memory(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(entity): Path<String>,
+    Query(query): Query<ExplainMemoryQuery>,
+) -> Result<Json<ExplainMemoryResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let id = parse_entity_id_param(&entity, "entity")?;
+    let read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
+    let session = resolved_session_id(&server, caller, query.session_id.as_deref()).await?;
+    let explained = match session_read_set(&server, caller, session.as_deref()).await? {
+        Some(reads) => server
+            .vault
+            .explain_served_memory(&read, &reads, id)
+            .map_err(|error| core_engine_error("memory explanation failed", error))?,
+        None => None,
+    };
+    let Some(explained) = explained else {
+        return Err(ApiError::not_found("served memory", Some(&entity)).into());
+    };
+    Ok(Json(ExplainMemoryResponse {
+        id: explained.id.to_hex(),
+        run_id: explained.why.run_id,
+        rank: explained.why.rank,
+        neighbor: explained.why.neighbor,
+        tier: explained.why.tier,
+        hook: explained.why.hook,
+        score: explained.breakdown.map(core_context_pack_score_evidence),
+    }))
+}
+
+/// Why a write needed approval: the gate decision behind receipt
+/// `gate:<hex>`, its outcome, reason codes and the policy rows it cites by
+/// reference. Only for the writer, the owner, or a caller that may read the
+/// claim the write proposed.
+#[utoipa::path(
+    get,
+    path = "/v1/core/explain/gate/{receipt}",
+    params(("receipt" = String, Path, description = "Gate receipt id, gate:<hex>")),
+    responses(
+        (status = 200, description = "Why the write was decided as it was.", body = ExplainGateResponse, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No such gate receipt, or the caller may not read it.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Explanation failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+pub(crate) async fn core_explain_gate(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(receipt): Path<String>,
+) -> Result<Json<ExplainGateResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let Some(explained) = server
+        .vault
+        .explain_gate_receipt(&read, &receipt)
+        .map_err(|error| core_engine_error("gate explanation failed", error))?
+    else {
+        return Err(ApiError::not_found("gate receipt", Some(&receipt)).into());
+    };
+    Ok(Json(ExplainGateResponse {
+        receipt_id: explained.receipt_id,
+        decided_at: explained.decided_at,
+        outcome: explained.outcome,
+        reason_codes: explained.reason_codes,
+        receipt_reasons: explained.receipt_reasons,
+        notices: explained
+            .notices
+            .into_iter()
+            .map(|(notice_type, row_ref)| ExplainGateNotice {
+                notice_type,
+                row_ref,
+            })
+            .collect(),
+        actor_class: explained.actor_class,
+        actor_ref: explained.actor_ref,
+        content_kind: explained.content_kind,
+        policy_manifest_version: explained.policy_manifest_version,
+        claim_ref: explained.claim_ref,
+    }))
+}
