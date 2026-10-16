@@ -15,9 +15,9 @@ use crate::edit_distance::delta::amendment_delta;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
-    AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
-    ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor,
-    withdraw_edit_proposal_in_txn,
+    AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, UnclearAttribution,
+    delete_unclear_in_txn, draw_proposal_sequence_in_txn, ground_attempt_receipt,
+    mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor, withdraw_edit_proposal_in_txn,
 };
 
 // ---------------------------------------------------------------------------

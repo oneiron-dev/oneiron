@@ -97,7 +97,7 @@ impl NativeOutput {
 }
 
 /// What kind of proposal is waiting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingProposalKind {
     Edit,
@@ -105,7 +105,7 @@ pub enum PendingProposalKind {
 }
 
 /// One proposal waiting beside its artifact, as a review surface lists it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingProposalView {
     pub artifact_id: EntityId,
     pub proposal_ref: String,
@@ -516,7 +516,11 @@ impl Vault {
         Ok(row.view(*artifact_id))
     }
 
-    fn pending_row(&self, artifact_id: &EntityId, proposal_ref: &str) -> Result<Option<PendingRow>> {
+    fn pending_row(
+        &self,
+        artifact_id: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<Option<PendingRow>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(row) = PENDING.get(
             &self.store,

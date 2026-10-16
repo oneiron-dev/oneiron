@@ -4,7 +4,7 @@
 //! A mixed non-floor goal vector is a pending tradeoff. When the goal holds
 //! tradeoff preferences, three rungs may settle it, in order: a stored
 //! preference rule (authored or learned) for the exact gained and lost axes,
-//! then a Jev verdict bound to the exact question at or above the goal's high
+//! then a typed decision bound to the exact question at or above the goal's high
 //! band, then a durable A/B ask to the responsible person, whose pick becomes a
 //! learned preference. Every settlement is a resolution row that answers the
 //! pending row, written by the decision door. A goal without preferences waits
@@ -13,7 +13,7 @@
 //! Preferences are part of the goal record. They are keyed by the portable goal
 //! identity and hashed into the goal revision, so a successor revision on any
 //! replica inherits them, and every pending ask, acceptance and verdict binds
-//! the preferences it was ruled under. The host supplies the Jev verdict; the
+//! the preferences it was ruled under. The host supplies the shared decision ladder; the
 //! engine owns rule order, binding, the pending question and the learned picks.
 //!
 //! A goal joined to a project's goal record ([`super::project_goal`]) climbs
@@ -30,7 +30,7 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::ArtifactError;
 use crate::gate::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
-use crate::llm::decision::{DecisionBand, DecisionRung, ProviderPin};
+use crate::llm::decision::{DecisionAnswer, DecisionBand, DecisionRung, ProviderPin};
 use serde::{Deserialize, Serialize};
 
 const PREFERENCES_PREFIX: &[u8] = b"skill_optimize/tradeoff_preferences/v1\0";
@@ -109,7 +109,10 @@ fn matching_rule(
         })
 }
 
-fn learning_full(preferences: Option<&SkillTradeoffPreferences>, limits: SkillTradeoffLimits) -> bool {
+fn learning_full(
+    preferences: Option<&SkillTradeoffPreferences>,
+    limits: SkillTradeoffLimits,
+) -> bool {
     let learned = preferences.map_or(0, |preferences| preferences.learned.len());
     limits
         .max_learned_rules
@@ -191,7 +194,11 @@ impl JevTradeoffVerdict {
                 .all(|byte| byte.is_ascii_hexdigit())
             || !matches!(
                 self.pin.rung,
-                DecisionRung::SystemOne | DecisionRung::Escalation
+                DecisionRung::Rule
+                    | DecisionRung::Local
+                    | DecisionRung::SystemOne
+                    | DecisionRung::Escalation
+                    | DecisionRung::Big
             )
             || self.pin.model.trim().is_empty()
             || self.pin.version.trim().is_empty()
@@ -550,7 +557,9 @@ pub(super) fn plan(
         vault,
         &txn,
         definition.project.as_ref(),
-        preferences.as_ref().map(|preferences| preferences.responsible),
+        preferences
+            .as_ref()
+            .map(|preferences| preferences.responsible),
     )?;
     drop(txn);
     let project = definition
@@ -592,40 +601,52 @@ pub(super) fn plan(
             jev: None,
         });
     }
-    // Only the exact question may skip Jev on a later ruling: a body, the
-    // evidence or the goal may have moved since an older ask was put.
+    // Reuse a measurement only for this exact question. Every fresh answer
+    // comes from the shared typed-decision ladder, never a supplied scalar.
     let band = preferences
         .as_ref()
         .and_then(|preferences| preferences.jev_band);
-    let jev = match prior.filter(|prior| prior.question == question) {
-        Some(prior) => prior.jev,
+    let jev = match (prior.filter(|prior| prior.question == question), band) {
+        (Some(prior), _) => prior.jev,
         // No band was authored, so no judgment can rule: ask the role.
-        None if band.is_none() => None,
-        None => {
-            let jev = scorer.jev_tradeoff(&question)?;
-            if let Some(verdict) = &jev
-                && (verdict.question_digest != question.digest()? || verdict.validate().is_err())
-            {
-                return Err(invalid(
-                    "Jev verdict does not bind the goal tradeoff question",
-                ));
-            }
-            // Choice probability is confidence in the chosen option, not
-            // P(yes): the lower tail is uncertainty, never a confident no.
-            if let Some(verdict) = jev.as_ref().filter(|verdict| {
-                band.is_some_and(|band| verdict.probability >= band.high)
-            }) {
-                let authentication = format!("{}@{}", verdict.pin.model, verdict.pin.version);
-                let choice = verdict.choice;
-                return Ok(TradeoffPlan::Decided {
-                    question,
+        (None, None) => None,
+        (None, Some(band)) => {
+            if let Some(decision) = scorer.tradeoff_decision(&question, band)? {
+                let choice = match &decision.answer {
+                    DecisionAnswer::Choice(value) if value == "approve" => {
+                        Some(TradeoffChoice::Approve)
+                    }
+                    DecisionAnswer::Choice(value) if value == "reject" => {
+                        Some(TradeoffChoice::Reject)
+                    }
+                    _ => None,
+                };
+                // Choice probability is confidence in the chosen option, not
+                // P(yes): the lower tail is uncertainty, never a confident no.
+                if let (Some(choice), Some(probability), Some(pin)) = (
                     choice,
-                    rung: TradeoffRung::Judgment,
-                    authentication,
-                    jev,
-                });
+                    decision.probability,
+                    decision.receipt.providers.last(),
+                ) && decision.human_ask.is_none()
+                    && probability >= band.high
+                {
+                    let verdict = JevTradeoffVerdict {
+                        question_digest: question.digest()?,
+                        choice,
+                        probability,
+                        pin: pin.clone(),
+                    };
+                    verdict.validate()?;
+                    return Ok(TradeoffPlan::Decided {
+                        authentication: format!("{}@{}", pin.model, pin.version),
+                        question,
+                        choice,
+                        rung: TradeoffRung::Judgment,
+                        jev: Some(verdict),
+                    });
+                }
             }
-            jev
+            None
         }
     };
     let holder = limits_holder(preferences.as_ref(), &question)?;
@@ -775,7 +796,9 @@ pub fn settle_skill_tradeoff_ask(
         {
             return Err(invalid("tradeoff goal changed before the pick"));
         }
-        let holder = previous.as_ref().map_or(actor, |previous| previous.responsible);
+        let holder = previous
+            .as_ref()
+            .map_or(actor, |previous| previous.responsible);
         if learning_full(
             previous.as_ref(),
             skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?,
