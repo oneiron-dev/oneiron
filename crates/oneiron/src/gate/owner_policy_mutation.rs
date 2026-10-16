@@ -33,6 +33,7 @@ pub enum PolicyRowScope {
 #[serde(rename_all = "snake_case")]
 pub enum PolicyRowAction {
     Warn,
+    Reword,
     Block,
     RouteToHelp,
 }
@@ -41,6 +42,7 @@ impl PolicyRowAction {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Warn => "warn",
+            Self::Reword => "reword",
             Self::Block => "block",
             Self::RouteToHelp => "route_to_help",
         }

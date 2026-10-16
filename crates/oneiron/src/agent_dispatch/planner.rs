@@ -43,12 +43,12 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::vault::Vault;
 
+use super::AgentDispatcher;
 use super::team_shape::{
     CoordinationPattern, PlannerCard, TEAM_SHAPE_LESSONS, TeamShape, seeded_shape,
 };
 use super::types::{CareLevel, SpawnNeed, SpawnOverride};
 use super::widen_record::invalid;
-use super::AgentDispatcher;
 
 /// One rung of the planner ladder. Cheap rungs handle the easy cases; the
 /// strong rung is reserved for xhigh/max care or big plans.
@@ -200,9 +200,15 @@ pub fn resolve_care(need: &SpawnNeed) -> CareLevel {
         return care;
     }
     let text = format!("{} {}", need.need, need.notes.as_deref().unwrap_or("")).to_lowercase();
-    if ["critical", "must not fail", "production", "irreversible", "legal"]
-        .iter()
-        .any(|word| text.contains(word))
+    if [
+        "critical",
+        "must not fail",
+        "production",
+        "irreversible",
+        "legal",
+    ]
+    .iter()
+    .any(|word| text.contains(word))
     {
         CareLevel::XHigh
     } else if text.len() > 280 || text.contains("thorough") || text.contains("careful") {
@@ -328,7 +334,11 @@ fn payoff_density(quote: &ShapeQuote) -> f64 {
 
 /// Quotes for the widest candidate a rung decision needs.
 fn widest(quotes: &[ShapeQuote]) -> u32 {
-    quotes.iter().map(|quote| quote.shape.width).max().unwrap_or(1)
+    quotes
+        .iter()
+        .map(|quote| quote.shape.width)
+        .max()
+        .unwrap_or(1)
 }
 
 /// The CEO's top shapes: the best `n` candidate plans with expected payoff
@@ -416,7 +426,9 @@ fn plan_from_quotes(
         chosen = solo.clone();
     }
 
-    if need.pinned_pattern().is_some() || need.pinned_width().is_some() || need.pinned_model().is_some()
+    if need.pinned_pattern().is_some()
+        || need.pinned_width().is_some()
+        || need.pinned_model().is_some()
     {
         why.push("pinned spawn fields honoured exactly".to_owned());
     }
@@ -450,7 +462,11 @@ fn fit_to_budget(
     let cap = chosen.envelope.hard_cap_units;
     let per_agent = chosen.envelope.per_agent_expected_units;
     let mut why = Vec::new();
-    let base = |shape: TeamShape, model: ModelId, envelope: CostEnvelope, fitted: bool, more: Option<String>| TeamPlan {
+    let base = |shape: TeamShape,
+                model: ModelId,
+                envelope: CostEnvelope,
+                fitted: bool,
+                more: Option<String>| TeamPlan {
         shape,
         model,
         care,
@@ -493,7 +509,9 @@ fn fit_to_budget(
         return (base(shape, chosen.model, envelope, true, more), why);
     }
     // Cheapest seatable model at the pattern floor.
-    if let Some(cheap) = models.iter().min_by_key(|model| model.expected_units_per_agent)
+    if let Some(cheap) = models
+        .iter()
+        .min_by_key(|model| model.expected_units_per_agent)
         && cheap
             .expected_units_per_agent
             .saturating_mul(u64::from(floor))
@@ -725,9 +743,7 @@ impl AgentDispatcher<'_> {
                 actor: actor.to_owned(),
                 standing,
                 trigger: LandingTrigger::BudgetWarning,
-                reason: Some(
-                    "wrap up: finish the step and hand over what exists".to_owned(),
-                ),
+                reason: Some("wrap up: finish the step and hand over what exists".to_owned()),
                 now,
             })?;
             outcomes.push((*attempt, outcome));
@@ -735,10 +751,7 @@ impl AgentDispatcher<'_> {
         let hold = PartialResultHold {
             root_attempt,
             attempts: attempts.to_vec(),
-            partial_result_refs: partial_result_refs
-                .iter()
-                .map(|id| id.to_hex())
-                .collect(),
+            partial_result_refs: partial_result_refs.iter().map(|id| id.to_hex()).collect(),
             plan,
             reason: reason.to_owned(),
             held_at: now,

@@ -14,9 +14,9 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
-    SecretScanSwitch, SecretsCommand, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmsCommand, ImportCommand, RecoverClockArgs,
+    RecoverWindowArgs, RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
+    SecretScanArgs, SecretScanSwitch, SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -666,6 +666,24 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
     Ok(())
+}
+
+/// The saved fork alarms a held root handoff left, and the owner's
+/// acknowledgement of one; `serve` answers the same at
+/// `/v1/owner/authority/handoff-alarms`.
+pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
+    let serve = match &command {
+        HandoffAlarmsCommand::List(args) => &args.serve,
+        HandoffAlarmsCommand::Acknowledge(args) => &args.serve,
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, "GET /v1/owner/authority/handoff-alarms")?;
+    match command {
+        HandoffAlarmsCommand::List(_) => emit(&vault.authority_handoff_alarms()?),
+        HandoffAlarmsCommand::Acknowledge(args) => {
+            emit(&vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?)
+        }
+    }
 }
 
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {

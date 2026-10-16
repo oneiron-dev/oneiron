@@ -125,6 +125,7 @@ pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
 pub mod task_authority;
+pub mod task_type;
 pub mod task_verb;
 pub mod team;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
@@ -339,7 +340,7 @@ pub use crate::compaction::{
 };
 pub use crate::companion::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
-    EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
+    EnqueueCompanionTaskOutcome,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
@@ -474,6 +475,7 @@ pub use crate::pipeline::{
     world_access_claim_body,
 };
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
+pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 // The provider-confidence shortcut rows are a DISPOSABLE cache with no
 // production control surface — reads repair them and the prior writer moves
 // them, and that is the whole contract. These three seams exist only so the

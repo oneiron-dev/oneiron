@@ -23,10 +23,16 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
     ),
     (
         "CoreQueryRequest",
-        &[(
-            "view",
-            "Optional projection view for returned items. Defaults to summary.",
-        )],
+        &[
+            (
+                "view",
+                "Optional projection view for returned items. Defaults to summary.",
+            ),
+            (
+                "media",
+                "Optional media query (OF-370): base64 bytes the server embeds into one declared space through its ai.embed rung, searched beside query and query_vector.",
+            ),
+        ],
     ),
     (
         "CoreHydrateRequest",

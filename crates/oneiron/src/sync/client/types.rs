@@ -44,7 +44,7 @@ pub struct SyncClientConfig {
     pub residence_home_route: Option<ResidenceHomeRoute>,
     /// Number of default windows to sync (current + previous). Default: 2.
     pub default_window_count: u8,
-    /// Debounce interval for rapid edits before sending. Default: 50ms.
+    /// Node proposal tick interval. Busy writers still flush every tick. Default: 50ms.
     pub sync_debounce_ms: u32,
     /// Maximum reconnection backoff delay. Default: 60s.
     pub reconnect_backoff_max_ms: u32,
@@ -52,6 +52,10 @@ pub struct SyncClientConfig {
     pub reconnect_initial_ms: u32,
     /// Ephemeral state inactivity timeout in milliseconds. Default: 30s.
     pub ephemeral_timeout_ms: i64,
+    /// A carrier to the home other than TCP to `server_url`, such as the
+    /// paired home machine's mesh connection (OF-535). The upgrade still
+    /// names `server_url`, and every slip and machine proof is the same.
+    pub mesh_dialer: Option<std::sync::Arc<dyn crate::sync::SyncDialer>>,
 }
 
 impl Default for SyncClientConfig {
@@ -73,6 +77,7 @@ impl Default for SyncClientConfig {
             reconnect_backoff_max_ms: 60_000,
             reconnect_initial_ms: 1_000,
             ephemeral_timeout_ms: 30_000,
+            mesh_dialer: None,
         }
     }
 }

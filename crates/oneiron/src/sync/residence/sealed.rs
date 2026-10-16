@@ -143,9 +143,9 @@ pub fn shelve_sealed_window(
             };
         }
         let seq = match vault.store.sync_state.get(wtxn, NEXT_KEY)? {
-            Some(raw) => {
-                u64::from_be_bytes(<[u8; 8]>::try_from(raw.as_ref()).map_err(|_| Error::InvalidKey)?)
-            }
+            Some(raw) => u64::from_be_bytes(
+                <[u8; 8]>::try_from(raw.as_ref()).map_err(|_| Error::InvalidKey)?,
+            ),
             None => 1,
         };
         let mut label = seq.to_be_bytes().to_vec();
@@ -184,7 +184,9 @@ pub fn sealed_shelf_after(
         .filter(|(_, seq, window, retired)| {
             !retired
                 && *seq > after
-                && window.world().is_some_and(|world| !withheld.contains(&world))
+                && window
+                    .world()
+                    .is_some_and(|world| !withheld.contains(&world))
         })
         .take(SEALED_SHELF_PAGE_MAX)
         .map(|(id, seq, window, _)| SealedShelfEntry { id, window, seq })
