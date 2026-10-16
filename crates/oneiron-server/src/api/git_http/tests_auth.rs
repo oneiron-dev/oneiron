@@ -428,17 +428,8 @@ mod tests {
             }
         }
         let dir = tempfile::tempdir().unwrap();
-        // The claim and the real HTTP door must read the same clock. A wall
-        // second sampled after the authority clock's first observation can be
-        // one second ahead at a boundary, making a fresh lease look unissued.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let clock = oneiron::store::ports::ManualClock::new(now);
-        let mut vault_config = oneiron::VaultConfig::device();
-        vault_config.store_clock = clock.bundle();
-        let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let config = secret_config();
         let pusher = principal();
         let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
@@ -506,7 +497,12 @@ mod tests {
                     // The test proves admission and stale epoch, not expiry.
                     // Leave ample time for a busy CI host to finish the push.
                     ttl_secs: Some(24 * 60 * 60),
-                    now,
+                    // The caller's own wall second at the claim, which can run
+                    // ahead of the vault's authority clock (ONE-2597).
+                    now: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
                 })
                 .unwrap();
             let lease = leases.get(grant.checkout_id).unwrap().unwrap();
