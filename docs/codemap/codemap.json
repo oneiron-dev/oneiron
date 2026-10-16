@@ -13684,7 +13684,7 @@
      "path": "src/credential_door/door_types.rs",
      "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -26337,6 +26337,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ExchangeBounds",
+      "ScanBounds"
+     ],
+     "path": "src/origin/smart_http/bounds.rs",
+     "purpose": "What one served exchange may cost the machine: how long it may sit idle, how long a push waits for its…",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/origin/smart_http/cgi_finish.rs",
      "purpose": "CGI response framing, observed-ref narrowing, and the exchange-to-report landing commit",
@@ -26386,7 +26401,7 @@
      "path": "src/origin/smart_http/door_window.rs",
      "purpose": "The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -26446,7 +26461,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DoorHooksDir"
@@ -26547,7 +26562,7 @@
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -26558,7 +26573,7 @@
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
       "const": 11,
-      "crate-vis": 19,
+      "crate-vis": 18,
       "fn": 3
      }
     },
@@ -26590,7 +26605,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ExchangeBounds",
       "ServeReport",
       "ServeSink"
      ],
@@ -26599,7 +26613,7 @@
      "surface": {
       "crate-vis": 4,
       "fn": 5,
-      "struct": 2,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -42131,7 +42145,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42686,7 +42700,7 @@
    },
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2571,
+   "source_files": 2572,
    "test_files": 865
   },
   "oneiron-android": {
@@ -52416,7 +52430,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/git_http/tests_lifetime.rs",
@@ -53992,9 +54006,17 @@
      "path": "src/config/limits.rs",
      "purpose": "The `[limits]` section: the bounds on work a remote caller can start at this server",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/config/limits_tests.rs",
+     "purpose": "Resolution rows for the `[limits]` section",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -56893,7 +56915,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57089,10 +57111,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 11,
+   "over_bar": 12,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 353,
-   "test_files": 165
+   "test_files": 166
   },
   "oneiron-spawn": {
    "files": [
