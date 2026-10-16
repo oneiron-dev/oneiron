@@ -499,7 +499,7 @@ pub(super) fn query(
         steps
     };
     let cursor = input.cursor.unwrap_or_default();
-    let mut picked = Picked {
+    let picked = Picked {
         many: filter.is_some() || steps.contains(&Step::All),
         filter,
         limit: input.limit,
