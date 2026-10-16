@@ -628,11 +628,12 @@ fn house_org_in_txn(
     agent: EntityId,
     at: u64,
 ) -> Result<Option<(EntityId, bool)>> {
-    let presets = super::records::PRESET.scan(&vault.store, txn)?;
-    if !presets
-        .iter()
-        .any(|(_, preset)| preset.house_actor_ref == agent)
-    {
+    let presets: Vec<_> = super::records::PRESET
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, row)| row.preset)
+        .collect();
+    if !presets.iter().any(|preset| preset.house_actor_ref == agent) {
         return Ok(None);
     }
     let Some(anchor) = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
@@ -644,7 +645,7 @@ fn house_org_in_txn(
         .shared_vault_creation_in_txn(txn)?
         .map(|creation| creation.vault_id);
     let mut found = None;
-    for (_, preset) in presets {
+    for preset in presets {
         if preset.house_actor_ref != agent || preset.org_ref != anchor.subject_ref {
             continue;
         }
