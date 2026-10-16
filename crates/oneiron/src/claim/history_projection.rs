@@ -216,8 +216,8 @@ pub(crate) fn verified_handoff_chain(
         let Some(parent) = parent else { break };
         let id =
             EntityId::from_bytes(parent[..16].try_into().map_err(|_| bad())?).map_err(|_| bad())?;
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
-            .ok_or_else(missing)?;
+        let raw =
+            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or_else(missing)?;
         let h = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine handoff header"))?;
         if h.entity_type != crate::registry::ENTITY_TYPE_CLAIM {

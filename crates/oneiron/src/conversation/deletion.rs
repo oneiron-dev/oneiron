@@ -288,7 +288,8 @@ pub(crate) fn replay_room_message_tombstone(
     turn: EntityId,
     raw_value: &[u8],
 ) -> Result<()> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &turn)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &turn)?
+    else {
         return Ok(());
     };
     if raw.first() != Some(&ENTITY_TYPE_TURN) {
@@ -585,17 +586,14 @@ impl Vault {
             ),
         };
         let author = author.ok_or_else(denied)?;
-        let class = match crate::ports::EntityStoreRead::port_entity_raw(
-            &self.store,
-            &txn,
-            &author,
-        )?
-        .and_then(|raw| raw.first().copied())
-        {
-            Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => crate::edge::EdgeActorClass::Agent,
-            Some(crate::registry::ENTITY_TYPE_MACHINE) => crate::edge::EdgeActorClass::System,
-            _ => crate::edge::EdgeActorClass::Human,
-        };
+        let class =
+            match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &author)?
+                .and_then(|raw| raw.first().copied())
+            {
+                Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => crate::edge::EdgeActorClass::Agent,
+                Some(crate::registry::ENTITY_TYPE_MACHINE) => crate::edge::EdgeActorClass::System,
+                _ => crate::edge::EdgeActorClass::Human,
+            };
         drop(txn);
         self.delete_room_record(room, record, WriteActor::new(author, class), reason)
     }
