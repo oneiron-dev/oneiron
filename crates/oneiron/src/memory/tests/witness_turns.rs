@@ -1661,3 +1661,57 @@ fn a_turn_fill_leased_before_the_owner_binding_does_not_land() {
         "work leased under the owner lands"
     );
 }
+
+/// F30 (H227): a witnessed turn is learned at its occurrence time, so the door
+/// refuses one past the store clock's skew with a typed bad request: a
+/// far-future row can no longer carry the consolidation watermark past every
+/// later turn. A turn at the clock's edge still lands, and the close plans the
+/// current turn with the watermark inside the skew.
+#[test]
+fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x61);
+    let facade = facade_for(&vault, actor);
+    let now = vault.store.clock.now_recorded_at();
+    let turn = |seed: u8, occurred_at: u64| WitnessTurn {
+        conversation_ref: EntityId::from_bytes([seed; 16])
+            .expect("conversation id")
+            .to_hex(),
+        turn_ref: None,
+        messages: vec![witness_message(0, WitnessAuthor::User, "a plain turn")],
+        occurred_at,
+    };
+
+    let refused = facade
+        .witness(&turn(0x62, now + 10 * 365 * 86_400))
+        .expect_err("a far-future witness is refused");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    facade
+        .witness(&turn(0x63, now))
+        .expect("a current turn lands");
+    facade
+        .witness(&turn(0x64, now + 60))
+        .expect("a turn inside the clock skew lands");
+    // The structural door takes a caller learned time, so it holds a TURN to
+    // the same ceiling.
+    let structural = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "TURN".to_owned(),
+            body: serde_json::json!({"speaker": "user"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: now,
+            learned_at: Some(now + 10 * 365 * 86_400),
+        })
+        .expect_err("a far-future structural turn is refused");
+    assert_eq!(structural.code, MEMORY_CODE_BAD_REQUEST);
+
+    let advance = production_close_wake(&vault)
+        .advance_watermark_to
+        .expect("the current turns are dirty");
+    assert!(
+        advance <= vault.store.clock.now_recorded_at() + 300,
+        "the watermark would advance to {advance}"
+    );
+}

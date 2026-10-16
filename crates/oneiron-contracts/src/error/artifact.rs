@@ -136,8 +136,8 @@ pub enum ArtifactError {
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
     InvalidRecoveryArtifact(&'static str),
-    /// A recovery artifact was invalid, but every sibling `.invalid-N`
-    /// quarantine target was occupied.
+    /// A recovery artifact was invalid, but every fresh random sibling
+    /// `.invalid-<hex>` name quarantine tried was occupied.
     #[error(
         "recovery artifact quarantine suffix space exhausted for {}",
         path.display()

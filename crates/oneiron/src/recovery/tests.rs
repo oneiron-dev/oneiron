@@ -2,18 +2,24 @@ use super::*;
 
 const ARTIFACT_TYPE_FIXTURE: u16 = 42;
 
-fn assert_invalid_suffix(path: &Path, original: &Path, suffix: u16) {
-    let mut expected = original
+/// `path` is a quarantine sibling of `original`: its name plus the invalid
+/// prefix and 16 random hex digits (F33).
+fn assert_invalid_suffix(path: &Path, original: &Path) {
+    let mut prefix = original
         .file_name()
         .and_then(|name| name.to_str())
         .expect("test artifact path is valid UTF-8")
         .to_owned();
-    expected.push_str(&format!(
-        "{RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX}{suffix}"
-    ));
-    assert_eq!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some(expected.as_str())
+    prefix.push_str(RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("quarantine path is valid UTF-8");
+    let suffix = name.strip_prefix(&prefix).expect("quarantine sibling name");
+    assert_eq!(path.parent(), original.parent());
+    assert!(
+        suffix.len() == 16 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{name}"
     );
 }
 
@@ -39,7 +45,7 @@ fn corrupt_magic_artifact_quarantines_without_losing_bytes() -> Result<()> {
     );
     assert!(!artifact_path.exists(), "invalid source is moved aside");
     assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
+    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path);
     Ok(())
 }
 
@@ -67,7 +73,7 @@ fn corrupt_checksum_artifact_quarantines_without_losing_bytes() -> Result<()> {
     );
     assert!(!artifact_path.exists(), "invalid source is moved aside");
     assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
+    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path);
     Ok(())
 }
 
@@ -95,7 +101,7 @@ fn artifact_type_tamper_quarantines_as_checksum_mismatch() -> Result<()> {
     );
     assert!(!artifact_path.exists(), "tampered source is moved aside");
     assert_eq!(fs::read(&quarantined.quarantine_path)?, tampered);
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
+    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path);
     Ok(())
 }
 
@@ -121,7 +127,7 @@ fn valid_artifact_with_unexpected_type_quarantines_without_use() -> Result<()> {
     );
     assert!(!artifact_path.exists(), "unexpected source is moved aside");
     assert_eq!(fs::read(&quarantined.quarantine_path)?, encoded);
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
+    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path);
     Ok(())
 }
 
@@ -150,19 +156,52 @@ fn repeated_invalid_artifact_quarantine_preserves_each_original() -> Result<()> 
     assert_eq!(fs::read(&first.quarantine_path)?, corrupt);
     assert_eq!(fs::read(&second.quarantine_path)?, corrupt);
     assert!(!artifact_path.exists(), "second source is removed");
-    assert_invalid_suffix(&second.quarantine_path, &artifact_path, 2);
+    assert_invalid_suffix(&second.quarantine_path, &artifact_path);
     Ok(())
 }
 
+/// Quarantine's rename never replaces an existing leaf, a planted symlink
+/// included, so a writer cannot redirect where the artifact bytes land.
 #[cfg(unix)]
 #[test]
-fn quarantine_skips_symlink_candidate_to_preserve_bytes() -> Result<()> {
+fn quarantine_rename_never_replaces_a_planted_symlink() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let artifact_path = dir.path().join("snapshot.oneiron-artifact");
+    fs::write(&artifact_path, b"artifact bytes")?;
+    let elsewhere = dir.path().join("elsewhere");
+    fs::write(&elsewhere, b"other bytes")?;
+    let planted = invalid_artifact_path(&artifact_path, "0000000000000001");
+    std::os::unix::fs::symlink(&elsewhere, &planted)?;
+
+    let error = super::quarantine::rename_no_replace(&artifact_path, &planted)
+        .expect_err("an existing symlink is never replaced");
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert!(fs::symlink_metadata(&planted)?.file_type().is_symlink());
+    assert_eq!(fs::read(&artifact_path)?, b"artifact bytes");
+    assert_eq!(fs::read(&elsewhere)?, b"other bytes");
+    Ok(())
+}
+
+/// F33 (H57): a writer in the artifact directory holding every name the old
+/// quarantine probed (`.invalid-1` to `.invalid-65535`, a directory at the
+/// first) cannot stop quarantine: the artifact moves to a fresh random name
+/// and every foreign leaf stays as it was.
+#[test]
+fn quarantine_survives_a_reserved_predictable_name_range() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let artifact_path = dir.path().join("snapshot.oneiron-artifact");
     let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
     corrupt[HEADER_LEN] ^= 0x01;
     fs::write(&artifact_path, &corrupt)?;
-    std::os::unix::fs::symlink(&artifact_path, invalid_artifact_path(&artifact_path, 1))?;
+    let reserved = |n: u16| {
+        dir.path().join(format!(
+            "snapshot.oneiron-artifact{RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX}{n}"
+        ))
+    };
+    fs::create_dir(reserved(1))?;
+    for n in 2..=u16::MAX {
+        fs::File::create(reserved(n))?;
+    }
 
     let RecoveryArtifactLoad::Quarantined(quarantined) =
         load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
@@ -170,9 +209,16 @@ fn quarantine_skips_symlink_candidate_to_preserve_bytes() -> Result<()> {
         panic!("corrupt artifact should quarantine");
     };
 
+    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path);
     assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
-    assert!(!artifact_path.exists(), "source is removed after fallback");
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 2);
+    assert!(!artifact_path.exists(), "source is removed");
+    assert!(reserved(1).is_dir());
+    assert_eq!(fs::read(reserved(u16::MAX))?, b"");
+    assert_eq!(
+        fs::read_dir(dir.path())?.count(),
+        usize::from(u16::MAX) + 1,
+        "every foreign leaf stays, beside the quarantined artifact"
+    );
     Ok(())
 }
 
@@ -190,7 +236,7 @@ fn quarantine_preserves_validated_bytes_when_source_changes() -> Result<()> {
         Err(Error::ConcurrentWrite(_))
     ));
     assert_eq!(fs::read(&artifact_path)?, concurrently_written);
-    assert!(!invalid_artifact_path(&artifact_path, 1).exists());
+    assert!(invalid_artifact_siblings(&artifact_path).is_empty());
     Ok(())
 }
 
@@ -218,6 +264,6 @@ fn unsupported_artifact_version_quarantines_without_use() -> Result<()> {
     );
     assert!(!artifact_path.exists(), "unsupported source is moved aside");
     assert_eq!(fs::read(&quarantined.quarantine_path)?, future);
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path, 1);
+    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path);
     Ok(())
 }

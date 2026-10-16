@@ -278,13 +278,34 @@ fn recovery_artifact_checksum(artifact_type: u16, payload: &[u8]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-fn invalid_artifact_path(path: &Path, suffix: u16) -> PathBuf {
+fn invalid_artifact_path(path: &Path, suffix: &str) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut file_name = path
         .file_name()
         .map_or_else(|| OsString::from("artifact"), OsString::from);
     file_name.push(format!("{RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX}{suffix}"));
     parent.join(file_name)
+}
+
+/// Every quarantine sibling of `path`, whatever its random suffix.
+#[cfg(test)]
+fn invalid_artifact_siblings(path: &Path) -> Vec<PathBuf> {
+    let mut prefix = path.file_name().unwrap_or_default().to_os_string();
+    prefix.push(RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX);
+    let prefix = prefix.to_string_lossy().into_owned();
+    let mut siblings: Vec<PathBuf> = fs::read_dir(path.parent().unwrap_or_else(|| Path::new(".")))
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .collect()
+        })
+        .unwrap_or_default();
+    siblings.retain(|sibling| {
+        sibling
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+    });
+    siblings
 }
 
 #[cfg(test)]

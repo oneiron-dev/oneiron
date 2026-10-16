@@ -187,6 +187,56 @@ def run():
         return False
 
 
+def string_edit_manifest():
+    """F39 (H137): a declared fragment edit may swap a string literal only for
+    an include_str!/include_bytes! path whose directory depth changed. A move
+    manifest declaring an auth-header or allowlist rewrite as an edit is
+    refused; the include-depth edit still passes."""
+    consumer = "crates/oneiron/src/consumer.rs"
+
+    def gate(old_line, new_line):
+        base, head = dict(BASE), dict(HEAD)
+        base[consumer] = BASE[consumer] + old_line + "\n"
+        head[consumer] = HEAD[consumer] + new_line + "\n"
+        decls = DECLS.replace("## edit\n", f"## edit\n{consumer}\t{old_line}\t{new_line}\n")
+        import tempfile
+        d = tempfile.mkdtemp(prefix="v2strings-")
+        open(f"{d}/synth.tsv", "w").write(TSV)
+        open(f"{d}/synth.decls", "w").write(decls)
+        D.base_file = lambda root, b, path: base.get(path)
+        D.head_file = lambda root, path: head.get(path)
+        D.changed_files = lambda root, b: sorted(set(base) | set(head))
+        D.glob.glob = lambda pat: []
+        try:
+            list(D.run_checks("/root", "synth", "BASE", d))
+            return True
+        except D.Violation:
+            return False
+
+    cases = [
+        (not gate('pub const AUTH: &str = "Authorization";',
+                  'pub const AUTH: &str = "X-Debug";'),
+         "auth-header string rewrite refused"),
+        (not gate('pub const ALLOW: [&str; 1] = ["owner"];',
+                  'pub const ALLOW: [&str; 1] = ["*"];'),
+         "allowlist string rewrite refused"),
+        (not gate('pub const DOC: &str = include_str!("../a.md");',
+                  'pub const DOC: &str = include_str!("../../b.md");'),
+         "include path to another file refused"),
+        (not gate('pub const TEXT: &str = r#"" include_str!("../policy") ""#;',
+                  'pub const TEXT: &str = r#"" include_str!("../../policy") ""#;'),
+         "include-looking raw-string rewrite refused"),
+        (gate('pub const DOC: &str = include_str!("../a.md");',
+              'pub const DOC: &str = include_str!("../../a.md");'),
+         "include path depth change passes"),
+    ]
+    ok = True
+    for good, name in cases:
+        print("  ", "ok" if good else "FAIL", "manifest:", name)
+        ok = ok and good
+    return ok
+
+
 def edit_props():
     """edit_delta_ok boundary properties (comment-interior frag-edit class,
     #423 comment-atomic residual): interiors obey the same strict path rules;
@@ -226,6 +276,23 @@ def edit_props():
          "code string-literal swap still legal"),
         (R.edit_delta_ok("fn f()", "pub(crate) fn f()"),
          "code pub(crate) promotion still legal"),
+        # F39 (H137): the string exception is an include path depth change
+        # only; any other literal swap, alone or beside one, is refused
+        (not R.edit_delta_ok('let k = "Authorization";', 'let k = "X-Debug";'),
+         "auth-header literal swap rejected"),
+        (not R.edit_delta_ok('f("a", include_str!("../x"))', 'f("b", include_str!("../../x"))'),
+         "literal swap beside an include rejected"),
+        (not R.edit_delta_ok('include_str!("../a.md")', 'include_str!("../b.md")'),
+         "include path to another file rejected"),
+        (not R.edit_delta_ok('include_str!("../a.md")', 'include_str!("/etc/a.md")'),
+         "include path made absolute rejected"),
+        (R.edit_delta_ok('include_bytes!("x.bin")', 'include_bytes!("../x.bin")'),
+         "include_bytes depth change legal"),
+        (not R.edit_delta_ok('let t = r#"" include_str!("../p") ""#;',
+                             'let t = r#"" include_str!("../../p") ""#;'),
+         "include-looking text inside a raw string rejected"),
+        (not R.edit_delta_ok('let t = br"a";', 'let t = br"b";'),
+         "raw byte-string swap rejected"),
     ]
     ok = True
     for good, name in cases:
@@ -328,9 +395,11 @@ if __name__ == "__main__":
     cp = canon_props()
     print("### edit_delta_ok boundary properties (comment-interior frag-edits):")
     ep = edit_props()
+    print("### F39 declared string edits (include path depth only):")
+    se = string_edit_manifest()
     print("### check 6 combined-multiset properties (move-into-new-file netting):")
     c6 = check6_props()
     print("### v2 synthetic (move-to-new-file + insertion + edit + comment + flat-name):")
-    ok = cp and ep and c6 and run() and fr.returncode == 0
+    ok = cp and ep and se and c6 and run() and fr.returncode == 0
     print("\nRESULT:", "PASS" if ok else "PROBLEM")
     sys.exit(0 if ok else 1)

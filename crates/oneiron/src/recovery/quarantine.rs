@@ -2,10 +2,16 @@
 
 use super::invalid_artifact_path;
 use crate::error::{ArtifactError, Error, Result};
+use rand_core::{OsRng, RngCore};
 use std::{
     fs, io,
     path::{Path, PathBuf},
 };
+
+/// Fresh names tried before quarantine fails. Each carries 64 random bits, so
+/// a writer in the artifact directory cannot reserve them ahead (F33); only a
+/// run of collisions reaches the bound.
+const QUARANTINE_NAME_ATTEMPTS: usize = 8;
 
 pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Result<PathBuf> {
     // A changed source is not the artifact we validated. Leave it alone.
@@ -14,8 +20,14 @@ pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Resul
             "recovery artifact changed before quarantine",
         ));
     }
-    for suffix in 1..=u16::MAX {
-        let candidate = invalid_artifact_path(path, suffix);
+    for _ in 0..QUARANTINE_NAME_ATTEMPTS {
+        let mut suffix = [0_u8; 8];
+        // A failed OS randomness read is an error, never a panic.
+        OsRng
+            .try_fill_bytes(&mut suffix)
+            .map_err(|_| io::Error::other("os randomness unavailable"))?;
+        let candidate =
+            invalid_artifact_path(path, &format!("{:016x}", u64::from_be_bytes(suffix)));
         match rename_no_replace(path, &candidate) {
             Ok(()) => {
                 // Rename consumes exactly one directory entry, not a later

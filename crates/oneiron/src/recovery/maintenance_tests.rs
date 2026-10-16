@@ -138,10 +138,13 @@ fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_sn
         RecoveryBudget::default(),
     )?;
     assert_eq!(repaired.tier, RecoveryTier::FullRebuild);
-    let quarantine = dir.join(format!("{window}.manifest.invalid-1"));
+    let quarantine = repaired
+        .quarantine_path
+        .clone()
+        .expect("quarantined manifest");
     assert_eq!(
-        repaired.quarantine_path.as_deref(),
-        Some(quarantine.as_path())
+        invalid_artifact_siblings(&manifest),
+        vec![quarantine.clone()]
     );
     assert_eq!(std::fs::read(&quarantine)?, b"corrupt manifest");
     assert_eq!(
@@ -153,7 +156,11 @@ fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_sn
         files(&dir),
         [
             format!("{window}.manifest"),
-            format!("{window}.manifest.invalid-1")
+            quarantine
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("quarantine name")
+                .to_owned()
         ],
         "no snapshot file remains"
     );

@@ -581,7 +581,7 @@ fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Resu
     assert_eq!(error.kind(), crate::error::ErrorKind::OverlayLimit);
     assert!(error.is_retryable());
     assert_eq!(fs::read(&path)?, b"bad manifest");
-    assert!(!invalid_artifact_path(&path, 1).exists());
+    assert!(invalid_artifact_siblings(&path).is_empty());
     let prepared = prepare_recovery(&path, snapshot, RecoveryBudget::default())?;
     assert_eq!(prepared.tier, RecoveryTier::FullRebuild);
     assert_eq!(
@@ -992,7 +992,7 @@ fn hard_delete_marker_blocks_soft_shell_recreation_without_quarantining_manifest
     assert!(target.get_raw(&fixture.soft)?.is_none());
     assert!(target.get_raw(&fixture.note)?.is_none());
     assert_eq!(fs::read(&path)?, b"bad");
-    assert!(!invalid_artifact_path(&path, 1).exists());
+    assert!(invalid_artifact_siblings(&path).is_empty());
     Ok(())
 }
 
@@ -1383,7 +1383,7 @@ fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_prefligh
     );
     assert_eq!(target.note_text(fixture.note)?, before);
     assert_eq!(fs::read(&path)?, b"do not quarantine on preflight error");
-    assert!(!invalid_artifact_path(&path, 1).exists());
+    assert!(invalid_artifact_siblings(&path).is_empty());
     Ok(())
 }
 
