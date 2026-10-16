@@ -40579,7 +40579,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "re-export": 2,
       "struct": 3
      }
@@ -40695,7 +40695,7 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "fn": 15,
+      "fn": 16,
       "re-export": 2,
       "struct": 3
      }
@@ -41351,7 +41351,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 12,
       "re-export": 6,
       "struct": 2
@@ -41407,12 +41407,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "WindowDemotion"
+     ],
      "path": "src/sync/residence/prune.rs",
-     "purpose": "Last-touch accounting and pruning for opened-item read caches",
+     "purpose": "Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
