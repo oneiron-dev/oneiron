@@ -160,6 +160,31 @@ impl RetrievalDeadline {
         }
         Ok(())
     }
+    /// When a typed decision's work stops. A quarter of the time stays the answer's, for
+    /// validation, the receipt and delivery, under [`Self::at`] as under [`Self::hard`].
+    fn decision_work_by(&self) -> Instant {
+        let total = self.at.saturating_duration_since(self.origin);
+        self.stages_by.min(self.origin + total / 4 * STAGE_QUARTERS)
+    }
+    /// The work time a typed decision has left. A provider's client waits no longer.
+    #[must_use]
+    pub fn decision_time_left(&self) -> Duration {
+        self.decision_work_by()
+            .saturating_duration_since(self.now())
+    }
+    /// Whether a typed decision may start a measurement: the caller has not taken the
+    /// answer early, and the work time is not spent.
+    pub(crate) fn decision_may_start(&self) -> bool {
+        !self.cancelled.load(Ordering::Relaxed) && self.now() < self.decision_work_by()
+    }
+    /// The call's whole budget, from its start to the answer's time.
+    pub(crate) fn budget(&self) -> Duration {
+        self.at.saturating_duration_since(self.origin)
+    }
+    /// The time the call has used so far.
+    pub(crate) fn used(&self) -> Duration {
+        self.now().saturating_duration_since(self.origin)
+    }
 }
 
 /// `signal`'s bit in [`RetrievalDeadline`]'s channel sets.
@@ -193,6 +218,11 @@ impl RetrievalDeadline {
             }
             None => std::thread::sleep(step),
         }
+    }
+    /// Spends `step` of a slow test decision provider, on the call's own clock.
+    #[doc(hidden)]
+    pub fn spend_for_test(&self, step: Duration) {
+        self.spend(step);
     }
 }
 

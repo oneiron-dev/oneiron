@@ -1,15 +1,19 @@
 //! Opt-in, non-light typed-decision seat and its receipt boundary.
 
+use super::ladder::millis;
 use super::{
     AnswerContract, DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung,
-    HumanAskReason, ProviderPin, TypedDecision,
+    DecisionTime, HumanAskReason, ProviderPin, Reasoning, ReasoningCause, Reversibility, StopCause,
+    TypedDecision,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{
     BudgetGuard, BudgetLease, EntityId, FatalLlmError, HostingPrivacyPosture, LlmResult, LlmUsage,
 };
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 /// The remote call is never admitted on a light query or synchronous relay path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,13 +84,29 @@ pub type SeatFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<SeatAnswer>> + S
 
 /// A provider-specific seat behind the shared typed-decision boundary.
 /// Hosts select providers; this trait never selects an egress route itself.
+/// `time_left` is the call's work time left: a seat with a native deadline gets it,
+/// and its client waits no longer.
 pub trait DecisionSeat: Send + Sync {
     fn pin(&self) -> ProviderPin;
-    fn ask<'a>(&'a self, request: SeatRequest, lease: &'a BudgetLease) -> SeatFuture<'a>;
+    fn ask<'a>(
+        &'a self,
+        request: SeatRequest,
+        lease: &'a BudgetLease,
+        time_left: Duration,
+    ) -> SeatFuture<'a>;
 }
 
-/// One off-hot remote rung. The caller owns access-scoped state and subsequent
-/// escalation; uncertainty or disagreement is a hold, never an accepted verdict.
+/// One off-hot remote rung under the call's one clock, `deadline`. The caller owns
+/// access-scoped state and subsequent escalation; uncertainty or disagreement is a
+/// hold, never an accepted verdict. No measurement starts once the work time is spent.
+/// A reply after the answer's time, or a failure once the work time is spent, is the
+/// cut: its lease is charged its reservation, since the provider may still bill. At
+/// the cut a reversible step takes the answer it holds and an irreversible one
+/// abstains; with no answer the call abstains.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the call's clock and its step's reversibility join the seat's request"
+)]
 pub async fn decide_at_remote_seat(
     seat: &dyn DecisionSeat,
     request: SeatRequest,
@@ -94,6 +114,8 @@ pub async fn decide_at_remote_seat(
     evidence: Vec<EntityId>,
     dial: DecisionDial,
     guard: &BudgetGuard,
+    reversibility: Reversibility,
+    deadline: &RetrievalDeadline,
 ) -> LlmResult<TypedDecision> {
     request.validate_remote()?;
     dial.band
@@ -109,64 +131,116 @@ pub async fn decide_at_remote_seat(
     {
         return Err(FatalLlmError::InvalidRequest.into());
     }
+    let mut providers = Vec::new();
+    let mut stop = StopCause::Done;
+    let mut reasoning = Reasoning::NotNeeded;
+    let mut answer = DecisionAnswer::Abstain;
+    let mut probability = None;
+    let mut human_ask = Some(HumanAskReason::Deadline);
     // Each measurement is admitted and settled as its own call. A retry cannot
     // silently reuse the first terminal lease or exceed the caller's budget.
-    let first_lease = guard.admit()?.lease;
-    let first = seat.ask(request.clone(), &first_lease).await;
-    let first = match first {
-        Ok(first) => {
-            guard.settle_per_call(&first_lease, &first.usage)?;
-            first
+    let first = if deadline.decision_may_start() {
+        let first_lease = guard.admit()?.lease;
+        providers.push(pin.clone());
+        let first = seat
+            .ask(request.clone(), &first_lease, deadline.decision_time_left())
+            .await;
+        match first {
+            Ok(first) => {
+                guard.settle_per_call(&first_lease, &first.usage)?;
+                (!deadline.answer_due()).then_some(first)
+            }
+            Err(error) => {
+                guard.settle_reserved(&first_lease)?;
+                if deadline.decision_may_start() {
+                    return Err(error);
+                }
+                None
+            }
         }
-        Err(error) => {
-            guard.settle_reserved(&first_lease)?;
-            return Err(error);
-        }
+    } else {
+        None
     };
-    check_answer(&request, &first)?;
-    let mut providers = vec![pin.clone()];
-    let mut answer = first.answer.clone();
-    let mut probability = Some(first.probability);
-    let mut human_ask = None;
-    // A negative accept-type Noul requires a fresh admitted measurement.
-    if request.question.accept_type
-        && matches!(request.question.contract, AnswerContract::Noul)
-        && answer == DecisionAnswer::Noul(false)
-        && first.probability < dial.band.low
-    {
-        match guard.admit() {
-            Ok(admission) => {
-                providers.push(pin);
-                let second = seat.ask(request.clone(), &admission.lease).await;
-                match second {
-                    Ok(second) => {
-                        guard.settle_per_call(&admission.lease, &second.usage)?;
-                        if check_answer(&request, &second).is_err() {
+    match first {
+        None => stop = StopCause::Deadline,
+        Some(first) => {
+            check_answer(&request, &first)?;
+            answer = first.answer.clone();
+            probability = Some(first.probability);
+            human_ask = None;
+            // A negative accept-type Noul requires a fresh admitted measurement.
+            if request.question.accept_type
+                && matches!(request.question.contract, AnswerContract::Noul)
+                && answer == DecisionAnswer::Noul(false)
+                && first.probability < dial.band.low
+            {
+                let cause = ReasoningCause::SecondMeasurement;
+                if !deadline.decision_may_start() {
+                    stop = StopCause::Deadline;
+                    reasoning = Reasoning::Skipped(cause);
+                } else {
+                    match guard.admit() {
+                        Ok(admission) => {
+                            reasoning = Reasoning::Ran(cause);
+                            providers.push(pin);
+                            let second = seat
+                                .ask(
+                                    request.clone(),
+                                    &admission.lease,
+                                    deadline.decision_time_left(),
+                                )
+                                .await;
+                            match second {
+                                Ok(second) => {
+                                    guard.settle_per_call(&admission.lease, &second.usage)?;
+                                    if deadline.answer_due() {
+                                        stop = StopCause::Deadline;
+                                        reasoning = Reasoning::Cut(cause);
+                                    } else if check_answer(&request, &second).is_err() {
+                                        answer = DecisionAnswer::Abstain;
+                                        probability = None;
+                                        human_ask = Some(HumanAskReason::ProviderUnavailable);
+                                        stop = StopCause::ProviderFailure;
+                                    } else if second.answer != DecisionAnswer::Noul(false)
+                                        || second.probability >= dial.band.low
+                                    {
+                                        answer = DecisionAnswer::Abstain;
+                                        probability = None;
+                                        human_ask = Some(HumanAskReason::Disagreement);
+                                    } else {
+                                        probability = Some(second.probability);
+                                    }
+                                }
+                                Err(_) => {
+                                    guard.settle_reserved(&admission.lease)?;
+                                    if deadline.decision_may_start() {
+                                        answer = DecisionAnswer::Abstain;
+                                        probability = None;
+                                        human_ask = Some(HumanAskReason::ProviderUnavailable);
+                                        stop = StopCause::ProviderFailure;
+                                    } else {
+                                        stop = StopCause::Deadline;
+                                        reasoning = Reasoning::Cut(cause);
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            reasoning = Reasoning::Skipped(cause);
                             answer = DecisionAnswer::Abstain;
                             probability = None;
                             human_ask = Some(HumanAskReason::ProviderUnavailable);
-                        } else if second.answer != DecisionAnswer::Noul(false)
-                            || second.probability >= dial.band.low
-                        {
-                            answer = DecisionAnswer::Abstain;
-                            probability = None;
-                            human_ask = Some(HumanAskReason::Disagreement);
-                        } else {
-                            probability = Some(second.probability);
+                            stop = StopCause::ProviderFailure;
                         }
                     }
-                    Err(_) => {
-                        guard.settle_reserved(&admission.lease)?;
-                        answer = DecisionAnswer::Abstain;
-                        probability = None;
-                        human_ask = Some(HumanAskReason::ProviderUnavailable);
-                    }
                 }
-            }
-            Err(_) => {
-                answer = DecisionAnswer::Abstain;
-                probability = None;
-                human_ask = Some(HumanAskReason::ProviderUnavailable);
+                // The second measurement did not finish: an irreversible step never
+                // takes the unfinished negative.
+                if stop == StopCause::Deadline && reversibility == Reversibility::OutboundEffect {
+                    answer = DecisionAnswer::Abstain;
+                    probability = None;
+                    human_ask = Some(HumanAskReason::Deadline);
+                }
             }
         }
     }
@@ -180,6 +254,7 @@ pub async fn decide_at_remote_seat(
         answer = DecisionAnswer::Abstain;
         human_ask = Some(HumanAskReason::Uncertain);
     }
+    let answered = (answer != DecisionAnswer::Abstain).then_some(DecisionRung::SystemOne);
     Ok(TypedDecision {
         answer,
         probability,
@@ -196,6 +271,13 @@ pub async fn decide_at_remote_seat(
             cost_per_thousand: None,
             paired: Vec::new(),
             person: Vec::new(),
+            time: Some(DecisionTime {
+                budget_ms: millis(deadline.budget()),
+                used_ms: millis(deadline.used()),
+                stop,
+                answered,
+                reasoning,
+            }),
         },
         human_ask,
     })

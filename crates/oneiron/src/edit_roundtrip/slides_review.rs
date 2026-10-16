@@ -290,6 +290,7 @@ pub fn review_slides(
                         cost_per_thousand: None,
                         paired: paired[index].clone(),
                         person: person[index].clone(),
+                        time: None,
                     },
                     human_ask: None,
                 };

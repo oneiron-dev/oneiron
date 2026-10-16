@@ -371,6 +371,7 @@ fn answer_unit(
                         .into_iter()
                         .collect(),
                     person: Vec::new(),
+                    time: None,
                 },
                 human_ask: None,
             },

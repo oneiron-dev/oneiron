@@ -6,6 +6,7 @@ use super::ladder::{DecisionProvider, PairedAnswer, ProviderDecision, validate_p
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
 use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet};
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
 
@@ -91,6 +92,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         &self,
         question: &DecisionQuestion,
         evidence: &[EntityId],
+        deadline: &RetrievalDeadline,
     ) -> Result<ProviderDecision> {
         if question != self.call.question || evidence != self.call.evidence {
             return Err(invalid("decision read prepared for another call"));
@@ -110,6 +112,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             },
             paired: &self.paired.text,
             person: self.person.map(|person| person.text.as_str()),
+            time_left: Some(deadline.decision_time_left()),
         };
         let lease = self
             .guard

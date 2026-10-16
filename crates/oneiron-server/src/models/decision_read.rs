@@ -351,8 +351,16 @@ impl LabelReadModel for DecisionReader {
         let person = request.person.is_some();
         let rows = self.recipe.rows(count, person).map_err(refused)?;
         let prompt = self.recipe.render(&read).map_err(refused)?;
-        self.runtime
-            .block_on(self.read_prompt(prompt, rows, count, person))
+        let read = self.read_prompt(prompt, rows, count, person);
+        // One bound for the tokenizer and completion waits: the decision's time left.
+        match request.time_left {
+            Some(time_left) => self.runtime.block_on(async {
+                tokio::time::timeout(time_left, read)
+                    .await
+                    .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
+            }),
+            None => self.runtime.block_on(read),
+        }
     }
 }
 

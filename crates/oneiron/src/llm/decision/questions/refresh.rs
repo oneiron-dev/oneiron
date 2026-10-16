@@ -163,6 +163,7 @@ pub fn refresh_question(
                         cost_per_thousand: None,
                         paired: p.proposal.paired.clone(),
                         person: Vec::new(),
+                        time: None,
                     },
                     human_ask: None,
                 },

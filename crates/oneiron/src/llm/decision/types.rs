@@ -203,6 +203,56 @@ pub struct DecisionReceipt {
     /// whether or not it routed the decision. A missing reading has no row, as above.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub person: Vec<PairedReading>,
+    /// The call's clock: its budget, the time used, why it stopped and the rung that
+    /// answered. Absent on a receipt made off the decision clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<DecisionTime>,
+}
+
+/// What the decision deadline left on a receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionTime {
+    pub budget_ms: u64,
+    pub used_ms: u64,
+    pub stop: StopCause,
+    /// The rung whose answer stands; none when the call abstained or asked a person.
+    pub answered: Option<DecisionRung>,
+    pub reasoning: Reasoning,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopCause {
+    Done,
+    /// The deadline cut work the call still wanted, or the caller took the answer early.
+    Deadline,
+    ProviderFailure,
+}
+
+/// Whether more thinking (a stronger rung, or a required second measurement) ran,
+/// and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", content = "cause", rename_all = "snake_case")]
+pub enum Reasoning {
+    /// A clear answer stopped there.
+    NotNeeded,
+    Ran(ReasoningCause),
+    /// It did not start: no time was left, or its admission was refused.
+    Skipped(ReasoningCause),
+    /// It started, and the deadline came before its answer.
+    Cut(ReasoningCause),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningCause {
+    /// The paired "does this need more thinking?" reading reached its row.
+    PairedHigh,
+    /// The answer fell inside an enforced band.
+    SmallMargin,
+    /// A confident negative on an accept-type question needs a second measurement.
+    SecondMeasurement,
 }
 
 /// A yes/no reading taken with the answer ("does this need more thinking?" or "ask a
@@ -321,6 +371,8 @@ pub enum HumanAskReason {
     OwnerSelected,
     /// The read's P(ask a person) reached the owner's threshold row.
     NeedsPerson,
+    /// The deadline cut the call, and its step cannot take an unfinished answer.
+    Deadline,
 }
 
 pub(super) fn invalid(message: &str) -> Error {

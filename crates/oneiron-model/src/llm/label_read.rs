@@ -35,6 +35,9 @@ pub struct LabelReadRequest<'a> {
     pub paired: &'a str,
     /// The person yes/no question, read in that same evaluation when present.
     pub person: Option<&'a str>,
+    /// The decision's work time left; the reader's client waits no longer. None keeps
+    /// the provider's own timeout.
+    pub time_left: Option<std::time::Duration>,
 }
 
 /// Probabilities from one forward evaluation.
