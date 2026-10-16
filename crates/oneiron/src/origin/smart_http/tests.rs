@@ -30,6 +30,7 @@ pub(super) fn fixture_intent_with_pointers(
         verdict: DoorWindowVerdict::Clean,
         ref_updates: updates,
         lfs_pointers,
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault
@@ -53,6 +54,7 @@ pub(super) fn fixture_attribution(
         verdict: DoorWindowVerdict::Clean,
         ref_updates: outcome.ref_updates.clone(),
         lfs_pointers: outcome.lfs_pointers.clone(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault

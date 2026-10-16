@@ -47,6 +47,7 @@ mod tests {
                 verdict: smart_http::DoorWindowVerdict::Clean,
                 ref_updates: Vec::new(),
                 lfs_pointers: Vec::new(),
+                ref_lfs_pointers: Vec::new(),
                 quarantine_path: None,
             },
             outcome: None,

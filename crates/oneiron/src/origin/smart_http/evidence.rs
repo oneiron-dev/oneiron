@@ -85,9 +85,9 @@ pub struct ReceivePackOutcome {
     pub repo_root: PathBuf,
     /// The ref moves the push proposed, as the door window saw them.
     pub ref_updates: Vec<RefUpdate>,
-    /// The Git-LFS pointers this push newly introduced, as the door window
-    /// framed them. Empty for every push that introduced none, which is every
-    /// push that does not use LFS.
+    /// The Git-LFS pointers this push newly introduced into these refs, as the
+    /// door window framed them. Empty for every push that introduced none,
+    /// which is every push that does not use LFS.
     pub lfs_pointers: Vec<LfsPushedPointer>,
     /// Where the objects live after the quarantine migrated.
     pub staged_objects_dir: PathBuf,

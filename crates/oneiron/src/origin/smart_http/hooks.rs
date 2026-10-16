@@ -23,7 +23,9 @@ use crate::error::Result;
 /// so binary content, NUL-carrying content and content whose lines begin with
 /// `+` all reach the door as the exact bytes the push would make durable. A
 /// blob the hook cannot size or read ends the push right here, under `set -e`,
-/// while the objects are still quarantined.
+/// while the objects are still quarantined. Each move's blobs follow a line
+/// naming the move, so the door holds each ref to the pointers its own move
+/// brings.
 ///
 /// The tip diff alone would miss what a push carries in between: a blob one
 /// commit adds and a later commit reverts or deletes leaves no trace in the
@@ -51,6 +53,8 @@ pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # The blob stream is length-framed: "blob <oid> <bytes> <path>\n" followed by
 # exactly <bytes> raw bytes. Framing rather than patch text is what makes the
 # extraction total -- there is no line shape a blob can carry that hides it.
+# Each move's records follow one "move <old> <new>\n" line naming it, so the
+# door knows which refs a blob reaches.
 #
 # The history stream frames every OTHER blob the new tips reach that no existing
 # ref already reaches, so a blob an intermediate commit adds and a later one
@@ -145,21 +149,24 @@ while read -r old new ref; do
 		*[!0]*) ;;
 		*) continue ;;
 	esac
-	case "$old" in
-		*[!0]*) base=$old ;;
-		*) base=$empty ;;
-	esac
-	printf '%s %s\n' "$base" "$new" >> "$pairs"
+	printf '%s %s\n' "$old" "$new" >> "$pairs"
 done
 # Many refs can name one move: each distinct move is diffed and its blobs
 # framed once, so a push's cost follows what it makes durable, not how many
 # names it gives it.
 sort -u -o "$pairs" "$pairs"
-while read -r base new; do
+while read -r old new; do
+	case "$old" in
+		*[!0]*) base=$old ;;
+		*) base=$empty ;;
+	esac
 	# Written to a file, never piped: a diff-tree that fails must fail the
 	# hook, and the left-hand side of a pipeline cannot do that in POSIX sh.
 	git --no-replace-objects diff-tree -r --raw --no-abbrev --no-commit-id \
 		--diff-filter=AMT "$base" "$new" > "$entries"
+	total=$((total + ${#old} + ${#new} + 7))
+	[ "$total" -le "$max" ] || disk_floor
+	printf 'move %s %s\n' "$old" "$new" >> "$blobspart"
 	# ":<srcmode> <dstmode> <srcoid> <dstoid> <status><tab><path>"
 	while IFS= read -r entry; do
 		meta=${entry%%"$tab"*}

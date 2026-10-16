@@ -87,6 +87,9 @@ pub(crate) struct TestHooks {
     /// The batches a dependent walk may still run after the transaction that
     /// marked it, as if the device stopped there; `None` runs them all.
     dependent_walk_batches: Mutex<Option<usize>>,
+    /// One-shot: the next served push ends once its backend has exited,
+    /// before its landing, as if the process stopped there.
+    pub(crate) stop_push_before_landing: AtomicBool,
 }
 
 impl TestHooks {

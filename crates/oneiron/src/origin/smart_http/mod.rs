@@ -93,6 +93,7 @@ mod intent;
 mod landing;
 mod landing_lfs;
 mod maintain;
+mod owner_pins;
 mod paths;
 mod serve;
 mod serve_cmd;
