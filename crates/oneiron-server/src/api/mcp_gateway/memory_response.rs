@@ -107,6 +107,27 @@ fn execute_read(
         McpGatewayError::new(-32602, "tool_args_invalid", "native request is required")
             .with_field("arguments.request")
     })?;
+    // A query past `[limits].retrieval_query_bytes` is refused with the typed
+    // tool error before any read (F21 H301, A3).
+    let door = match method {
+        VaultReadMethod::Query => Some(crate::server::QueryDoor::McpMemoryQuery),
+        VaultReadMethod::ContextPack => Some(crate::server::QueryDoor::McpMemoryContextPack),
+        _ => None,
+    };
+    if let Some(door) = door
+        && let Some(query) = body.get("query").and_then(Value::as_str)
+    {
+        server
+            .check_retrieval_query(
+                &actor.actor_ref.to_hex(),
+                door,
+                "arguments.request.query",
+                query,
+            )
+            .map_err(|over| {
+                McpGatewayError::payload_too_large(over.field, over.bound, over.bytes)
+            })?;
+    }
     let reader = mcp_scoped_read(&server.vault, actor)?;
     let producers = oneiron::memory::ProducerRows::default();
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())

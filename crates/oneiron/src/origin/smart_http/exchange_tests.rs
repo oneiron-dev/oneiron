@@ -82,6 +82,7 @@ fn ends_soon(
                 ExchangeBounds {
                     idle: Duration::from_secs(120),
                     repository_wait: Duration::ZERO,
+                    scan: ScanBounds::default(),
                 },
                 &mut io::Cursor::new(bytes),
                 &mut sink,
@@ -272,6 +273,7 @@ fn a_push_killed_mid_pack_leaves_no_quarantine_behind() {
         ExchangeBounds {
             idle: Duration::from_secs(1),
             repository_wait: Duration::ZERO,
+            scan: ScanBounds::default(),
         },
         &mut body,
         &mut CapturingSink::default(),
@@ -357,6 +359,7 @@ fn a_push_that_ends_by_itself_leaves_another_quarantine_alone() {
         ExchangeBounds {
             idle: Duration::from_secs(5),
             repository_wait: Duration::ZERO,
+            scan: ScanBounds::default(),
         },
         &mut body,
         &mut CapturingSink::default(),
@@ -403,6 +406,7 @@ fn a_backend_that_exits_before_its_body_leaves_another_quarantine_alone() {
         ExchangeBounds {
             idle: Duration::from_secs(5),
             repository_wait: Duration::ZERO,
+            scan: ScanBounds::default(),
         },
         &mut body,
         &mut CapturingSink::default(),

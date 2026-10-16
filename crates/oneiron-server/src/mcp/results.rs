@@ -134,6 +134,7 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
         "verb_dispatch_failed" => {
             &["re-read the board with board.refresh and retry against the current epoch"]
         }
+        "payload_too_large" => &["shorten the field to at most max_bytes bytes and retry"],
         "mcp_verb_not_bound" => &[
             "this credential is bound to a narrower verb set than the endpoint lists",
             "ask the vault owner to widen the connector's bound verbs",

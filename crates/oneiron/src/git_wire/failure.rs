@@ -40,6 +40,8 @@ pub enum GitWireFailureClass {
     OutputOverflow,
     /// The child was terminated by a signal.
     Signalled,
+    /// The effect's source no longer holds the authority to apply it.
+    Unauthorized,
     /// Anything else. Always treated as uncertainty, never as absence.
     Unknown,
 }
@@ -57,12 +59,13 @@ impl GitWireFailureClass {
             Self::Timeout => "timeout",
             Self::OutputOverflow => "output_overflow",
             Self::Signalled => "signalled",
+            Self::Unauthorized => "unauthorized",
             Self::Unknown => "unknown",
         }
     }
 
     pub(super) fn parse(value: &str) -> Result<Self> {
-        const ALL: [GitWireFailureClass; 10] = [
+        const ALL: [GitWireFailureClass; 11] = [
             GitWireFailureClass::RefLocked,
             GitWireFailureClass::RefMismatch,
             GitWireFailureClass::Missing,
@@ -72,6 +75,7 @@ impl GitWireFailureClass {
             GitWireFailureClass::Timeout,
             GitWireFailureClass::OutputOverflow,
             GitWireFailureClass::Signalled,
+            GitWireFailureClass::Unauthorized,
             GitWireFailureClass::Unknown,
         ];
         ALL.into_iter()

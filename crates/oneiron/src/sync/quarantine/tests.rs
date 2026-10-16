@@ -1626,6 +1626,73 @@ fn observer_b_quarantines_divergent_suppression_and_keeps_original() -> crate::R
     exercise_suppression_remote_quarantine(true, true)
 }
 
+/// F25 H32: a peer's malformed CODE_ARTIFACT (or BLOB_ARTIFACT) body is a
+/// rejection of that remote row. Before, its typed body error was unclassified,
+/// so one bad row aborted the replay and the valid sibling never landed.
+fn exercise_artifact_body_remote_quarantine(observer: bool) -> crate::Result<()> {
+    let (_dir, vault) = test_vault_with_dir();
+    let materializer = Arc::new(Materializer::new());
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+    let (code, blob, good) = (EntityId::now(), EntityId::now(), EntityId::now());
+    let subscriptions = observer
+        .then(|| crate::sync::bridge::register_observer_b(&doc, &vault, &materializer, WINDOW));
+    let entities = doc.get_map("entities");
+    for (id, entity_type) in [
+        (code, crate::registry::ENTITY_TYPE_CODE_ARTIFACT),
+        (blob, crate::registry::ENTITY_TYPE_BLOB_ARTIFACT),
+    ] {
+        // 0xc1 is the reserved MessagePack marker: never a valid body.
+        let row = entity_blob(entity_type, valid_time_range(), LEARNED_AT, &[0xc1]);
+        map_insert_bytes(&entities, &id.to_hex(), &row)?;
+    }
+    map_insert_bytes(
+        &entities,
+        &good.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_ASSET,
+            valid_time_range(),
+            LEARNED_AT,
+            b"unrelated valid asset",
+        ),
+    )?;
+    doc.commit();
+    if !observer {
+        forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
+    }
+    assert_eq!(
+        vault.get(&good)?.as_deref(),
+        Some(b"unrelated valid asset".as_slice()),
+        "the valid sibling must materialize despite the rejected artifact rows"
+    );
+    assert_eq!(vault.get_raw(&code)?, None);
+    assert_eq!(vault.get_raw(&blob)?, None);
+    let mut reasons: Vec<String> = quarantined_records(&vault)?
+        .into_iter()
+        .map(|(_, record)| record.reason_code)
+        .collect();
+    reasons.sort();
+    assert_eq!(
+        reasons,
+        ["InvalidBlobArtifactBody", "InvalidCodeArtifactBody"],
+        "each malformed artifact row is quarantined under its typed reason"
+    );
+    drop(subscriptions);
+    Ok(())
+}
+
+#[test]
+fn observer_b_quarantines_malformed_artifact_bodies_and_commits_valid_sibling() -> crate::Result<()>
+{
+    exercise_artifact_body_remote_quarantine(true)
+}
+
+#[test]
+fn forward_remat_quarantines_malformed_artifact_bodies_and_commits_valid_sibling()
+-> crate::Result<()> {
+    exercise_artifact_body_remote_quarantine(false)
+}
+
 /// Matrix: protected receipt arrival is independent of tombstone order and
 /// of which production materializer runs first. The sibling is ordinary ASSET.
 fn receipt_arrival_matrix(observer: bool, order: u8) -> crate::Result<()> {
