@@ -99,6 +99,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/pptx_tests.rs` | test | m | — | — | PPTX thread identity/drift and consume-once settlement using actual package bytes |
 | `src/anchored_annotation/reanchor.rs` | src | m | 2 fn · 3 crate-vis | — | Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn) |
 | `src/anchored_annotation/tests.rs` | test | L | — | — | — |
+| `src/anchored_annotation/tests/anchor_scenarios.rs` | test | L | — | — | Comment-anchor scenarios across the three office locators (owner ask 2026-10-16; the cases come from tdoc's… |
 | `src/anchored_annotation/threads.rs` | src | m | 8 fn · 6 crate-vis | — | Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort |
 | `src/artifact_hosting/access.rs` | src | m | 1 struct · 1 enum · 2 fn | ArtifactLinkCapability, ArtifactServeTier | Serve-time authority for live artifact pointers |
 | `src/artifact_hosting/mod.rs` | src | L | 5 struct · 4 enum · 18 fn · 1 const · 1 re-export · 3 crate-vis | ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel, ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus, ArtifactServedFile, ArtifactSnapshotRef +1 | Local artifact hosting over pinned code snapshots and blob exports |

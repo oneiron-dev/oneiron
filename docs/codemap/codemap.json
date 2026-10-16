@@ -1016,6 +1016,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/anchored_annotation/tests/anchor_scenarios.rs",
+     "purpose": "Comment-anchor scenarios across the three office locators (owner ask 2026-10-16; the cases come from tdoc's…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -41346,7 +41354,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42679,7 +42687,7 @@
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2571,
-   "test_files": 864
+   "test_files": 865
   },
   "oneiron-android": {
    "files": [
@@ -46792,6 +46800,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/comment_anchors.rs",
+     "purpose": "Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/identity.rs",
      "purpose": "—",
      "surface": {}
@@ -46874,7 +46890,7 @@
    "over_bar": 1,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 39,
-   "test_files": 10
+   "test_files": 11
   },
   "oneiron-driver": {
    "files": [

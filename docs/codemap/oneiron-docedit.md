@@ -57,6 +57,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
+| `tests/comment_anchors.rs` | test | s | — | — | Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from… |
 | `tests/identity.rs` | test | s | — | — | — |
 | `tests/revisions.rs` | test | s | — | — | — |
 | `tests/stemma_reader.rs` | test | s | — | — | The stemma fork reads untrusted DOCX parts with quick-xml |
