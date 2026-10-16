@@ -72,6 +72,24 @@
       "section": false
     },
     {
+      "name": "self.memory.diary.reads",
+      "input": "crate::memory::DiaryReadsRequest",
+      "output": "crate::memory::DiaryReadsView",
+      "call": "memory.diary_reads(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.memory.diary.review",
+      "input": "crate::memory::DiaryReviewAnswer",
+      "output": "crate::memory::DiaryReadRequest",
+      "call": "memory.answer_diary_read(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "cancel",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
@@ -357,10 +375,10 @@
     },
     {
       "name": "vault.receipts",
-      "input": "ReceiptsRequest",
+      "input": "crate::task_verb::sdk::VaultReceiptsRequest",
       "output": "Vec<crate::memory::MemoryReceipt>",
       "mcp_served_output": "output.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
-      "call": "memory.receipts(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?",
+      "call": "memory.receipts_of_kinds(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT), &input.kinds)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -369,6 +387,7 @@
       "section": false,
       "binding": {
         "assemble": true,
+        "defaults": true,
         "args": [
           {
             "name": "limit",
@@ -387,6 +406,29 @@
           "limit": "u32"
         },
         "output": "Vec<FacadeReceipt>"
+      }
+    },
+    {
+      "name": "vault.images.view",
+      "input": "crate::memory::ImageViewRequest",
+      "output": "crate::memory::PulledImage",
+      "call": "memory.view_image(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.\n",
+          "ts": "/** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */",
+          "py": "The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull."
+        }
       }
     },
     {
@@ -555,6 +597,19 @@
       "section": false
     },
     {
+      "name": "vault.hooks.replay",
+      "input": "crate::task_verb::sdk::HooksReplayRequest",
+      "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.hooks.replay\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.limit()?;"
+      },
+      "section": false
+    },
+    {
       "name": "vault.artifacts.view",
       "input": "crate::blob_artifact::ArtifactRefRequest",
       "output": "Option<crate::blob_artifact::ArtifactView>",
@@ -651,6 +706,52 @@
           "remote": "    /// The proposals waiting beside one artifact for Keep or Discard.\n",
           "ts": "/** The proposals waiting beside one artifact for Keep or Discard. */",
           "py": "The proposals waiting beside one artifact for Keep or Discard."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.waits",
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Vec<crate::edit_settle::OrganWaitView>",
+      "call": "memory.artifacts_waits(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The organ calls held beside one artifact until one of your nodes can run them, each with why it waits.\n",
+          "ts": "/** The organ calls held beside one artifact until one of your nodes can run them, each with why it waits. */",
+          "py": "The organ calls held beside one artifact until one of your nodes can run them, each with why it waits."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.release_wait",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::ReleasedWait",
+      "call": "memory.artifacts_release_wait(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Lets one held organ call go, by its run ref, under the consent a Discard needs.\n",
+          "ts": "/** Lets one held organ call go, by its run ref, under the consent a Discard needs. */",
+          "py": "Lets one held organ call go, by its run ref, under the consent a Discard needs."
         }
       }
     },
@@ -1246,6 +1347,19 @@
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.verdict",
+      "input": "crate::task_verb::sdk::AiVerdictRequest",
+      "output": "crate::task_verb::sdk::AiVerdict",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.verdict\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_batch_len(\"evidence\", input.evidence.len())?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "section": false
     },

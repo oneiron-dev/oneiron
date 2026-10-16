@@ -60,7 +60,7 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub(crate) use self::reference_refusal::{ReferenceRefusalFacts, record_reference_refusal};
-pub use self::served_form::ServedForm;
+pub use self::served_form::{PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
