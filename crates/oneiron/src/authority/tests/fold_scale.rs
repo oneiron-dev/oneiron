@@ -10,7 +10,7 @@
 use super::support::*;
 use super::*;
 
-fn agent_key(n: usize) -> SigningKey {
+pub(super) fn agent_key(n: usize) -> SigningKey {
     let mut seed = [0xA6; 32];
     seed[..8].copy_from_slice(&(n as u64).to_be_bytes());
     SigningKey::from_bytes(&seed)
