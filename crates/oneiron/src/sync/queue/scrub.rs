@@ -74,6 +74,26 @@ pub(crate) fn queued_window_updates(
     Ok(queued)
 }
 
+/// How many queued sends name `window_key`, read in the caller's transaction.
+/// Rows [`queued_window_updates`] would skip are not counted.
+pub(crate) fn queued_window_update_count_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    window_key: &str,
+) -> Result<usize> {
+    let mut count = 0;
+    for row in store.sync_queue.prefix_iter(txn, UPDATE_PREFIX)? {
+        let (key, value) = row?;
+        if let (Ok(_), Ok((row_window, _))) =
+            (decode_update_key(&key), decode_update_value_parts(&value))
+            && row_window == window_key
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 /// Retires the queued sends `seqs`, delete-bearing rows and their `d:` sidecars included, in the
 /// transaction that installs a window's replacement. Their operations depend on history the
 /// replacement does not hold, and the replacement carries their effects as its own operations,
