@@ -30,6 +30,7 @@ pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
+pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
@@ -124,6 +125,7 @@ pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
 pub mod task_authority;
+pub mod task_type;
 pub mod task_verb;
 pub mod team;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
@@ -156,6 +158,7 @@ pub mod engine_executor;
 pub mod failure_ladder;
 pub mod failure_signals;
 pub mod run_tree;
+pub mod runtime_hooks;
 pub mod self_heal;
 pub mod session_lifecycle;
 pub mod wave_orchestration;
@@ -183,6 +186,7 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+pub mod training_pack;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ===== Code, artifacts & custody ===== code memory, git wire, build cache, artifacts, secrets
@@ -290,7 +294,7 @@ pub use crate::calendar::{
 };
 pub use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, EmailThreadHeaders,
 };
 pub use crate::channel_identity_selection::{
     ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
@@ -337,7 +341,7 @@ pub use crate::compaction::{
 };
 pub use crate::companion::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
-    EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
+    EnqueueCompanionTaskOutcome,
 };
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
@@ -472,6 +476,7 @@ pub use crate::pipeline::{
     world_access_claim_body,
 };
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
+pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 // The provider-confidence shortcut rows are a DISPOSABLE cache with no
 // production control surface — reads repair them and the prior writer moves
 // them, and that is the whole contract. These three seams exist only so the
@@ -570,6 +575,7 @@ pub use crate::workspace_roster::{
     MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterPreset,
     WorkspaceRosterRole,
 };
+pub use crate::workspace_roster::{CompanionChoice, WorkCompanionPolicy};
 pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
 };

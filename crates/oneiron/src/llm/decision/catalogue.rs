@@ -62,6 +62,15 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which quoted team shape should this spawn run (pattern at a width)?
+/// Keyed by task type. The options are the planner's own ranked shape
+/// tokens, so an answer can only re-rank what the floor already quoted.
+pub const PLANNER_SHAPE: QuestionFamily = QuestionFamily {
+    name: "planner.shape",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// What conversational signal does a received reaction carry? Host wording;
 /// the fixed labels are ack, agree, disagree, affect and none.
 pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
@@ -116,6 +125,38 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// The paired yes/no question every decision read asks beside the labels: does this need
+/// more thinking? Keyed by its wording alone.
+pub const THINK_MORE: QuestionFamily = QuestionFamily {
+    name: "decision.think_more",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// The host's person question, asked beside the call's questions when the dial reaches the
+/// person: ask up to the next authorised role? Keyed by its wording alone.
+pub const ASK_UP: QuestionFamily = QuestionFamily {
+    name: "decision.ask_up",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Does this candidate violate one owner-authored policy row? Keyed by the
+/// document hash, row reference and action; wording comes from the row.
+pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {
+    name: "policy_model.owner_row",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does this candidate violate one attested hosted-legal policy row? Never
+/// assembled on a local/BYO path. Keyed as the owner question is.
+pub const POLICY_HOSTED_ROW: QuestionFamily = QuestionFamily {
+    name: "policy_model.hosted_row",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// How should this parked contradiction settle (keep one member, hold both, dismiss or
 /// escalate)? Keyed by the contested predicates.
 pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
@@ -132,11 +173,20 @@ pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// Which capability setting one connector grant-slate row drafts (auto, always ask or
+/// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
+pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
+    name: "connector.grant_slate.draft",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
     CRITIC_REVIEW,
     FANOUT_ASK,
+    PLANNER_SHAPE,
     REACTION_MEANING,
     SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
@@ -144,6 +194,11 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    THINK_MORE,
+    ASK_UP,
+    POLICY_OWNER_ROW,
+    POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
     WIRE_HEALTH,
+    CONNECTOR_SLATE_DRAFT,
 ];

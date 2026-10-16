@@ -511,8 +511,7 @@ pub(crate) fn companion_profile_access_grant(
                 return Err(Error::CorruptedIndex("access grant body"));
             }
         };
-        if grant.allows_companion_profile_read(principal_ref, person_ref, facet_ref, now)
-            && live()?
+        if grant.allows_companion_profile_read(principal_ref, person_ref, facet_ref, now) && live()?
         {
             return Ok(Some(id));
         }

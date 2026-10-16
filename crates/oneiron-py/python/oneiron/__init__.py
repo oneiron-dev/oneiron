@@ -191,6 +191,8 @@ class Oneiron:
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
     # BEGIN GENERATED FACADE VERBS
+    def report(self, spec):
+        return json.loads(_translate(lambda: self._client.report(json.dumps(spec))))
     @property
     def self(self) -> "Oneiron._SelfVerbs":
         return Oneiron._SelfVerbs(self._client)
@@ -292,9 +294,9 @@ class Oneiron:
         def export(self, format: str | None = None) -> dict[str, Any]:
             """Exports the live vault through the five-format serializer."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
-        def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
-            """Governance receipts, newest first."""
-            return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
+        @property
+        def receipts(self) -> "Oneiron._VaultReceiptsVerbs":
+            return Oneiron._VaultReceiptsVerbs(self._client)
         @property
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
@@ -307,12 +309,29 @@ class Oneiron:
         @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
+        @property
+        def conversations(self) -> "Oneiron._VaultConversationsVerbs":
+            return Oneiron._VaultConversationsVerbs(self._client)
+        @property
+        def companions(self) -> "Oneiron._VaultCompanionsVerbs":
+            return Oneiron._VaultCompanionsVerbs(self._client)
+        @property
+        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
+            return Oneiron._VaultWorkspaceVerbs(self._client)
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
             """Upserts one claim. The consent gate, not this call, decides approval."""
             return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(claim))))
+    class _VaultReceiptsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, limit: int = 100) -> list[dict[str, Any]]:
+            """Governance receipts, newest first."""
+            return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
     class _VaultKvVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -385,6 +404,47 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+        def host(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
+        def sharing(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultConversationsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def turn(self) -> "Oneiron._VaultConversationsTurnVerbs":
+            return Oneiron._VaultConversationsTurnVerbs(self._client)
+    class _VaultConversationsTurnVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def continue_(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_conversations_turn_continue(json.dumps(spec))))
+        def retry(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_conversations_turn_retry(json.dumps(spec))))
+    class _VaultCompanionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def sharing(self) -> "Oneiron._VaultCompanionsSharingVerbs":
+            return Oneiron._VaultCompanionsSharingVerbs(self._client)
+    class _VaultCompanionsSharingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_companions_sharing_get(json.dumps(spec))))
+    class _VaultWorkspaceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs":
+            return Oneiron._VaultWorkspaceWorkCompanionVerbs(self._client)
+    class _VaultWorkspaceWorkCompanionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_get(json.dumps(spec))))
+        def set(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_set(json.dumps(spec))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

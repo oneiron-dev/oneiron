@@ -1,4 +1,5 @@
 //! Exact, inert PACK.md source catalogs. A source blob is never an install grant.
+mod advisories;
 mod agent_facets;
 mod builtin;
 pub(crate) use builtin::seed_builtin_packs;
@@ -44,8 +45,12 @@ fn invalid(reason: &'static str) -> crate::error::Error {
 mod admission;
 mod admission_types;
 mod bundled_skills;
+mod qualify;
 #[cfg(test)]
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
+pub use qualify::{
+    ConnectorPackQualification, PackConnectorReceipt, ProbePackQualifier, QualifiedPackFitPolicy,
+};
 mod schema;
 mod screening;
 mod script_plan;

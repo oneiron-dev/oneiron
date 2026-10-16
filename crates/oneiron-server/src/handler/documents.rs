@@ -37,6 +37,7 @@ pub(super) fn handle_document(
         return artifact_publication(server, state, entity, payload, direct);
     }
     let principal = document_principal(server, state)?;
+    let peer = state.peer_machine(server.vault());
     if kind == document_sub_tags::REQUEST && payload.get(..4) == Some(&[0; 4]) {
         return owner_request(server, state, entity, &payload[4..], direct);
     }
@@ -70,11 +71,12 @@ pub(super) fn handle_document(
             // An export opens the document: past the live-document row it
             // waits its turn off the runtime worker (rule 5).
             let frame = crate::server::blocking(|| {
-                server.reassert_manager.export_document(
+                server.reassert_manager.export_document_for_peer(
                     entity,
                     selector_grant_scope(),
                     &request.selector,
                     &request.remote_vv,
+                    peer,
                 )
             })
             .map_err(storage_error)?;
@@ -119,7 +121,16 @@ pub(super) fn handle_document(
                     entity,
                     selector_grant_scope(),
                     &request.selector,
-                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
+                    |txn| {
+                        auth.credential_is_live_in_write_txn(&server.vault, txn)
+                            && oneiron::sync::documents::admit_document_destination_in_txn(
+                                &server.vault,
+                                txn,
+                                entity,
+                                peer,
+                            )
+                            .is_ok()
+                    },
                     &operation,
                 )
                 .map_err(|error| ProtocolError::Persistence(error.to_string()))?;
@@ -155,7 +166,13 @@ pub(super) fn handle_document(
             // and live entity selection; an earlier export is not authority.
             let document = open_for(server, entity, &request.selector.member_ref)?;
             document
-                .import_from_peer(kind, payload, selector_grant_scope(), &request.selector)
+                .import_from_peer(
+                    kind,
+                    payload,
+                    selector_grant_scope(),
+                    &request.selector,
+                    peer,
+                )
                 .map_err(storage_error)?;
             let vv = document.version_vector().map_err(storage_error)?;
             drop(document);
@@ -367,6 +384,7 @@ pub(super) fn document_delivery_retrying(
         return Ok(Vec::new());
     }
     let principal = document_principal(server, state)?;
+    let peer = state.peer_machine(server.vault());
     let mut out = Vec::new();
     for doc in docs {
         let doc = doc.map_err(|_| ProtocolError::InvalidPayload("invalid document notice"))?;
@@ -399,11 +417,12 @@ pub(super) fn document_delivery_retrying(
             }
             // Denial withholds this entity; it never falls back to the raw notice.
             let exported = crate::server::blocking(|| {
-                server.reassert_manager.export_document(
+                server.reassert_manager.export_document_for_peer(
                     doc.entity,
                     selector_grant_scope(),
                     &request.selector,
                     &request.remote_vv,
+                    peer,
                 )
             });
             if let Err(error) = &exported

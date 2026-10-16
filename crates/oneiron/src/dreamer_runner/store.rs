@@ -16,8 +16,9 @@ use super::codec::{
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
-    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -503,6 +504,23 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
             )?;
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
+            // A finished agent launch settles its spend lease (OF-532) in the
+            // commit that finishes it: its parent pays what it spent and the
+            // unused hold goes back. Settling twice is a no-op.
+            let record = match &outcome {
+                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
+                    record
+                }
+            };
+            if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
+                payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+            }) {
+                crate::agent_dispatch::AgentDispatcher::new(self.vault).settle_child_in_txn(
+                    wtxn,
+                    &attempt_id,
+                    input.now,
+                )?;
+            }
             Ok(outcome)
         })?;
         match outcome {

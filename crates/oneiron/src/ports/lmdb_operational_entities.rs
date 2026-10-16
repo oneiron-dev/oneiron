@@ -42,9 +42,19 @@ impl EntityStoreMaintenance for Store {
         record: ScrubbedRecord,
         recorded_at: u64,
     ) -> Result<bool> {
-        let (stored, _) = stored_record(self, txn, id)?;
-        let ScrubbedRecord::Shell = record;
-        let scrubbed = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        let (stored, entity_type) = stored_record(self, txn, id)?;
+        let mut scrubbed = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        match record {
+            ScrubbedRecord::Shell => {}
+            ScrubbedRecord::WithdrawnEpoch(keyframe) => {
+                if entity_type != ENTITY_TYPE_SUMMARY {
+                    return Err(Error::InvariantViolation(
+                        "only an epoch summary keeps a withdrawn keyframe",
+                    ));
+                }
+                scrubbed.extend_from_slice(&keyframe.encode()?);
+            }
+        }
         if scrubbed == stored {
             return Ok(false);
         }

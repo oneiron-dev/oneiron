@@ -146,6 +146,9 @@ side_tables! {
     /// Crash-recoverable heartbeat journal (oid32+timestamp8, 40 bytes) for one in-progress streamed
     /// LFS upload. Key: id16.
     ORIGIN_LFS_UPLOAD_JOURNAL: VaultMeta b"origin:lfs:upload:v1:" Raw;
+    /// The owner's outbound mirror of one served repository: its https URL, the custody record of
+    /// its push token, the cadence and the last push. Key: id16 (repo id).
+    ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named;
     /// Durable journal row for one origin ref-publication attempt, across its
     /// Prepared/Published/Failed/Conflicted lifecycle. Key: id16.
     ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named;
