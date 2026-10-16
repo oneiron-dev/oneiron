@@ -185,6 +185,33 @@ pub(crate) fn world_keys_destroyed_in_txn(
         || IDENTITY_SOFT_DELETE_MARKER.contains(store, txn, &id)?)
 }
 
+/// The world whose key a pad row `raw` splits: `None` for a row that is not
+/// a pad, an error for a pad whose body does not decode. Sync reads it to keep
+/// a destroyed world's late pad out of every window.
+pub(crate) fn pad_body_world(raw: &[u8]) -> Option<Result<EntityId>> {
+    let header = EntityMetadataHeader::parse(raw)?;
+    if header.entity_type != ENTITY_TYPE_WORLD_KEY_PAD {
+        return None;
+    }
+    Some(
+        raw.get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("world key pad body"))
+            .and_then(decode_pad_body)
+            .map(|(key, _)| key.world),
+    )
+}
+
+/// Whether `raw` is a late pad: a pad row of a world whose keys this replica
+/// has destroyed, or a pad whose body names no world anyone can check. Any
+/// other row is not.
+pub(crate) fn late_pad_in_txn(store: &Store, txn: &heed::RoTxn<'_>, raw: &[u8]) -> Result<bool> {
+    match pad_body_world(raw) {
+        None => Ok(false),
+        Some(Err(_)) => Ok(true),
+        Some(Ok(world)) => world_keys_destroyed_in_txn(store, txn, world),
+    }
+}
+
 /// `key`'s pad on this replica, if its row is here.
 pub(crate) fn pad_in_txn(
     store: &Store,

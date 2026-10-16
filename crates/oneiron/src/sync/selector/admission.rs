@@ -297,6 +297,9 @@ fn admit_window_update(
     )?;
 
     crate::sync::note::copy_judged(vault, &remote, &admitted)?;
+    // Rule A: the sender's birth envelope crosses whole, beside each row this
+    // admission kept.
+    crate::sync::row_birth::copy_births_for_entities(&remote, &admitted)?;
     let births = match &lane {
         Some(lane) => pending_births(
             vault,

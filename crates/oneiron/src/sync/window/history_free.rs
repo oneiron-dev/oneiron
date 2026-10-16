@@ -83,6 +83,9 @@ pub(crate) struct HistoryCheck {
     /// world witness, as the egress claim scrub proves them: carriers no claim door decodes, yet
     /// the live state of the window.
     retained_shells: BTreeSet<(EntityId, Vec<u8>)>,
+    /// The worlds whose keys this replica destroyed, among those the window's
+    /// pads name: such a pad's bytes never ship, live or in history.
+    late_pad_worlds: BTreeSet<EntityId>,
 }
 
 impl HistoryCheck {
@@ -108,6 +111,35 @@ impl HistoryCheck {
             let raw = vault.store.entities.get(&rtxn, id.as_bytes())?;
             if crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, raw.as_deref())? {
                 erased.insert(id);
+            }
+        }
+        let mut pad_worlds = BTreeSet::new();
+        map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
+            if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
+                pad_worlds.insert(world);
+            }
+        });
+        let entities_root = ContainerID::new_root("entities", ContainerType::Map);
+        for op in doc
+            .export_json_updates(&VersionVector::default(), &doc.oplog_vv())
+            .changes
+            .iter()
+            .flat_map(|change| &change.ops)
+        {
+            if op.container == entities_root
+                && let JsonOpContent::Map(MapOp::Insert {
+                    value: LoroValue::Binary(blob),
+                    ..
+                }) = &op.content
+                && let Some(Ok(world)) = crate::world_keys::pad_body_world(blob)
+            {
+                pad_worlds.insert(world);
+            }
+        }
+        let mut late_pad_worlds = BTreeSet::new();
+        for world in pad_worlds {
+            if crate::world_keys::world_keys_destroyed_in_txn(&vault.store, &rtxn, world)? {
+                late_pad_worlds.insert(world);
             }
         }
         let mut retained_shells = BTreeSet::new();
@@ -142,6 +174,7 @@ impl HistoryCheck {
             redacted,
             erased,
             retained_shells,
+            late_pad_worlds,
         })
     }
 
@@ -254,6 +287,9 @@ impl HistoryCheck {
                 .is_ok_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob))
             || crate::identity_topology::attribution_carrier_key(blob)
                 .is_some_and(|author| self.redacted.contains(&author))
+            || crate::world_keys::pad_body_world(blob).is_some_and(|world| {
+                world.is_err() || world.is_ok_and(|world| self.late_pad_worlds.contains(&world))
+            })
     }
 }
 

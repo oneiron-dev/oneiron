@@ -8,7 +8,7 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::SyncError;
-use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::sync::loro_support::{TombstoneIndex, map_for_each_value_bytes, map_get_bytes};
 use crate::{Error, Result};
 
@@ -93,6 +93,9 @@ fn validate_window_update(
                 "diagnostic observations are local-only".into(),
             )),
             ENTITY_TYPE_SECRET_CUSTODY => Some(crate::secret_custody::reject_secret_custody_byte()),
+            // A destroyed world's pad arriving late never rejoins a window;
+            // a live world's pad replicates with the base rows.
+            ENTITY_TYPE_WORLD_KEY_PAD => vault.and_then(|vault| late_pad(vault, blob)),
             _ => None,
         })
     };
@@ -277,6 +280,7 @@ fn validate_window_update(
         }
     }
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
+    let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -285,7 +289,9 @@ fn validate_window_update(
         else {
             continue;
         };
-        if op.container == witnesses {
+        if op.container == births {
+            crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
+        } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)
                     if key.and_then(crate::sync::WindowKey::world)
@@ -516,4 +522,20 @@ fn state_section_is_canonical(section: &[u8]) -> bool {
         previous = Some(key.to_vec());
         canonical && increasing
     })
+}
+
+/// The refusal of a late pad `blob`: one of a world whose keys this replica
+/// destroyed. A replica that cannot read its own destruction facts refuses.
+fn late_pad(vault: &crate::Vault, blob: &[u8]) -> Option<Error> {
+    let late = (|| -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        crate::world_keys::late_pad_in_txn(&vault.store, &txn, blob)
+    })();
+    match late {
+        Ok(false) => None,
+        Ok(true) => Some(Error::InvalidConfig(
+            "a destroyed world's key pad cannot rejoin a window".into(),
+        )),
+        Err(error) => Some(error),
+    }
 }

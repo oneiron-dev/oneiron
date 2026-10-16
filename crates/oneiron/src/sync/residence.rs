@@ -291,6 +291,7 @@ pub fn admit_promoted_window_update(
         return Err(malformed());
     }
     let entities = ContainerID::new_root("entities", ContainerType::Map);
+    let births = ContainerID::new_root(super::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     let txn = vault.store.env.read_txn()?;
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
@@ -300,6 +301,18 @@ pub fn admit_promoted_window_update(
         else {
             return Err(malformed());
         };
+        // A row is born once, never on this lane: a birth write here may
+        // only restate the carrier the home window already holds.
+        if op.container == births {
+            let held = super::loro_support::map_get_bytes(
+                &source.get_map(super::row_birth::ROW_BIRTHS_MAP),
+                &key,
+            );
+            if held.as_deref() != Some(&blob[..]) {
+                return Err(malformed());
+            }
+            continue;
+        }
         if op.container != entities {
             return Err(malformed());
         }

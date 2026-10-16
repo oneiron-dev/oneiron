@@ -182,6 +182,46 @@ pub(crate) fn stamp_row_birth_in_txn(
     Ok(())
 }
 
+/// Stamps a birth that arrived on sync beside its row. The shape rules, the
+/// live-row rule and immutability hold as in [`stamp_row_birth_in_txn`], but
+/// a prompt input or trigger may be absent here: it can sit in another
+/// window, outside the receiver's grant, or not have arrived yet. The trigger
+/// index is written from the envelope alone, so the born-from read still
+/// lists the row once the trigger lands.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] for a malformed envelope or an absent row;
+/// [`Error::InvariantViolation`] when the row already has a different birth;
+/// storage errors as they occur.
+pub(crate) fn stamp_replicated_row_birth_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    birth: &RowBirth,
+) -> Result<()> {
+    birth.check_shape()?;
+    if !live_entity_row_in_txn(store, txn, row)?.is_live() {
+        return Err(Error::InvalidConfig(
+            "a replicated row birth names a row this transaction does not hold".into(),
+        ));
+    }
+    match ROW_BIRTH.get(store, txn, row)? {
+        Some(stored) if stored == *birth => return Ok(()),
+        Some(_) => {
+            return Err(Error::InvariantViolation(
+                "a row's birth envelope is immutable",
+            ));
+        }
+        None => {}
+    }
+    ROW_BIRTH.put(store, txn, row, birth)?;
+    if let Some(trigger) = &birth.made_by.trigger {
+        BIRTH_BY_TRIGGER.put(store, txn, &(trigger.row(), *row), &())?;
+    }
+    Ok(())
+}
+
 /// `row`'s birth envelope, or `None` when the row has no stamped birth.
 /// Unknown provenance is never read as stated.
 pub(crate) fn row_birth_in_txn(

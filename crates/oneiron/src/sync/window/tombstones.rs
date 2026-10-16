@@ -171,6 +171,8 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     if entities.get(&hex_id).is_some() {
         map_delete(&entities, &hex_id)?;
     }
+    // The deleted row's birth leaves with its carrier.
+    crate::sync::row_birth::remove_birth_carrier(doc, id)?;
 
     // Edge keys are swept on the EFFECTIVE hardness, not just the incoming
     // value's: a REJECTED soft arriving over an effective hard tombstone
