@@ -4,7 +4,7 @@ use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::PptxCommentAction;
 use crate::edit_roundtrip::pptx::tests::support;
 use crate::edit_settle::{SettleConsent, SettleOutcomeKind};
-use crate::llm::decision::{AnswerContract, DecisionClass};
+use crate::llm::decision::{AnswerContract, DecisionClass, PairedAnswer};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 use crate::{TimeRange, WriteActor};
@@ -369,6 +369,117 @@ fn keep_receipt_survives_reopen_and_stale_preview_cannot_overwrite() {
             .answered_by,
         stale_patch.answered_by
     );
+}
+
+/// One fixed answer for every unit in a batch.
+struct Fixed {
+    rung: DecisionRung,
+    decision: ProviderDecision,
+}
+impl SlideReviewProvider for Fixed {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: self.rung,
+            model: "fixture".into(),
+            version: "2".into(),
+        }
+    }
+    fn decide_batch(
+        &self,
+        _question: &DecisionQuestion,
+        rows: &[SlideReviewUnit],
+    ) -> Result<Vec<ProviderDecision>> {
+        Ok(vec![self.decision.clone(); rows.len()])
+    }
+}
+
+/// PR B2 acceptance: under an enforced band, an in-band System One answer steps to the
+/// house model's read. Its paired reading stays on the receipt and the settle door
+/// accepts it.
+#[test]
+fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
+    let input = deck(1);
+    let (_dir, vault, artifact, actor) = vault_with_deck(&input);
+    let question = question();
+    let mut policy = DecisionBandPolicy::default();
+    policy
+        .learn_shadow(
+            &question,
+            Reversibility::ReversibleRead,
+            DecisionBand::default(),
+            1,
+        )
+        .unwrap();
+    policy
+        .enforce(&question, Reversibility::ReversibleRead)
+        .unwrap();
+    let system_one = Fixed {
+        rung: DecisionRung::SystemOne,
+        decision: ProviderDecision {
+            answer: DecisionAnswer::Noul(false),
+            probability: Some(0.5),
+            paired: None,
+        },
+    };
+    let paired = PairedAnswer {
+        question: EntityId::now(),
+        question_version: 1,
+        probability: 0.2,
+    };
+    let house = Fixed {
+        rung: DecisionRung::Escalation,
+        decision: ProviderDecision {
+            answer: DecisionAnswer::Noul(true),
+            probability: Some(0.9),
+            paired: Some(paired),
+        },
+    };
+    let run = review_slides(
+        &input,
+        Some(1),
+        &SlideReviewRequest {
+            units: &units(1),
+            question: &question,
+            principal: EntityId::now(),
+            answered_by: EntityId::now(),
+            author: &PptxAuthor {
+                guid: support::AUTHOR.into(),
+                name: "Editor".into(),
+            },
+            dial: DecisionDial {
+                first: DecisionRung::SystemOne,
+                ceiling: DecisionRung::Escalation,
+                band: DecisionBand::default(),
+            },
+            resident_dial: None,
+            limits: SlideReviewLimits::default(),
+            policy: &policy,
+            reversibility: Reversibility::ReversibleRead,
+            labels: &labels(),
+            providers: &[&system_one, &house],
+            run_ref: "review:house",
+            at: 1_700_000_000_123,
+        },
+    )
+    .unwrap();
+    let proposal = run.proposal.unwrap();
+    let decision = &proposal.manifest.slide_judgments[0].decision;
+    assert_eq!(decision.answer, DecisionAnswer::Noul(true));
+    assert_eq!(
+        decision.receipt.providers,
+        vec![system_one.pin(), house.pin()]
+    );
+    assert_eq!(decision.receipt.paired, vec![paired.bind(house.pin())]);
+    vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &proposal,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            TimeRange { start: 4, end: 4 },
+            4,
+        )
+        .unwrap();
 }
 
 #[test]

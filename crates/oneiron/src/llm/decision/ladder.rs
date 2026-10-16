@@ -1,7 +1,7 @@
 //! Host-injected, one-step decision ladder. The engine owns routing and receipts.
 
 use super::policy::{BandMode, DecisionBandPolicy, Reversibility};
-use super::types::invalid;
+use super::types::{invalid, paired_valid};
 use super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung, HumanAskReason,
     PairedReading, ProviderPin, TypedDecision,
@@ -27,18 +27,34 @@ pub struct PairedAnswer {
     pub probability: f64,
 }
 
+impl PairedAnswer {
+    /// The engine binds a reading to the provider that measured it.
+    pub(crate) fn bind(self, provider: ProviderPin) -> PairedReading {
+        PairedReading {
+            provider,
+            question: self.question,
+            question_version: self.question_version,
+            probability: self.probability,
+        }
+    }
+}
+
 impl ProviderDecision {
-    fn validate(&self, question: &DecisionQuestion) -> Result<()> {
-        let unit = |p: f64| p.is_finite() && (0.0..=1.0).contains(&p);
+    pub(crate) fn validate(&self, question: &DecisionQuestion) -> Result<()> {
         if !question.contract.accepts(&self.answer)
             || match self.answer {
                 DecisionAnswer::Abstain => self.probability.is_some(),
-                _ => !self.probability.is_some_and(unit),
+                _ => !self
+                    .probability
+                    .is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p)),
             }
             || self.paired.is_some_and(|paired| {
-                paired.question == question.id
-                    || paired.question_version == 0
-                    || !unit(paired.probability)
+                !paired_valid(
+                    question.id,
+                    paired.question,
+                    paired.question_version,
+                    paired.probability,
+                )
             })
         {
             return Err(invalid("invalid provider decision"));
@@ -274,12 +290,7 @@ impl DecisionLadder<'_> {
         let answer = provider.decide(question, evidence)?;
         answer.validate(question)?;
         if let Some(reading) = answer.paired {
-            paired.push(PairedReading {
-                provider: pin.clone(),
-                question: reading.question,
-                question_version: reading.question_version,
-                probability: reading.probability,
-            });
+            paired.push(reading.bind(pin.clone()));
         }
         pins.push(pin);
         Ok(answer)

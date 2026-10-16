@@ -1753,6 +1753,34 @@ fn ask_receipt_labels_only_counted_human_words_against_pinned_ladder_option() ->
     Ok(())
 }
 
+/// PR B2 acceptance: the house model's decision read feeds the ask door like System
+/// One, with its probability.
+#[test]
+fn house_read_ladder_answer_is_admitted_with_its_probability() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let mut spec = fixture.spec();
+    spec.what.class_key = Some("house-read-class".into());
+    spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("yes")?,
+        rung: crate::llm::decision::DecisionRung::Escalation,
+        probability: None,
+    });
+    assert!(
+        fixture.ask(&spec).is_err(),
+        "a model rung answers with its probability"
+    );
+    if let Some(ladder) = spec.what.ladder_answer.as_mut() {
+        ladder.probability = Some(0.6);
+    }
+    let handle = fixture.ask(&spec)?;
+    fixture.word(handle, 0, "no")?;
+    assert_eq!(
+        fixture.result(handle)?.evidence[0].ladder_changed,
+        Some(true)
+    );
+    Ok(())
+}
+
 #[test]
 fn comparable_ask_without_question_class_is_refused_before_admission() -> Result<()> {
     let fixture = RuledAskFixture::new(1)?;

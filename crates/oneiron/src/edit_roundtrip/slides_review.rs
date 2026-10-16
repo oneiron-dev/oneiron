@@ -12,8 +12,8 @@ use super::pptx::{
 use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionQuestion, DecisionReceipt, DecisionRung, ProviderDecision, ProviderPin, Reversibility,
-    SlideReviewLimits, TypedDecision,
+    DecisionQuestion, DecisionReceipt, DecisionRung, PairedReading, ProviderDecision, ProviderPin,
+    Reversibility, SlideReviewLimits, TypedDecision,
 };
 use crate::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -228,6 +228,7 @@ pub fn review_slides(
         let mut pending: Vec<usize> = (0..chunk.len()).collect();
         let mut pins: Vec<Vec<ProviderPin>> = vec![Vec::new(); chunk.len()];
         let mut first_probabilities: Vec<Option<f64>> = vec![None; chunk.len()];
+        let mut paired: Vec<Vec<PairedReading>> = vec![Vec::new(); chunk.len()];
         for (rung, provider) in providers.iter().enumerate() {
             if pending.is_empty() {
                 break;
@@ -239,15 +240,11 @@ pub fn review_slides(
             }
             let mut next = Vec::new();
             for (index, result) in pending.iter().copied().zip(results) {
-                if !question.contract.accepts(&result.answer)
-                    || match result.answer {
-                        DecisionAnswer::Abstain => result.probability.is_some(),
-                        _ => !result
-                            .probability
-                            .is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p)),
-                    }
-                {
+                if result.validate(question).is_err() {
                     return Err(invalid("malformed review answer").into());
+                }
+                if let Some(reading) = result.paired {
+                    paired[index].push(reading.bind(provider_pins[rung].clone()));
                 }
                 pins[index].push(provider_pins[rung].clone());
                 if rung == 0 {
@@ -287,7 +284,7 @@ pub fn review_slides(
                         band_version: band_policy.version,
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
-                        paired: Vec::new(),
+                        paired: paired[index].clone(),
                     },
                     human_ask: None,
                 };
@@ -356,6 +353,7 @@ fn rung_from(first: DecisionRung, steps: usize) -> Option<DecisionRung> {
         DecisionRung::Rule,
         DecisionRung::Local,
         DecisionRung::SystemOne,
+        DecisionRung::Escalation,
         DecisionRung::Big,
     ];
     rungs
@@ -460,6 +458,11 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
                     || pin.version.trim().is_empty()
                     || pin.rung == DecisionRung::Human
             })
+            || !PairedReading::rows_valid(
+                &decision.receipt.paired,
+                decision.receipt.question,
+                &decision.receipt.providers,
+            )
             || decision.receipt.question_version == 0
             || row.frontier != proposal.base_content_hash
             || row.judged_version != proposal.base_version
