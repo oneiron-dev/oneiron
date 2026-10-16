@@ -864,7 +864,7 @@ impl Vault {
             if at >= scheduled_for {
                 break;
             }
-            let mut wire: WireDigest = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
             if let Some(lens) = wire.lens.take() {
                 previous = Some((at, wire.into_report()?.value, lens));
             }
