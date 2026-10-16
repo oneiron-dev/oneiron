@@ -97,7 +97,7 @@ pub(super) fn pinned_row(
                 .short_ids_reverse
                 .get(txn, found.id.as_bytes())?
                 .map(|raw| {
-                    crate::batch::parse_short_id_value(raw).map(|(short_id, _)| short_id.to_owned())
+                    crate::batch::parse_short_id_value(&raw).map(|(short_id, _)| short_id.to_owned())
                 })
                 .transpose()?,
         };
