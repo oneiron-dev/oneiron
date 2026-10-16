@@ -156,6 +156,21 @@ fn form_fields(fields: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// The largest image one reply may carry, decoded. A generated image is a few
+/// MiB; anything past this is refused as no usable image.
+const MAX_IMAGE_RESPONSE_BYTES: usize = 64 << 20;
+
+/// What standard base64 `encoded` decodes to, at most, counted from its length.
+fn decoded_len(encoded: &str) -> usize {
+    let padding = encoded
+        .bytes()
+        .rev()
+        .take(2)
+        .filter(|byte| *byte == b'=')
+        .count();
+    (encoded.len() / 4 * 3).saturating_sub(padding)
+}
+
 fn decode_response(
     response: OpenAiImageHttpResponse,
     model: ModelId,
@@ -168,27 +183,26 @@ fn decode_response(
             &response.body,
         ));
     }
-    let mut body = response
-        .body
-        .as_object()
-        .cloned()
-        .ok_or(FatalLlmError::EmptyResponse)?;
-    let mut data = body
-        .remove("data")
-        .and_then(|v| v.as_array().cloned())
-        .ok_or(FatalLlmError::EmptyResponse)?;
+    // The reply is owned: take its parts rather than copying them, and judge
+    // the image's size from its encoding before decoding it.
+    let Value::Object(mut body) = response.body else {
+        return Err(FatalLlmError::EmptyResponse.into());
+    };
+    let Some(Value::Array(mut data)) = body.remove("data") else {
+        return Err(FatalLlmError::EmptyResponse.into());
+    };
     if data.len() != 1 {
         return Err(FatalLlmError::EmptyResponse.into());
     }
-    let mut item = data
-        .remove(0)
-        .as_object()
-        .cloned()
-        .ok_or(FatalLlmError::EmptyResponse)?;
-    let encoded = item
-        .remove("b64_json")
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .ok_or(FatalLlmError::EmptyResponse)?;
+    let Some(Value::Object(mut item)) = data.pop() else {
+        return Err(FatalLlmError::EmptyResponse.into());
+    };
+    let Some(Value::String(encoded)) = item.remove("b64_json") else {
+        return Err(FatalLlmError::EmptyResponse.into());
+    };
+    if decoded_len(&encoded) > MAX_IMAGE_RESPONSE_BYTES {
+        return Err(FatalLlmError::EmptyResponse.into());
+    }
     let bytes = STANDARD
         .decode(encoded)
         .map_err(|_| FatalLlmError::EmptyResponse)?;

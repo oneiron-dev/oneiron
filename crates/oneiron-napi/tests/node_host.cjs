@@ -83,6 +83,16 @@ try {
   }
   try { vault.putCodebaseSnapshot(id, swappingSnapshot) } catch (_) { /* invalid repo is expected */ }
   assert.equal(fileReads, 1)
+  // F04 H39: a manifest path is measured in UTF-8 before napi-rs copies it;
+  // the entry is refused without reading its other fields.
+  const longPath = {
+    path: "\u00e9".repeat(2049), // 2,049 UTF-16 units, 4,098 UTF-8 bytes.
+    get contentHash() { throw new Error("entry was read past its path") },
+  }
+  assert.throws(
+    () => vault.putCodebaseSnapshot(id, { projectId: "test", repoRef: "bad-repo-ref", files: [longPath] }),
+    /codebase snapshot path must be <= 4096 bytes, got 4098/,
+  )
   console.log("NODE-HOST-OK: JS string and array caps precede native DTO allocation")
 
   const client2 = NativeClient.open(join(dir, "client"), 4)

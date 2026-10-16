@@ -1,6 +1,7 @@
 //! Shared caps, parse/validate helpers and napi error mapping for the legacy surface.
 
 use napi::bindgen_prelude::*;
+use oneiron::codebase::CODEBASE_FILE_PATH_MAX_BYTES;
 use oneiron::{CODEBASE_CONTENT_HASH_LEN, EdgeKind, EntityId};
 
 pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
@@ -124,7 +125,9 @@ pub(super) fn read_codebase_snapshot(
 ) -> napi::Result<super::types::NapiCodebaseSnapshot> {
     let files: Array<'_> = required_field(&snapshot, "files")?;
     validate_codebase_file_count(files.len() as usize).map_err(napi::Error::from_reason)?;
-    let files = read_bounded_array(&files, validate_codebase_file_count)?;
+    let files = (0..files.len())
+        .map(|index| read_codebase_file_entry(&files, index))
+        .collect::<napi::Result<Vec<_>>>()?;
     Ok(super::types::NapiCodebaseSnapshot {
         project_id: required_field(&snapshot, "projectId")?,
         repo_ref: required_field(&snapshot, "repoRef")?,
@@ -132,6 +135,30 @@ pub(super) fn read_codebase_snapshot(
         fork_hash: snapshot.get::<Option<Buffer>>("forkHash")?.flatten(),
         scope_key: snapshot.get::<Option<Buffer>>("scopeKey")?.flatten(),
         files,
+    })
+}
+
+/// One manifest entry, its path measured in UTF-8 before it is copied into a
+/// Rust string: a path past the core cap is refused here, not after the copy.
+fn read_codebase_file_entry(
+    files: &Array<'_>,
+    index: u32,
+) -> napi::Result<super::types::NapiCodebaseFileEntry> {
+    let entry: Object<'_> = files
+        .get(index)?
+        .ok_or_else(|| napi::Error::from_reason(format!("array element {index} is missing")))?;
+    let path: napi::JsString<'_> = required_field(&entry, "path")?;
+    let len = path.utf8_len()?;
+    if len > CODEBASE_FILE_PATH_MAX_BYTES {
+        return Err(napi::Error::from_reason(format!(
+            "codebase snapshot path must be <= {CODEBASE_FILE_PATH_MAX_BYTES} bytes, got {len}"
+        )));
+    }
+    Ok(super::types::NapiCodebaseFileEntry {
+        path: path.into_utf8()?.into_owned()?,
+        content_hash: required_field(&entry, "contentHash")?,
+        size_bytes: required_field(&entry, "sizeBytes")?,
+        content: entry.get::<Option<Buffer>>("content")?.flatten(),
     })
 }
 

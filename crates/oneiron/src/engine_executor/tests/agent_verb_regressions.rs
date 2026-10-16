@@ -827,6 +827,96 @@ fn a_closed_door_ends_a_runs_reads_of_its_recorded_output() {
     assert!(refused.to_string().contains("door_closed"), "{refused}");
 }
 
+/// Step 0 records a large observation. Step 1 asks for chunks of it by
+/// references the path itself shows are wrong, around one good read.
+struct ReadsBadReferences {
+    steps: u64,
+    reads: Vec<(Result<Option<Vec<u8>>>, usize)>,
+}
+
+const LARGE_OBSERVATION_BYTES: usize = 2 << 20;
+
+impl JsCodeModeRuntime for ReadsBadReferences {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        use crate::compaction::output::OutputRef;
+        use crate::session_overlay::hygiene_tests::peak_allocated;
+        self.steps += 1;
+        let observation = "n".repeat(LARGE_OBSERVATION_BYTES);
+        if self.steps == 1 {
+            return Ok(JsCodeModeStepOutcome::pending(observation));
+        }
+        let source = OutputRef::from_bytes(observation.as_bytes());
+        let chunk = |offset| super::super::store::recoverable_chunk_path(0, source, offset);
+        let elsewhere = OutputRef {
+            hash: [7; 32],
+            ..source
+        };
+        for path in [
+            chunk(LARGE_OBSERVATION_BYTES as u64 + 1),
+            chunk(0),
+            super::super::store::recoverable_chunk_path(0, elsewhere, 0),
+        ] {
+            self.reads
+                .push(peak_allocated(|| host.read_recoverable_output(&path)));
+        }
+        Ok(JsCodeModeStepOutcome::complete(""))
+    }
+}
+
+/// F04 H416: a recorded-output read whose path names an offset past its own
+/// length, or a source a read already showed it is not, is refused without
+/// loading the source. Main loaded and decoded the whole output first.
+#[test]
+fn a_bad_recorded_output_reference_is_refused_without_loading_the_source() {
+    let (_dir, vault) = open_test_vault();
+    let gated = gated_actor_write(&vault, "run-bad-output-reference")
+        .with_agent_verb_door(ClosingDoor::new(false));
+    let config = executor_config(
+        entity(0xE9),
+        EngineExecutorLimits {
+            soft_steps: 4,
+            hard_steps: 8,
+        },
+    );
+    let backend = FixtureBackend::new(["const first = 1;", "const second = 2;"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime = ReadsBadReferences {
+        steps: 0,
+        reads: Vec::new(),
+    };
+    let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
+    let _ = block_on_ready(executor.run(&config));
+    drop(executor);
+    let [
+        (past_end, past_end_peak),
+        (good, _),
+        (elsewhere, elsewhere_peak),
+    ] = runtime.reads.as_slice()
+    else {
+        panic!("step 1 read three times: {:?}", runtime.reads);
+    };
+    let good = good
+        .as_ref()
+        .expect("the good read")
+        .as_deref()
+        .expect("the recorded output");
+    assert_eq!(
+        good.len(),
+        super::super::store::RECOVERABLE_OUTPUT_CHUNK_BYTES
+    );
+    for (refused, peak) in [(past_end, past_end_peak), (elsewhere, elsewhere_peak)] {
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(
+            *peak < LARGE_OBSERVATION_BYTES / 4,
+            "refused after holding {peak} bytes"
+        );
+    }
+}
+
 /// Review repro (Sol, burn engine-prs-03 R1): a run whose door stopped
 /// admitting its calls still spoke its answer, through the executor's
 /// trailing implicit speech. That bubble is the run's own `self.speak`: a

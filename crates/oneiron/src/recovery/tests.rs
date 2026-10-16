@@ -23,6 +23,36 @@ fn assert_invalid_suffix(path: &Path, original: &Path) {
     );
 }
 
+// F04 H51: a file past the largest shell any writer emits (a canonical
+// snapshot) is refused on its size before it is read; main read all of it,
+// and twice more to quarantine it.
+#[test]
+fn an_artifact_past_the_shell_limit_is_refused_before_it_is_read() -> Result<()> {
+    use crate::session_overlay::hygiene_tests::peak_allocated;
+    let dir = tempfile::tempdir()?;
+    let artifact_path = dir.path().join("snapshot.oneiron-artifact");
+    let file = fs::File::create(&artifact_path)?;
+    file.set_len(CANONICAL_SNAPSHOT_MAX_BYTES as u64 + 1)?;
+    drop(file);
+    let (loaded, peak) =
+        peak_allocated(|| load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE));
+    assert!(
+        matches!(
+            loaded,
+            Err(Error::Artifact(ArtifactError::OverlayLimit { limit, .. }))
+                if limit == CANONICAL_SNAPSHOT_MAX_BYTES
+        ),
+        "{loaded:?}"
+    );
+    assert!(peak < 1 << 20, "refused after holding {peak} bytes");
+    assert_eq!(
+        fs::metadata(&artifact_path)?.len(),
+        CANONICAL_SNAPSHOT_MAX_BYTES as u64 + 1,
+        "the refused file stays where it was"
+    );
+    Ok(())
+}
+
 #[test]
 fn corrupt_magic_artifact_quarantines_without_losing_bytes() -> Result<()> {
     let dir = tempfile::tempdir()?;

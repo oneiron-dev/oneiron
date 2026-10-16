@@ -5,6 +5,7 @@ use super::repo_ref::{RepoRef, normalize_commit_hash, validate_normalized_commit
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
+use crate::msgpack_shape::{OverBudget, ShapeBudget, over_budget};
 use crate::side_table::{CodecError, RawValue};
 use rmpv::Value;
 
@@ -218,7 +219,25 @@ impl RawValue for CodebaseSnapshot {
     }
 }
 
+/// What a snapshot body may unfold into before its schema is read: a root
+/// map of six fields whose `files` array holds entry maps of three, and no
+/// field longer than a path.
+const SNAPSHOT_SHAPE: ShapeBudget = ShapeBudget {
+    max_values: 7 * CODEBASE_SNAPSHOT_MAX_FILES as u64 + 64,
+    max_depth: 4,
+    max_scalar_bytes: CODEBASE_FILE_PATH_MAX_BYTES,
+};
+
 pub fn decode_codebase_snapshot(bytes: &[u8]) -> Result<CodebaseSnapshot> {
+    if let Some(over) = over_budget(bytes, SNAPSHOT_SHAPE) {
+        return Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+            match over {
+                OverBudget::Values => "snapshot holds more values than its manifest allows",
+                OverBudget::Depth => "snapshot nests deeper than its manifest allows",
+                OverBudget::Scalar => "snapshot holds a field longer than its manifest allows",
+            },
+        )));
+    }
     let mut cursor = bytes;
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
         Error::Code(CodeError::InvalidCodebaseSnapshotBody(
