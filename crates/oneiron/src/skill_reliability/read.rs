@@ -1,4 +1,6 @@
-//! Reading reliability truth back: the resolved posterior, the selection score, and the confidence-cache rebuild.
+//! Skill reliability reads use learning cells, never SkillRecord confidence.
+
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -6,28 +8,82 @@ use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
+use crate::learning::project::StoredEstimateClaim;
+use crate::learning::{
+    Estimate, EstimateValue, LearningCell, LearningPredicate, LearningRead, PriorOrigin, TypeRef,
+};
 use crate::ports::EntityStoreRead;
 use crate::skill::SkillRecord;
 use crate::temporal::TimeRange;
 
-use super::codec::{invalid, map_entry};
+use super::codec::invalid;
 use super::posterior::SkillReliabilityPosterior;
+use super::priors::read_cell_in_txn;
 use super::projector::PREDICATE_SKILL_RELIABILITY;
 use super::provenance::{skill_reliability_prior, skill_reliability_prior_in_txn};
-use rmpv::Value;
 
-/// Reads the legacy unknown-executor arm, or `None` when it has never been
-/// projected. Named-model selection must use [`skill_reliability_posterior_for_executor`].
+/// The task placement and axis the caller will execute. The judge is not a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillReliabilityQuery {
+    pub type_ref: TypeRef,
+    pub axis: String,
+    /// The type tree's parent chain, nearest parent first.
+    pub type_parents: Vec<TypeRef>,
+}
+
+impl SkillReliabilityQuery {
+    pub fn validate(&self) -> Result<()> {
+        self.type_ref.validate()?;
+        if self.axis.is_empty() || self.axis.len() > 256 || self.axis.chars().any(char::is_control)
+        {
+            return Err(invalid("invalid skill reliability axis"));
+        }
+        for parent in &self.type_parents {
+            parent.validate()?;
+            if parent.tree_version != self.type_ref.tree_version {
+                return Err(invalid(
+                    "skill type parents must use the placement's tree version",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn cell(&self, skill: EntityId, executor: &str) -> Result<LearningCell> {
+        self.validate()?;
+        validate_executor(executor)?;
+        let cell = LearningCell::new(LearningPredicate::Reliability, skill)
+            .executor(executor)
+            .type_ref(self.type_ref.clone())
+            .axis(self.axis.clone());
+        cell.validate()?;
+        Ok(cell)
+    }
+}
+
+/// Full metadata, including fractional own runs, prior origin and UNTESTED.
+pub fn read_skill_reliability(
+    vault: &Vault,
+    skill: &EntityId,
+    executor: &str,
+    query: &SkillReliabilityQuery,
+) -> Result<LearningRead> {
+    let txn = vault.store.env.read_txn()?;
+    let cell = query.cell(*skill, executor)?;
+    read_cell_in_txn(vault, &txn, &cell, &query.type_parents)
+}
+
+/// Diagnostic unqualified read: the richest cell, never a pooled posterior.
+/// Selection for a task uses read_skill_reliability instead.
 pub fn skill_reliability_posterior(
     vault: &Vault,
     skill: &EntityId,
 ) -> Result<Option<SkillReliabilityPosterior>> {
-    let rtxn = vault.store.env.read_txn()?;
-    resolved_reliability_posterior_in_txn(vault, &rtxn, skill, None)
+    let txn = vault.store.env.read_txn()?;
+    resolved_reliability_posterior_in_txn(vault, &txn, skill, None)
 }
 
-/// Reads a named (skill, executor model@revision) pair. A new model has no
-/// projected claim even when another model has many runs.
+/// Diagnostic executor read. Different task types and axes never add together.
 pub fn skill_reliability_posterior_for_executor(
     vault: &Vault,
     skill: &EntityId,
@@ -50,37 +106,67 @@ pub(crate) fn validate_executor(executor: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn claim_executor(body: &ClaimBody) -> Option<&str> {
-    map_entry(&body.value, "executor").and_then(Value::as_str)
+pub(super) fn posterior_from_estimate(estimate: &Estimate) -> Result<SkillReliabilityPosterior> {
+    let EstimateValue::Beta { alpha, beta } = &estimate.value else {
+        return Err(invalid("skill reliability requires a Beta estimate"));
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    let posterior = SkillReliabilityPosterior {
+        alpha: *alpha as f32,
+        beta: *beta as f32,
+    };
+    if !posterior.alpha.is_finite()
+        || !posterior.beta.is_finite()
+        || posterior.alpha <= 0.0
+        || posterior.beta <= 0.0
+    {
+        return Err(invalid(
+            "skill reliability Beta parameters are finite and positive",
+        ));
+    }
+    Ok(posterior)
 }
 
-/// The posterior the active heads settle on: the richest one.
-///
-/// A fork is transient — the next projection supersedes every head — but a read
-/// that lands mid-fork must not answer with whichever row the edge index
-/// happened to yield first.
-pub(super) fn resolved_reliability_posterior_in_txn(
+pub(super) fn resolved_estimate_in_txn(
     vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     skill: &EntityId,
     executor: Option<&str>,
-) -> Result<Option<SkillReliabilityPosterior>> {
-    let mut resolved: Option<SkillReliabilityPosterior> = None;
-    for (id, body, _) in active_reliability_heads_in_txn(vault, rtxn, skill, executor)? {
+) -> Result<Option<Estimate>> {
+    let mut resolved: Option<Estimate> = None;
+    for (id, body, _) in active_reliability_heads_in_txn(vault, txn, skill, executor)? {
         if !claim_consolidation_eligible_in_txn(
             &vault.store,
-            rtxn,
+            txn,
             &id,
             ConsolidationReader::SkillReliabilityPosterior,
         )? {
             continue;
         }
-        let candidate = SkillReliabilityPosterior::from_value(&body.value)?;
-        if resolved.is_none_or(|held| candidate.observations() > held.observations()) {
-            resolved = Some(candidate);
+        let estimate = StoredEstimateClaim::from_value(&body.value)?.estimate;
+        if estimate.ver != crate::learning::ESTIMATOR_VERSION {
+            continue;
+        }
+        if resolved
+            .as_ref()
+            .is_none_or(|held| estimate.runs > held.runs)
+        {
+            resolved = Some(estimate);
         }
     }
     Ok(resolved)
+}
+
+pub(super) fn resolved_reliability_posterior_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    executor: Option<&str>,
+) -> Result<Option<SkillReliabilityPosterior>> {
+    resolved_estimate_in_txn(vault, txn, skill, executor)?
+        .as_ref()
+        .map(posterior_from_estimate)
+        .transpose()
 }
 
 /// EVERY active claim for `predicate` on `skill`, with the `occurred_start` a
@@ -113,46 +199,36 @@ pub(super) fn active_claims_in_txn(
 
 pub(super) fn active_reliability_heads_in_txn(
     vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     skill: &EntityId,
     executor: Option<&str>,
 ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
     Ok(
-        active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_RELIABILITY)?
+        active_claims_in_txn(vault, txn, skill, PREDICATE_SKILL_RELIABILITY)?
             .into_iter()
             .filter(|(_, body, _)| {
                 body.source == Some(crate::claim::ClaimSource::Observed)
                     && body.approval == crate::claim::ClaimApprovalStatus::Auto
-                    && claim_executor(body) == executor
+                    && StoredEstimateClaim::from_value(&body.value).is_ok_and(|stored| {
+                        executor.is_none_or(|executor| {
+                            stored.cell.executor.as_deref() == Some(executor)
+                        })
+                    })
             })
             .collect(),
     )
 }
 
-// ---------------------------------------------------------------------------
-// Cache rebuild (CID-7 demotion door)
-// ---------------------------------------------------------------------------
-
-/// Rebuilds the record's `confidence` CACHE from the reliability claim and
-/// returns the value written.
-///
-/// The REPAIR law in one call (doc 13 §3, CID-7's shape): clobber or drop the
-/// record field, run this, get the claim's posterior mean back. Claims are
-/// truth — this reads them and never writes them, which is the direction proof.
-/// A skill with no reliability claim rebuilds to its provenance prior's mean,
-/// so the cache is defined before the first attributed outcome too.
-///
-/// A SUPERSEDED revision is frozen history and keeps the cache it was frozen
-/// with (see `Vault::refresh_skill_confidence_cache_in_txn`); the value returned
-/// is still the claim's, so a caller reading it reads truth either way.
+/// Rebuild the scalar diagnostic cache from the richest measured cell.
+/// No selector reads this cache.
 pub fn rebuild_skill_confidence_cache(vault: &Vault, skill: &EntityId, at: u64) -> Result<f32> {
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn_grouped(|wtxn| {
+    vault.with_write_txn_grouped(|txn| {
         let posterior =
-            resolved_reliability_posterior_in_txn(vault, wtxn, skill, None)?.unwrap_or(prior);
+            resolved_reliability_posterior_in_txn(vault, txn, skill, None)?.unwrap_or(prior);
         let mean = posterior.mean();
         vault.refresh_skill_confidence_cache_in_txn(
-            wtxn,
+            txn,
             skill,
             mean,
             TimeRange { start: at, end: at },
@@ -162,40 +238,13 @@ pub fn rebuild_skill_confidence_cache(vault: &Vault, skill: &EntityId, at: u64) 
     })
 }
 
-// ---------------------------------------------------------------------------
-// Selection
-// ---------------------------------------------------------------------------
-
-/// The legacy unknown-executor arm's score: posterior mean plus the exploration bonus
-/// ([`SkillReliabilityPosterior::ucb`]).
-///
-/// Reads the CLAIM, never the record's cache field — a stale or clobbered cache
-/// must never be able to change which skills load. A skill with no claim scores
-/// off its provenance prior.
-///
-/// `total_pulls` is the observation total across the candidate set the caller is
-/// ranking (sum of [`SkillReliabilityPosterior::observations`]); it is an
-/// argument rather than a hidden scan so ranking N skills costs N reads, not N².
+/// Untyped discovery has only a provenance prior. A task's measured history
+/// requires the same placement and axis that will appear on its receipt.
 pub fn skill_selection_score(vault: &Vault, skill: &EntityId, total_pulls: u32) -> Result<f32> {
-    let rtxn = vault.store.env.read_txn()?;
-    skill_selection_score_in_txn(vault, &rtxn, skill, total_pulls)
+    let txn = vault.store.env.read_txn()?;
+    Ok(selection_posterior_in_txn(vault, &txn, skill, None)?.ucb(total_pulls))
 }
 
-/// Same score as the public door, on the retrieval candidate's read snapshot.
-fn skill_selection_score_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    skill: &EntityId,
-    total_pulls: u32,
-) -> Result<f32> {
-    Ok(skill_selection_score_from_posterior(
-        selection_posterior_in_txn(vault, rtxn, skill, None)?,
-        total_pulls,
-    ))
-}
-
-/// The shared score computation after a candidate set has fixed its pull horizon.
-/// Lets retrieval reuse the posterior it already resolved for that horizon.
 pub(crate) fn skill_selection_score_from_posterior(
     posterior: SkillReliabilityPosterior,
     total_pulls: u32,
@@ -205,50 +254,71 @@ pub(crate) fn skill_selection_score_from_posterior(
 
 pub(crate) fn selection_posterior_in_txn(
     vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     skill: &EntityId,
     executor: Option<&str>,
 ) -> Result<SkillReliabilityPosterior> {
-    match resolved_reliability_posterior_in_txn(vault, rtxn, skill, executor)? {
-        Some(posterior) => Ok(posterior),
-        None => skill_reliability_prior_in_txn(vault, rtxn, skill),
+    if let Some(executor) = executor {
+        validate_executor(executor)?;
+    }
+    skill_reliability_prior_in_txn(vault, txn, skill)
+}
+
+pub(crate) fn selection_posterior_for_query_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    executor: Option<&str>,
+    query: Option<&SkillReliabilityQuery>,
+) -> Result<SkillReliabilityPosterior> {
+    match (executor, query) {
+        (Some(executor), Some(query)) => {
+            let cell = query.cell(*skill, executor)?;
+            posterior_from_estimate(
+                &read_cell_in_txn(vault, txn, &cell, &query.type_parents)?.estimate,
+            )
+        }
+        _ => selection_posterior_in_txn(vault, txn, skill, executor),
     }
 }
 
-/// Pair-specific UCB ranking, seeded from provenance until measured. Never
-/// borrows another executor's claim or the skill-wide confidence cache.
+/// Typed skill arms pick by UCB through the existing shared Posterior.
 pub fn skill_selection_score_for_executor(
     vault: &Vault,
     skill: &EntityId,
     executor: &str,
+    query: &SkillReliabilityQuery,
     total_pulls: u32,
 ) -> Result<f32> {
-    let posterior = skill_reliability_posterior_for_executor(vault, skill, executor)?
-        .unwrap_or(skill_reliability_prior(vault, skill)?);
-    Ok(posterior.ucb(total_pulls))
+    let read = read_skill_reliability(vault, skill, executor, query)?;
+    Ok(posterior_from_estimate(&read.estimate)?.ucb(total_pulls))
 }
 
-/// Read-ready metadata for the faint "new model, n runs" presentation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ExecutorReliability {
     pub posterior: SkillReliabilityPosterior,
-    pub runs: u32,
+    pub runs: f64,
     pub new_model: bool,
+    pub untested: bool,
+    pub prior_origin: PriorOrigin,
+    pub prior_weight_runs: f64,
 }
 
+/// This exact cell's own-run dominance and carried/provenance presentation.
 pub fn skill_executor_reliability(
     vault: &Vault,
     skill: &EntityId,
     executor: &str,
+    query: &SkillReliabilityQuery,
 ) -> Result<ExecutorReliability> {
-    let prior = skill_reliability_prior(vault, skill)?;
-    let posterior =
-        skill_reliability_posterior_for_executor(vault, skill, executor)?.unwrap_or(prior);
-    let runs = super::projector::attributed_outcomes(prior, posterior);
+    let estimate = read_skill_reliability(vault, skill, executor, query)?.estimate;
     Ok(ExecutorReliability {
-        posterior,
-        runs,
-        new_model: runs == 0,
+        posterior: posterior_from_estimate(&estimate)?,
+        runs: estimate.runs,
+        new_model: estimate.runs == 0.0,
+        untested: estimate.untested(),
+        prior_origin: estimate.prior.origin,
+        prior_weight_runs: estimate.prior.weight_runs,
     })
 }
 

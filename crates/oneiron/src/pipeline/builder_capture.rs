@@ -14,6 +14,12 @@ impl PipelineBuilder<'_> {
         self.skill_executor.as_deref()
     }
 
+    pub(crate) fn skill_reliability_query(
+        &self,
+    ) -> Option<&crate::skill_reliability::SkillReliabilityQuery> {
+        self.skill_reliability_query.as_ref()
+    }
+
     pub(crate) fn captures_replay(&self) -> bool {
         self.capture_retrieval_trace && self.vault.store.retrieval_telemetry_capture_enabled()
     }

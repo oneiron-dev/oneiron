@@ -90,6 +90,17 @@ pub(super) fn stamp_judge_revision(
     )
 }
 
+/// Original scoring identity; conversion never edits this provenance.
+pub(crate) fn judgment_judge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sequence: u64,
+) -> Result<Option<String>> {
+    Ok(JUDGE_REVISION
+        .get(&vault.store, txn, &sequence)?
+        .map(|row| row.0))
+}
+
 pub(crate) fn judgment_displaced(vault: &Vault, sequence: u64) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     judgment_displaced_in_txn(vault, &txn, sequence)

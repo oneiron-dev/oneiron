@@ -315,3 +315,18 @@ fn key_of(outcome: &OutcomeRef) -> Vec<u8> {
     outcome.encode_into(&mut key);
     key
 }
+
+/// Every retained amendment identity, including withdrawals, for reconciling
+/// the learning projection without resurrecting an old share.
+pub(super) fn amended_receipts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    executor: Option<&str>,
+) -> Result<Vec<String>> {
+    Ok(AMENDED
+        .scan_keys(&vault.store, txn, &outcome_arm_prefix(skill, executor))?
+        .into_iter()
+        .map(|outcome| outcome.receipt().to_owned())
+        .collect())
+}

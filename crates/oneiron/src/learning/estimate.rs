@@ -277,7 +277,7 @@ impl Estimate {
     #[must_use]
     pub fn from_prior(prior: Prior, of: impl Into<String>, window: Window) -> Self {
         Self {
-            value: prior.value.clone(),
+            value: fold_value(&prior, &OwnTally::empty(prior.value.form())),
             runs: 0.0,
             prior,
             of: of.into(),

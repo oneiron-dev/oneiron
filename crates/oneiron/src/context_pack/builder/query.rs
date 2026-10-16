@@ -66,6 +66,15 @@ impl<'a> ContextPackBuilder<'a> {
         self.pipeline = self.pipeline.skill_executor(model)?;
         Ok(self)
     }
+    /// Rank skills for this task's required placement and scored axis.
+    pub fn skill_reliability_context(
+        mut self,
+        query: crate::skill_reliability::SkillReliabilityQuery,
+    ) -> crate::Result<Self> {
+        self.pipeline = self.pipeline.skill_reliability_context(query)?;
+        Ok(self)
+    }
+
     pub fn retrieval_effort(mut self, effort: crate::memory::Effort, seeds: &[EntityId]) -> Self {
         self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
         self

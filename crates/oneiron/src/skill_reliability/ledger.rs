@@ -462,9 +462,11 @@ pub(super) fn record_outcome_in_txn(
     if receipt_ref.is_empty() {
         return Err(invalid("a reliability outcome must cite a receipt"));
     }
-    if let Some(model) = executor {
-        super::read::validate_executor(model)?;
-    }
+    let model = executor.ok_or(invalid("a skill outcome requires its executor revision"))?;
+    super::read::validate_executor(model)?;
+    let receipt = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, wtxn, receipt_ref)?
+        .ok_or(invalid("a skill outcome requires a terminal pack receipt"))?;
+    super::projector::receipt_query(&receipt)?;
     let key = OutcomeRef::new(skill, executor, receipt_ref);
     if win
         && let Some(existing) = key.get(vault, wtxn)?
@@ -701,4 +703,52 @@ pub(super) fn outcome_is_local(
     outcome: &OutcomeRef,
 ) -> Result<bool> {
     Ok(outcome.contains(vault, rtxn)? || is_amended(vault, rtxn, outcome)?)
+}
+
+/// One executor's records for the learning projection. A retained but
+/// suppressed receipt maps to None, so displacement withdraws its own evidence
+/// without touching its receipt or lending its mass to another executor.
+pub(super) fn projection_outcomes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    executor: &str,
+) -> Result<Vec<(String, Option<AttributedOutcome>)>> {
+    let mut amended = amended_shares_in_txn(vault, txn, skill, Some(executor))?;
+    let mut records = Vec::new();
+    for (key, row) in PAIRED_OUTCOME.scan_from(
+        &vault.store,
+        txn,
+        &ExecutorArm::new(skill, executor).key_prefix(),
+    )? {
+        let outcome = OutcomeRef::Paired(key);
+        let counted = if let Some(share) = amended.remove(outcome.receipt()) {
+            Some(AttributedOutcome {
+                win: false,
+                loss: share,
+            })
+        } else if is_displaced(vault, txn, &outcome)? {
+            None
+        } else {
+            Some(AttributedOutcome::whole(row.win))
+        };
+        records.push((outcome.into_receipt(), counted));
+    }
+    records.extend(amended.into_iter().map(|(receipt, share)| {
+        (
+            receipt,
+            Some(AttributedOutcome {
+                win: false,
+                loss: share,
+            }),
+        )
+    }));
+    // Withdrawn amendments may have no attempt-lane row underneath them.
+    for receipt in super::amended::amended_receipts_in_txn(vault, txn, skill, Some(executor))? {
+        if !records.iter().any(|(held, _)| held == &receipt) {
+            records.push((receipt, None));
+        }
+    }
+    records.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(records)
 }

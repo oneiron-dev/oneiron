@@ -1,8 +1,5 @@
 //! Imported reliability history is inert data, not a local posterior or synced base.
-use super::{
-    PREDICATE_SKILL_RELIABILITY, SKILL_RELIABILITY_MAX_CITED_RECEIPTS, SkillReliabilityPosterior,
-    codec::invalid, projector::posterior_value, read::claim_executor,
-};
+use super::{PREDICATE_SKILL_RELIABILITY, SKILL_RELIABILITY_MAX_CITED_RECEIPTS, codec::invalid};
 use crate::{
     Vault,
     claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject},
@@ -32,15 +29,7 @@ pub(crate) fn imported_reliability_body(body: &ClaimBody) -> Result<ClaimBody> {
     {
         return Err(invalid("reliability archive is neither native nor inert"));
     }
-    let posterior = SkillReliabilityPosterior::from_value(&body.value)?;
-    let executor = claim_executor(body);
-    if executor.is_some_and(|model| super::read::validate_executor(model).is_err())
-        || body.value != posterior_value(posterior, executor)
-    {
-        return Err(invalid(
-            "reliability archive requires the exact posterior codec",
-        ));
-    }
+    crate::learning::validate_learning_claim_structure(body)?;
     let Some(Value::Array(refs)) = body.evidence.as_ref() else {
         return Err(invalid("reliability archive needs its citations"));
     };
@@ -57,6 +46,7 @@ pub(crate) fn imported_reliability_body(body: &ClaimBody) -> Result<ClaimBody> {
     Ok(out)
 }
 pub(crate) fn validate_imported_reliability(body: &ClaimBody) -> Result<()> {
+    crate::learning::validate_learning_claim_structure(body)?;
     if body.source == Some(ClaimSource::Imported) && imported_reliability_body(body)? != *body {
         return Err(invalid("foreign reliability must remain inert"));
     }

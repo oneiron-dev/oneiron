@@ -49,6 +49,7 @@ pub(crate) fn own_estimate_in_txn(
         .into_iter()
         .filter_map(|(_, body, _)| StoredEstimateClaim::from_value(&body.value).ok())
         .map(|stored| stored.estimate)
+        .filter(|estimate| estimate.ver == super::estimate::ESTIMATOR_VERSION)
         .max_by(|a, b| a.runs.total_cmp(&b.runs)))
 }
 
@@ -68,7 +69,20 @@ pub fn read_learning(
     type_parents: &[TypeRef],
 ) -> Result<LearningRead> {
     let rtxn = vault.store.env.read_txn()?;
-    let txn = &rtxn;
+    read_learning_in_txn(vault, &rtxn, cell, type_parents)
+}
+
+/// The same backoff on a retrieval or projection snapshot.
+pub(crate) fn read_learning_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+    type_parents: &[TypeRef],
+) -> Result<LearningRead> {
+    cell.validate()?;
+    for parent in type_parents {
+        parent.validate()?;
+    }
     if let Some(estimate) = own_estimate_in_txn(vault, txn, cell)? {
         return Ok(LearningRead {
             estimate,

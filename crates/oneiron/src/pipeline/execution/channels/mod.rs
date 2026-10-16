@@ -933,6 +933,7 @@ impl PipelineBuilder<'_> {
                 rtxn,
                 signal_components,
                 self.skill_executor.as_deref(),
+                self.skill_reliability_query.as_ref(),
             )?
         } else {
             Vec::new()
