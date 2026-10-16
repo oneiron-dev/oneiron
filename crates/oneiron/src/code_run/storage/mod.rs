@@ -1,6 +1,7 @@
 //! Canonical code-run persistence rows and the executor's storage routing.
 
 mod compaction;
+mod folds;
 mod records;
 mod routing;
 mod speech_identity;
