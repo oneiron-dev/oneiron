@@ -173,6 +173,9 @@ side_tables! {
     /// its machine was mine under before the pin last changed. Local like the machine id:
     /// never synced, and dropped wherever the machine id is. Key: ().
     IDENTITY_PINNED_ROOT: SyncState b"m:pinned_root" Raw;
+    /// Sweep refs a hard delete captured from a provenance Claim before its SoftErase emptied the
+    /// body, held until a purge queues its sweep. Key: hex32 (entity id).
+    DELETION_PENDING_SWEEP_REFS: SyncState b"m:sr:" Raw;
     /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
     /// Key: hex32 (entity id).
     SYNC_M_U_SEQ_E: SyncState b"m:u_seq:e:" Raw;
