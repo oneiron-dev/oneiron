@@ -179,3 +179,67 @@ fn board_observations_keep_their_read_receipt() -> Result<()> {
     assert!(session.refresh(&read, 8)?.rows.is_empty());
     Ok(())
 }
+
+/// Class-A row 40: a session keeps every row it was served, however many.
+/// Main refused the 4,097th new row. Past the threshold row a served
+/// snapshot raises the owner's check once, and observing goes on.
+#[test]
+fn a_session_read_set_keeps_every_row_past_the_old_cap() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = crate::test_util::entity(231);
+    let claim = crate::test_util::entity(232);
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    vault.put_claim(
+        &claim,
+        &ClaimBody::new(
+            "profile.likes",
+            ClaimSubject::Entity(subject),
+            rmpv::Value::from("tea"),
+            0.8,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?,
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    crate::test_util::authorize_readers(&vault, &["viewer"]);
+    let scan = crate::scan_check::EngineScan::ReadSetRows;
+    vault.set_scan_threshold(scan, 2)?;
+    let read = vault.scoped_read(ScopedReadActorKey::new("viewer").unwrap());
+    let mut session = SessionReadSet::default();
+    // Served claims alone, as the server's claim path records them.
+    for index in 0..4_097_u64 {
+        let mut bytes = [0x7e; 16];
+        bytes[8..].copy_from_slice(&index.to_be_bytes());
+        session.observe_lifecycle(
+            &read,
+            crate::EntityId::from_bytes(bytes)?,
+            ServedLifecycle::Active,
+        )?;
+    }
+    let lifecycle_only = vault.scan_checks()?;
+    assert_eq!(
+        lifecycle_only.len(),
+        1,
+        "the lifecycle path raised the check"
+    );
+    let row = read
+        .read(&[crate::claim::PointRead::id(claim)], None)?
+        .single()
+        .value
+        .expect("readable claim");
+    let (kind, body) = (row.entity_type, row.body.expect("live body"));
+    for _ in 0..2 {
+        session.observe_snapshot(&read, claim, kind, &body, false)?;
+    }
+    let checks = vault.scan_checks()?;
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].scan, scan.code());
+    Ok(())
+}

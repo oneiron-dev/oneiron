@@ -18,6 +18,9 @@ pub enum EmptyReason {
     NoData,
     AllActivated,
     BelowThreshold,
+    /// The reader's profile takes no optional memory for this task, so no
+    /// retrieval ran (ARCH-0004 #reader-budget). It says nothing about rows.
+    SkippedByProfile,
 }
 
 /// Structured context for an empty context-pack response.
@@ -195,5 +198,42 @@ fn empty_hint(reason: EmptyReason) -> &'static str {
             "All matching items are already activated; allow activated results to revisit them"
         }
         EmptyReason::BelowThreshold => "Try broadening the query or lowering the result threshold",
+        EmptyReason::SkippedByProfile => {
+            "The reader's profile takes no optional memory for this task; pinned rows still apply"
+        }
+    }
+}
+
+/// The pack a reader whose profile takes no optional memory gets: empty, and
+/// built before any retrieval or L2 work.
+pub(super) fn skipped_by_profile_pack() -> ContextPack {
+    let stats = PackStats {
+        critical_over_budget: false,
+        critical_count: 0,
+        candidates_considered: 0,
+        signals_used: Vec::new(),
+        query_time_us: 0,
+        entities_hydrated: 0,
+        neighbors_hydrated: 0,
+        cosine_ghosts_dampened: 0,
+        claims_suppressed: 0,
+        tokens: super::PackTokenStats::default(),
+        items_truncated: super::PackItemAccounting::item_budget(),
+        items_dropped: super::PackItemAccounting::token_budget(),
+    };
+    let retrieval_quality = RetrievalQualityReport::default();
+    ContextPack {
+        capabilities: Vec::new(),
+        l2_base: None,
+        empty: empty_context(
+            true,
+            &stats,
+            Some(EmptyReason::SkippedByProfile),
+            &retrieval_quality,
+        ),
+        retrieval_quality,
+        results: Vec::new(),
+        neighbors: Vec::new(),
+        stats,
     }
 }

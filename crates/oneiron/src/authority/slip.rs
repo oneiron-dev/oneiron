@@ -253,6 +253,61 @@ impl CapabilitySlip {
         self.verify_holder(challenge, holder_signature)?;
         Ok(verified)
     }
+    /// Checks what a proof's bytes fix for good: the mint's claims equal this
+    /// slip's, the host signed them, every caveat transfer is signed by the
+    /// key before it, and the last binding key signed `challenge`. Standing
+    /// (revocation, retirement, expiry, scope) is the reader's later check, so
+    /// a row that passes here can still lose its authority.
+    pub(crate) fn verify_origin(
+        &self,
+        fold: &AuthorityFold,
+        challenge: &[u8],
+        holder_signature: &[u8],
+    ) -> Result<()> {
+        self.claims.validate()?;
+        if self.version != 2
+            || self.caveats.len() > MAX_CAVEATS
+            || canonical(self)?.len() > MAX_WIRE_BYTES
+            || fold.vault_id != Some(self.claims.vault_id)
+        {
+            return Err(invalid_authority());
+        }
+        let mint = fold
+            .slips
+            .mints
+            .get(&self.claims.slip_id)
+            .ok_or_else(invalid_authority)?;
+        let super::AuthorityKey::Ed25519(host_key) = &mint.signer else {
+            return Err(invalid_authority());
+        };
+        if mint.action.claims != self.claims {
+            return Err(invalid_authority());
+        }
+        let host = VerifyingKey::from_bytes(host_key).map_err(|_| invalid_authority())?;
+        let signature = Signature::from_slice(&self.signature).map_err(|_| invalid_authority())?;
+        host.verify_strict(&mint_transcript(&self.claims)?, &signature)
+            .map_err(|_| invalid_authority())?;
+        let mut prefix = Self {
+            version: self.version,
+            claims: self.claims.clone(),
+            caveats: Vec::new(),
+            signature: self.signature.clone(),
+        };
+        let mut binding_key = self.claims.binding_key;
+        for block in &self.caveats {
+            let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
+            let signature =
+                Signature::from_slice(&block.signature).map_err(|_| invalid_authority())?;
+            key.verify_strict(
+                &caveat_transcript(&prefix, &block.caveat, &block.next_binding_key)?,
+                &signature,
+            )
+            .map_err(|_| invalid_authority())?;
+            prefix.caveats.push(block.clone());
+            binding_key = block.next_binding_key;
+        }
+        self.verify_holder(challenge, holder_signature)
+    }
     fn verify_holder(&self, challenge: &[u8], holder_signature: &[u8]) -> Result<()> {
         let key = VerifyingKey::from_bytes(&self.current_binding_key())
             .map_err(|_| invalid_authority())?;

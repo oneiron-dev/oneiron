@@ -3658,8 +3658,8 @@ fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> 
 
 /// Sol R8 F1, F3: the TASK scans an ask and a room thread read take place
 /// at the caller's locality. Off this device a TASK a device-local world
-/// keeps takes no place in a page, a scan cap or the room census guard, so
-/// none of their refusals counts it; on this device each still does.
+/// keeps takes no place in a page, a scan cap or the room census; on this
+/// device each still does.
 #[test]
 fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
     use crate::claim::CallerLocality;
@@ -3713,11 +3713,115 @@ fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
     let members = std::collections::BTreeSet::from([owner.to_hex()]);
     let census = |locality| {
         let memory = vault.memory(owner, EdgeActorClass::Human).at(locality);
-        super::room_thread::thread_tasks_capped(&memory, &roots, &members, 1, 1)
+        super::room_thread::thread_tasks(&memory, &roots, &members, 1)
             .map(|tasks| tasks.len())
             .map_err(|error| format!("{error:?}"))
     };
     assert_eq!(census(CallerLocality::OffDevice)?, 0);
-    assert!(census(CallerLocality::OnDevice).is_err());
+    assert_eq!(census(CallerLocality::OnDevice)?, 2);
+    Ok(())
+}
+
+/// F13 H431: a room thread read walks the room members' tasks, never every
+/// TASK in the vault. An unrelated TASK no member owns, whose row no longer
+/// reads, costs the read nothing; a walk over every TASK fails on it.
+#[test]
+fn a_room_thread_read_walks_only_its_members_tasks() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let root = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("thread_ref"),
+                rmpv::Value::from(root.to_hex()),
+            )]),
+            None,
+            None,
+            None,
+        ))?;
+    vault.backfill_tasks_by_owner()?;
+    let unrelated = EntityId::from_bytes([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])?;
+    vault.with_write_txn(|wtxn| {
+        // A TASK row with no readable header, filed under no owner.
+        vault.store.entities.put(
+            wtxn,
+            unrelated.as_bytes(),
+            &[crate::registry::ENTITY_TYPE_TASK],
+        )?;
+        let type_key =
+            crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_TASK, &unrelated);
+        vault.store.type_index.put(wtxn, &type_key, &[])?;
+        Ok(())
+    })?;
+
+    let roots = std::collections::BTreeMap::from([(root, root)]);
+    let members = std::collections::BTreeSet::from([owner.to_hex()]);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let tasks = super::room_thread::thread_tasks(&memory, &roots, &members, 1)
+        .expect("the members' tasks read");
+    assert_eq!(tasks.len(), 1);
+    Ok(())
+}
+
+/// Class-A rows 3 to 7: an ask's task census, its words and a room thread
+/// census read every row they need, however many (rule 5). Main refused
+/// past 4,096 tasks or words and 100,000 thread tasks; here each scan's
+/// threshold row is lowered to 1, every read serves past it, and each scan
+/// raises the owner's check once. Rows 3 and 4 share one census, read here
+/// through the ask's omitted task context.
+#[test]
+fn ask_and_thread_census_read_past_their_threshold_row() -> Result<()> {
+    use crate::scan_check::EngineScan;
+    let fixture = RuledAskFixture::new(2)?;
+    let (agent, _) = governed_agent(&fixture)?;
+    let root = EntityId::now();
+    let owner_memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    for _ in 0..2 {
+        owner_memory.tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("thread_ref"),
+                rmpv::Value::from(root.to_hex()),
+            )]),
+            None,
+            None,
+            None,
+        ))?;
+    }
+    let scans = [
+        EngineScan::TaskCensusRows,
+        EngineScan::AskWordRows,
+        EngineScan::RoomThreadTasks,
+    ];
+    for scan in scans {
+        fixture.vault.set_scan_threshold(scan, 1)?;
+    }
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Hold;
+    let receipt = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask(&spec)?;
+    fixture.word(receipt.handle, 0, "yes")?;
+    fixture.word(receipt.handle, 1, "no")?;
+    let evidence = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask_evidence(receipt.handle)?;
+    assert_eq!(evidence.len(), 2);
+    let roots = std::collections::BTreeMap::from([(root, root)]);
+    let members = std::collections::BTreeSet::from([fixture.owner.to_hex()]);
+    let tasks = super::room_thread::thread_tasks(&owner_memory, &roots, &members, 1)?;
+    assert_eq!(tasks.len(), 2);
+    let checks = fixture.vault.scan_checks()?;
+    for scan in scans {
+        let raised = checks
+            .iter()
+            .filter(|check| check.scan == scan.code())
+            .count();
+        assert_eq!(raised, 1, "{} raised its check once", scan.code());
+    }
     Ok(())
 }

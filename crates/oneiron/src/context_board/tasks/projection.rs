@@ -11,9 +11,9 @@ use crate::{EntityId, Result, Vault};
 /// Maximum concrete TASKS rows rendered before the additive overflow footer.
 ///
 /// ARCH-0067 §3 sheds TASKS "to counts" under the board cap, so the section
-/// needs a row bound of its own. This one bounds TOKENS; `task_verb`'s
-/// `TASK_PRESENCE_SCAN_CAP` bounds WORK. Collapsing the two would let a
-/// malformed or filtered prefix starve the visible board unpredictably.
+/// needs a row bound of its own. This one bounds TOKENS; `task_verb`'s board
+/// scan reads every TASK row (rule 5), so no malformed or filtered prefix
+/// starves the visible board.
 ///
 /// Re-exported crate-wide as [`TasksSection::RENDER_ROW_CAP`].
 pub(super) const TASKS_RENDER_ROW_CAP: usize = 100;
@@ -224,8 +224,7 @@ impl TasksSection {
     ///
     /// `context_board`'s re-export list is a shared chokepoint this ticket does
     /// not claim, and `mod tasks` is private — an associated const travels with
-    /// the already re-exported type, so `task_verb` can pin its own scan cap
-    /// against this one at compile time.
+    /// the already re-exported type.
     pub const RENDER_ROW_CAP: usize = TASKS_RENDER_ROW_CAP;
 
     /// Renders presence into collapsed rows under the render cap, carrying the

@@ -402,7 +402,6 @@ impl SlideReviewProvider for Fixed {
 #[test]
 fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
     let input = deck(1);
-    let (_dir, vault, artifact, actor) = vault_with_deck(&input);
     let question = question();
     let mut policy = DecisionBandPolicy::default();
     policy
@@ -444,54 +443,78 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             person: Some(person),
         },
     };
-    let run = review_slides(
-        &input,
-        Some(1),
-        &SlideReviewRequest {
-            units: &units(1),
-            question: &question,
-            principal: EntityId::now(),
-            answered_by: EntityId::now(),
-            author: &PptxAuthor {
-                guid: support::AUTHOR.into(),
-                name: "Editor".into(),
-            },
-            dial: DecisionDial {
-                first: DecisionRung::SystemOne,
-                ceiling: DecisionRung::Escalation,
-                band: DecisionBand::default(),
-            },
-            resident_dial: None,
-            limits: SlideReviewLimits::default(),
-            policy: &policy,
-            reversibility: Reversibility::ReversibleRead,
-            labels: &labels(),
-            providers: &[&system_one, &house],
-            run_ref: "review:house",
-            at: 1_700_000_000_123,
+    let big = Fixed {
+        rung: DecisionRung::Big,
+        decision: ProviderDecision {
+            answer: DecisionAnswer::Noul(true),
+            probability: Some(0.95),
+            paired: None,
+            person: None,
         },
-    )
-    .unwrap();
-    let proposal = run.proposal.unwrap();
-    let decision = &proposal.manifest.slide_judgments[0].decision;
-    assert_eq!(decision.answer, DecisionAnswer::Noul(true));
-    assert_eq!(
-        decision.receipt.providers,
-        vec![system_one.pin(), house.pin()]
-    );
-    assert_eq!(decision.receipt.paired, vec![paired.bind(house.pin())]);
-    // The surface has no person rung, so the reading routes nothing, and it stays.
-    assert_eq!(decision.receipt.person, vec![person.bind(house.pin())]);
-    vault
-        .settle_select_edit_proposal(
-            &artifact,
-            &proposal,
-            &SettleConsent::OwnerConsent { brief_ref: None },
-            actor,
-            TimeRange { start: 4, end: 4 },
-            4,
+    };
+    // Without a house model the route skips its rung (ARCH-0076 #posture): System
+    // One steps to the big model, and the settle door accepts that receipt too.
+    let routes: [(&[&dyn SlideReviewProvider], DecisionRung); 2] = [
+        (&[&system_one, &house], DecisionRung::Escalation),
+        (&[&system_one, &big], DecisionRung::Big),
+    ];
+    for (providers, ceiling) in routes {
+        let (_dir, vault, artifact, actor) = vault_with_deck(&input);
+        let run = review_slides(
+            &input,
+            Some(1),
+            &SlideReviewRequest {
+                units: &units(1),
+                question: &question,
+                principal: EntityId::now(),
+                answered_by: EntityId::now(),
+                author: &PptxAuthor {
+                    guid: support::AUTHOR.into(),
+                    name: "Editor".into(),
+                },
+                dial: DecisionDial {
+                    first: DecisionRung::SystemOne,
+                    ceiling,
+                    band: DecisionBand::default(),
+                },
+                resident_dial: None,
+                limits: SlideReviewLimits::default(),
+                policy: &policy,
+                reversibility: Reversibility::ReversibleRead,
+                labels: &labels(),
+                providers,
+                run_ref: "review:house",
+                at: 1_700_000_000_123,
+            },
         )
         .unwrap();
+        let proposal = run.proposal.unwrap();
+        let decision = &proposal.manifest.slide_judgments[0].decision;
+        assert_eq!(decision.answer, DecisionAnswer::Noul(true));
+        let pins: Vec<_> = providers.iter().map(|provider| provider.pin()).collect();
+        assert_eq!(decision.receipt.providers, pins);
+        let rows: Vec<_> = (ceiling == DecisionRung::Escalation)
+            .then(|| paired.bind(house.pin()))
+            .into_iter()
+            .collect();
+        assert_eq!(decision.receipt.paired, rows);
+        // The surface has no person rung, so the reading routes nothing, and it stays.
+        let rows: Vec<_> = (ceiling == DecisionRung::Escalation)
+            .then(|| person.bind(house.pin()))
+            .into_iter()
+            .collect();
+        assert_eq!(decision.receipt.person, rows);
+        vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &proposal,
+                &SettleConsent::OwnerConsent { brief_ref: None },
+                actor,
+                TimeRange { start: 4, end: 4 },
+                4,
+            )
+            .unwrap();
+    }
 }
 
 #[test]

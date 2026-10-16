@@ -137,6 +137,8 @@ pub(crate) enum CoreContextPackStateKind {
     Ok,
     MissingData,
     LowConfidence,
+    /// The reader's profile takes no optional memory for this task.
+    Skipped,
 }
 
 /// Stable context-pack empty-result reason.
@@ -147,6 +149,7 @@ pub(crate) enum CoreContextPackStateReason {
     NoData,
     AllActivated,
     BelowThreshold,
+    SkippedByProfile,
 }
 
 /// Score component that contributed to a context-pack result.
@@ -257,6 +260,9 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     empty: Option<Value>,
+    /// The request's `limit` was past 1,000 and was served at 1,000.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(super) limit_clamped: bool,
 }
 
 pub(crate) async fn run_context_pack_builder(
@@ -473,6 +479,7 @@ pub(crate) fn core_context_pack_response(
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
+        limit_clamped: false,
     }
 }
 
@@ -551,6 +558,7 @@ pub(crate) fn core_context_pack_state(
     CoreContextPackState {
         kind: match empty.reason {
             oneiron::EmptyReason::BelowThreshold => CoreContextPackStateKind::LowConfidence,
+            oneiron::EmptyReason::SkippedByProfile => CoreContextPackStateKind::Skipped,
             oneiron::EmptyReason::FilterMatchedNone
             | oneiron::EmptyReason::NoData
             | oneiron::EmptyReason::AllActivated => CoreContextPackStateKind::MissingData,
@@ -569,6 +577,7 @@ pub(crate) fn core_context_pack_state_reason(
         oneiron::EmptyReason::NoData => CoreContextPackStateReason::NoData,
         oneiron::EmptyReason::AllActivated => CoreContextPackStateReason::AllActivated,
         oneiron::EmptyReason::BelowThreshold => CoreContextPackStateReason::BelowThreshold,
+        oneiron::EmptyReason::SkippedByProfile => CoreContextPackStateReason::SkippedByProfile,
     }
 }
 

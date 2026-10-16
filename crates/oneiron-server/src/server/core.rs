@@ -78,6 +78,8 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
     pub(crate) transfers: crate::api::Transfers,
+    /// OF-520 questions retrieval queries past `config.limits` raised.
+    pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
@@ -141,6 +143,10 @@ pub struct SyncServer {
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
+    /// With the override set, the runtime instant it holds from: the booking
+    /// clock then moves with the runtime's (paused) time.
+    #[cfg(test)]
+    pub(crate) booking_test_clock_from: Option<tokio::time::Instant>,
 }
 
 impl SyncServer {
@@ -279,6 +285,7 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
+            query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
             mcp_registry,
@@ -300,6 +307,8 @@ impl SyncServer {
             artifact_port: None,
             #[cfg(test)]
             booking_test_now_secs: None,
+            #[cfg(test)]
+            booking_test_clock_from: None,
         })
     }
 

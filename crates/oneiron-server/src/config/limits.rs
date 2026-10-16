@@ -73,6 +73,14 @@ pub struct LimitsConfig {
     /// How long a git or LFS transfer may go without moving a byte, in
     /// milliseconds, before it is ended and its worker and child freed.
     pub transfer_idle_timeout_ms: u64,
+    /// Bytes one retrieval query may carry, counted as sent. A query past it
+    /// is refused with the typed 413 naming this bound, and raises the
+    /// OF-520 question once per caller, door and field.
+    pub retrieval_query_bytes: usize,
+    /// Stored body bytes one multi-row read decodes. A row past it is served
+    /// with a `bodyOmitted` marker in place of its body; a single-entity read
+    /// returns its body whole, whatever its size.
+    pub projection_body_bytes: usize,
     /// The most bytes one pushed blob may hold for the push door to scan it.
     /// The door holds one blob at a time, so this is a memory floor per blob,
     /// never a cap on a push; by default a sixty-fourth of the machine's
@@ -87,7 +95,11 @@ pub struct LimitsConfig {
     /// Free bytes the disk holding the vault keeps. An upload that would take
     /// the disk below it, counting the room every other upload in flight has
     /// claimed, is refused: before a byte is read when it declares its size,
-    /// and as soon as it gets there when it does not.
+    /// and as soon as it gets there when it does not. Each write a git push
+    /// makes to the disk past memory (its command section, its status report)
+    /// asks first and is refused if it would take the disk below it; a write
+    /// claims nothing, so writes asking at once can each pass it by their own
+    /// bytes.
     pub disk_reserve_bytes: u64,
 }
 
@@ -108,6 +120,10 @@ impl Default for LimitsConfig {
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
             transfer_idle_timeout_ms: 300_000,
+            // Format bounds far above a question or a page of bodies: 128
+            // times the facade's 8 KiB query and 64 times one entity payload.
+            retrieval_query_bytes: 1 << 20,
+            projection_body_bytes: 4 << 20,
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
@@ -163,6 +179,8 @@ impl LimitsConfig {
             decision_reads,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
+            retrieval_query_bytes,
+            projection_body_bytes,
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
@@ -183,6 +201,8 @@ impl LimitsConfig {
         set(&mut self.decision_reads, decision_reads);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
+        set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
+        set(&mut self.projection_body_bytes, projection_body_bytes);
         set(&mut self.git_scan_blob_bytes, git_scan_blob_bytes);
         set(
             &mut self.git_scan_disk_floor_bytes,
@@ -212,6 +232,8 @@ impl LimitsConfig {
             ("decision_reads", self.decision_reads as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
+            ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
+            ("projection_body_bytes", self.projection_body_bytes as u64),
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
@@ -267,6 +289,8 @@ pub(super) struct LimitsConfigOverride {
     pub(super) decision_reads: Option<usize>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
+    pub(super) retrieval_query_bytes: Option<usize>,
+    pub(super) projection_body_bytes: Option<usize>,
     pub(super) git_scan_blob_bytes: Option<u64>,
     pub(super) git_scan_disk_floor_bytes: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,

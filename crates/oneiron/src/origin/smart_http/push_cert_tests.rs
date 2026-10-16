@@ -156,6 +156,87 @@ fn a_push_certificate_never_reaches_the_object_store() {
     }
 }
 
+/// A push names any number of refs (rule 5), so its command section is held
+/// whatever its size: past the mebibyte held in memory it is held in an
+/// unnamed file in the door root and read whole. 3,699 creations named at the
+/// 200-byte ref limit, then a replacement ref, make a section past a mebibyte:
+/// the door window refuses the push for that last name alone, which only a
+/// backend handed the whole section can report. A push certificate past the
+/// mebibyte is still refused before the backend reads a byte. Nothing the
+/// sections were held in is left in the door root.
+#[cfg(unix)]
+#[test]
+fn a_command_section_past_a_mebibyte_is_held_and_read_whole() {
+    let (_vault_dir, vault) = temp_vault();
+    let (_source, repo, _, second) = served_repo(&vault);
+    let door_root = origin_door_root(&vault).expect("door root");
+    let door_entries = || {
+        let mut names: Vec<_> = fs::read_dir(&door_root)
+            .expect("door root")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    let before = door_entries();
+    let zero = "0".repeat(40);
+    let mut names: Vec<String> = (0..3_699)
+        .map(|n| format!("refs/heads/{n:04}-{}", "x".repeat(184)))
+        .collect();
+    names.push(format!("refs/replace/{}", "y".repeat(187)));
+    assert!(names.iter().all(|name| name.len() == 200));
+    let mut section = Vec::new();
+    for (n, name) in names.iter().enumerate() {
+        let capabilities = if n == 0 { "\0report-status" } else { "" };
+        section.extend(pkt(&format!(
+            "{zero} {} {name}{capabilities}\n",
+            second.as_str()
+        )));
+    }
+    assert!(section.len() > 1 << 20, "{} section bytes", section.len());
+    let pack = Command::new("git")
+        .current_dir(&repo)
+        .args(["pack-objects", "--stdout"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("pack-objects");
+    assert!(pack.status.success() && pack.stdout.starts_with(b"PACK"));
+
+    let mut body = section.clone();
+    body.extend(b"0000");
+    body.extend(&pack.stdout);
+    let report = receive_pack(&vault, body, None).expect("a section of any size is served");
+    let DoorWindowVerdict::Rejected { reasons } = &report.door.verdict else {
+        panic!(
+            "the door refuses the replacement ref: {:?}",
+            report.door.verdict
+        );
+    };
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].starts_with("refs/replace/")
+            && reasons[0].ends_with("this origin never serves a replacement ref"),
+        "{reasons:?}"
+    );
+    assert!(git(&repo, &["for-each-ref", "refs/heads/0000-*"]).is_empty());
+
+    let mut signed = section;
+    signed.extend(pkt("push-cert\0report-status\n"));
+    signed.extend(pkt("certificate version 0.1\n"));
+    signed.extend(pkt("push-cert-end\n"));
+    signed.extend(b"0000");
+    let refused = receive_pack(&vault, signed, None);
+    assert!(
+        matches!(
+            &refused,
+            Err(Error::Code(CodeError::ReceivePackDoorRejected { reason }))
+                if reason == "the origin accepts no push certificate"
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(door_entries(), before);
+}
+
 fn gzip(body: &[u8]) -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(body).expect("gzip");

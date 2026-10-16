@@ -12,8 +12,13 @@ use oneiron::{
 #[derive(Default)]
 struct FixtureBackend {
     answer_inputs: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+    trace_inputs: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
     routing_prompts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     rejected_alias: Option<String>,
+    /// Answer from the context alone, and judge by exact match.
+    reads_context: bool,
+    /// Judge a right answer as partly correct (0.5).
+    half_credit: bool,
 }
 impl LlmBackend for FixtureBackend {
     fn generate<'a>(
@@ -22,24 +27,37 @@ impl LlmBackend for FixtureBackend {
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
+            let ContentPart::Text { text: user } = &request.messages[1].content[0] else {
+                panic!("text")
+            };
+            let input: serde_json::Value = serde_json::from_str(user).unwrap_or_default();
             let text = match request.envelope.purpose {
                 CallPurpose::Eval => {
-                    let ContentPart::Text { text } = &request.messages[1].content[0] else {
-                        panic!("text")
-                    };
-                    let input: serde_json::Value = serde_json::from_str(text).unwrap();
                     if self
                         .rejected_alias
                         .as_deref()
                         .is_some_and(|alias| input["gold_answer"] == alias)
+                        || (self.reads_context && input["candidate_answer"] != input["gold_answer"])
                     {
-                        "0"
+                        "0".to_owned()
+                    } else if self.half_credit {
+                        "0.5".to_owned()
                     } else {
-                        "1"
+                        "1".to_owned()
                     }
                 }
-                CallPurpose::ToolRouting => "contract launch code",
-                _ => "tulip",
+                CallPurpose::ToolRouting => "contract launch code".to_owned(),
+                CallPurpose::AnswerGen if input.get("trace").is_some() => {
+                    self.trace_inputs.lock().unwrap().push(input.clone());
+                    format!("draft:{}", input["question"].as_str().unwrap())
+                }
+                CallPurpose::AnswerGen
+                    if self.reads_context
+                        && !input["context"].as_str().unwrap().contains("tulip") =>
+                {
+                    "violet".to_owned()
+                }
+                _ => "tulip".to_owned(),
             };
             if request.envelope.purpose == CallPurpose::ToolRouting {
                 let ContentPart::Text { text } = &request.messages[0].content[0] else {
@@ -47,7 +65,7 @@ impl LlmBackend for FixtureBackend {
                 };
                 self.routing_prompts.lock().unwrap().push(text.clone());
             }
-            if request.envelope.purpose == CallPurpose::AnswerGen {
+            if request.envelope.purpose == CallPurpose::AnswerGen && input.get("trace").is_none() {
                 let input = match &request.messages[1].content[0] {
                     ContentPart::Text { text } => text,
                     _ => panic!("text"),
@@ -61,7 +79,7 @@ impl LlmBackend for FixtureBackend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text: text.into() }],
+                    content: vec![ContentPart::Text { text }],
                 },
                 usage: LlmUsage {
                     input: LlmInputUsage {
@@ -150,11 +168,13 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
         },
         answer_prompt: prompt.into(),
         routing_prompt: AnswerPromptPin::from_exact_text("Fixture query routing policy."),
+        trajectory_prompt: AnswerPromptPin::from_exact_text("Fixture own-step policy."),
         answerers: [
             ArmKind::Deterministic,
             ArmKind::Agentic,
             ArmKind::BackboneSolo,
             ArmKind::Chat,
+            ArmKind::TrajectoryOnly,
         ]
         .into_iter()
         .map(|arm| AnswererArm {
@@ -172,11 +192,13 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
                 name: "light".into(),
                 token_budget: 1024,
                 retrieval_steps: 1,
+                total_token_allowance: 4096,
             },
             Effort {
                 name: "medium".into(),
                 token_budget: 2048,
                 retrieval_steps: 2,
+                total_token_allowance: 8192,
             },
         ],
         amortized_question_count: 1,
@@ -208,7 +230,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
         report.scorer.judge_instruction_sha256.as_deref(),
         Some(plan.judge.instruction.sha256.as_str())
     );
-    assert_eq!(report.rows.len(), 8);
+    assert_eq!(report.rows.len(), 10);
     assert_eq!(report.chat_cost_accuracy_points.len(), 2);
     assert!(!report.frontier.is_empty());
     assert!(report.offline_total.input_tokens > 0);
@@ -433,5 +455,170 @@ fn measured_two_case_ingest_amortizes_measured_tokens_and_index_time() {
     assert_eq!(
         report.offline_cost_usd_per_question,
         report.offline_amortized.cost_usd
+    );
+}
+
+/// The shipped plan over two questions, where one model call fits each
+/// effort's token allowance and two do not.
+fn two_question_plan(dir: &std::path::Path) -> ModelRunPlan {
+    let mut plan = shipped_plan();
+    let record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    let mut other = record.clone();
+    other["question_id"] = serde_json::json!("second-question");
+    other["question"] = serde_json::json!("Which code replaced violet?");
+    std::fs::write(dir.join("run.jsonl"), format!("{record}\n{other}\n")).unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    manifest["caseIds"] = serde_json::json!([record["question_id"], "second-question"]);
+    plan.retrieval_manifest = dir.join("run.json");
+    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+    plan.amortized_question_count = 2;
+    // The fixture bills 103 tokens a call: one call fits, two do not.
+    for effort in &mut plan.efforts {
+        effort.total_token_allowance = 150;
+    }
+    plan
+}
+
+// ZERO-RETRIEVAL = A (owner, 2026-10-16; ARCH-0042 scour:G12): the reader's
+// own trajectory runs beside backbone-solo, and the paired rows keep zero
+// optional memory as the pick unless memory beats it.
+#[test]
+fn trajectory_arm_sees_only_its_own_steps_and_zero_memory_wins_ties() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = two_question_plan(dir.path());
+    let steps: usize = plan.efforts.iter().map(|e| e.retrieval_steps).sum();
+
+    let backend = FixtureBackend::default();
+    let (traces, answers) = (backend.trace_inputs.clone(), backend.answer_inputs.clone());
+    let report = run_with_session(&plan, &fixture_session(&plan, backend)).unwrap();
+    let traces = traces.lock().unwrap();
+    assert_eq!(traces.len(), 2 * steps);
+    for input in traces.iter() {
+        let own = format!("draft:{}", input["question"].as_str().unwrap());
+        let trace: Vec<String> = serde_json::from_str(input["trace"].as_str().unwrap()).unwrap();
+        assert!(trace.iter().all(|step| *step == own), "{input}");
+    }
+    let trajectory_contexts: Vec<_> = answers
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|input| {
+            let context = input["context"].as_str().unwrap().to_owned();
+            context
+                .starts_with("[\"draft:")
+                .then_some((input.clone(), context))
+        })
+        .collect();
+    assert_eq!(trajectory_contexts.len(), 2 * plan.efforts.len());
+    for (input, context) in &trajectory_contexts {
+        let own = format!("draft:{}", input["question"].as_str().unwrap());
+        let trace: Vec<String> = serde_json::from_str(context).unwrap();
+        assert!(trace.iter().all(|step| *step == own), "{context}");
+    }
+    assert!(report.paired.iter().all(|row| {
+        row.pairs == 2 && !matches!(row.arm, ArmKind::BackboneSolo | ArmKind::Chat)
+    }));
+    for regime in [
+        paired::Regime::FixedAnswerCap,
+        paired::Regime::FixedTotalTokens,
+    ] {
+        let arms: BTreeSet<_> = report
+            .paired
+            .iter()
+            .filter(|row| row.regime == regime)
+            .map(|row| row.arm.as_str())
+            .collect();
+        assert_eq!(
+            arms,
+            BTreeSet::from(["agentic", "deterministic", "trajectory_only"])
+        );
+    }
+    let over = report
+        .paired
+        .iter()
+        .find(|row| {
+            row.regime == paired::Regime::FixedTotalTokens && row.arm == ArmKind::TrajectoryOnly
+        })
+        .unwrap();
+    assert_eq!(
+        (over.over_allowance_rate, over.paired_difference.fixed),
+        (1.0, -1.0)
+    );
+    // Every arm answers right here, so memory only ties: zero memory stays.
+    assert!(!report.picks.is_empty());
+    for pick in &report.picks {
+        assert_eq!(pick.arm, ArmKind::BackboneSolo, "{pick:?}");
+        assert_eq!((pick.optional_memory_tokens, pick.tier), (None, None));
+    }
+
+    // When only recalled evidence holds the answer, memory beats zero.
+    let backend = FixtureBackend {
+        reads_context: true,
+        ..FixtureBackend::default()
+    };
+    let report = run_with_session(&plan, &fixture_session(&plan, backend)).unwrap();
+    let light = &plan.efforts[0];
+    for pick in &report.picks {
+        assert_eq!(pick.arm, ArmKind::Deterministic, "{pick:?}");
+        assert_eq!(pick.effort.as_deref(), Some(light.name.as_str()));
+        assert_eq!(pick.optional_memory_tokens, Some(light.token_budget));
+        assert_eq!(pick.tier, Some("standard"));
+        assert_eq!(pick.paired_difference.fixed, 1.0);
+    }
+    let trajectory = report
+        .paired
+        .iter()
+        .find(|row| {
+            row.regime == paired::Regime::FixedAnswerCap && row.arm == ArmKind::TrajectoryOnly
+        })
+        .unwrap();
+    assert_eq!(
+        (trajectory.score.fixed, trajectory.solo_score.fixed),
+        (0.0, 0.0)
+    );
+}
+
+// ARCH-0042 beam:D9: a claim rests on beam-fixed, where half credit counts.
+// The int-cast column drops each 0.5 to 0 and would call memory a tie.
+#[test]
+fn half_credit_moves_a_pick_that_int_cast_scores_as_a_tie() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = two_question_plan(dir.path());
+    let backend = FixtureBackend {
+        reads_context: true,
+        half_credit: true,
+        ..FixtureBackend::default()
+    };
+    let report = run_with_session(&plan, &fixture_session(&plan, backend)).unwrap();
+    let light = &plan.efforts[0];
+    let half = paired::BeamColumns {
+        int_cast: 0.0,
+        fixed: 0.5,
+    };
+    assert!(!report.picks.is_empty());
+    for pick in &report.picks {
+        assert_eq!(pick.arm, ArmKind::Deterministic, "{pick:?}");
+        assert_eq!(pick.effort.as_deref(), Some(light.name.as_str()));
+        assert_eq!(pick.paired_difference, half);
+    }
+    let deterministic = report
+        .points
+        .iter()
+        .find(|point| point.arm == ArmKind::Deterministic && point.effort == light.name)
+        .unwrap();
+    assert_eq!(deterministic.accuracy, half);
+    let json = serde_json::to_value(&report).unwrap();
+    let columns: BTreeSet<_> = json["picks"][0]["paired_difference"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        columns,
+        BTreeSet::from(["beam-fixed", "int-cast-saw-question"])
     );
 }

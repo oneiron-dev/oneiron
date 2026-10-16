@@ -17,14 +17,7 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::Error::from)?;
         let now = self.vault().store.clock.now_recorded_at();
-        let holders = self.ask_holders_in_txn(&txn, input)?;
-        let effective = input.effective(
-            &holders.iter().copied().collect(),
-            now,
-            self.ask_class_in_txn(&txn, input.task_ref)?
-                .map(|(_, class)| class),
-        )?;
-        self.ask_question_in(&txn, &effective.what)?;
+        // An actor that may not ask is refused before any census runs.
         if super::rate_limit::task_actor_ceiling(
             self.vault(),
             &txn,
@@ -38,6 +31,14 @@ impl Memory<'_> {
                 "Propose the ask through the authority surface.",
             ));
         }
+        let holders = self.ask_holders_in_txn(&txn, input)?;
+        let effective = input.effective(
+            &holders.iter().copied().collect(),
+            now,
+            self.ask_class_in_txn(&txn, input.task_ref)?
+                .map(|(_, class)| class),
+        )?;
+        self.ask_question_in(&txn, &effective.what)?;
         if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
             for (person, guest) in guests {
                 super::ask_guest::check_disclosure(
