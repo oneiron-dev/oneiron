@@ -313,8 +313,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             };
             return Ok((response, None));
         };
-        // A generated image is served the form `reader` reads (OF-329): its
-        // bytes, or its ASSET_TEXT, each read through this lane.
+        // A generated image is served down its ladder for `reader` (OF-329):
+        // its bytes, its thumbnail beside its ASSET_TEXT, or the text, each
+        // read through this lane.
         let mut served = None;
         if entity_type == ENTITY_TYPE_ASSET {
             let asset =
@@ -322,21 +323,14 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     .map_err(|error| engine_failure(method, &error))?;
             narrowing.restrict_with(&asset.receipt);
             served = match asset.value {
-                crate::memory::HydratedAsset::Image { body, caption } => {
+                crate::memory::HydratedAsset::Served { body, text, form } => {
                     if let Some(producers) = self.producers {
-                        producers.list(caption);
+                        producers.list(text);
                     }
-                    Some((body, ServedForm::image(id)))
+                    Some((body, form))
                 }
-                crate::memory::HydratedAsset::Text { body, asset_text } => {
-                    if let Some(producers) = self.producers {
-                        producers.list([asset_text]);
-                    }
-                    Some((body, ServedForm::text(id, asset_text)))
-                }
-                crate::memory::HydratedAsset::Stored | crate::memory::HydratedAsset::Omitted => {
-                    None
-                }
+                crate::memory::HydratedAsset::Stored
+                | crate::memory::HydratedAsset::Omitted { .. } => None,
             };
         }
         let item = entity_record_from_parts(

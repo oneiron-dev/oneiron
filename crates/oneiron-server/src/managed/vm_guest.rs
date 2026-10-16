@@ -16,7 +16,7 @@ use oneiron_vault_contract::host::{Host, HostFuture, HostLimits};
 use oneiron_vault_contract::host_adapters::{
     FirecrackerGuest, GuestLink, MicroVmHost, VsockListener, VsockStream,
 };
-use oneiron_vault_contract::vm::{VM_CTL_PORT, VM_HOST_CID, VM_LEDGER_PORT};
+use oneiron_vault_contract::vm::{VM_ARTIFACT_PORT, VM_CTL_PORT, VM_HOST_CID, VM_LEDGER_PORT};
 use oneiron_vault_contract::{Schedule, WakeEntry};
 use std::{
     path::PathBuf,
@@ -34,6 +34,7 @@ pub(super) struct VmGuestHost {
     http_socket: PathBuf,
     ctl_socket: PathBuf,
     hypnos_socket: PathBuf,
+    artifact_socket: Option<PathBuf>,
     shutdown: ManagedShutdown,
 }
 impl VmGuestHost {
@@ -43,6 +44,7 @@ impl VmGuestHost {
             http_socket: args.http_socket.clone(),
             ctl_socket: args.ctl_socket.clone(),
             hypnos_socket: args.hypnos_socket.clone(),
+            artifact_socket: args.artifact_socket.clone(),
             shutdown,
         }
     }
@@ -63,6 +65,9 @@ impl Host for VmGuestHost {
         let http = self.inner.listener()?;
         spawn_inbound(http, self.http_socket.clone());
         spawn_inbound(VsockListener::bind(VM_CTL_PORT)?, self.ctl_socket.clone());
+        if let Some(artifacts) = &self.artifact_socket {
+            spawn_inbound(VsockListener::bind(VM_ARTIFACT_PORT)?, artifacts.clone());
+        }
         let ledger = bind_unix_socket(&self.hypnos_socket)?;
         spawn_outbound(ledger, VM_LEDGER_PORT);
         Ok(ServeListener::UnixPath(self.http_socket.clone()))

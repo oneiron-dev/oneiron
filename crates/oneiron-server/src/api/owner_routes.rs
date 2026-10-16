@@ -40,13 +40,17 @@ use crate::server::SyncServer;
 mod conflict_routes;
 mod cooperative_deletion_routes;
 mod decision_ask_routes;
+mod diary_routes;
 mod handoff_alarm_routes;
 mod history_routes;
 mod inbox_routes;
 mod pack_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
+mod skill_judge_routes;
 mod space_posting_routes;
+mod weave_routes;
+mod wire_health_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -83,13 +87,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(conflict_routes::routes())
+        .merge(diary_routes::routes())
         .merge(history_routes::routes())
         .merge(inbox_routes::routes())
         .merge(proactivity_routes::routes())
+        .merge(weave_routes::routes())
         .merge(pack_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(decision_ask_routes::routes())
         .merge(peer_confidence_routes::routes())
+        .merge(skill_judge_routes::routes())
+        .merge(wire_health_routes::routes())
         .merge(handoff_alarm_routes::routes())
         .merge(space_posting_routes::routes())
         .merge(super::owner_origin::routes())

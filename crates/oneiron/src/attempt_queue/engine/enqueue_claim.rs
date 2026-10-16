@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use crate::Vault;
+use crate::attempt_queue::annotation_hold::AnnotationHold;
 use crate::attempt_queue::cancel::AttemptCancelState;
 use crate::attempt_queue::encoding::{
     DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, encode_record, ready_at,
@@ -71,6 +72,8 @@ struct ClaimKindReadScan {
     stale_ready_keys: Vec<Vec<u8>>,
     ready_replacements: Vec<([u8; READY_KEY_LEN], AttemptId)>,
     stale_missing_record_ids: HashSet<AttemptId>,
+    /// Ready rows whose TASK waits on an unattached comment (OF-368).
+    held: Vec<(AttemptId, AnnotationHold)>,
     candidate: Option<ClaimKindCandidate>,
 }
 #[derive(Debug)]
@@ -664,12 +667,20 @@ impl<'a> AttemptQueue<'a> {
                 }
                 continue;
             }
+            if let Some(hold) = self.annotation_hold_for_row_in_txn(&*wtxn, &record)? {
+                scan.held.push((id, hold));
+                continue;
+            }
             scan.candidate = Some(ClaimKindCandidate { id });
             break;
         }
 
         let candidate = scan.candidate.as_ref().map(|candidate| candidate.id);
+        let held = std::mem::take(&mut scan.held);
         self.apply_claim_kind_read_repairs(wtxn, scan)?;
+        for (id, hold) in held {
+            self.hold_for_annotation_in_txn(wtxn, id, hold, now)?;
+        }
         Ok(candidate)
     }
 
@@ -719,6 +730,7 @@ impl<'a> AttemptQueue<'a> {
         let mut stale_ready_keys = Vec::new();
         let mut ready_replacements = Vec::new();
         let mut stale_missing_record_ids = HashSet::new();
+        let mut held = Vec::new();
         let mut claimed = None;
         for row in self.store.attempt_ready.iter(&*wtxn)? {
             let (key, value) = row?;
@@ -770,6 +782,12 @@ impl<'a> AttemptQueue<'a> {
             )? {
                 continue;
             }
+            // OF-368: a TASK whose comment is unattached is paused, not
+            // leased, so no claim walks past it again until a reattach.
+            if let Some(hold) = self.annotation_hold_for_row_in_txn(&*wtxn, &record)? {
+                held.push((id, hold));
+                continue;
+            }
             lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
             claimed = Some((key.to_vec(), id, record));
             break;
@@ -781,6 +799,9 @@ impl<'a> AttemptQueue<'a> {
         }
         for (key, id) in ready_replacements {
             self.store.attempt_ready.put(wtxn, &key, id.as_bytes())?;
+        }
+        for (id, hold) in held {
+            self.hold_for_annotation_in_txn(wtxn, id, hold, input.now)?;
         }
 
         let Some((ready_key, id, record)) = claimed else {

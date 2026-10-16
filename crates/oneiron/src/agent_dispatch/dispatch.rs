@@ -315,6 +315,19 @@ impl<'a> AgentDispatcher<'a> {
                         input.now,
                     ),
                 )?;
+                // OF-368: a TASK a comment's assignment made waits while that
+                // comment is unattached. Its attempt is minted paused for the
+                // hold, never dropped; a reattach resumes it.
+                if let Some(task) = task_ref
+                    && let Some(hold) = self.vault.annotation_task_hold_in_txn(wtxn, &task)?
+                {
+                    status.attempt = AttemptQueue::new(self.vault).hold_for_annotation_in_txn(
+                        wtxn,
+                        status.attempt.id,
+                        hold,
+                        input.now,
+                    )?;
+                }
                 AgentDispatchOutcome::Dispatched(status)
             }
             EnqueueDreamerAttemptOutcome::Existing(status) => {

@@ -146,7 +146,9 @@ impl AnonymousChatSession<'_> {
             });
         }
 
-        let content = responder.respond_with_notices(target, text, &notices).await?;
+        let content = responder
+            .respond_with_notices(target, text, &notices)
+            .await?;
         route.revalidate()?;
         let (decision, mut output_notices) = crate::policy_model::stateless_owner_classification(
             vault,

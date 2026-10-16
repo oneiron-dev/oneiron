@@ -4,6 +4,7 @@ declare const ai: {
   options(input: { inputs?: string[]; operation?: string | null }): Promise<unknown>;
   speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
   transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  verdict(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; deadline_ms?: number | null; evidence?: string[]; image?: string | null; locate?: boolean; misses?: number; options?: string[]; question: string; reversibility?: "reversible_read" | "outbound_effect"; routine?: boolean; state?: unknown; until_ms?: number | null }): Promise<unknown>;
   video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }) => Promise<unknown>) & {
     cancel(input: { job: string }): Promise<unknown>;
     poll(input: { job: string }): Promise<unknown>;
@@ -24,15 +25,19 @@ declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
+    batch(input: { steps: (object | object | object | object | object | object | object)[]; subgoal?: string | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
+    crop(input: { height: number; image: string; width: number; x: number; y: number }): Promise<unknown>;
     expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
     find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
     observe(input: { since?: number | null }): Promise<unknown>;
     open(input: { url: string }): Promise<unknown>;
-    screenshot(input: object): Promise<unknown>;
+    screenshot(input: { trigger: "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt" }): Promise<unknown>;
     select(input: { option: string; ref: string }): Promise<unknown>;
     type(input: { clear?: boolean; ref: string; text: string }): Promise<unknown>;
+    view(input: { image: string }): Promise<unknown>;
     wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
+    zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
   };
   const compact: (input: { note?: string | null }) => Promise<unknown>;
   const focus: {
@@ -40,10 +45,14 @@ declare namespace self {
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
-  const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
+  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
   const memory: {
-    diary(input: { content: string; kind?: string | null }): Promise<unknown>;
+    diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
+      query(input: { agent: string; reason: string }): Promise<unknown>;
+      reads(input: { limit?: number | null }): Promise<unknown>;
+      review(input: { request: string; approve: boolean }): Promise<unknown>;
+    };
   };
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;
@@ -73,8 +82,16 @@ declare const vault: {
     propose_output(input: { artifact_ref: string; content_base64: string; made_by?: unknown; media_type: string; name: string; report?: unknown; run_ref: string }): Promise<unknown>;
     put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
     read(input: { artifact_ref: string; version: number }): Promise<unknown>;
+    release_wait(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image: string; target: unknown }[] }): Promise<unknown>;
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
+    waits(input: { artifact_ref: string }): Promise<unknown>;
+  };
+  authority: {
+    handoff_alarms: ((input: object) => Promise<unknown>) & {
+      acknowledge(input: { signer: string }): Promise<unknown>;
+    };
   };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
@@ -107,13 +124,32 @@ declare const vault: {
   habits: {
     checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
   };
+  hooks: {
+    replay(input: { binding: string; limit?: number | null; since?: string | null }): Promise<unknown>;
+  };
   hydrate(input: { refs: string[] }): Promise<unknown>;
+  images: {
+    view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
+  };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;
     get(input: { key: string; namespace: string[] }): Promise<unknown>;
     namespaces(input: { limit?: number; max_depth?: number | null; offset?: number; prefix?: string[]; suffix?: string[] }): Promise<unknown>;
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
+  };
+  lenses: {
+    activate(input: { compiled_hash: string; expected_active_ref?: string | null; lens_ref: string }): Promise<unknown>;
+    deactivate(input: { expected_active_ref: string; slot: object }): Promise<unknown>;
+    default(input: { dossiers?: object[]; ledger?: string[]; threads?: string[]; title: string }): Promise<unknown>;
+    list(input: { after?: string | null; limit?: number | null; pack_name?: string | null; with_compiled?: boolean }): Promise<unknown>;
+    propose(input: { compiled: unknown; intent_prompt: string; pack_content_hash: string; slot: object }): Promise<unknown>;
+  };
+  members: {
+    add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
+    change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
+    leave(input: { vault_id: number }): Promise<unknown>;
+    remove(input: { member: string; vault_id: number }): Promise<unknown>;
   };
   neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
   notes: {
@@ -124,9 +160,24 @@ declare const vault: {
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
   };
+  projects: {
+    confirm(input: { action_id: string; card_id: string; occurred_at: number }): Promise<unknown>;
+    dismiss_card(input: { card_id: string }): Promise<unknown>;
+    goal: {
+      dismiss(input: { expected_goal_ref: string; project_ref: string; question_digest: string }): Promise<unknown>;
+      intake(input: { project_ref: string }): Promise<unknown>;
+      revisions(input: { project_ref: string }): Promise<unknown>;
+    };
+    proposals(input: { conversation_ref: string }): Promise<unknown>;
+    propose(input: { card_id: string; goal: object; picks: object; source_message_ref: string }): Promise<unknown>;
+    route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
+  };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
-  receipts: ((input: { limit?: number | null }) => Promise<unknown>) & {
+  receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
+  };
+  refs: {
+    resolve(input: { reference: string }): Promise<unknown>;
   };
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   rooms: {
@@ -151,8 +202,21 @@ declare const vault: {
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
   };
+  shared: {
+    deletion(input: object): Promise<unknown>;
+    execute(input: { act_id: string }): Promise<unknown>;
+    outcomes(input: { vault_id: number }): Promise<unknown>;
+    propose_delete(input: { vault_id: number }): Promise<unknown>;
+    propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
+    propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
+    receipt(input: { receipt_id: string }): Promise<unknown>;
+  };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
+  };
+  weave: {
+    digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
   workspace: {

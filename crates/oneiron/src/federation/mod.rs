@@ -49,6 +49,7 @@ mod peer_authority;
 pub mod record_scope;
 mod relationships;
 mod stale;
+pub(crate) use stale::world_registered_to_pact_in;
 
 pub use self::coreference::{
     COREFERENCE_LINK_WEIGHT, CoreferenceStatus, coreference_share_consent,

@@ -1,7 +1,6 @@
 //! The organ host: install, call, unload, revoke.
 
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -10,12 +9,14 @@ use std::time::{Duration, Instant};
 use oneiron::Vault;
 use oneiron_organ_protocol::{
     ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, MAX_FDS_PER_FRAME, MappedRegion,
-    Outcome, Output, Payload, Proposal, SharedRegion, TypedBody,
+    Outcome, Output, Payload, Proposal, SharedRegion,
 };
 
-use crate::asks::{AskHandlers, CallAsks, in_handler};
-use crate::budget::{Budget, Kept, Permit};
+use crate::asks::CallAsks;
+use crate::budget::{Budget, Permit};
 use crate::error::{HostError, Unavailable};
+use crate::handlers::{AskHandlers, in_handler};
+use crate::outcome::{OrganOutcome, OrganOutput, OutputBytes};
 use crate::process::{CallFailure, Grant, OrganProcess, Revocations, Wait};
 use crate::receipt::{
     AskReceipt, CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest,
@@ -29,43 +30,6 @@ const MAX_NAME_BYTES: usize = 256;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// What an organ proposed, checked by the host. Nothing here is in the vault
-/// yet: the caller lands it through the write gate, or drops it.
-#[derive(Debug)]
-pub struct OrganOutcome {
-    pub body: Option<TypedBody>,
-    pub outputs: Vec<OrganOutput>,
-    pub report: rmpv::Value,
-    pub receipt: CallReceipt,
-}
-
-/// One file an organ made, hashed by the host.
-#[derive(Debug)]
-pub struct OrganOutput {
-    pub name: String,
-    pub media_type: String,
-    pub content_hash: Hash32,
-    bytes: OutputBytes,
-    /// The budget memory these bytes hold until they drop.
-    _kept: Kept,
-}
-
-#[derive(Debug)]
-enum OutputBytes {
-    Inline(Vec<u8>),
-    Mapped(MappedRegion),
-}
-
-impl Deref for OrganOutput {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        match &self.bytes {
-            OutputBytes::Inline(bytes) => bytes,
-            OutputBytes::Mapped(region) => region,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -153,6 +117,18 @@ impl OrganHost {
     #[must_use]
     pub fn status(&self, organ: &str) -> Option<OrganStatus> {
         self.slot(organ).ok().map(|slot| slot.status())
+    }
+
+    /// Every installed organ and the verbs its grant names, by name: what
+    /// this machine offers the owner's other nodes.
+    #[must_use]
+    pub fn installed(&self) -> Vec<(String, Vec<String>)> {
+        let mut offered: Vec<(String, Vec<String>)> = lock(&self.slots)
+            .iter()
+            .map(|(name, slot)| (name.clone(), slot.spec.verbs.clone()))
+            .collect();
+        offered.sort();
+        offered
     }
 
     /// Starts the organ now if it is cold. Returns spawn-to-`hello_ack` for
@@ -282,7 +258,7 @@ impl OrganHost {
         lent: Vec<LentInput>,
         asks: &AskHandlers<'_>,
     ) -> Result<OrganOutcome, HostError> {
-        self.run(vault, call, lent, asks, false)
+        self.run(vault, call, unvouched(lent), asks, false)
     }
 
     /// [`Self::call_with`], in a process started for this call alone: it
@@ -300,14 +276,29 @@ impl OrganHost {
         lent: Vec<LentInput>,
         asks: &AskHandlers<'_>,
     ) -> Result<OrganOutcome, HostError> {
-        self.run(vault, call, lent, asks, true)
+        self.run(vault, call, unvouched(lent), asks, true)
+    }
+
+    /// A call another of the owner's nodes sent over the mesh. That node
+    /// read every input from its own vault, under its own actor's
+    /// authority, and sent the bytes: each comes with the artifact version
+    /// it read (none for bytes its caller lent), and is hashed here again,
+    /// so the receipt holds what this host saw. `call.inputs` is empty.
+    pub(crate) fn call_for_peer(
+        &self,
+        vault: &Vault,
+        call: OrganCall,
+        inputs: Vec<(Option<OrganInput>, LentInput)>,
+        asks: &AskHandlers<'_>,
+    ) -> Result<OrganOutcome, HostError> {
+        self.run(vault, call, inputs, asks, false)
     }
 
     fn run(
         &self,
         vault: &Vault,
         call: OrganCall,
-        lent: Vec<LentInput>,
+        lent: Vec<(Option<OrganInput>, LentInput)>,
         asks: &AskHandlers<'_>,
         fresh: bool,
     ) -> Result<OrganOutcome, HostError> {
@@ -344,8 +335,8 @@ impl OrganHost {
             .iter()
             .map(|input| self.resolve(vault, &slot.spec, *input))
             .collect::<Result<Vec<_>, _>>()?;
-        for input in lent {
-            inputs.push(self.lend(&slot.spec, input)?);
+        for (of, input) in lent {
+            inputs.push(self.lend(&slot.spec, input, of)?);
         }
         let process = if fresh {
             slot.fresh_process(&self.config, Some(deadline))?
@@ -521,8 +512,14 @@ impl OrganHost {
     }
 
     /// Lends bytes the caller holds: hashed here, inline when small, else a
-    /// sealed region kept by content hash like a vault input's.
-    fn lend(&self, spec: &OrganSpec, input: LentInput) -> Result<Resolved, HostError> {
+    /// sealed region kept by content hash like a vault input's. `of` is the
+    /// vault version another node read them from, if any.
+    fn lend(
+        &self,
+        spec: &OrganSpec,
+        input: LentInput,
+        of: Option<OrganInput>,
+    ) -> Result<Resolved, HostError> {
         let LentInput { media_type, bytes } = input;
         if !spec
             .media_types
@@ -548,13 +545,18 @@ impl OrganHost {
             )
         };
         Ok(Resolved {
-            input: None,
+            input: of,
             media_type,
             hash,
             len,
             held,
         })
     }
+}
+
+/// Bytes a local caller lent: no vault version stands behind them.
+fn unvouched(lent: Vec<LentInput>) -> Vec<(Option<OrganInput>, LentInput)> {
+    lent.into_iter().map(|input| (None, input)).collect()
 }
 
 /// Stops a one-call process when its call ends.
@@ -748,7 +750,7 @@ fn take_outputs(
                 media_type: bound_text(&output.media_type, MAX_NAME_BYTES),
                 content_hash,
                 bytes,
-                _kept: permit.keep(len as u64),
+                _kept: Some(permit.keep(len as u64)),
             })
         })
         .collect()

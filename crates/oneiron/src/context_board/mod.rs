@@ -1,12 +1,20 @@
 //! Typed Context Board render projections.
 //!
-//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, INBOX, SCRATCHPAD, session read-set riders and stream
-//! projections.
+//! WORLDS, MEMORIES, TASKS, SKILLS, ROOM, INBOX, SCRATCHPAD, the cached
+//! `people` roster, session read-set riders and stream projections.
 
-mod agents;
-mod agents_fanout;
-pub(crate) use agents_fanout::fanout_agent_rows;
 mod capabilities;
+mod children;
+pub use children::{
+    ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
+};
+mod explain;
+pub use explain::{GateExplanation, MemoryExplanation};
+mod people;
+pub(crate) use people::ensure_agent_person;
+pub use people::{
+    PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
+};
 mod inbox;
 pub use inbox::assemble_inbox_section;
 mod observations;
@@ -22,7 +30,7 @@ mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{
     ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
-    ProposalReason, ServedLifecycle, SessionReadSet,
+    ProposalReason, ServedLifecycle, ServedWhy, SessionReadSet,
 };
 pub(crate) use room::scope_worlds;
 pub use room::{
@@ -68,18 +76,13 @@ pub use stream::{
 mod surfaces_tests;
 mod tasks;
 
-pub use agents::{
-    AgentLane, AgentRow, AgentsSection, ChildAgentPresence, PeerPresence, child_presence_for_actor,
-    render_agents_section,
-};
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
     BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
     CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
     SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
-    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_agents_section,
-    assemble_task_agent_sections, assemble_tasks_section, render_board_block, resolve_board_budget,
-    section_policy_for_budget_ref, shed,
+    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_tasks_section, render_board_block,
+    resolve_board_budget, section_policy_for_budget_ref, shed,
 };
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,

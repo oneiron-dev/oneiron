@@ -132,6 +132,9 @@ impl PackSource {
         if let Some(facets) = &manifest.agent_facets {
             facets.validate_files(&manifest, &files)?;
         }
+        if let Some(setup) = &manifest.setup {
+            setup.validate_files(&files)?;
+        }
         let hooks = super::hooks::parse_source_hooks(&manifest, &files)?;
         let organs = super::organs::parse_source_organs(&manifest, &files)?;
         Ok(Self {

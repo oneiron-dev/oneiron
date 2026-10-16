@@ -3,7 +3,7 @@
 //! new authorities.
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
-use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault,
@@ -22,6 +22,19 @@ const ACTOR: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::DREAMER_
 /// gate-decision receipt that admitted it.
 const ATTEMPT: SideTable<AttemptId, DreamerAuthorityStamp, LegacyJson> =
     SideTable::new(&side_table::DREAMER_AUTHORITY_ATTEMPT);
+
+/// The resident one dreaming attempt runs as (OF-490): its own stamp, never
+/// the Dreamer's, bound at enqueue.
+const RESIDENT_ATTEMPT: SideTable<AttemptId, ResidentAuthorityStamp, Named> =
+    SideTable::new(&side_table::DREAMER_RESIDENT_ATTEMPT);
+
+/// A resident's stamp on one of its own dreaming attempts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResidentAuthorityStamp {
+    pub attempt_id: [u8; 16],
+    pub resident: EntityId,
+    pub receipt_id: [u8; 16],
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -304,6 +317,10 @@ pub(crate) fn stamp_attempt(
     record: &AttemptRecord,
     facet: &str,
 ) -> Result<()> {
+    // A resident's own dreaming runs under the resident's stamp.
+    if record.kind == super::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND {
+        return stamp_resident_attempt(vault, txn, record);
+    }
     // The generic runner also carries independent agent dispatch. Those jobs
     // retain their own principals and are NOT base-agent facets.
     if facet == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
@@ -368,6 +385,76 @@ pub(crate) fn stamp_attempt(
     };
     ATTEMPT.put(&vault.store, txn, &record.id, &stamp)?;
     Ok(())
+}
+/// Binds a resident dreaming attempt to its resident: an enabled agent
+/// definition whose dreaming is not off. The row id is the resident's actor.
+fn stamp_resident_attempt(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<()> {
+    let payload = super::decode_dreamer_attempt_payload(&record.payload)?;
+    if payload.attempt_type != super::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND {
+        return Err(invalid());
+    }
+    let resident = crate::dreamer_consolidation::resident_of_dream_input(&payload.input)?;
+    if let Some(stamp) = RESIDENT_ATTEMPT.get(&vault.store, &*txn, &record.id)? {
+        if stamp.resident != resident || stamp.attempt_id != *record.id.as_bytes() {
+            return Err(invalid());
+        }
+        return Ok(());
+    }
+    let definition = vault.read_agent_definition_in_txn(txn, &resident)?;
+    if !definition.enabled || definition.dreaming_mode() == crate::agent_def::DreamingMode::Off {
+        return Err(Error::InvalidConfig(
+            "a resident whose dreaming is off does not dream".into(),
+        ));
+    }
+    let receipt_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
+    let receipt = GateDecisionRecord {
+        version: GATE_DECISION_LEDGER_VERSION,
+        decision_id: receipt_id,
+        created_at: record.created_at,
+        outcome: "allow".into(),
+        reason_codes: vec!["gate.dreamer.resident_admitted".into()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: EdgeActorClass::Agent.gate_actor_class().into(),
+        actor_ref: Some(resident.to_hex()),
+        content_kind: "dreamer_authority".into(),
+        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+        claim_id: None,
+        grant_ref: None,
+        diff_handle: record.id.as_bytes().to_vec(),
+        read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
+            .read_frontier_hash()?,
+        redacted_at: None,
+    };
+    vault.store.append_gate_decision_in_txn(txn, &receipt)?;
+    RESIDENT_ATTEMPT.put(
+        &vault.store,
+        txn,
+        &record.id,
+        &ResidentAuthorityStamp {
+            attempt_id: *record.id.as_bytes(),
+            resident,
+            receipt_id: receipt_id.as_bytes(),
+        },
+    )
+}
+
+impl Vault {
+    /// The resident a dreaming attempt runs as, by its own stamp.
+    pub fn resident_actor_for_attempt(&self, id: AttemptId) -> Result<WriteActor> {
+        let txn = self.store.env.read_txn()?;
+        let stamp = RESIDENT_ATTEMPT
+            .get(&self.store, &txn, &id)?
+            .ok_or_else(invalid)?;
+        if stamp.attempt_id != *id.as_bytes() {
+            return Err(invalid());
+        }
+        Ok(WriteActor::new(stamp.resident, EdgeActorClass::Agent))
+    }
 }
 #[cfg(test)]
 mod tests;

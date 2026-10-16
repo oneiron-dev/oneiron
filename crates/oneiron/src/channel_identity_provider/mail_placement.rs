@@ -53,7 +53,7 @@ impl PlacementPolicy {
             Ok(())
         } else {
             Err(Error::InvalidConfig(format!(
-                "gmail wire returned {placement:?} outside {self:?} placement policy"
+                "mail wire returned {placement:?} outside {self:?} placement policy"
             )))
         }
     }

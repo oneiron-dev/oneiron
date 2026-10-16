@@ -13,11 +13,11 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission};
 use oneiron::llm::{
     FatalLlmError, LabelReadFailure, LabelReadRequest, LabelReadout, LabelSet, LlmError, LlmUsage,
 };
-use oneiron::BudgetLease;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -147,12 +147,7 @@ pub(super) async fn decision_read(
     let read = tokio::task::spawn_blocking(move || {
         let _turn = turn;
         let questions = request.questions(&probe);
-        read(
-            &door,
-            &request.label_read(&questions),
-            reserve,
-            run,
-        )
+        read(&door, &request.label_read(&questions), reserve, run)
     })
     .await;
     match read {

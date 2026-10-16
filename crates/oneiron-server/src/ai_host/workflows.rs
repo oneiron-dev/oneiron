@@ -5,14 +5,23 @@
 //! (recovery). A step whose leaf is scheduled or backing off has no signal
 //! of its own, so while any workflow is open but waiting the pump also
 //! re-checks on a slow timer; with nothing open it only waits for a signal.
+//! Each pass also resumes a TASK's attempts held while its comment was
+//! unattached, once the comment is back (OF-368); a reattach signals no
+//! attempt, so while any is held the timer runs too.
 //! A failed step goes to the engine's failure ladder ([`super::step_failure`]).
 //! A metered leaf with no spend left under its lease's cap stops before its
 //! model call (OF-532); the engine pump settles each leaf's lease.
-use std::sync::Arc;
+//!
+//! On the same signal it asks each queued project question (OF-501): a
+//! person's turn queued it by reference, and it runs here, off that turn, on
+//! the host's typed ladder once the host installed one.
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use oneiron::Vault;
-use oneiron::agent_dispatch::{AgentDispatcher, WorkflowProgress};
+use oneiron::agent_dispatch::{
+    AgentDispatcher, ProjectDetection, ProjectDetectionRun, WorkflowProgress,
+};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::failure_ladder::FailureLadderOutcome;
 use tokio::sync::{broadcast, watch};
@@ -22,12 +31,17 @@ use super::step::StepRunner;
 use super::step_failure::{FailedStep, held_leases, settle};
 
 const LEASE_OWNER: &str = "oneiron-server-workflows";
+/// Project questions lease apart from workflow steps, so a failed step's
+/// settlement never reads one as its own.
+const DETECTION_LEASE_OWNER: &str = "oneiron-server-project-detection";
 /// How often an open-but-waiting workflow is looked at again.
 const WAITING_RECHECK: Duration = Duration::from_secs(30);
 
 pub(super) struct WorkflowPump {
     stop: watch::Sender<bool>,
     thread: std::thread::JoinHandle<()>,
+    /// The host's typed project question, once the host holds a ladder for it.
+    detection: Arc<OnceLock<ProjectDetection>>,
 }
 
 impl WorkflowPump {
@@ -37,6 +51,8 @@ impl WorkflowPump {
         status: Arc<StatusCell>,
     ) -> std::io::Result<Self> {
         let (stop, stopped) = watch::channel(false);
+        let detection = Arc::new(OnceLock::new());
+        let questions = Arc::clone(&detection);
         // Waiting from the moment the pump exists, so a status read right
         // after start never sees the pre-start state.
         status.update(|status| status.workflows = WorkStatus::waiting());
@@ -56,9 +72,22 @@ impl WorkflowPump {
                         return;
                     }
                 };
-                pump(&runtime, &vault, &runner, &status, stopped);
+                pump(&runtime, &vault, &runner, &status, &questions, stopped);
             })?;
-        Ok(Self { stop, thread })
+        Ok(Self {
+            stop,
+            thread,
+            detection,
+        })
+    }
+
+    /// Installs the host's typed project question, the way a code-mode
+    /// provider takes its seat decisions: from the next pass on, each queued
+    /// question runs on it. Until then the questions wait queued. `false`
+    /// when one is installed already.
+    #[allow(dead_code)] // No in-tree host builds the project question's ladder yet.
+    pub(super) fn with_project_detection(&self, detection: ProjectDetection) -> bool {
+        self.detection.set(detection).is_ok()
     }
 
     /// Asks the pump to stop between steps, without waiting.
@@ -78,6 +107,7 @@ fn pump(
     vault: &Vault,
     runner: &StepRunner,
     status: &StatusCell,
+    detection: &OnceLock<ProjectDetection>,
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
@@ -85,6 +115,7 @@ fn pump(
         if *stopped.borrow() {
             return;
         }
+        ask_project_questions(vault, detection, &stopped);
         let open = match pump_once(runtime, vault, runner, status, &stopped) {
             Ok(open) => open,
             Err(error) => {
@@ -110,7 +141,8 @@ fn pump(
 }
 
 /// Runs every open workflow as far as it will go. Returns whether any
-/// workflow is still open (and so may need a timed re-check).
+/// workflow is still open, a wave plan is pending, or any attempt is still
+/// held for an unattached comment (and so may need a timed re-check).
 fn pump_once(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
@@ -118,6 +150,13 @@ fn pump_once(
     status: &StatusCell,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
+    let held = match vault.release_annotation_holds() {
+        Ok(sweep) => sweep.held > 0,
+        Err(error) => {
+            tracing::warn!(%error, "annotation hold release failed");
+            true
+        }
+    };
     if !*stopped.borrow() {
         super::waves::run_once(runtime, vault, runner, status)?;
     }
@@ -222,7 +261,31 @@ fn pump_once(
                     | oneiron::attempt_queue::AttemptState::Leased
             )
     });
-    Ok(wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
+    Ok(held || wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
+}
+
+/// Asks every queued project question on the host's ladder; with none
+/// installed they wait queued. A question that fails is logged and ends its
+/// attempt: the conversation's next person turn asks again.
+fn ask_project_questions(
+    vault: &Vault,
+    detection: &OnceLock<ProjectDetection>,
+    stopped: &watch::Receiver<bool>,
+) {
+    let Some(detection) = detection.get() else {
+        return;
+    };
+    let dispatcher = AgentDispatcher::new(vault);
+    while !*stopped.borrow() {
+        match dispatcher.run_project_detection(detection, DETECTION_LEASE_OWNER, now_secs()) {
+            Ok(ProjectDetectionRun::Idle) => return,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "a project question did not complete");
+                return;
+            }
+        }
+    }
 }
 
 fn now_secs() -> u64 {

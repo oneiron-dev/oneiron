@@ -273,9 +273,11 @@ impl Vault {
         &self,
         event: &ConnectorEvent,
     ) -> Result<Vec<ConnectorWakeDecision>> {
-        self.with_write_txn_grouped(|txn| {
+        let decisions = self.with_write_txn_grouped(|txn| {
             self.ingest_connector_event_in_txn(txn, event, None, crate::unix_seconds_now())
-        })
+        })?;
+        self.signal_connector_wakes(&decisions);
+        Ok(decisions)
     }
 
     /// The foreign-pack door attenuates host ingress to exactly the acting
@@ -304,9 +306,22 @@ impl Vault {
         agent: EntityId,
         now: u64,
     ) -> Result<Vec<ConnectorWakeDecision>> {
-        self.with_write_txn_grouped(|txn| {
+        let decisions = self.with_write_txn_grouped(|txn| {
             self.ingest_connector_event_in_txn(txn, event, Some((agent, None)), now)
-        })
+        })?;
+        self.signal_connector_wakes(&decisions);
+        Ok(decisions)
+    }
+
+    /// Post-commit: an enqueued wake re-arms the Dreamer's deadline source,
+    /// which watches proactivity changes rather than the attempt queue.
+    fn signal_connector_wakes(&self, decisions: &[ConnectorWakeDecision]) {
+        if decisions
+            .iter()
+            .any(|decision| decision.status == ConnectorWakeStatus::Enqueued)
+        {
+            self.store.notify_proactivity_changes();
+        }
     }
 
     fn ingest_connector_event_in_txn(

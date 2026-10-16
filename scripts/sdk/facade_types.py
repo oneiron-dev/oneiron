@@ -25,6 +25,9 @@ def declarations(root: Path):
             for field in re.finditer(r'((?:[ \t]*#\[[^\n]*\]\n)*)[ \t]*pub (\w+): ([^\n]+),', body):
                 attrs, key, typ = field.groups()
                 rename = re.search(r'rename = "([^\"]+)"', attrs)
+                # A field serialized through a base64 codec is a string on the wire.
+                if re.search(r'with = "[^"]*base64', attrs):
+                    typ = 'String'
                 fields.append((rename.group(1) if rename else key, typ, 'default' in attrs))
             records[name] = fields
         for match in re.finditer(r'pub enum (\w+)\s*\{(.*?)^}', text, re.M | re.S):

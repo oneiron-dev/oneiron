@@ -133,6 +133,13 @@ struct PromotionReply {
     snapshot: String,
 }
 
+/// The home's version vector for one window (OF-534 demotion).
+#[derive(Deserialize)]
+struct WindowVvReply {
+    window: String,
+    vv: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchHit {
@@ -628,6 +635,71 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         self.manager.notify_promotion(window);
         Ok(true)
+    }
+
+    /// Demote a promoted window back to thin (OF-534). The home's version
+    /// vector for the window must cover every op this device holds; then the
+    /// local replica goes, in bounded steps with the window closed, and its
+    /// items read through the thin cache again. The home keeps the window,
+    /// and a later first edit promotes it again. Controls, tombstoned and
+    /// pending rows stay. Not `complete` while the home lacks an op, a queued
+    /// write for the window waits, or a handle keeps the window open: call
+    /// again.
+    pub async fn demote_window(
+        &mut self,
+        window: &WindowKey,
+    ) -> Result<crate::sync::residence::WindowDemotion, TransportError> {
+        let storage = |e: crate::Error| TransportError::Storage(e.to_string());
+        if self.config.residence_mode != SyncResidenceMode::Opened
+            || self
+                .vault
+                .sync_state_get(&format!("rp:w:{window}"))
+                .map_err(storage)?
+                .is_none()
+        {
+            return Err(refused());
+        }
+        let budgets = residence_budgets(&self.vault)?;
+        let selector = self
+            .config
+            .residence_selector
+            .as_ref()
+            .ok_or_else(refused)?;
+        let selector = base64::engine::general_purpose::STANDARD
+            .encode(encode_sync_selector(selector).map_err(|_| refused())?);
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
+            return Err(TransportError::Storage("home node offline".into()));
+        };
+        let reply: WindowVvReply = serde_json::from_value(
+            rpc.request(
+                "residence.window.vv",
+                json!({ "window": window.as_str(), "selector": selector }),
+            )
+            .await?,
+        )
+        .map_err(|_| refused())?;
+        if reply.window != window.as_str() {
+            return Err(refused());
+        }
+        let home = base64::engine::general_purpose::STANDARD
+            .decode(reply.vv)
+            .ok()
+            .and_then(|bytes| loro::VersionVector::decode(&bytes).ok())
+            .ok_or_else(refused)?;
+        // A loaded window persists before it closes; one a handle still
+        // holds stays, and the demotion waits.
+        match self.manager.unload_window(window) {
+            Ok(_) => {}
+            Err(crate::Error::Sync(crate::error::SyncError::WindowBusy { .. })) => {
+                return Ok(crate::sync::residence::WindowDemotion::default());
+            }
+            Err(error) => return Err(storage(error)),
+        }
+        Ok(
+            crate::sync::residence::demote_resident_window(&self.vault, window, &home)
+                .map_err(storage)?
+                .unwrap_or_default(),
+        )
     }
 
     /// Read a previously fetched thin item. This cache has no writable Loro

@@ -35,10 +35,16 @@ mod versions;
 mod weave_digest;
 pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
-    StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule,
+    StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestReader,
+    WeaveDigestSchedule,
 };
 mod weave_correction;
 mod weave_report;
+mod weave_serve;
+pub use weave_serve::{
+    WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveReaderKind, WeaveReaderRef,
+    WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveSectionInput, WeaveSectionView,
+};
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
