@@ -32293,6 +32293,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactKind",
+      "CheckpointKey"
+     ],
+     "path": "src/recovery/checkpoint/artifact.rs",
+     "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -32543,8 +32559,8 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 12,
-      "re-export": 1,
+      "fn": 14,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -43333,7 +43349,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 3,
       "re-export": 13,
       "struct": 2
@@ -43489,15 +43505,16 @@
      "kind": "src",
      "notable": [
       "VaultKeyStatus",
+      "VaultKeyUnlock",
       "VaultKeyWrapInfo",
       "VaultKeyWrapKind"
      ],
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 13,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -45405,7 +45422,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -45827,7 +45844,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2752,
+   "source_files": 2753,
    "test_files": 903
   },
   "oneiron-android": {
