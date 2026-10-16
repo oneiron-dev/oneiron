@@ -1,0 +1,5 @@
+{
+  "resolution": "Several values were extracted for one claim identity; the state lists the prior heads the branch holds and each new candidate. How do they resolve? merge: one value replaces them all. supersede: the newest value replaces the prior head. accumulate: the predicate genuinely holds several values at once, so every candidate is kept. escalate: a real contradiction, left standing for a person to settle.",
+  "identity": "If this conflict resolves by merge or supersede, which listed candidate's claim identity does the resolved claim keep? none keeps the conflict's own identity; a merge across predicates must name a candidate.",
+  "correction": "Each state candidate was just extracted from the conversation and names its own questions. Does it correct or update one of the listed claims about the same entity? Answer with that claim's id, or none when it states something new."
+}

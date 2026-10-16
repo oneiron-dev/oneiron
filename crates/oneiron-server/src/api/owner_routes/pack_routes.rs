@@ -2,7 +2,8 @@
 //! The owner installs a pack from a folder on this host or from its files,
 //! lists what is installed, and binds or dials its hooks. Hub refs sync at
 //! their stored policy, and hub skills import, sync, restore and read their
-//! receipts here (OF-213).
+//! receipts here (OF-213). The organ inventory and the owner's organ build
+//! upload live here too (OF-575).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,7 +16,8 @@ use axum::routing::{get, post};
 use oneiron::EntityId;
 use oneiron::consent::ConsentReceipt;
 use oneiron::skill_hub::pack_catalog::{
-    PackHookBinding, PackInstallDisposition, PackInstallReceipt, hub_pin,
+    MAX_ORGAN_BUILD_BYTES, PackHookBinding, PackInstallDisposition, PackInstallReceipt,
+    PackOrganBuild, PackOrganEntry, hub_pin,
 };
 use oneiron::skill_hub::{
     HubAdmissionReceipt, HubAskSurface, HubFile, HubImportReceipt, HubPin, HubRef,
@@ -32,7 +34,8 @@ use crate::server::SyncServer;
 /// A folder read from disk stops here; the pack source applies its own,
 /// tighter bounds after.
 const MAX_FOLDER_FILES: usize = 1024;
-const MAX_FOLDER_BYTES: u64 = 64 * 1024 * 1024;
+/// Organ builds ride in the folder and leave the source as blob assets.
+const MAX_FOLDER_BYTES: u64 = 256 * 1024 * 1024;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -43,6 +46,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/hooks/enabled", post(set_hook_enabled))
         .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
         .route("/packs/sync", post(sync_pack))
+        .route("/packs/organs", get(pack_organs))
+        .route("/packs/organs/build", post(put_organ_build))
         .route("/packs/skills/import", post(import_skill))
         .route("/packs/skills/restore", post(restore_skill))
         .route(
@@ -330,6 +335,63 @@ async fn set_hook_enabled(
     })
     .await?;
     Ok(Json(()))
+}
+
+/// `GET /v1/owner/packs/organs`: every organ of an Active installation, with
+/// the platforms this vault holds a build for.
+async fn pack_organs(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<PackOrganEntry>> {
+    owner(&auth, &server)?;
+    let organs = blocking(move || Ok(server.vault().pack_organs()?)).await?;
+    Ok(Json(organs))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PutOrganBuild {
+    /// The staged pack source, as 32 hex.
+    source: String,
+    organ: String,
+    platform: String,
+    /// An absolute path to the build on this host.
+    path: PathBuf,
+}
+
+/// `POST /v1/owner/packs/organs/build`: hold one organ build for a staged
+/// pack source. The bytes must match the source's pin; holding grants nothing.
+async fn put_organ_build(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PutOrganBuild>, JsonRejection>,
+) -> OwnerReply<PackOrganBuild> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let build = blocking(move || {
+        let source = entity_id(&request.source, "source")?;
+        if !request.path.is_absolute() {
+            return Err(OwnerError::Invalid(
+                "a build path must be absolute".to_owned(),
+            ));
+        }
+        let length = std::fs::metadata(&request.path)
+            .map_err(|error| OwnerError::Host(error.into()))?
+            .len();
+        if length > MAX_ORGAN_BUILD_BYTES {
+            return Err(OwnerError::Invalid("the organ build is too large".to_owned()));
+        }
+        let bytes = std::fs::read(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
+        Ok(server.vault().put_pack_organ_build(
+            &owner,
+            source,
+            &request.organ,
+            &request.platform,
+            &bytes,
+        )?)
+    })
+    .await?;
+    Ok(Json(build))
 }
 
 fn entity_id(hex: &str, what: &str) -> Result<EntityId, OwnerError> {

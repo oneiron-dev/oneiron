@@ -290,14 +290,32 @@ impl Vault {
         connector_key: EntityId,
         now: u64,
     ) -> Result<Vec<ConnectorWakeDecision>> {
-        self.ingest_connector_event_in_txn(txn, event, Some((agent, connector_key)), now)
+        self.ingest_connector_event_in_txn(txn, event, Some((agent, Some(connector_key))), now)
+    }
+
+    /// Surface ingress (OF-218): a routed inbound event wakes only the
+    /// subscriptions of the actor its receiving identity routed to, under
+    /// whichever key that actor subscribed with. Match, live-key check,
+    /// budget charge, wake enqueue and decision receipt share one txn, as
+    /// host ingress does.
+    pub fn ingest_surface_connector_event(
+        &self,
+        event: &ConnectorEvent,
+        agent: EntityId,
+        now: u64,
+    ) -> Result<Vec<ConnectorWakeDecision>> {
+        self.with_write_txn_grouped(|txn| {
+            self.ingest_connector_event_in_txn(txn, event, Some((agent, None)), now)
+        })
     }
 
     fn ingest_connector_event_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         event: &ConnectorEvent,
-        scope: Option<(EntityId, EntityId)>,
+        // The acting agent, and the one key granted to it when a pack run
+        // carries one.
+        scope: Option<(EntityId, Option<EntityId>)>,
         now: u64,
     ) -> Result<Vec<ConnectorWakeDecision>> {
         validate_connector_event(event)?;
@@ -309,7 +327,9 @@ impl Vault {
             // nothing until it is cleared.
             if !row.active
                 || !row.filter.matches(event)
-                || scope.is_some_and(|(agent, key)| row.agent != agent || row.connector_key != key)
+                || scope.is_some_and(|(agent, key)| {
+                    row.agent != agent || key.is_some_and(|key| row.connector_key != key)
+                })
                 || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &*txn, &id)?
             {
                 continue;

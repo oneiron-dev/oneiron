@@ -446,6 +446,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
+    RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as

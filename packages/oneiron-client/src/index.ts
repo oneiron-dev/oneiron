@@ -20,6 +20,11 @@
  * TypeScript worker and npm-capable external agents.
  */
 
+import { facadeVerbs } from "./facade.js";
+export { FACADE_VERBS } from "./facade.js";
+export type { FacadeVerb } from "./facade.js";
+export type * from "./facade-types.js";
+
 export interface HttpBaseClientOptions {
   /** Origin of an existing Oneiron server, e.g. `http://127.0.0.1:9090`. */
   readonly baseUrl: string | URL;
@@ -122,6 +127,14 @@ export function mergeHeaders(defaults: Headers, extra?: HeadersInit): Headers {
 }
 
 export class HttpBaseClient {
+  readonly facade = facadeVerbs((verb, input, init = {}) => {
+    const headers = new Headers(init.headers ?? {});
+    headers.set("Content-Type", "application/json");
+    return this.request(`/v1/core/facade/${encodeURIComponent(verb)}`, {
+      ...init, method: "POST", headers, body: JSON.stringify(input),
+    });
+  });
+
   readonly baseUrl: URL;
   readonly fetch: typeof globalThis.fetch;
   readonly headers: Headers;
