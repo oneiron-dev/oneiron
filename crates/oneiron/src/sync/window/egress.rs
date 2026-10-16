@@ -163,6 +163,7 @@ pub(super) fn scrub_local_only_carriers(
         removed |= remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
     }
     if removed {
+        crate::sync::row_birth::drop_orphan_births(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -287,6 +288,7 @@ pub(super) fn scrub_local_claim_carriers(
     }
     removed |= delete_edges_touching_entities(&edges, &ids)?;
     if removed {
+        crate::sync::row_birth::drop_orphan_births(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -387,6 +389,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
     for (raw_key, _) in &withdrawn {
         map_delete(&entities, raw_key)?;
     }
+    crate::sync::row_birth::drop_orphan_births(doc)?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(pin)
 }
@@ -430,6 +433,7 @@ pub(super) fn scrub_redacted_attribution_carriers(
         map_delete(&entities, map_key)?;
     }
     if !keys.is_empty() {
+        crate::sync::row_birth::drop_orphan_births(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(!keys.is_empty())
@@ -677,6 +681,11 @@ fn replay_mirrors(
                 map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)?;
                 wrote_edges = true;
             }
+            // The same crash window can fall between the entity and its
+            // Rule A birth.
+            if crate::sync::row_birth::mirror_local_birth(vault, doc, id)? {
+                wrote_edges = true;
+            }
             if wrote_edges {
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
                 replayed += 1;
@@ -721,6 +730,8 @@ fn replay_mirrors(
             )?;
             map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)?;
         }
+        // Rule A: the birth rides in the same bridge commit as its row.
+        crate::sync::row_birth::mirror_local_birth(vault, doc, id)?;
 
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 

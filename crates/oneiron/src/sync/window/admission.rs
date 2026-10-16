@@ -277,6 +277,7 @@ fn validate_window_update(
         }
     }
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
+    let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -285,7 +286,9 @@ fn validate_window_update(
         else {
             continue;
         };
-        if op.container == witnesses {
+        if op.container == births {
+            crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
+        } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)
                     if key.and_then(crate::sync::WindowKey::world)

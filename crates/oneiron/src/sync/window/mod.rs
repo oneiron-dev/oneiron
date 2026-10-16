@@ -98,7 +98,7 @@ pub struct LoadedWindow {
     /// Observer A subscription (persistence + broadcast).
     _observer_a: Subscription,
     /// Observer B subscriptions (entities, edges, tombstones materialization).
-    _observer_b: (Subscription, Subscription, Subscription),
+    _observer_b: (Subscription, Subscription, Subscription, Subscription),
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
