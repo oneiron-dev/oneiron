@@ -11,8 +11,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/cdp.rs` | src | s | 3 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
+| `src/cdp.rs` | src | s | 6 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/driver.rs` | src | m | 4 crate-vis | — | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
 | `src/lib.rs` | src | s | 15 struct · 1 enum · 1 trait · 4 fn · 2 re-export | BrowserDriver, BrowserError, ClickInput, ExpectInput, ExpectOutput, FindInput, FindOutput, Observation +9 | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
 | `src/outline.rs` | src | s | 2 crate-vis | — | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
-| `src/session.rs` | src | s | 2 struct · 3 fn | BrowserGuest, BrowserSession | A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's… |
+| `src/session.rs` | src | s | 2 struct · 5 fn | BrowserGuest, BrowserSession | A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's… |
