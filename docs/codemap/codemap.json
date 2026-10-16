@@ -3123,6 +3123,7 @@
      "path": "src/autoreason_campaign/coverage.rs",
      "purpose": "Coverage is a goal-record floor, not a skill quality-diversity archive",
      "surface": {
+      "crate-vis": 1,
       "fn": 9,
       "struct": 3
      }
@@ -9051,6 +9052,16 @@
      "surface": {
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/retrieval_loop.rs",
+     "purpose": "Scoped admission shared by the read-only retrieval loop's verbs",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -29777,7 +29788,41 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 6,
+      "mod": 1,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReadOnlyRetrievalLoop"
+     ],
+     "path": "src/pipeline/retrieval_loop.rs",
+     "purpose": "OF-183: the engine's read-only, receipt-aware loop over entity handles",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetrievalEvidence",
+      "RetrievalHandle",
+      "RetrievalLoopAction",
+      "RetrievalLoopObservation",
+      "RetrievalLoopStatus"
+     ],
+     "path": "src/pipeline/retrieval_loop/types.rs",
+     "purpose": "Read-only retrieval verbs and their model-facing observations",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "struct": 3
      }
     },
     {
@@ -35457,7 +35502,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 2,
       "trait": 1
      }
@@ -44274,7 +44319,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45009,7 +45054,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 57,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45515,7 +45560,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2732,
+   "source_files": 2735,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56469,6 +56514,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/packs/defaults.rs",
+     "purpose": "Explicit default restores and on-demand imports from the pinned library",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/packs/mod.rs",
+     "purpose": "Served pack operations, including explicit default skill imports",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -60967,7 +61032,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 216,
+     "files": 218,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61207,7 +61272,7 @@
    },
    "over_bar": 18,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 396,
+   "source_files": 398,
    "test_files": 182
   },
   "oneiron-spawn": {
