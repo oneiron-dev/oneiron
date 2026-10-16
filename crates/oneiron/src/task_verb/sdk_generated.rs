@@ -10,6 +10,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
     > = std::sync::LazyLock::new(|| {
         std::collections::HashMap::from([
             (
+                "report",
+                crate::code_run::vault_read::request_schema::<crate::feedback::ReportRequest>(),
+            ),
+            (
                 "self.focus.refresh",
                 crate::code_run::vault_read::request_schema::<BoardRefreshRequest>(),
             ),
@@ -215,6 +219,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.conversations.turn.continue",
+                crate::code_run::vault_read::request_schema::<crate::conversation::TurnActionRequest>(
+                ),
+            ),
+            (
+                "vault.conversations.turn.retry",
+                crate::code_run::vault_read::request_schema::<crate::conversation::TurnActionRequest>(
+                ),
+            ),
+            (
                 "vault.rooms.host",
                 crate::code_run::vault_read::request_schema::<RoomHostRequest>(),
             ),
@@ -379,6 +393,13 @@ pub fn mcp_arguments_schema_from_input(
 ) -> Option<serde_json::Value> {
     let mut properties = serde_json::Map::new();
     let required: &[&str] = match verb {
+        "report" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.focus.refresh" => {
             properties.insert(
                 "frame_epoch".to_owned(),
@@ -733,6 +754,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.conversations.turn.continue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.conversations.turn.retry" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.host" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -868,6 +903,10 @@ pub fn mcp_arguments_schema_from_input(
 }
 pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {
     match verb {
+        "report" => {
+            let input: crate::feedback::ReportRequest = decode(value.clone())?;
+            input.validate().map_err(MemoryError::from)?;
+        }
         "self.focus.refresh" => {
             let _input: BoardRefreshRequest = decode(value.clone())?;
         }
@@ -1018,6 +1057,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.consent" => {
             let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
         }
+        "vault.conversations.turn.continue" => {
+            let _input: crate::conversation::TurnActionRequest = decode(value.clone())?;
+        }
+        "vault.conversations.turn.retry" => {
+            let _input: crate::conversation::TurnActionRequest = decode(value.clone())?;
+        }
         "vault.rooms.host" => {
             let _input: RoomHostRequest = decode(value.clone())?;
         }
@@ -1115,6 +1160,7 @@ pub fn invoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     match verb {
+        "report" => encode(report(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -1161,6 +1207,12 @@ pub fn invoke(
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
+        "vault.conversations.turn.continue" => {
+            encode(vault_conversations_turn_continue(memory, decode(value)?)?)
+        }
+        "vault.conversations.turn.retry" => {
+            encode(vault_conversations_turn_retry(memory, decode(value)?)?)
+        }
         "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
@@ -1246,6 +1298,13 @@ pub fn invoke_browser(
     };
     output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string()))
 }
+pub fn report(
+    memory: &Memory<'_>,
+    input: crate::feedback::ReportRequest,
+) -> MemoryResult<crate::feedback::ReportReceipt> {
+    input.validate().map_err(MemoryError::from)?;
+    memory.report(input)
+}
 pub fn self_focus_refresh<S: crate::board_verb::LiveBoardSource>(
     context: &mut crate::board_verb::BoardVerbContext<'_, S>,
     input: BoardRefreshRequest,
@@ -1330,7 +1389,7 @@ pub fn tasks_create(
     input: TaskCreateRequest,
 ) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
     memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(
-        crate::companion_value_from_json(&input.spec)?,
+        crate::msgpack_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
         Some(memory.vault().now_recorded_at()),
@@ -1609,6 +1668,18 @@ pub fn vault_rooms_consent(
     input: crate::workspace_roster::ConsentAnswer,
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_consent(&input)
+}
+pub fn vault_conversations_turn_continue(
+    memory: &Memory<'_>,
+    input: crate::conversation::TurnActionRequest,
+) -> MemoryResult<crate::conversation::TurnActionReceipt> {
+    memory.conversations_turn_continue(&input)
+}
+pub fn vault_conversations_turn_retry(
+    memory: &Memory<'_>,
+    input: crate::conversation::TurnActionRequest,
+) -> MemoryResult<crate::conversation::TurnActionReceipt> {
+    memory.conversations_turn_retry(&input)
 }
 pub fn vault_rooms_host(
     memory: &Memory<'_>,

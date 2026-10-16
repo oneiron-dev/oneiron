@@ -12,7 +12,7 @@ use loro::ExportMode;
 use oneiron::sync::federation_burst::{
     FederationBurstDecision, prepare_selector_fetch, replay_selector_fetch,
 };
-use oneiron::sync::{WindowKey, filtered_window_doc};
+use oneiron::sync::{WindowKey, filtered_window_doc_for_peer};
 
 pub(super) async fn handle_selector_fetch(
     server: &SyncServer,
@@ -90,12 +90,13 @@ pub(super) async fn handle_selector_fetch(
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
     let doc = window.doc.clone();
-    let filtered = filtered_window_doc(
+    let filtered = filtered_window_doc_for_peer(
         server.vault.as_ref(),
         &doc,
         key,
         selector_grant_scope(),
         &prepared.selector,
+        state.peer_machine(server.vault()),
     )
     .map_err(map_selector_filter_err)?;
     let delta = filtered
@@ -118,4 +119,27 @@ fn send(
         .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
     tx.send(frame)
         .map_err(|_| ProtocolError::Persistence("selector response channel closed".into()))
+}
+
+/// Selector bytes are a standalone closed subgraph. Recheck only that
+/// subgraph against the destination now, not an unrelated canonical row.
+pub(super) fn selector_update_withheld(
+    server: &SyncServer,
+    frame: &[u8],
+    peer: oneiron::authority::PeerMachine,
+) -> bool {
+    if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
+        return false;
+    }
+    let Some((key, sub_tag, update)) = frame
+        .get(1..)
+        .and_then(|payload| protocol::decode_window_sync(payload).ok())
+    else {
+        return true;
+    };
+    matches!(
+        sub_tag,
+        protocol::window_sub_tags::UPDATE | protocol::window_sub_tags::REPLACEMENT
+    ) && oneiron::sync::window::selector_update_verdict_for_peer(server.vault(), key, update, peer)
+        != oneiron::sync::window::UpdateVerdict::Portable
 }

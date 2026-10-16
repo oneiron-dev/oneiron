@@ -14,11 +14,11 @@ use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::companion::companion_value_to_json;
 use crate::deletion::{DeleteReason, DeletionGateContext};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind};
+use crate::serialize::msgpack_value_to_json;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};
 

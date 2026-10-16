@@ -3,6 +3,7 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 mod refs;
+mod report;
 use super::{
     FeedbackCategory, FeedbackEncoding, decode_feedback_bundle_as, feedback_bundle_digest_as,
 };
