@@ -13113,7 +13113,7 @@
      "purpose": "Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the…",
      "surface": {
       "const": 8,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 16,
       "struct": 3
@@ -13311,7 +13311,7 @@
      "path": "src/consent/widen.rs",
      "purpose": "Propose-only authority widening",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -14719,6 +14719,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ContainerAttendee",
+      "ContainerAttendeeEntry",
+      "ContainerAttendeeEvent"
+     ],
+     "path": "src/conversation/attendee.rs",
+     "purpose": "An attendee's first entry into a chat or room (OF-365, ILDF2 P5)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ConversationBody",
       "ConversationKind",
       "RoomRole"
@@ -14755,7 +14772,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -14769,7 +14786,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
       "crate-vis": 6,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -16011,7 +16028,7 @@
      "purpose": "The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises \"who is this?\" to the…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -40532,7 +40549,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ActorSubjectAnchor",
@@ -40543,7 +40560,7 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 12,
       "re-export": 1,
@@ -42896,7 +42913,17 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/attendee_entry.rs",
+     "purpose": "The protected first-entry fact of one attendee in one container (OF-365, ILDF2 P5)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -42944,7 +42971,7 @@
      "path": "src/task_verb/ask_settlement.rs",
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -43042,6 +43069,16 @@
       "enum": 16,
       "fn": 5,
       "struct": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/attendee_answer.rs",
+     "purpose": "The owner-proof rule for an attendee ask's answer (OF-365, ILDF2 P4)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -43668,6 +43705,7 @@
       "BoardRefreshRequest",
       "BoardSubscriptionRequest",
       "CompanionSharingRequest",
+      "CompanionSharingSetRequest",
       "DescribeRequest",
       "EmptyRequest",
       "InboxListRequest",
@@ -43702,9 +43740,9 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "re-export": 9,
-      "struct": 31
+      "struct": 32
      }
     },
     {
@@ -43762,7 +43800,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 163
+      "fn": 164
      }
     },
     {
@@ -46882,7 +46920,7 @@
      "purpose": "Sharing reads (ONEIRON-ARCH-0063: the owner dials personal context per contact; ONEIRON-ARCH-0067 §8…",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 4
      }
     },
@@ -48455,7 +48493,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49339,7 +49377,7 @@
     "subject_model": {
      "files": 15,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)"
     },
@@ -49386,7 +49424,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 103,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -49540,9 +49578,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 109,
+   "over_bar": 110,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2990,
+   "source_files": 2993,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57140,7 +57178,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 141
+      "fn": 142
      }
     },
     {
@@ -58153,7 +58191,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 142
+      "fn": 143
      }
     },
     {
