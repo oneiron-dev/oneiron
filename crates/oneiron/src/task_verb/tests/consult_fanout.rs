@@ -8,14 +8,12 @@ use crate::fanout_auto::{
     FanoutAskClassifier, FanoutAskContext, FanoutAskVerdict, FanoutClassifierView,
     FanoutDecisionHistory,
 };
+use crate::own_rate::OwnRateKind;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::store::GateDecisionId;
 
 fn owner(vault: &Vault) -> AuthenticatedOwner {
-    let actor = consult_peer(vault, 0xF0);
-    vault
-        .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
-        .expect("human proof")
+    crate::test_util::embedded_owner_proof(vault)
 }
 
 fn plan(vault: &Vault, count: u8) -> ConsultFanOutSpec {
@@ -90,6 +88,15 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
     // Visible after process loss, not only present in an in-memory sink.
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("reopen paused run");
+    // A proof binds to the open it was minted on: the reopened vault takes a fresh one.
+    let human = vault
+        .authenticate_owner(
+            human.actor(),
+            human.principal_ref(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("fresh proof");
     let facade = vault.memory(actor, EdgeActorClass::Agent);
     assert_eq!(
         facade
@@ -562,4 +569,233 @@ fn fanout_missing_manifest_threshold_uses_shipped_row_and_malformed_refuses() {
     assert!(facade.get_consult_fanout_policy().is_err());
     assert!(facade.fan_out_counted_consults(&input, "research").is_err());
     assert_eq!(task_entity_census(&vault), 1);
+}
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_releases_no_paused_fan_out() {
+        let (_dir, vault) = open_vault();
+        let actor = own_agent(&vault);
+        let human = owner(&vault);
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(human.actor(), human.principal_ref());
+        let input = plan(&vault, 26);
+        let facade = vault.memory(actor, EdgeActorClass::Agent);
+        let paused = facade.fan_out_consults(&input).unwrap();
+
+        let refused = facade
+            .resume_fan_out_consults(
+                paused.correlation_ref,
+                paused.meter.plan_digest,
+                ConsultFanOutChoice::ApproveOnce,
+                &foreign,
+            )
+            .expect_err("another vault's proof releases nothing");
+        assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+        assert_eq!(task_entity_census(&vault), 0);
+        let released = facade
+            .resume_fan_out_consults(
+                paused.correlation_ref,
+                paused.meter.plan_digest,
+                ConsultFanOutChoice::ApproveOnce,
+                &human,
+            )
+            .unwrap();
+        assert_eq!(released.task_refs.len(), 26);
+    }
+}
+
+/// Rule 5: an actor's fan-out requests are counted, never refused for rate.
+/// A burst of 200 from one actor under the shipped policy lands whole; main
+/// refused the eleventh in a minute.
+#[test]
+fn an_actor_burst_of_200_fan_outs_lands_whole() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let input = plan(&vault, 1);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    for request in 1..=200 {
+        let receipt = facade
+            .fan_out_consults(&input)
+            .unwrap_or_else(|error| panic!("fan-out {request} was refused: {}", error.code));
+        assert_eq!((receipt.task_refs.len(), receipt.paused), (1, None));
+    }
+    assert_eq!(task_entity_census(&vault), 200);
+    assert_eq!(
+        vault
+            .own_rate_check(actor, OwnRateKind::ConsultFanout)
+            .unwrap(),
+        None,
+        "a burst under the shipped row raises no question"
+    );
+}
+
+/// OF-520: past the owner's row the fan-outs still land, and the first
+/// request past it in the window leaves one typed check.
+#[test]
+fn fan_outs_past_the_owner_row_land_and_leave_one_typed_check() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let input = plan(&vault, 1);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let row = TaskCreateRateLimit {
+        limit: 20,
+        window_seconds: u64::MAX,
+    };
+    facade
+        .set_consult_fanout_policy(
+            &owner(&vault),
+            &ConsultFanOutPolicy {
+                create_rate: row,
+                ..ConsultFanOutPolicy::default()
+            },
+        )
+        .unwrap();
+    for _ in 0..30 {
+        assert_eq!(facade.fan_out_consults(&input).unwrap().task_refs.len(), 1);
+    }
+    assert_eq!(task_entity_census(&vault), 30);
+    let check = vault
+        .own_rate_check(actor, OwnRateKind::ConsultFanout)
+        .unwrap()
+        .expect("the crossing left a check");
+    assert_eq!(
+        (
+            check.actor,
+            check.count,
+            check.threshold,
+            check.window_seconds
+        ),
+        (actor.to_hex(), 21, 20, u64::MAX)
+    );
+}
+
+/// Review r1 (Sol F1 and F2): an actor's fan-outs count in one window
+/// against one bound, the vault's own row, whatever scope each runs in. A
+/// scoped row of another duration and bound neither resets the count nor
+/// asks again: 30 requests alternating between the vault and a project
+/// leave the vault row's one check, at the 21st.
+#[test]
+fn fan_outs_across_scopes_count_in_one_window_against_the_vault_row() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let input = plan(&vault, 1);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let row = |limit, window_seconds| ConsultFanOutPolicy {
+        create_rate: TaskCreateRateLimit {
+            limit,
+            window_seconds,
+        },
+        ..ConsultFanOutPolicy::default()
+    };
+    // Windows of about 31 and 63 years: the clock's window number differs
+    // between the two, and holds for the test.
+    facade
+        .set_consult_fanout_policy(&human, &row(20, 1_000_000_000))
+        .unwrap();
+    // 0x6B: [0xA1; 16] is a reserved system-agent id.
+    let project = ConsultFanOutScope {
+        project_ref: Some(consult_peer(&vault, 0x6B).to_hex()),
+        ..ConsultFanOutScope::default()
+    };
+    facade
+        .set_consult_fanout_scope_policy(&human, &project, &row(10, 2_000_000_000), false)
+        .unwrap();
+    for request in 0..30 {
+        let receipt = if request % 2 == 0 {
+            facade.fan_out_consults(&input)
+        } else {
+            facade.fan_out_counted_consults_in_scope(&input, "research", &project, &human, None)
+        }
+        .unwrap();
+        assert_eq!(receipt.task_refs.len(), 1);
+    }
+    let check = vault
+        .own_rate_check(actor, OwnRateKind::ConsultFanout)
+        .unwrap()
+        .expect("the crossing left a check");
+    assert_eq!(
+        (check.count, check.threshold, check.window_seconds),
+        (21, 20, 1_000_000_000)
+    );
+}
+
+/// Allows the fan-out it rules on, after the clock moves to the next window
+/// and the same actor lands `burst` one-peer fan-outs there.
+struct InterleavingClassifier<'a> {
+    clock: &'a crate::ports::ManualClock,
+    next_window: u64,
+    facade: &'a crate::memory::Memory<'a>,
+    input: &'a ConsultFanOutSpec,
+    burst: usize,
+}
+impl FanoutAskClassifier for InterleavingClassifier<'_> {
+    fn classify(
+        &self,
+        _: &FanoutAskContext,
+        _: &FanoutClassifierView<'_>,
+        _: &FanoutDecisionHistory,
+    ) -> Result<FanoutAskVerdict> {
+        self.clock.set(self.next_window);
+        for _ in 0..self.burst {
+            let landed = self.facade.fan_out_consults(self.input).expect("lands");
+            assert_eq!(landed.task_refs.len(), 1);
+        }
+        Ok(FanoutAskVerdict::Allow)
+    }
+}
+
+/// Review r2 (Astra F1): a fan-out counts at the time it mints, not at the
+/// time its admission began. One held by its classifier across a window
+/// boundary, while the same actor lands 20 requests in the new window, is
+/// that window's 21st and leaves its check.
+#[test]
+fn a_fan_out_held_across_a_window_counts_in_the_window_it_lands_in() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let clock = crate::ports::ManualClock::new(599);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    let actor = own_agent(&vault);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    facade
+        .set_consult_fanout_policy(
+            &owner(&vault),
+            &ConsultFanOutPolicy {
+                create_rate: TaskCreateRateLimit {
+                    limit: 20,
+                    window_seconds: 60,
+                },
+                ..ConsultFanOutPolicy::default()
+            },
+        )
+        .unwrap();
+    let one = plan(&vault, 1);
+    let classifier = InterleavingClassifier {
+        clock: &clock,
+        next_window: 600,
+        facade: &facade,
+        input: &one,
+        burst: 20,
+    };
+    let held = facade
+        .fan_out_consults_with_classifier(&plan(&vault, 26), Some(&classifier))
+        .unwrap();
+    assert_eq!(held.task_refs.len(), 26);
+    assert_eq!(facade.fan_out_consults(&one).unwrap().task_refs.len(), 1);
+    let check = vault
+        .own_rate_check(actor, OwnRateKind::ConsultFanout)
+        .unwrap()
+        .expect("the window's 21st request left a check");
+    assert_eq!(
+        (check.count, check.threshold, check.window_started_at),
+        (21, 20, 600)
+    );
 }

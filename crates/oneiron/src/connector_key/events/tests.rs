@@ -4,7 +4,7 @@ use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 #[test]
 fn subscriptions_roundtrip_revoke_and_wake_only_matching_non_depleted_keys() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x71);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let agent_a = entity(0x72);
     let agent_b = entity(0x73);
     for id in [owner_id, agent_a, agent_b] {
@@ -115,7 +115,7 @@ fn subscriptions_roundtrip_revoke_and_wake_only_matching_non_depleted_keys() -> 
 #[test]
 fn corrupt_subscription_claim_fails_closed() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x61);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let actor = entity(0x62);
     let key_id = entity(0x63);
     for id in [owner_id, actor] {
@@ -212,4 +212,97 @@ fn deliver_queued_event(vault: &Vault, exec: &mut EventConsumer) -> Result<()> {
         }
     }
     Err(invalid())
+}
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_subscribes_no_agent() -> Result<()> {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+        let agent = entity(0x72);
+        for id in [owner_id, agent] {
+            vault.put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"actor",
+            )?;
+        }
+        let owner =
+            vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner_id, &owner_id.to_hex());
+        let key = entity(0x74);
+        vault.register_connector_key(
+            &key,
+            ConnectorKeyRecord::active("calendar", Some(agent), Vec::new(), 1),
+        )?;
+        let filter = ConnectorEventFilter {
+            connector: "calendar".into(),
+            event_kind: Some("updated".into()),
+            predicate: Some("calendar.event".into()),
+        };
+
+        assert_eq!(
+            vault
+                .subscribe_connector_event(&foreign, agent, key, filter.clone())
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.connector_event_subscriptions(agent)?.is_empty());
+        vault.subscribe_connector_event(&owner, agent, key, filter)?;
+        assert_eq!(vault.connector_event_subscriptions(agent)?.len(), 1);
+        Ok(())
+    }
+}
+
+mod revoked_owner_credential {
+    use super::*;
+
+    /// Astra r1 on #1458: the owner's credential is revoked while the
+    /// subscription waits for the writer. The writer's snapshot refuses it.
+    #[test]
+    fn a_credential_revoked_while_the_subscription_waits_subscribes_no_agent() -> Result<()> {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let agent = entity(0x72);
+        vault.put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )?;
+        let key = entity(0x74);
+        vault.register_connector_key(
+            &key,
+            ConnectorKeyRecord::active("calendar", Some(agent), Vec::new(), 1),
+        )?;
+        let filter = ConnectorEventFilter {
+            connector: "calendar".into(),
+            event_kind: Some("updated".into()),
+            predicate: Some("calendar.event".into()),
+        };
+        let vault = std::rc::Rc::new(vault);
+        let (owner, slip) = crate::test_util::credentialed_owner_proof(&vault, b"subscription");
+        crate::test_util::revoke_before_the_next_write(&vault, slip);
+
+        assert_eq!(
+            vault
+                .subscribe_connector_event(&owner, agent, key, filter.clone())
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.connector_event_subscriptions(agent)?.is_empty());
+        let (fresh, _) = crate::test_util::credentialed_owner_proof(&vault, b"subscription again");
+        vault.subscribe_connector_event(&fresh, agent, key, filter)?;
+        assert_eq!(vault.connector_event_subscriptions(agent)?.len(), 1);
+        Ok(())
+    }
 }

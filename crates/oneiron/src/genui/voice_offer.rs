@@ -180,19 +180,20 @@ impl Vault {
         }
         let key = offer_key(grant_offer_nonce)?;
         self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, &*txn)?;
+            let principal_ref = owner.principal_ref_in_txn(self, &*txn)?;
             let row = OFFERS
                 .get(&self.store, txn, &key)
                 .map_err(row_error)?
                 .ok_or_else(invalid_offer)?;
             if row.version != 1
-                || row.owner_actor != owner.actor().to_hex()
-                || row.principal_ref != owner.principal_ref()
+                || row.owner_actor != actor.to_hex()
+                || row.principal_ref != principal_ref
                 || row.bound_digest != bound.digest().to_hex()
                 || row.expires_at <= self.now_recorded_at()
             {
                 return Err(invalid_offer());
             }
-            owner.revalidate_in_txn(self, &*txn)?;
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
             OFFERS.delete(&self.store, txn, &key)?;
             Ok(receipt)
@@ -241,7 +242,7 @@ mod tests {
     #[test]
     fn cross_axis_bound_substitution_cannot_consume_nonce_or_mint() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-        let actor = person(&vault, 0xC4)?;
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let owner = vault.authenticate_owner(actor, "owner", true, GateDecisionId::now())?;
         let offered = GrantBound::disclosure(
             AudienceBound::singleton("alice")?,
@@ -378,7 +379,7 @@ mod tests {
         let mut config = crate::VaultConfig::device();
         config.store_clock = clock.bundle();
         let (_dir, vault) = crate::test_util::open_test_vault_with(config);
-        let actor = person(&vault, 0xC3)?;
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let bound = disclosure()?;
         assert!(
             vault

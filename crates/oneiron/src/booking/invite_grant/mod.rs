@@ -42,6 +42,7 @@ pub use self::types::{
 
 pub(crate) use self::authorization::{
     BookingInviteCoverage, booker_identity, booker_identity_in_txn, normalize_identity,
+    page_grant_covers_booking_in_txn,
 };
 pub(super) use self::dispatch::{
     NoConfirmInviteSink, dispatch_confirm_booking_invite, sending_address,

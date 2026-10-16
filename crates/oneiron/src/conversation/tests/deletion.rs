@@ -308,12 +308,14 @@ fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
         .unwrap()
         .id;
     let saved = vault.get(&record).unwrap();
-    vault
-        .put_authority_log_entries(&[
+    // No door stores a rival genesis (H72); build the conflicted log here.
+    crate::authority::with_authority_doors_open_for_test(|| {
+        vault.put_authority_log_entries(&[
             (independent_root(0x74), TimeRange { start: 1, end: 1 }, 1),
             (independent_root(0x75), TimeRange { start: 2, end: 2 }, 2),
         ])
-        .unwrap();
+    })
+    .unwrap();
     assert!(vault.authority_fold().unwrap().vault_root_is_conflicted());
     for err in [
         vault
@@ -396,6 +398,77 @@ fn room_soft_shell_escalates_through_authorized_gdpr_and_keeps_dag_usable() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn a_deleted_dag_record_keeps_no_hash_of_its_words() {
+    use crate::ports::EntityStoreRead;
+    // B29 / ONE-2578: the pin a deleted record leaves still refuses its id,
+    // and is the same fixed value whatever the deleted words were.
+    let (_dir, vault, owner, room, _) = fixture();
+    let soft = vault
+        .append_dag_record(&record(&vault, room, owner, 3))
+        .unwrap()
+        .id;
+    let hard = vault
+        .append_dag_record(&record(&vault, room, owner, 4))
+        .unwrap()
+        .id;
+    let pin = |id| crate::conversation_dag::stored_body_pin_for_test(&vault, &id).unwrap();
+    let rows = [soft, hard].map(|id| {
+        let txn = vault.store.env.read_txn().unwrap();
+        vault.store.port_entity_record(&txn, &id).unwrap().unwrap()
+    });
+    let content = [soft, hard].map(|id| pin(id).expect("an appended record is pinned"));
+    assert_ne!(content[0], content[1]);
+    let recreate = |id: &EntityId, row: &crate::ports::EntityRecord, replicated: bool| {
+        let builder = vault.batch();
+        let builder = if replicated {
+            builder.put_replicated(id, row.entity_type, row.occurred, row.learned_at, &row.body)
+        } else {
+            builder.put(id, row.entity_type, row.occurred, row.learned_at, &row.body)
+        };
+        builder.commit()
+    };
+
+    vault
+        .delete_room_record(room, soft, owner, crate::DeleteReason::UserDelete)
+        .unwrap();
+    vault
+        .delete_room_record(room, hard, owner, crate::DeleteReason::UserHardDelete)
+        .unwrap();
+    assert!(vault.is_deleted_shell(&soft).unwrap());
+    assert_ne!(
+        pin(soft),
+        Some(content[0]),
+        "soft delete keeps a content hash"
+    );
+    assert_eq!(pin(soft), pin(hard), "the deleted pins name their words");
+    for replicated in [false, true] {
+        assert!(recreate(&soft, &rows[0], replicated).is_err());
+        assert!(vault.is_deleted_shell(&soft).unwrap());
+    }
+
+    vault
+        .delete_room_record_unchecked_for_test(&soft, crate::DeleteReason::UserHardDelete)
+        .unwrap();
+    assert!(pin(soft).is_some());
+    assert_eq!(pin(soft), pin(hard));
+    for (index, id) in [soft, hard].into_iter().enumerate() {
+        assert_ne!(
+            pin(id),
+            Some(content[index]),
+            "hard delete keeps a content hash"
+        );
+        for replicated in [false, true] {
+            assert_eq!(
+                recreate(&id, &rows[index], replicated).unwrap_err().kind(),
+                ErrorKind::InvalidConversationDag,
+                "replicated: {replicated}",
+            );
+            assert!(vault.get(&id).unwrap().is_none());
+        }
+    }
 }
 
 #[test]

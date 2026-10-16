@@ -763,7 +763,7 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
 
     // A standing block session reads the agent's claims as its reader: a
     // reader slip scoped to one world withholds the other world's claim.
-    let agent = put_person(&vault, 0x63)?;
+    let agent = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let world = put_world(&vault, 0x64)?;
     let elsewhere = put_world(&vault, 0x65)?;
     let owner = vault.authenticate_owner(
@@ -846,4 +846,68 @@ fn put_world(vault: &Vault, byte: u8) -> Result<EntityId> {
         b"world",
     )?;
     Ok(id)
+}
+
+/// F18 review (H397): owner-only configuration acts only under a proof this
+/// vault authenticated. A proof another vault minted for the same PERSON id
+/// opens no standing block here, so it cannot claim the pair first; the
+/// owner's own proof then opens it with the intended configuration.
+#[test]
+fn a_foreign_owner_proof_opens_no_standing_block() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (_other_dir, other) = test_vault();
+    // Each vault's embedded owner: one id, the same in both.
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    other.ensure_embedded_owner_actor().expect("embedded owner");
+    let agent = put_person(&vault, 0x72)?;
+    let world = put_world(&vault, 0x73)?;
+    let foreign = other.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(
+        vault
+            .open_standing_block(&foreign, agent, world, "squatted", 8)
+            .is_err()
+    );
+    let own = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.open_standing_block(&own, agent, world, "identity", 64)?;
+    Ok(())
+}
+
+mod revoked_owner_credential {
+    use super::*;
+
+    /// Astra r1 on #1458: the owner's credential is revoked while the block
+    /// waits for the writer. The writing transaction refuses it.
+    #[test]
+    fn a_credential_revoked_while_the_block_waits_configures_no_standing_block() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let agent = put_person(&vault, 0x72)?;
+        let world = put_world(&vault, 0x73)?;
+        let vault = std::rc::Rc::new(vault);
+        let (owner, slip) = crate::test_util::credentialed_owner_proof(&vault, b"standing block");
+        crate::test_util::revoke_before_the_next_write(&vault, slip);
+
+        assert_eq!(
+            vault
+                .open_standing_block(&owner, agent, world, "identity", 64)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.standing_block(agent, world)?.is_none());
+        let (fresh, _) =
+            crate::test_util::credentialed_owner_proof(&vault, b"standing block again");
+        vault.open_standing_block(&fresh, agent, world, "identity", 64)?;
+        assert!(vault.standing_block(agent, world)?.is_some());
+        Ok(())
+    }
 }

@@ -292,17 +292,12 @@ fn mint_fixture(
         ConsentActionKind, ConsentActorIdentity, ConsentSurface, PROJECT_PROPOSAL_MINT_ACTION_ID,
         ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
     };
-    let person = crate::test_util::entity(0x78);
+    let person = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let message = crate::test_util::entity(0x79);
     let skill = crate::test_util::entity(0x7A);
     let at = TimeRange { start: 20, end: 20 };
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        20,
-        b"owner",
-    )?;
     // A source message must go through the witness door, never a raw MESSAGE put.
     let staging = EntityId::now();
     let staging_project = ProjectRecord::new(
@@ -514,6 +509,13 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     );
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    // A proof binds to the open it was minted on: the reopened vault takes a fresh one.
+    let owner = reopened.authenticate_owner(
+        owner.actor(),
+        owner.principal_ref(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
     assert_eq!(
         reopened.mint_project_from_card(&card, &tap, &owner)?,
         receipt

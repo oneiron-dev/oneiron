@@ -185,3 +185,149 @@ fn embedded_owner_bootstrap_refuses_permanent_hard_delete_after_reopen() {
         assert!(vault.get_raw(&owner).expect("read owner").is_none());
     }
 }
+
+/// Review r3 (Sol F1): an acquirer whose lock file was unlinked between its
+/// open and its lock is refused, through either door. A removal unlinks the
+/// lock last, under its own lease; another owner may then make a fresh lock
+/// under the name, and the late acquirer must not hold a second lease beside
+/// that owner's.
+#[cfg(unix)]
+#[test]
+fn an_acquirer_whose_lock_file_was_unlinked_before_its_lock_is_refused() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for held in [false, true] {
+        let dir = root.path().join(format!("vault-{held}"));
+        std::fs::create_dir(&dir).unwrap();
+        let remover = VaultWriterLease::acquire(&dir).expect("the remover's lease");
+        let fresh = std::rc::Rc::new(std::cell::RefCell::new(None));
+        arm_before_lock({
+            let (dir, fresh) = (dir.clone(), fresh.clone());
+            move || {
+                std::fs::remove_file(dir.join(VAULT_WRITER_LOCK_FILE)).unwrap();
+                drop(remover);
+                *fresh.borrow_mut() = Some(VaultWriterLease::acquire(&dir).expect("a fresh owner"));
+            }
+        });
+        let late = if held {
+            VaultWriterLease::acquire_held(open_root_directory(&dir).unwrap(), &dir)
+        } else {
+            VaultWriterLease::acquire(&dir)
+        };
+        assert!(
+            matches!(late, Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD))),
+            "held {held}: the late acquirer took a second lease: {:?}",
+            late.map(|lease| lease.pid())
+        );
+        assert!(fresh.borrow().is_some(), "held {held}");
+        assert!(matches!(
+            VaultWriterLease::acquire(&dir),
+            Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD))
+        ));
+    }
+}
+
+/// Review r3 (Sol F2): a lock file linked elsewhere is locked but never
+/// written, through either door. A file outside the directory, hard-linked
+/// under the lock's name, keeps its bytes.
+#[cfg(unix)]
+#[test]
+fn a_lock_file_linked_elsewhere_keeps_its_bytes() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let note = root.path().join("note");
+    std::fs::write(&note, "placeholder\n").unwrap();
+    for held in [false, true] {
+        let dir = root.path().join(format!("vault-{held}"));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::hard_link(&note, dir.join(VAULT_WRITER_LOCK_FILE)).unwrap();
+        let lease = if held {
+            VaultWriterLease::acquire_held(open_root_directory(&dir).unwrap(), &dir)
+        } else {
+            VaultWriterLease::acquire(&dir)
+        }
+        .expect("the lease");
+        assert_eq!(
+            std::fs::read_to_string(&note).unwrap(),
+            "placeholder\n",
+            "held {held}"
+        );
+        drop(lease);
+    }
+}
+
+/// A lock name that is a symbolic link is never followed. Either door refuses
+/// it with an error an owner can act on, and the link's target, there or not,
+/// is left as it was (Engine, after review r5).
+#[cfg(unix)]
+#[test]
+fn a_lock_name_that_is_a_symbolic_link_is_refused_by_its_cause() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for (held, there) in [(false, false), (false, true), (true, false), (true, true)] {
+        let dir = root.path().join(format!("vault-{held}-{there}"));
+        let target = root.path().join(format!("target-{held}-{there}"));
+        std::fs::create_dir(&dir).unwrap();
+        if there {
+            std::fs::write(&target, "placeholder\n").unwrap();
+        }
+        std::os::unix::fs::symlink(&target, dir.join(VAULT_WRITER_LOCK_FILE)).unwrap();
+        let refused = if held {
+            VaultWriterLease::acquire_held(open_root_directory(&dir).unwrap(), &dir)
+        } else {
+            VaultWriterLease::acquire(&dir)
+        };
+        let Err(Error::Io(error)) = refused else {
+            panic!("held {held}, target there {there}: the link was not refused as I/O");
+        };
+        assert_eq!(
+            error.to_string(),
+            "the vault's writer lock oneiron.writer.lock is a symbolic link; remove it",
+            "held {held}, target there {there}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).ok().as_deref(),
+            there.then_some("placeholder\n"),
+            "held {held}, target there {there}"
+        );
+    }
+}
+
+/// Review r4 (Sol F1): a lease refused after its lock was granted unlocks
+/// before it closes, as a held lease does. A child forked while the refused
+/// acquirer held its descriptor keeps the descriptor, never the lock.
+#[cfg(unix)]
+#[test]
+fn a_lease_refused_after_its_lock_leaves_no_lock_a_forked_child_holds() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for held in [false, true] {
+        let dir = root.path().join(format!("vault-{held}"));
+        let aside = root.path().join(format!("aside-{held}"));
+        std::fs::create_dir(&dir).unwrap();
+        let remover = VaultWriterLease::acquire(&dir).expect("the remover's lease");
+        let kept = std::rc::Rc::new(std::cell::RefCell::new(None));
+        arm_before_lock({
+            let (dir, aside, kept) = (dir.clone(), aside.clone(), kept.clone());
+            move || {
+                // The late acquirer's lock stays reachable under another name.
+                std::fs::hard_link(dir.join(VAULT_WRITER_LOCK_FILE), &aside).unwrap();
+                std::fs::remove_file(dir.join(VAULT_WRITER_LOCK_FILE)).unwrap();
+                drop(remover);
+                let fresh = VaultWriterLease::acquire(&dir).expect("a fresh owner");
+                *kept.borrow_mut() = Some((fresh, ParkedChild::fork()));
+            }
+        });
+        let late = if held {
+            VaultWriterLease::acquire_held(open_root_directory(&dir).unwrap(), &dir)
+        } else {
+            VaultWriterLease::acquire(&dir)
+        };
+        assert!(
+            matches!(late, Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD))),
+            "held {held}"
+        );
+        let lock = std::fs::File::open(&aside).unwrap();
+        assert!(
+            VaultWriterLease::lock_file(&lock).is_ok(),
+            "held {held}: the refused lease left its lock held by a forked child"
+        );
+        drop(kept.borrow_mut().take());
+    }
+}

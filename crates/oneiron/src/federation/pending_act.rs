@@ -290,6 +290,9 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(invalid());
         }
+        // A grant confers no earlier than the vault clock: a caller's event
+        // time can bring an expiry forward, never put it back.
+        let now = now.max(self.store.clock.now_recorded_at());
         let mut holders = Vec::new();
         for row in self
             .store
@@ -397,7 +400,9 @@ impl Vault {
             row.validate_named(act)?;
         }
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: the approvals must be exactly the live
+        // policy editors below, each a named holder.
+        let actor = owner.revalidate_person_in_txn(self, &txn)?;
         let creation = check_vault(self, &txn, vault_id)?;
         let mut policies = self.act_policies_in_txn(&txn, &creation)?;
         let default = policies.effective(DEFAULT_ROW)?;
@@ -414,10 +419,10 @@ impl Vault {
             .filter(|holder| holder.can(&current.policy_editor_roles, &current.required_verb))
             .map(|holder| holder.member)
             .collect();
-        let mut approvals = BTreeSet::from([owner.actor()]);
+        let mut approvals = BTreeSet::from([actor]);
         for co_owner in co_owners {
-            co_owner.revalidate_in_txn(self, &txn)?;
-            if !approvals.insert(co_owner.actor()) {
+            let co_owner_actor = co_owner.revalidate_person_in_txn(self, &txn)?;
+            if !approvals.insert(co_owner_actor) {
                 return Err(invalid());
             }
         }
@@ -441,7 +446,7 @@ impl Vault {
             return Err(invalid());
         }
         let data = with_act_table(body, &policies.stored)?;
-        self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        self.write_holder_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         txn.commit()?;
         Ok(())
     }
@@ -454,7 +459,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         setting: SharedActPolicy,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -462,18 +466,17 @@ impl Vault {
             act,
             payload,
             SettingChoice::Holder(setting),
-            now,
         )
     }
     /// Start an arbitrary host-defined authority act. The host must execute only
     /// when `completed` is true; every named live role holder gets one durable event.
+    /// The window starts at the store clock, never at a time the starter names.
     pub fn start_authority_act(
         &self,
         starter: &AuthenticatedOwner,
         vault_id: u64,
         act: &str,
         payload: Vec<u8>,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -481,7 +484,6 @@ impl Vault {
             act,
             payload,
             SettingChoice::Stored,
-            now,
         )
     }
 
@@ -495,7 +497,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         setting: Option<SharedActPolicy>,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -503,7 +504,6 @@ impl Vault {
             act,
             payload,
             SettingChoice::Host(setting),
-            now,
         )
     }
 
@@ -514,13 +514,19 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         selection: SettingChoice,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         if !valid_name(act) {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        starter.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: the starter's named initiator role. A
+        // host-selected setting replaces the stored policy that check reads,
+        // so only an owner's proof carries one.
+        let starter_actor = if matches!(selection, SettingChoice::Host(_)) {
+            starter.revalidate_in_txn(self, &txn)?
+        } else {
+            starter.revalidate_person_in_txn(self, &txn)?
+        };
         let creation = check_vault(self, &txn, vault_id)?;
         let base = self.act_policies_in_txn(&txn, &creation)?.effective(act)?;
         let policy = match selection {
@@ -544,9 +550,12 @@ impl Vault {
         if act.len() > policy.max_act_name_bytes || payload.len() > policy.max_payload_bytes {
             return Err(invalid());
         }
+        // The window runs on the store clock: a starter's own time could open
+        // it already past its deadline.
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let holders = self.live_act_holders(&txn, vault_id, now)?;
         if !holders.iter().any(|holder| {
-            holder.member == starter.actor()
+            holder.member == starter_actor
                 && holder.can(&policy.initiator_roles, &policy.required_verb)
         }) {
             return Err(invalid());
@@ -559,7 +568,7 @@ impl Vault {
             vault_id,
             act: act.to_owned(),
             payload,
-            starter: starter.actor().to_hex(),
+            starter: starter_actor.to_hex(),
             started_at: now,
             deadline,
             objector_roles: policy.objector_roles.clone(),
@@ -610,16 +619,17 @@ impl Vault {
         now: u64,
     ) -> Result<Vec<PendingActStarted>> {
         let txn = self.store.env.read_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        // Person tier: a member reads their own started events.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
         check_vault(self, &txn, vault_id)?;
         if !self
             .live_act_holders(&txn, vault_id, now)?
             .iter()
-            .any(|entry| entry.member == holder.actor())
+            .any(|entry| entry.member == holder_actor)
         {
             return Err(invalid());
         }
-        let prefix = key(EVENT_PREFIX, &format!("{}:", holder.actor().to_hex()));
+        let prefix = key(EVENT_PREFIX, &format!("{}:", holder_actor.to_hex()));
         let mut events = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
             let (_, bytes) = entry?;
@@ -631,30 +641,33 @@ impl Vault {
         Ok(events)
     }
     /// Objections are live only while their holder still carries a named role.
-    /// Once the deadline has passed, withdrawing the last live objection releases the act.
+    /// Once the deadline has passed on the store clock, withdrawing the last
+    /// live objection releases the act.
     pub fn change_authority_objection(
         &self,
         holder: &AuthenticatedOwner,
         id: &str,
         object: bool,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         let id = EntityId::from_hex(id)?;
         let mut txn = self.store.env.write_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: the objector's named role.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
+        // The store clock, not the holder's own time, says whether the
+        // deadline has passed.
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let k = key(ACT_PREFIX, &id.to_hex());
         let raw = self.store.vault_meta.get(&txn, &k)?.ok_or_else(invalid)?;
         let mut record: PendingAuthorityAct = decode(&raw)?;
         if record.completed
             || now < record.started_at
-            || (holder.actor().to_hex() == record.starter && !record.starter_may_object)
+            || (holder_actor.to_hex() == record.starter && !record.starter_may_object)
         {
             return Err(invalid());
         }
         let holders = self.live_act_holders(&txn, record.vault_id, now)?;
         if !holders.iter().any(|entry| {
-            entry.member == holder.actor()
-                && entry.can(&record.objector_roles, &record.required_verb)
+            entry.member == holder_actor && entry.can(&record.objector_roles, &record.required_verb)
         }) {
             return Err(invalid());
         }
@@ -662,9 +675,9 @@ impl Vault {
             return Err(invalid());
         }
         if object {
-            record.objections.insert(holder.actor().to_hex());
+            record.objections.insert(holder_actor.to_hex());
         } else {
-            record.objections.remove(&holder.actor().to_hex());
+            record.objections.remove(&holder_actor.to_hex());
         }
         reconcile(&mut record, &holders, now);
         self.store.vault_meta.put(&mut txn, &k, &encode(&record)?)?;

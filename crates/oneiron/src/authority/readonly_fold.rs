@@ -41,6 +41,9 @@ pub(crate) struct AuthorityCacheKey {
     now_secs: u64,
     posture: HostingPrivacyPosture,
     policy: AuthorityObservationPolicy,
+    /// This install's pin, read in the same snapshot: a pin write also moves
+    /// the generation, and the committed-fold probe rebuilds this key.
+    pin: Option<PinnedRoot>,
 }
 
 /// An immutable verified fold attached to one authority generation. The
@@ -77,6 +80,7 @@ impl AuthorityCachedFold {
         self.key.generation == key.generation
             && self.key.posture == key.posture
             && self.key.policy == key.policy
+            && self.key.pin == key.pin
             && key.now_secs >= self.key.now_secs
             && self
                 .next_deadline_secs
@@ -97,6 +101,7 @@ fn authority_cache_key(
         now_secs: authority_observation_secs(store, floor, store.clock.now_recorded_at()),
         posture,
         policy: authority_observation_policy_in_txn(store, txn)?,
+        pin: super::pinned_root::read_pinned_root_in_txn(store, txn)?,
     })
 }
 
@@ -107,6 +112,50 @@ fn cached_fold(store: &Store, key: AuthorityCacheKey) -> Option<AuthorityView> {
             .filter(|cached| cached.matches(key))
             .map(|cached| cached.view.clone())
     })
+}
+
+/// `build`'s value for `txn`'s authority generation, from `cache` when it
+/// holds that generation. A value is cached only when its generation is the
+/// committed one, so a write that aborts never publishes it, and a
+/// transaction that staged an authority row reads past the cache.
+pub(super) fn per_authority_generation<T>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    cache: &std::sync::Mutex<Option<(u64, Arc<T>)>>,
+    build: impl FnOnce() -> Result<T>,
+) -> Result<Arc<T>> {
+    let generation = authority_cache_generation(store, txn)?;
+    let cached = cache.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .filter(|(cached, _)| *cached == generation)
+            .map(|(_, value)| Arc::clone(value))
+    });
+    if let Some(value) = cached {
+        return Ok(value);
+    }
+    let value = Arc::new(build()?);
+    // A second read txn on this thread fails with MDB_BAD_RSLOT; see
+    // `cache_fold_if_committed`.
+    let committed = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                store
+                    .env
+                    .read_txn()
+                    .ok()
+                    .and_then(|committed| authority_cache_generation(store, &committed).ok())
+            })
+            .join()
+            .ok()
+            .flatten()
+    });
+    if committed == Some(generation)
+        && let Ok(mut cache) = cache.lock()
+    {
+        *cache = Some((generation, Arc::clone(&value)));
+    }
+    Ok(value)
 }
 
 fn cache_fold_if_committed(
@@ -192,6 +241,35 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         tracing::trace!(target: "oneiron::authority::cache", generation = fold.generation(), "exact authority fold cache hit");
         return Ok(fold);
     }
+    let (view, next_deadline_secs) = fold_view_for_key(store, posture, txn, key)?;
+    cache_fold_if_committed(store, key, next_deadline_secs, &view);
+    Ok(view)
+}
+
+/// This vault's own log folded as an install pinned to `pin` would fold it,
+/// in the caller's snapshot: what a pin door compares before it moves the
+/// pin, and the read under another admitter. Never cached, so the cached
+/// view stays the stored pin's.
+pub(super) fn authority_view_under_pin_for_store_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    pin: Option<PinnedRoot>,
+) -> Result<AuthorityView> {
+    let key = AuthorityCacheKey {
+        pin,
+        ..authority_cache_key(store, posture, txn)?
+    };
+    Ok(fold_view_for_key(store, posture, txn, key)?.0)
+}
+
+/// The full fold behind `key`, and the next stale-roster deadline it holds.
+fn fold_view_for_key(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    key: AuthorityCacheKey,
+) -> Result<(AuthorityView, Option<u64>)> {
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
     let mut first_seen_at_secs = BTreeMap::new();
     // Read once: all entries in this fold share one snapshot clock and marker.
@@ -225,6 +303,7 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         &peer_consent_roots,
         &observations,
         posture,
+        key.pin.as_ref(),
     );
     // The fold's only clock-sensitive transition is stale-roster approval
     // expiry, here and in the fold with no vouch that bounds this install's
@@ -244,8 +323,7 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         fold: Arc::new(fold),
         generation: key.generation,
     };
-    cache_fold_if_committed(store, key, next_deadline_secs, &view);
-    Ok(view)
+    Ok((view, next_deadline_secs))
 }
 
 /// First-seen seconds for ONE entry inside a readonly fold, reproducing the

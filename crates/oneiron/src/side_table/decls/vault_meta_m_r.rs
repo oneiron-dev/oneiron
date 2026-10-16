@@ -86,8 +86,12 @@ side_tables! {
     /// Epoch-bound publication permit stamp (u64be epoch), authorizing one publication under the
     /// current authority epoch. Key: id16.
     ORIGIN_AUTHORITY_PERMIT: VaultMeta b"origin:authority_permit:v1:" Raw;
+    /// Marker (empty) that every Published row written before Published rows kept their CAS row
+    /// has one. Key: ().
+    ORIGIN_CAS_BACKFILL: VaultMeta b"origin:cas_backfill:v1" Raw;
     /// Compare-and-swap ownership claim binding one (repo, ref, old_oid, new_oid) triple to its
-    /// owning publication id (value = id16). Key: id16 "\x00" string "\x00" string "\x00" string.
+    /// owning publication id (value = id16): in flight while Prepared, consumed for good once
+    /// Published. Key: id16 "\x00" string "\x00" string "\x00" string.
     ORIGIN_CAS_INTENT: VaultMeta b"origin:cas_intent:v1:" Raw;
     /// Tamper-detection proof hash (32 bytes) pinning one repo.change claim's exact byte content at
     /// publication time. Key: id16.
@@ -141,6 +145,11 @@ side_tables! {
     /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
     /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
     ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
+    /// The OF-520 check one origin scan raised for one scope, once. Key: u8 (scan) + id16 (the
+    /// repository), or the u8 alone for the vault-wide publication journal.
+    ORIGIN_SCAN_CHECK: VaultMeta b"origin:scan_check:v1:" Named;
+    /// Device-local threshold row (u64) of one origin scan. Key: u8 (scan).
+    ORIGIN_SCAN_POLICY: VaultMeta b"origin:scan_policy:v1:" Raw;
     /// The publication currently advertised for one repository's ref name (value = id16). Key: id16
     /// "\x00" string.
     ORIGIN_VISIBLE_REF: VaultMeta b"origin:visible_ref:v1:" Raw;
@@ -244,6 +253,16 @@ side_tables! {
     PORTS_DEPENDENCY: VaultMeta b"ports:dependency:v1:" Raw;
     /// Reverse dependency index. Key: id16 + id16 + u64be.
     PORTS_DEPENDENCY_REVERSE: VaultMeta b"ports:dependency_reverse:v1:" Raw;
+    /// What is left of one source's dependent walk: door, walked count, the last row walked, the
+    /// last row it covers, and the worlds its words sat in. Key: id16.
+    PORTS_DEPENDENT_WALK: VaultMeta b"ports:dependent_walk:v1:" Raw;
+    /// The OF-520 check a source's dependent walk raised past its threshold, once. Key: id16.
+    PORTS_DEPENDENT_WALK_CHECK: VaultMeta b"ports:dependent_walk_check:v1:" Named;
+    /// Device-local dependent walk batch and check threshold. Key: ().
+    PORTS_DEPENDENT_WALK_POLICY: VaultMeta b"ports:dependent_walk_policy:v1" Raw;
+    /// A dependency row its source's pending walk passes by: admitted after the mark, or withdrawn
+    /// early before a put rewrote its dependent. Key: id16 + u64be + id16.
+    PORTS_DEPENDENT_WALK_SETTLED: VaultMeta b"ports:dependent_walk_settled:v1:" Raw;
     /// Local id allocator floor. Key: ().
     PORTS_ID_FLOOR: VaultMeta b"ports:id_floor:v1" Raw;
     /// Stale derived entity marker. Key: id16.

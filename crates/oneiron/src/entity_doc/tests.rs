@@ -4,21 +4,14 @@ use super::*;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::edge::EdgeActorClass;
 use crate::error::{ArtifactError, Error, Result};
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
 fn actor(vault: &Vault) -> Result<(WriteActor, AuthenticatedOwner)> {
-    let id = EntityId::now();
-    vault.put_entity(
-        &id,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let id = vault.ensure_embedded_owner_actor().unwrap();
     let actor = WriteActor::new(id, EdgeActorClass::Human);
     let owner =
         vault.authenticate_owner(id, "principal:document-test", true, GateDecisionId::now())?;
@@ -753,4 +746,38 @@ fn a_document_past_the_text_ceiling_is_written_and_left_out_of_search() -> Resul
     assert_eq!(vault.entity_text(&id)?, format!("lantern harbor{long}"));
     assert!(!found("lantern")? && !found("tidewater")?);
     Ok(())
+}
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_purges_no_text_history() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let (writer, owner) = actor(&vault)?;
+        let id = entity(&vault, writer, &owner, "seed")?;
+        let frontier = append(&vault, id, writer, &owner, " one", 11)?;
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), owner.principal_ref());
+
+        assert_eq!(
+            vault
+                .purge_entity_text_history(&id, &frontier, &DocAuthorization::Owner(&foreign), 30)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.entity_text_purge_receipts(&id)?.is_empty());
+        let receipt = vault.purge_entity_text_history(
+            &id,
+            &frontier,
+            &DocAuthorization::Owner(&owner),
+            30,
+        )?;
+        assert_eq!(vault.entity_text_purge_receipts(&id)?, vec![receipt]);
+        Ok(())
+    }
 }

@@ -296,7 +296,13 @@ pub(crate) async fn run_context_pack_builder(
         tracing::error!(kind = ?error.kind(), "core context-pack failed");
         core_engine_error("core context-pack failed", error)
     })?;
-    let clamped_out = pack.clamped_out();
+    // The clamp's count names only rows the caller reads: a hidden row that
+    // matched the query must not show up as a number.
+    let clamped_out = pack.clamped_out_under(scoped_read).map_err(|error| {
+        pack.discard_telemetry();
+        tracing::error!(kind = ?error.kind(), "core context-pack clamp count failed");
+        core_engine_error("core context-pack scoped read failed", error)
+    })?;
     let mut narrowing = scoped_read
         .filter_context_pack_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
@@ -670,6 +676,20 @@ impl CoreContextPackResponse {
             ids.extend_from_slice(base.evidence_ids());
         }
         Ok(ids)
+    }
+
+    /// The rows this pack names beyond its documents, each of which a keyed
+    /// replay re-admits: every known contact it stamps and every capability
+    /// it discovered.
+    pub(crate) fn replay_admits(&self) -> Vec<oneiron::EntityId> {
+        let contacts = self
+            .interlocutors
+            .iter()
+            .flatten()
+            .filter(|stamp| stamp.class == oneiron::interlocutor::InterlocutorClass::KnownContact)
+            .filter_map(|stamp| oneiron::EntityId::from_hex(&stamp.speaker).ok());
+        let capabilities = self.capabilities.iter().map(|hit| hit.id);
+        contacts.chain(capabilities).collect()
     }
 
     /// Records the served rows on the session, folding that read's receipt

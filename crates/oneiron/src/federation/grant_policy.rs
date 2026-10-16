@@ -287,7 +287,8 @@ impl crate::Vault {
         now: u64,
         expires_at: u64,
     ) -> Result<EntityId> {
-        holder.revalidate_in_txn(self, txn)?;
+        // Person tier, own holder check: the parent admin grant names this holder.
+        let holder_actor = holder.revalidate_person_in_txn(self, txn)?;
         let raw = self
             .get_raw_in(txn, &parent_grant_id)?
             .ok_or(Error::EntityNotFound)?;
@@ -310,7 +311,7 @@ impl crate::Vault {
                 "delegate parent or member is not active".into(),
             ));
         };
-        if parent.member_ref != holder.actor()
+        if parent.member_ref != holder_actor
             || !parent.is_admin()
             || parent.expires_at.is_some_and(|expires| now >= expires)
             || self

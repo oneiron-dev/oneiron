@@ -22,6 +22,7 @@ const MACHINE_CONNECTION_DOMAIN: &[u8] = b"oneiron/machine-proof/v1\0";
 pub const MACHINE_PROOF_HEADER: &str = "x-oneiron-machine";
 /// An empty MessagePack map: a MACHINE row the enrolment had to create.
 const EMPTY_MACHINE_BODY: &[u8] = &[0x80];
+const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 
 /// What a machine sends to join a vault: its row, its keys, and its own
 /// signature over them for that vault.
@@ -34,19 +35,54 @@ pub struct MachineEnrolmentRequest {
     pub machine_proof: [u8; 64],
 }
 
+/// What a new machine shows the owner, as a QR code or 26 base32 characters,
+/// for the owner to scan or type on the machine that approves its request. It
+/// commits to every field of the request, so a host that relays the request
+/// cannot swap in its own with the same code: at 128 bits it cannot grind one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RequestCode(pub [u8; 16]);
+
+impl MachineEnrolmentRequest {
+    /// The first 16 bytes of `BLAKE3-derive_key("oneiron/machine-request-code/v1",
+    /// vault_id ‖ machine ‖ machine_key ‖ suite (u16 BE) ‖ key length (u32 BE) ‖ key
+    /// ‖ machine_proof)`.
+    #[must_use]
+    pub fn code(&self) -> RequestCode {
+        let key = &self.encryption_key.key;
+        let mut hasher = blake3::Hasher::new_derive_key(REQUEST_CODE_CONTEXT);
+        hasher.update(&self.vault_id);
+        hasher.update(self.machine.as_bytes());
+        hasher.update(&self.machine_key);
+        hasher.update(&self.encryption_key.suite.to_be_bytes());
+        hasher.update(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_be_bytes());
+        hasher.update(key);
+        hasher.update(&self.machine_proof);
+        let mut code = [0; 16];
+        code.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+        RequestCode(code)
+    }
+}
+
 /// This install's machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMachine {
     pub id: EntityId,
-    /// The owner's profile for this row, only when it names this install's key.
+    /// Every admitter's chain for this row, once one of them names this
+    /// install's key.
     pub profile: Option<FoldedMachine>,
+    /// Mine under this install's pin, through a trusted identity that names
+    /// this install's key. A chain that clones the row with other keys never
+    /// makes it so.
+    pub mine: bool,
 }
 
 /// The machine at the other end of a connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerMachine {
-    /// A live profiled machine that proved its machine key on this connection.
-    Proven(EntityId),
+    /// A machine that proved, on this connection, the key it stands on here
+    /// ([`AuthorityFold::machine_proof_key`]). The key stays with the proof:
+    /// a later trusted identity under other keys is not this connection's.
+    Proven { machine: EntityId, key: [u8; 32] },
     /// No proof, a proof that did not verify, or a machine not live here. It
     /// is never read as this machine or as one of the owner's.
     Unknown,
@@ -92,22 +128,39 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let profile = fold
             .machine(id)
-            .filter(|machine| key == Some(machine.profile.machine_key))
+            .filter(|machine| key.is_some_and(|key| machine.names_key(&key)))
             .cloned();
-        Ok(Some(LocalMachine { id, profile }))
+        let mine = fold
+            .trusted_machine(id)
+            .is_some_and(|trusted| key == Some(trusted.profile.machine_key));
+        Ok(Some(LocalMachine { id, profile, mine }))
     }
 
     /// Called on the machine that joins: mints (once) and keeps this install's
     /// machine id and key, and signs its identity for `vault_id` with that key.
+    /// `encryption_key` must be this install's own for `vault_id`
+    /// ([`Vault::machine_encryption_key`]), derived under the machine id the request
+    /// signs: a key from another slot, or one taken before the id changed, is refused.
     pub fn machine_enrolment_request(
         &self,
         vault_id: [u8; 32],
         encryption_key: MachineEncryptionKey,
     ) -> Result<MachineEnrolmentRequest> {
         encryption_key.validate()?;
+        let (derived_under, own_key) = self.machine_encryption_key_with_id(vault_id)?;
+        if encryption_key != own_key {
+            return Err(crate::world_keys::refused(
+                "the encryption key is not this install's own for this vault",
+            ));
+        }
         let mut request = None;
         self.with_write_txn_grouped(|wtxn| {
             let (machine, key) = crate::identity::load_or_mint_machine_in_txn(self, wtxn)?;
+            if machine != derived_under {
+                return Err(crate::world_keys::refused(
+                    "the machine identity changed after its encryption key was read",
+                ));
+            }
             let machine_key = key.verifying_key().to_bytes();
             let machine_proof = key
                 .sign(&machine_profile_proof_transcript(
@@ -141,13 +194,54 @@ impl Vault {
         role: MachineRole,
     ) -> Result<FoldedMachine> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let folded = self.enroll_machine_in_txn(&mut txn, issuer, owner.actor(), request, role)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let folded = self.enroll_machine_in_txn(&mut txn, issuer, actor, request, role)?;
         txn.commit()?;
         Ok(folded)
     }
 
-    /// The owner changes a machine's answer or removes it. Removal is terminal.
+    /// The host's own node: this install's machine in the roster as a
+    /// `HostedNode`, signed by the host root, which may register its own node
+    /// but never vouch for a machine as the owner's. The node is never mine
+    /// and never a wrap recipient; its profile names the machine and its keys
+    /// so a connection can prove it. No owner answered here, so the profile
+    /// names the vault's owner PERSON. A restart reuses the profile only when
+    /// it names this install's id, both keys and the `HostedNode` role; a node
+    /// the owner removed or answered for otherwise is never enrolled again.
+    pub fn provision_host_node(&self, issuer: &HostSlipIssuer) -> Result<FoldedMachine> {
+        let vault_id = self
+            .authority_fold()?
+            .vault_id
+            .ok_or_else(invalid_authority)?;
+        let encryption_key = self.machine_encryption_key(vault_id)?;
+        let request = self.machine_enrolment_request(vault_id, encryption_key)?;
+        let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if let Some(folded) = fold.machine(request.machine)
+            && let Some(roster) = &folded.roster
+        {
+            let same = roster.is_live()
+                && roster.profile.role == MachineRole::HostedNode
+                && roster.profile.machine_key == request.machine_key
+                && roster.profile.encryption_key == request.encryption_key;
+            return if same {
+                Ok(folded.clone())
+            } else {
+                Err(invalid_authority())
+            };
+        }
+        let owner = crate::policy_model::owners_in_txn(self, &txn)?
+            .first()
+            .copied()
+            .ok_or_else(invalid_authority)?;
+        let folded =
+            self.enroll_machine_in_txn(&mut txn, issuer, owner, &request, MachineRole::HostedNode)?;
+        txn.commit()?;
+        Ok(folded)
+    }
+
+    /// The owner changes a machine's answer or removes it, in the roster's
+    /// chain. Removal is terminal there. An anchor's chain is the anchor's.
     pub fn set_machine_role(
         &self,
         issuer: &HostSlipIssuer,
@@ -156,15 +250,16 @@ impl Vault {
         role: MachineRole,
     ) -> Result<FoldedMachine> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let owner_actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let current = fold
             .machine(machine)
-            .filter(|folded| !folded.removed)
+            .and_then(|folded| folded.roster.as_ref())
+            .filter(|roster| !roster.removed)
             .ok_or_else(invalid_authority)?;
         let profile = MachineProfile {
-            owner: owner.actor(),
+            owner: owner_actor,
             role,
             revision: current
                 .profile
@@ -189,11 +284,13 @@ impl Vault {
     ) -> Result<FoldedMachine> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
-        // A machine joins once. A later answer changes its role through
-        // `set_machine_role`; nothing that joins replaces its key.
+        // A machine joins the roster's chain once. A later answer changes its
+        // role through `set_machine_role`; nothing that joins replaces its key.
         if role == MachineRole::Removed
             || fold.vault_id != Some(request.vault_id)
-            || fold.machine(request.machine).is_some()
+            || fold
+                .machine(request.machine)
+                .is_some_and(|folded| folded.roster.is_some())
         {
             return Err(invalid_authority());
         }
@@ -211,9 +308,10 @@ impl Vault {
         self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
     }
 
-    /// Signs every live machine's standing again under `next`, in the
-    /// caller's transaction. A re-root revokes every roster key, and a
-    /// standing that rests on a revoked key goes stale.
+    /// Signs every live roster standing again under `next`, in the caller's
+    /// transaction. A re-root revokes every roster key, and a standing that
+    /// rests on a revoked key goes stale. An anchor's chain rests on no
+    /// roster key and is not the roster's to carry.
     pub(super) fn carry_machine_standing_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -224,11 +322,14 @@ impl Vault {
         for machine in before
             .machines
             .iter()
-            .filter(|(_, folded)| folded.is_live())
+            .filter(|(_, folded)| folded.roster.as_ref().is_some_and(MachineRevision::is_live))
             .map(|(machine, _)| *machine)
         {
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            let current = fold.machine(machine).ok_or_else(invalid_authority)?;
+            let current = fold
+                .machine(machine)
+                .and_then(|folded| folded.roster.as_ref())
+                .ok_or_else(invalid_authority)?;
             let profile = MachineProfile {
                 revision: current
                     .profile
@@ -255,11 +356,14 @@ impl Vault {
         // later revision of a machine already not the owner's took nothing
         // away: it carries that list, and the fold reads only the first. Nor
         // does one whose "yours" no longer stands by the roster rule.
-        profile.seen_world_edits = match fold.machine(profile.machine) {
-            Some(current) if !current.profile.says_mine() => {
-                current.profile.seen_world_edits.clone()
-            }
-            Some(current) if !super::world_privacy::mine_by_roster(current) => {
+        let current = fold.machine(profile.machine);
+        profile.seen_world_edits = match current.and_then(|folded| folded.roster.as_ref()) {
+            Some(head) if !head.profile.says_mine() => head.profile.seen_world_edits.clone(),
+            Some(_)
+                if !current.is_some_and(|folded| {
+                    folded.roster_view().admits(&MachineAdmitter::Roster)
+                }) =>
+            {
                 std::collections::BTreeSet::new()
             }
             _ => super::world_privacy::live_edits_by(fold, profile.machine),
@@ -281,14 +385,18 @@ impl Vault {
         let removal = profile.role == MachineRole::Removed;
         self.authority_view_readonly_in_txn(txn)?
             .machine(profile.machine)
-            .filter(|folded| folded.profile == profile && (folded.is_live() || removal))
+            .filter(|folded| {
+                folded.roster.as_ref().is_some_and(|roster| {
+                    roster.profile == profile && (roster.is_live() || removal)
+                })
+            })
             .cloned()
             .ok_or_else(invalid_authority)
     }
 
     /// A live MACHINE row, created empty when absent. Never another kind, and
     /// never a deleted, archived or stale row.
-    fn ensure_machine_row_in_txn(
+    pub(super) fn ensure_machine_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         machine: EntityId,
@@ -345,8 +453,9 @@ impl Vault {
     }
 
     /// The server half: the machine one request's proof names. Anything that
-    /// does not verify against a live profile is `Unknown`, never an error, so
-    /// a machine whose profile has not synced here yet can still sync.
+    /// does not verify under the key the machine stands on here is `Unknown`,
+    /// never an error, so a machine whose profile has not synced here yet can
+    /// still sync. A key only an untrusted chain names never proves it.
     pub fn verify_machine_connection_proof(
         &self,
         machine: EntityId,
@@ -357,13 +466,11 @@ impl Vault {
     ) -> Result<PeerMachine> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let (Some(vault_id), Some(folded)) = (
-            fold.vault_id,
-            fold.machine(machine).filter(|folded| folded.is_live()),
-        ) else {
+        let (Some(vault_id), Some(machine_key)) = (fold.vault_id, fold.machine_proof_key(machine))
+        else {
             return Ok(PeerMachine::Unknown);
         };
-        let Ok(key) = VerifyingKey::from_bytes(&folded.profile.machine_key) else {
+        let Ok(key) = VerifyingKey::from_bytes(&machine_key) else {
             return Ok(PeerMachine::Unknown);
         };
         let transcript = machine_connection_transcript(&vault_id, machine, token, timestamp, nonce);
@@ -372,10 +479,31 @@ impl Vault {
                 .verify_strict(&transcript, &Signature::from_bytes(signature))
                 .is_ok()
             {
-                PeerMachine::Proven(machine)
+                PeerMachine::Proven {
+                    machine,
+                    key: machine_key,
+                }
             } else {
                 PeerMachine::Unknown
             },
         )
+    }
+
+    /// A machine one connection proved earlier, while it still stands here
+    /// on the key it proved. A socket outlives its proof: a machine removed,
+    /// poisoned, gone stale or trusted under other keys since is `Unknown`,
+    /// as is one the fold cannot be read for.
+    #[must_use]
+    pub fn peer_machine_stands(&self, peer: PeerMachine) -> PeerMachine {
+        match peer {
+            PeerMachine::Proven { machine, key }
+                if self
+                    .authority_fold()
+                    .is_ok_and(|fold| fold.machine_proof_key(machine) == Some(key)) =>
+            {
+                peer
+            }
+            _ => PeerMachine::Unknown,
+        }
     }
 }

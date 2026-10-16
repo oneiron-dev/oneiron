@@ -187,7 +187,7 @@ impl Vault {
             ConnectorSubscription {
                 version: 1,
                 agent,
-                owner: owner.actor(),
+                owner: owner.revalidate(self)?,
                 connector_key,
                 filter,
                 active: true,
@@ -215,7 +215,7 @@ impl Vault {
             return Err(invalid());
         }
         let mut row = decode_subscription(&body)?;
-        if row.owner != owner.actor() {
+        if row.owner != owner.revalidate(self)? {
             return Err(invalid());
         }
         row.active = false;
@@ -228,7 +228,7 @@ impl Vault {
         row: ConnectorSubscription,
     ) -> Result<()> {
         let envelope = WriteEnvelope::new(
-            WriteActor::new(owner.actor(), EdgeActorClass::Human),
+            WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human),
             ClaimSource::UserStated,
             WriteProvenance::new(Value::Map(vec![
                 (
@@ -250,6 +250,8 @@ impl Vault {
             1.0,
         );
         let now = crate::unix_seconds_now();
+        // Checked again in the writer's snapshot: a revocation that commits
+        // first subscribes nothing.
         self.batch()
             .claim_candidate(
                 &id,
@@ -261,7 +263,7 @@ impl Vault {
                 },
                 now,
             )
-            .commit()
+            .commit_with_target_guard(|txn| owner.revalidate_in_txn(self, txn).map(drop))
     }
     /// Host ingress. The event data never becomes authority. Match, live-key
     /// check, budget charge, wake enqueue and decision receipt share one txn.

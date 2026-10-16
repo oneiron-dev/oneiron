@@ -119,17 +119,41 @@ fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
 
 pub mod digest;
 
+/// The owner proof still holds in this write: it was authenticated by THIS
+/// vault (a proof from another vault never acts here, whatever PERSON ids the
+/// two share), its credential is live, and its actor is a live, active PERSON
+/// that owns this vault.
 pub(crate) fn validate_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &crate::consent::AuthenticatedOwner,
-) -> Result<()> {
+) -> Result<crate::EntityId> {
+    require_active_person_in_txn(vault, txn, owner.revalidate_in_txn(vault, txn)?)
+}
+
+/// [`validate_owner_in_txn`] on the person tier, for maintenance a person
+/// does on their own behalf: their own judge budget, a judge ask assigned to
+/// them, a proposal or a representation review addressed to them. The shared
+/// proactivity digest is no such door: it reads every pending proposal and
+/// moves the vault's one delivery state.
+pub(crate) fn validate_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &crate::consent::AuthenticatedOwner,
+) -> Result<crate::EntityId> {
+    require_active_person_in_txn(vault, txn, owner.revalidate_person_in_txn(vault, txn)?)
+}
+
+fn require_active_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: crate::EntityId,
+) -> Result<crate::EntityId> {
     let refused = || {
         Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
             "maintenance requires a live owner in this vault",
         ))
     };
-    let actor = owner.actor();
     if !matches!(
         crate::vault::live_entity_row_in_txn(&vault.store, txn, &actor)?,
         crate::vault::LiveEntityRow::Live {
@@ -141,5 +165,5 @@ pub(crate) fn validate_owner_in_txn(
     {
         return Err(refused());
     }
-    Ok(())
+    Ok(actor)
 }

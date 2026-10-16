@@ -37,6 +37,7 @@ pub(super) fn uncached_reference_fold(
     let peers =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(&vault.store, txn).unwrap();
     let observations = authority_local_observations_in_txn(&vault.store, txn, &entries).unwrap();
+    let pin = crate::authority::pinned_root::read_pinned_root_in_txn(&vault.store, txn).unwrap();
     fold_authority_log_with_local_observations_and_posture(
         &entries,
         &first_seen,
@@ -44,6 +45,7 @@ pub(super) fn uncached_reference_fold(
         &peers,
         &observations,
         vault.privacy_posture(),
+        pin.as_ref(),
     )
 }
 

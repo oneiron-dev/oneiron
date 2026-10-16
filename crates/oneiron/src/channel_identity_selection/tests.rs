@@ -60,14 +60,7 @@ fn person(vault: &Vault, seed: u8) -> crate::EntityId {
 }
 
 fn owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    vault
-        .authenticate_owner(
-            person(vault, 0x66),
-            "principal:owner",
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("authenticate owner")
+    crate::test_util::embedded_owner_proof(vault)
 }
 
 fn owner_writer(vault: &Vault) -> ChannelIdentitySelectionWriter {
@@ -511,7 +504,6 @@ fn duplicate_rows_and_regressed_revisions_fail_typed() {
 fn writer_kind_is_derived_from_the_authenticated_actor() {
     let (_dir, vault) = open_vault();
     assert_eq!(owner_writer(&vault).kind(), SelectionRuleWriterKind::Owner);
-    assert_eq!(owner_writer(&vault).actor_ref(), entity(0x66));
     assert_eq!(agent_writer(&vault).kind(), SelectionRuleWriterKind::Agent);
 
     let system = WriteActor::new(entity(0x6F), EdgeActorClass::System);
@@ -543,7 +535,8 @@ fn the_selection_write_door_rechecks_its_writer() {
     let (_dir, vault) = open_vault();
     let (_other_dir, other) = open_vault();
     let foreign = ChannelIdentitySelectionWriter::owner(&owner_proof(&other));
-    person(&vault, 0x66);
+    // The same owner id is live here too: only the proof's vault differs.
+    vault.ensure_embedded_owner_actor().expect("embedded owner");
     let retire = ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
         agent_amendable: false,
         enabled: false,
@@ -627,7 +620,10 @@ fn accepted_changes_stamp_the_actor_and_advance_one_revision() {
         .expect("row present");
     // The caller mis-stamped both provenance fields; the door derived them.
     assert_eq!(row.writer_kind, SelectionRuleWriterKind::Owner);
-    assert_eq!(row.updated_by, Some(entity(0x66)));
+    assert_eq!(
+        row.updated_by,
+        Some(vault.ensure_embedded_owner_actor().expect("embedded owner"))
+    );
 
     let reread = vault.channel_identity_selection_rules().expect("reread");
     assert_eq!(reread, updated);

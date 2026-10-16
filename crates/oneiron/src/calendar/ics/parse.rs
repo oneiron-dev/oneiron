@@ -92,22 +92,56 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
     Ok(ParsedIcsFeed { events })
 }
 
-/// Extracts one invitation's actual organizer using the existing ICS parser.
-pub(crate) fn invite_organizer(input: &[u8]) -> Result<String, CalendarError> {
+/// What one invitation's ICS actually says about itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InviteIcsIdentity {
+    /// The VCALENDAR `METHOD`, as written.
+    pub(crate) method: String,
+    /// The single VEVENT's UID, unescaped.
+    pub(crate) uid: String,
+    /// The single VEVENT's SEQUENCE (absent reads as 0).
+    pub(crate) sequence: u32,
+    /// The ORGANIZER address without its `mailto:` scheme.
+    pub(crate) organizer: String,
+}
+
+/// Extracts one invitation's actual identity using the existing ICS parser.
+///
+/// An invite is read strictly, in the shape the emitter writes: exactly one
+/// VCALENDAR carrying exactly one VEVENT and nothing else, upper-case names
+/// throughout, and one METHOD, UID, ORGANIZER and at most one SEQUENCE. The
+/// transport sends these bytes whole, so a second calendar, a second event
+/// under any spelling, or a repeated identity property is refused rather
+/// than shipped beside the event that was checked.
+pub(crate) fn invite_identity(input: &[u8]) -> Result<InviteIcsIdentity, CalendarError> {
     let text = std::str::from_utf8(input).map_err(|_| ics_parse("invite is not UTF-8"))?;
-    let calendar = icalendar::parser::read_calendar(text).map_err(|message| ics_parse(&message))?;
-    let mut events = calendar
-        .components
-        .iter()
-        .filter(|component| component.name.as_str() == "VEVENT");
-    let event = events
-        .next()
-        .ok_or_else(|| ics_parse("invite has no VEVENT"))?;
-    if events.next().is_some() {
-        return Err(ics_parse("invite has competing VEVENTs"));
+    let roots = icalendar::parser::read_calendar_simple(text)
+        .map_err(|_| ics_parse("invite did not parse"))?;
+    let [calendar] = roots.as_slice() else {
+        return Err(ics_parse("invite must be exactly one VCALENDAR"));
+    };
+    if calendar.name.as_str() != "VCALENDAR" || !names_are_upper_case(calendar) {
+        return Err(ics_parse("invite names must be upper-case iCalendar names"));
     }
-    let organizer = event
-        .find_prop("ORGANIZER")
+    let [event] = calendar.components.as_slice() else {
+        return Err(ics_parse(
+            "invite must carry exactly one VEVENT and nothing else",
+        ));
+    };
+    if event.name.as_str() != "VEVENT" || nests_a_vevent(event) {
+        return Err(ics_parse(
+            "invite must carry exactly one VEVENT and nothing else",
+        ));
+    }
+    let method = single_prop(&calendar.properties, "METHOD")?
+        .ok_or_else(|| ics_parse("invite has no METHOD"))?
+        .val
+        .as_str()
+        .trim()
+        .to_owned();
+    single_prop(&event.properties, "UID")?;
+    single_prop(&event.properties, "SEQUENCE")?;
+    let organizer = single_prop(&event.properties, "ORGANIZER")?
         .ok_or_else(|| ics_parse("invite has no organizer"))?
         .val
         .as_str()
@@ -119,7 +153,45 @@ pub(crate) fn invite_organizer(input: &[u8]) -> Result<String, CalendarError> {
     if organizer.is_empty() {
         return Err(ics_parse("invite has an empty organizer"));
     }
-    Ok(organizer.to_owned())
+    Ok(InviteIcsIdentity {
+        method,
+        uid: required_uid(event)?,
+        sequence: vevent_sequence(event)?,
+        organizer: organizer.to_owned(),
+    })
+}
+
+/// Whether a VEVENT sits anywhere below `component`.
+fn nests_a_vevent(component: &icalendar::parser::Component<'_>) -> bool {
+    component
+        .components
+        .iter()
+        .any(|child| child.name.as_str() == "VEVENT" || nests_a_vevent(child))
+}
+
+/// The one property named `name`, or none; a repeat is refused.
+fn single_prop<'c, 'a>(
+    properties: &'c [icalendar::parser::Property<'a>],
+    name: &str,
+) -> Result<Option<&'c icalendar::parser::Property<'a>>, CalendarError> {
+    let mut matching = properties.iter().filter(|prop| prop.name.as_str() == name);
+    let first = matching.next();
+    if matching.next().is_some() {
+        return Err(ics_parse("invite repeats an identity property"));
+    }
+    Ok(first)
+}
+
+/// Whether every component and property name below `component` is written
+/// upper-case, as the emitter writes them, so exact-name reads see them all.
+fn names_are_upper_case(component: &icalendar::parser::Component<'_>) -> bool {
+    let upper = |name: &str| !name.bytes().any(|byte| byte.is_ascii_lowercase());
+    upper(component.name.as_str())
+        && component
+            .properties
+            .iter()
+            .all(|prop| upper(prop.name.as_str()))
+        && component.components.iter().all(names_are_upper_case)
 }
 
 /// Parses one VEVENT parser component into the calendar-owned row.
@@ -127,15 +199,7 @@ fn parse_vevent(
     component: &icalendar::parser::Component<'_>,
 ) -> Result<ParsedVEvent, CalendarError> {
     let uid = required_uid(component)?;
-    let sequence = match component.find_prop("SEQUENCE") {
-        None => 0,
-        Some(prop) => prop
-            .val
-            .as_str()
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| ics_parse("VEVENT SEQUENCE is not an unsigned integer"))?,
-    };
+    let sequence = vevent_sequence(component)?;
     let starts_at_utc = optional_datetime_prop(component, "DTSTART")?;
     let ends_at_utc = optional_datetime_prop(component, "DTEND")?;
     let busy_transparency = CalendarBusyTransparency::from_ics_transp(
@@ -164,6 +228,19 @@ fn parse_vevent(
         description,
         cancelled,
     })
+}
+
+/// Reads the VEVENT SEQUENCE; an absent one is 0.
+fn vevent_sequence(component: &icalendar::parser::Component<'_>) -> Result<u32, CalendarError> {
+    match component.find_prop("SEQUENCE") {
+        None => Ok(0),
+        Some(prop) => prop
+            .val
+            .as_str()
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| ics_parse("VEVENT SEQUENCE is not an unsigned integer")),
+    }
 }
 
 /// Reads the required VEVENT UID, unescaped.

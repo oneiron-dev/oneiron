@@ -114,12 +114,7 @@ impl Vault {
         name: &str,
         token_floor: usize,
     ) -> Result<StandingBlockHandle> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
+        owner.revalidate(self)?;
         if name.trim().is_empty() || name.len() > 128 || token_floor == 0 {
             return Err(invalid());
         }
@@ -130,7 +125,10 @@ impl Vault {
             name: name.trim().into(),
             token_floor,
         };
+        // Checked again where the block lands: a revocation that commits
+        // first configures nothing.
         self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
             let actor_row =
                 crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*txn, &agent)?
                     .ok_or(Error::EntityNotFound)?;
@@ -347,15 +345,13 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::ENTITY_TYPE_PERSON;
     use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
     #[test]
     fn handles_refuse_text_and_session_floor_evictions_rebuild_deterministically() -> Result<()> {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
-        let actor = entity(0x51);
+        let actor = vault.ensure_embedded_owner_actor().unwrap();
         let world = entity(0x52);
         let at = TimeRange { start: 1, end: 1 };
-        vault.put_entity(&actor, ENTITY_TYPE_PERSON, at, 1, b"fixture")?;
         vault.put_entity(
             &world,
             crate::registry::ENTITY_TYPE_WORLD,

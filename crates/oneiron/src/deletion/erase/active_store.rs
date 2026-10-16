@@ -132,7 +132,12 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .erase(id, self.store.env.info().last_txn_id);
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        crate::ports::invalidate_source_in_txn(&self.store, wtxn, id)?;
+        crate::ports::invalidate_source_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            crate::ports::DependentWalkDoor::SoftErase,
+        )?;
         crate::ports::keep_deleted_worlds_in_txn(&self.store, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
@@ -194,6 +199,7 @@ impl Vault {
             id,
             header.entity_type,
         )?;
+        crate::deletion::tear_derived_rows_in_txn(&self.store, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the

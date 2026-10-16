@@ -25,7 +25,7 @@ use crate::store::root_directory::{
     FileIdentity, file_identity, make_directory, named_directory_identity, parent_or_here,
     refuse_shared_path, refuse_shared_vault_root, remove_held_directory,
 };
-use crate::store::{Store, read_existing_vault_meta};
+use crate::store::{Store, VaultWriterLease, read_existing_vault_meta};
 
 use super::keys::GATE_DECISION_KEY_PREFIX;
 use super::ledger::{CUSTODY_ROOT, LEDGER};
@@ -217,21 +217,37 @@ fn names(_: &Path, (): &()) -> Result<bool> {
     Ok(true)
 }
 
-/// The directory a restore made for its copy. Each open of the copy goes by
-/// name, and is checked against the directory made: rows are written into,
-/// and a mark lifted from, only that one, never a directory moved in under
-/// its name since.
+/// The directory a restore made for its copy, and the copy's writer lease.
+/// Each open of the copy goes by name, and is checked against the directory
+/// made: rows are written into, and a mark lifted from, only that one, never a
+/// directory moved in under its name since.
+///
+/// The lease is taken as the directory is made and held to the commit, where
+/// the copy's vault takes it over ([`MadeDestination::keep`]): no other owner
+/// opens the copy between the restore's opens. Dropped before that, after the
+/// copy's vault has closed, this removes the directory it made with
+/// everything in it, through the descriptor it holds and still under the
+/// lease. A directory moved in under the name since is left as it is, and so
+/// is one another owner leased first (review r1, both F1). Off unix, with no
+/// identity to check, it removes the destination by name, still only under
+/// the copy's lease, as main's discard did once the copy had opened; no lease
+/// is granted off unix today, so there it removes nothing.
 pub(crate) struct MadeDestination {
+    destination: PathBuf,
     #[cfg(unix)]
-    made: FileIdentity,
+    made: std::fs::File,
+    #[cfg(unix)]
+    identity: FileIdentity,
+    lease: Option<VaultWriterLease>,
+    kept: bool,
 }
 
 impl MadeDestination {
-    /// Makes `destination`, which must not exist yet, owner-only. It is
-    /// refused unless no other user can move an entry on the way to it, or,
-    /// for a copy that will replace the live vault at `home`, on the way to
-    /// that vault or inside it: on such a path no name this restore makes,
-    /// opens or exchanges can be changed under it.
+    /// Makes `destination`, which must not exist yet, owner-only, and takes
+    /// its writer lease. It is refused unless no other user can move an entry
+    /// on the way to it, or, for a copy that will replace the live vault at
+    /// `home`, on the way to that vault or inside it: on such a path no name
+    /// this restore makes, opens or exchanges can be changed under it.
     pub(crate) fn make(destination: &Path, home: Option<&Path>) -> Result<Self> {
         #[cfg(unix)]
         let made = {
@@ -246,57 +262,85 @@ impl MadeDestination {
             let _ = home;
             std::fs::create_dir(destination)?;
         }
+        let mut guard = Self {
+            destination: destination.to_owned(),
+            #[cfg(unix)]
+            identity: file_identity(&made.metadata()?),
+            #[cfg(unix)]
+            made,
+            lease: None,
+            kept: false,
+        };
         #[cfg(test)]
         if let Some(callback) = AFTER_RESTORE_DESTINATION_MADE.with(|slot| slot.borrow_mut().take())
         {
             callback();
         }
-        Ok(Self {
-            #[cfg(unix)]
-            made,
-        })
+        // Through the directory made, so nothing is locked or written in one
+        // moved in under the name (review r2, Astra F2).
+        #[cfg(unix)]
+        let lease =
+            VaultWriterLease::acquire_held(guard.made.try_clone()?, &destination.canonicalize()?)?;
+        #[cfg(not(unix))]
+        let lease = VaultWriterLease::acquire(&destination.canonicalize()?)?;
+        guard.lease = Some(lease);
+        Ok(guard)
+    }
+
+    /// The copy's writer lease, for each open of it.
+    pub(crate) fn lease(&self) -> Result<&VaultWriterLease> {
+        self.lease
+            .as_ref()
+            .ok_or_else(|| Error::InvalidConfig("a restore's copy holds no writer lease".into()))
     }
 
     /// Refuses unless `store` is open on the directory made.
     pub(crate) fn holds(&self, store: &Store) -> Result<()> {
         #[cfg(unix)]
-        if opened_directory(store)? != self.made {
-            return Err(Error::InvalidConfig(
-                "a restore's copy no longer sits where it was made".into(),
-            ));
+        if opened_directory(store)? != self.identity {
+            return Err(moved());
         }
         #[cfg(not(unix))]
         let _ = store;
         Ok(())
     }
+
+    /// Keeps the copy, its restore committed: `copy`, its vault, takes over
+    /// the writer lease.
+    pub(crate) fn keep(mut self, copy: &mut crate::Vault) {
+        self.kept = true;
+        if let Some(lease) = self.lease.take() {
+            copy.adopt_writer_lease(lease);
+        }
+    }
 }
 
-/// Drops `vault`, the copy a refused restore made at `destination`, and
-/// removes the directory it made there: the one the copy had open, never a
-/// directory moved in under that name since, which is left as it is.
-pub(crate) fn discard_restored_copy(vault: crate::Vault, destination: &Path) {
-    #[cfg(unix)]
-    {
-        let held = vault
-            .store
-            .owner
-            .env
-            ._bound_root_dir
-            .as_ref()
-            .map(std::fs::File::try_clone);
-        drop(vault);
-        let removed = match held {
-            Some(Ok(held)) => remove_held_directory(destination, &held).is_ok(),
-            _ => false,
-        };
+/// A restore's copy is no longer where the restore made it.
+fn moved() -> Error {
+    Error::InvalidConfig("a restore's copy no longer sits where it was made".into())
+}
+
+impl Drop for MadeDestination {
+    fn drop(&mut self) {
+        if self.kept {
+            return;
+        }
+        // Only under its own lease: without it, the copy is another owner's,
+        // or, off unix, was never opened (review r3, Sol F3).
+        let removed = self.lease.take().is_some_and(|lease| {
+            #[cfg(unix)]
+            let removed = remove_held_directory(&self.destination, &self.made).is_ok();
+            // With no directory identity to check, the destination goes by
+            // name after the copy's vault has closed, as main's discard took
+            // it (Engine ruling on review r1's F2).
+            #[cfg(not(unix))]
+            let removed = std::fs::remove_dir_all(&self.destination).is_ok();
+            drop(lease);
+            removed
+        });
         if !removed {
             tracing::warn!("a refused restore left the copy it made in place");
         }
-    }
-    #[cfg(not(unix))]
-    {
-        drop(vault);
-        let _ = std::fs::remove_dir_all(destination);
     }
 }
 

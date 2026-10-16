@@ -199,15 +199,16 @@ impl Vault {
         now: u64,
     ) -> Result<Vec<PolicyRowProposal>> {
         let txn = self.store.env.read_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        // Person tier: a holder reads the proposals addressed to them.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
         let mut rows = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&txn, PROPOSAL)? {
             let (_, value) = entry?;
             let proposal: PolicyRowProposal = decode(&value)?;
             if matches!(proposal.status, PolicyProposalStatus::Pending)
-                && proposal.holders.contains(&holder.actor().to_hex())
+                && proposal.holders.contains(&holder_actor.to_hex())
                 && super::holders_for_change_in_txn(self, &txn, &proposal.change, now)?
-                    .contains(&holder.actor())
+                    .contains(&holder_actor)
             {
                 rows.push(proposal);
             }

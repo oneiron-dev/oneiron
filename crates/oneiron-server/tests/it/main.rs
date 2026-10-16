@@ -8,6 +8,10 @@
 mod agent_credentials;
 mod ai_serve;
 mod api_cli;
+// Runs the shipped binary through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
+mod artifact_listener;
+mod artifact_origin_browser;
 mod booking_agent_api;
 // The broker runs as a second user through a user namespace: Linux only.
 #[cfg(target_os = "linux")]
@@ -25,6 +29,9 @@ mod history_import;
 #[cfg(unix)]
 mod host_re_root;
 mod import_claims;
+// Runs the shipped binary through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
+mod maintain_cli;
 // The wake ledger talks to Hypnos over a Unix socket.
 #[cfg(unix)]
 mod managed_ledger_wire;

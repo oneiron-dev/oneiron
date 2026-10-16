@@ -73,13 +73,14 @@
 //! secret stack is the catastrophe dial's verdict on the `door:receive-pack`
 //! effector, because a dial that cannot shut the push door shuts nothing that
 //! matters — it READS that dial and mints nothing from it. It buffers no
-//! request or response body, caps no body and no rate (its caps are on the
-//! blob bytes one push hands the door to scan and the lines they split into),
-//! and expands no gix feature; an exchange that moves no byte for its idle
-//! limit is ended, never one that is merely slow. `git_wire.rs` and
+//! request or response body, caps no body, no rate and no push (its door holds
+//! one blob at a time under a per-blob memory floor, and its hook keeps a disk
+//! floor while it frames them), and expands no gix feature; an exchange that
+//! moves no byte for its idle limit is ended, never one that is merely slow. `git_wire.rs` and
 //! `credential_door.rs` are consumed read-only; this module owns neither.
 
 mod advertise;
+mod bounds;
 mod cgi_finish;
 mod door;
 mod door_window;
@@ -90,14 +91,12 @@ mod hooks;
 mod intent;
 mod landing;
 mod landing_lfs;
+mod maintain;
 mod paths;
 mod serve;
 mod serve_cmd;
 
-// The flat module reached its sibling as `super::publication`; the children
-// keep that path through this seam.
-use super::publication;
-
+pub use self::bounds::{ExchangeBounds, ScanBounds};
 pub use self::door::{DoorAdmissionStamp, DoorSeam};
 pub use self::door_window::{DoorWindowReport, DoorWindowVerdict};
 pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};
@@ -105,7 +104,12 @@ pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_O
 pub use self::held::HeldBytes;
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
-pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already_applied};
+pub use self::landing::{
+    ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,
+};
+pub use self::maintain::{
+    SERVED_REPOSITORY_GC_TIMEOUT, ServedRepositoryMaintenance, maintain_served_repositories,
+};
 pub use self::paths::{
     DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME,
     ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REF_UPDATE_BATCH, ORIGIN_REFUSED_REF_PREFIX,
@@ -114,7 +118,8 @@ pub use self::paths::{
     validate_repo_name,
 };
 pub use self::serve::{
-    ServeReport, ServeSink, serve, serve_bounded, serve_with_authority, serve_with_provenance,
+    ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_with_authority,
+    serve_with_provenance,
 };
 pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 
@@ -135,7 +140,13 @@ mod intent_recovery_tests;
 #[cfg(test)]
 mod landing_tests;
 #[cfg(test)]
+mod maintain_tests;
+#[cfg(test)]
 mod push_cert_tests;
+#[cfg(test)]
+mod recreate_tests;
+#[cfg(test)]
+mod scan_cap_tests;
 #[cfg(test)]
 mod tests;
 

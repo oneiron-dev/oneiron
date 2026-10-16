@@ -314,11 +314,12 @@ fn beam_search_graph(
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
 
+    let walks = check_existence && crate::ports::any_pending_walk(store, txn)?;
     if !check_existence
         || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &entry_point)?.is_some()
     {
         results.push(entry);
-        if check_existence && is_match(store, txn, &entry_point)? {
+        if check_existence && is_match(store, txn, &entry_point, walks)? {
             visible.push(entry);
         }
     }
@@ -379,7 +380,7 @@ fn beam_search_graph(
             if check_existence
                 && (visible.len() < ef
                     || distance < visible.peek().map_or(f32::INFINITY, |entry| entry.distance))
-                && is_match(store, txn, &neighbor_id)?
+                && is_match(store, txn, &neighbor_id, walks)?
             {
                 visible.push(candidate);
                 if visible.len() > ef {
@@ -408,12 +409,15 @@ fn beam_search_graph(
     Ok(found)
 }
 
-/// Whether a node the walk scored can be a match: not archived, and not a
-/// row the reading room hides (the walk passes through it, see
-/// [`load_vector_into`]).
-fn is_match(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(!store.vectors().hides(id.as_bytes())
-        && !crate::vault_cleanup::is_archived_in_txn(store, txn, id)?)
+/// Whether a node the walk scored can be a match: not archived, not a row
+/// the reading room hides, and, while `walks` are pending, not one marked
+/// stale or a dependent walk withdraws before its batch removes the vector
+/// (the walk passes through each, see [`load_vector_into`]).
+fn is_match(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId, walks: bool) -> Result<bool> {
+    let hidden = store.vectors().hides(id.as_bytes())
+        || crate::vault_cleanup::is_archived_in_txn(store, txn, id)?
+        || (walks && crate::ports::stale_in_txn(store, txn, id)?);
+    Ok(!hidden)
 }
 
 #[allow(clippy::too_many_arguments)]

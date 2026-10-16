@@ -436,6 +436,13 @@ fn epoch_delete_crash_drains_before_mirror_cutover_and_stale_replay_cannot_delet
     git(&root, &["update-ref", "refs/heads/deleted", first.as_str()]);
     let update = ref_update("refs/heads/deleted", Some(&first), None);
     epoch_intent(&vault, &root, actor, &lease, vec![update.clone()]);
+    let source = EntityId::from_hex(
+        &vault.receive_pack_intents(&root).expect("pending deletion")[0]
+            .1
+            .refs[0]
+            .outcome_id,
+    )
+    .expect("source");
     git(&root, &["update-ref", "-d", "refs/heads/deleted"]);
     drop(vault);
     let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
@@ -448,11 +455,11 @@ fn epoch_delete_crash_drains_before_mirror_cutover_and_stale_replay_cannot_delet
             .expect("no advancing publication")
             .is_empty()
     );
-    let rows = reopened
-        .receive_pack_intents(&root)
-        .expect("durable deletion");
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
-    let source = EntityId::from_hex(&rows[0].1.refs[0].outcome_id).expect("source");
+    assert_eq!(
+        reopened.receive_pack_intent_rows_for_test(&root),
+        0,
+        "the drained deletion settled"
+    );
     git(&root, &["update-ref", "refs/heads/deleted", tip.as_str()]);
     let outcome = ReceivePackOutcome {
         repo_root: root.clone(),
@@ -561,4 +568,91 @@ fn epoch_new_host_cannot_launder_old_observer_evidence_without_an_old_permit() {
             .expect("no Prepared row")
             .is_empty()
     );
+}
+
+fn push_deletion(old: &GitOid, name: &str) -> Vec<u8> {
+    let command = format!(
+        "{} {} {name}\0report-status\n",
+        old.as_str(),
+        "0".repeat(40)
+    );
+    format!("{:04x}{command}0000", command.len() + 4).into_bytes()
+}
+
+/// A ref published in one epoch, deleted, and pushed again at the same tip in
+/// the next lands on its first publication without that publication's effect
+/// running again. After a second deletion, the first epoch's outcome cannot
+/// recreate the ref.
+#[test]
+fn epoch_recreation_lands_on_the_old_publication_and_its_outcome_cannot_replay() {
+    const TOPIC: &str = "refs/heads/topic";
+    let (_vault_dir, vault) = temp_vault();
+    let (_source, root, first, tip) = served_repo(&vault);
+    let repo = epoch_repo(&vault, &root, &tip);
+    let old_host = EntityId::now();
+    let new_host = EntityId::now();
+    vault
+        .set_origin_authority(&repo, None, OriginResidence::LocalVault, old_host, false)
+        .expect("epoch 1");
+    let old_lease = vault
+        .lease_origin_authority(&repo, old_host)
+        .expect("old lease");
+    let request = epoch_request(EntityId::now());
+    let push = |lease: &OriginAuthorityLease, bytes: Vec<u8>| {
+        let mut body = io::Cursor::new(bytes);
+        let mut sink = CapturingSink::default();
+        serve_with_authority(
+            &vault,
+            "demo",
+            &request,
+            DoorSeam::Landed,
+            lease,
+            &mut body,
+            &mut sink,
+        )
+        .expect("authorized CGI push")
+    };
+    let published = vec![ReceivePackRefResult {
+        name: TOPIC.to_owned(),
+        status: ReceivePackRefStatus::Published,
+    }];
+    let created = push(&old_lease, push_existing_object(&root, &first, TOPIC));
+    assert_eq!(created.ref_results, published);
+    let old_outcome = created.outcome.expect("served outcome");
+    let deleted = push(&old_lease, push_deletion(&first, TOPIC));
+    assert_eq!(deleted.ref_results, published);
+
+    vault
+        .set_origin_authority(&repo, Some(1), OriginResidence::CloudVault, new_host, false)
+        .expect("epoch 2");
+    let new_lease = vault
+        .lease_origin_authority(&repo, new_host)
+        .expect("new lease");
+    let recreated = push(&new_lease, push_existing_object(&root, &first, TOPIC));
+    assert_eq!(recreated.ref_results, published, "the recreation settled");
+    assert_eq!(git(&root, &["rev-parse", TOPIC]), first.as_str());
+    assert_eq!(
+        vault
+            .origin_publication_ids(None)
+            .expect("publications")
+            .len(),
+        1,
+        "the recreation published nothing new"
+    );
+    assert!(
+        advertised_refs(&advertise(&vault, "git-upload-pack").body)
+            .iter()
+            .any(|(name, oid)| name == TOPIC && oid == first.as_str())
+    );
+    assert_eq!(vault.receive_pack_intent_rows_for_test(&root), 0);
+
+    let deleted = push(&new_lease, push_deletion(&first, TOPIC));
+    assert_eq!(deleted.ref_results, published);
+    assert!(
+        vault
+            .apply_receive_pack_update(&old_outcome.pinned_repo_ref().expect("pin"), &old_outcome)
+            .is_err(),
+        "the first epoch's outcome is no authority to recreate the ref"
+    );
+    assert!(git(&root, &["for-each-ref", TOPIC]).is_empty());
 }

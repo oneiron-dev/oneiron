@@ -2,23 +2,24 @@
 //! pre-check, seam scan, verdict publish.
 
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use super::bounds::ScanBounds;
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam};
 use super::evidence::{RefUpdate, receive_pack_provenance_refused};
 use super::hooks::DoorHooksDir;
 use super::paths::{
-    DOOR_MAX_FRAMED_BYTES, DOOR_MAX_SCAN_LINES, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK,
-    DOOR_WINDOW_POLL, ORIGIN_REFUSED_REF_PREFIX, serve_failed,
+    DOOR_BLOB_TOO_LARGE, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
+    ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::credential_door::{CredentialDoorService, DoorScanVerdict, PushedBlob};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsPushedPointer;
 
@@ -79,6 +80,8 @@ impl DoorWindowReport {
 pub(super) struct DoorWindowContext<'a> {
     pub(super) seam: DoorSeam,
     pub(super) admission: Option<&'a DoorAdmissionStamp>,
+    /// The bounds the hook was written with, held again here.
+    pub(super) scan: ScanBounds,
 }
 
 pub(super) struct DoorWindowRequest {
@@ -127,44 +130,19 @@ pub(super) fn serve_door_window(
     // both unscanned bytes, so they become a published refusal rather than an
     // empty scan — and rather than an unanswered hook left blocking.
     let (ref_updates, lfs_pointers, quarantine_path, verdict) =
-        match door_window_inputs(&request_path, hooks) {
-            Ok((request, blobs, tip_blobs)) => {
-                // The name rule decides FIRST, and it decides here rather than
-                // at the landing: this is the last moment at which refusing
-                // costs nothing, because the hook is still blocked and the
-                // backend has moved no ref. A push whose names the landing
-                // could not journal is refused whole; nothing about a legal
-                // batch changes.
-                let unlandable = unlandable_ref_reasons(&request.ref_updates);
-                let verdict = if unlandable.is_empty() {
-                    match context.seam {
-                        DoorSeam::Noop => DoorWindowVerdict::Rejected {
-                            reasons: vec!["publication requires the landed scan".to_owned()],
-                        },
-                        DoorSeam::Landed => scan_through(
-                            &CredentialDoorService::new(Arc::clone(vault)),
-                            repo,
-                            &blobs,
-                        ),
-                    }
-                } else {
-                    DoorWindowVerdict::Rejected {
-                        reasons: unlandable,
-                    }
-                };
-                (
-                    request.ref_updates,
-                    lfs_pushed_pointers(&blobs[..tip_blobs]),
-                    request.quarantine_path,
-                    verdict,
-                )
-            }
-            Err(_) => (
+        match scan_window(vault, repo, &request_path, hooks, context) {
+            Ok(window) => (
+                window.request.ref_updates,
+                window.lfs_pointers,
+                window.request.quarantine_path,
+                window.verdict,
+            ),
+            Err(refused) => (
                 Vec::new(),
                 Vec::new(),
                 None,
                 DoorWindowVerdict::Rejected {
-                    reasons: vec!["receive-pack input could not be verified".to_owned()],
+                    reasons: vec![refused.reason().to_owned()],
                 },
             ),
         };
@@ -192,85 +170,236 @@ pub(super) fn serve_door_window(
     Ok(report)
 }
 
-/// The Git-LFS pointers a push newly introduced.
-///
-/// Reads only what the door was already handed. No git child runs, no object
-/// is re-read, and a blob that is not a pointer is simply not one: the
-/// grammar decides, never a size.
-fn lfs_pushed_pointers(blobs: &[PushedBlob]) -> Vec<LfsPushedPointer> {
-    blobs
-        .iter()
-        .filter_map(|blob| LfsPushedPointer::from_pointer_lines(&blob.path, &blob.added_lines))
-        .collect()
+/// Why a window's input was not taken. Only the door's own bound is named to
+/// the pusher; every other fault is the one generic refusal, whatever it was.
+#[derive(Debug)]
+pub(super) enum InputRefused {
+    /// A blob past the scan's per-blob bound.
+    BlobTooLarge,
+    /// Input the door could not read whole.
+    Unverified,
 }
 
-/// Reads what the hook left behind: the ref list it decided over, the
-/// complete blob stream it framed from the tip diffs, and the history stream of
-/// every other new blob. All three are required — both streams are moved into
-/// place BEFORE the request file that announces them, so a readable request
-/// with an unreadable extraction is a fault, never an empty push.
+impl InputRefused {
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::BlobTooLarge => DOOR_BLOB_TOO_LARGE,
+            Self::Unverified => "receive-pack input could not be verified",
+        }
+    }
+}
+
+impl From<Error> for InputRefused {
+    fn from(_: Error) -> Self {
+        Self::Unverified
+    }
+}
+
+impl From<std::io::Error> for InputRefused {
+    fn from(_: std::io::Error) -> Self {
+        Self::Unverified
+    }
+}
+
+/// What one window read and decided.
+struct WindowScan {
+    request: DoorWindowRequest,
+    lfs_pointers: Vec<LfsPushedPointer>,
+    verdict: DoorWindowVerdict,
+}
+
+/// Reads what the hook left behind and decides on it: the ref list, the blob
+/// stream it framed from the tip diffs, and the history stream of every other
+/// new blob. All three are required — both streams are moved into place
+/// BEFORE the request file that announces them, so a readable request with an
+/// unreadable extraction is a fault, never an empty push.
 ///
-/// Returns every blob the door scans, tip blobs first, and how many of them
-/// came from the tip diffs: only those carry the tip paths an LFS pointer is
-/// paired with.
-fn door_window_inputs(
+/// The streams are read one record at a time and each blob is scanned, then
+/// dropped, before the next is read: the door holds one blob, never a push. A
+/// record that cannot be read whole refuses the window, whatever was scanned
+/// before it. Only tip blobs carry the tip paths an LFS pointer is paired
+/// with, so only they are read for pointers.
+fn scan_window(
+    vault: &Arc<Vault>,
+    repo: &RepoRef,
     request_path: &Path,
     hooks: &DoorHooksDir,
-) -> Result<(DoorWindowRequest, Vec<PushedBlob>, usize)> {
+    context: DoorWindowContext<'_>,
+) -> std::result::Result<WindowScan, InputRefused> {
     let request = parse_door_request(&fs::read(request_path)?)?;
-    let mut framed = DOOR_MAX_FRAMED_BYTES;
-    let tip = read_framed(&hooks.blobs_path(), &mut framed)?;
-    let history = read_framed(&hooks.history_path(), &mut framed)?;
-    let (blobs, tip_blobs) = parse_door_streams(&tip, &history, DOOR_MAX_SCAN_LINES)?;
-    Ok((request, blobs, tip_blobs))
-}
-
-/// Reads one framed stream whole, charging its bytes to `remaining`; a
-/// stream past it is refused before more of it is held.
-pub(super) fn read_framed(path: &Path, remaining: &mut u64) -> Result<Vec<u8>> {
-    let mut framed = Vec::new();
-    fs::File::open(path)?
-        .take(remaining.saturating_add(1))
-        .read_to_end(&mut framed)?;
-    *remaining = remaining
-        .checked_sub(framed.len() as u64)
-        .ok_or_else(|| serve_failed("door streams frame more bytes than it holds"))?;
-    Ok(framed)
-}
-
-/// Both streams' blobs, tip blobs first, and how many came from the tip
-/// stream. Together they split into at most `max_lines` lines, counted
-/// before any line is allocated; past that the window is refused whole.
-pub(super) fn parse_door_streams(
-    tip: &[u8],
-    history: &[u8],
-    max_lines: usize,
-) -> Result<(Vec<PushedBlob>, usize)> {
-    let mut lines = max_lines;
-    let mut blobs = parse_framed_blobs(tip, false, &mut lines)?;
-    let tip_blobs = blobs.len();
-    blobs.extend(parse_framed_blobs(history, true, &mut lines)?);
-    Ok((blobs, tip_blobs))
-}
-
-/// Runs one bound door through the seam. A scan that cannot run is a refusal,
-/// never a pass: the error arm becomes a rejection, not a clean verdict.
-pub(super) fn scan_through(
-    hook: &dyn DoorHook,
-    repo: &RepoRef,
-    blobs: &[PushedBlob],
-) -> DoorWindowVerdict {
-    match hook.pre_receive_scan(repo, blobs) {
-        Ok(DoorScanVerdict::Clean) => DoorWindowVerdict::Clean,
-        Ok(DoorScanVerdict::Rejected { proposals }) => DoorWindowVerdict::Rejected {
-            reasons: proposals
-                .iter()
-                .map(|proposal| format!("{}: {}", proposal.path, proposal.reason))
-                .collect(),
+    // The name rule decides FIRST, and it decides here rather than at the
+    // landing: this is the last moment at which refusing costs nothing,
+    // because the hook is still blocked and the backend has moved no ref. A
+    // push whose names the landing could not journal is refused whole and
+    // goes unscanned; nothing about a legal batch changes.
+    let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
+    let door = CredentialDoorService::new(Arc::clone(vault));
+    let mut scan = (unlandable.is_empty() && context.seam == DoorSeam::Landed)
+        .then(|| BlobScan::new(&door, repo));
+    let mut lfs_pointers = Vec::new();
+    for_each_framed_blob(
+        &mut BufReader::new(fs::File::open(hooks.blobs_path())?),
+        false,
+        context.scan,
+        &mut |blob| {
+            lfs_pointers.extend(LfsPushedPointer::from_pointer_content(
+                &blob.path,
+                &blob.content,
+            ));
+            if let Some(scan) = scan.as_mut() {
+                scan.blob(&blob);
+            }
         },
-        Err(_) => DoorWindowVerdict::Rejected {
-            reasons: vec!["receive-pack scan could not complete".to_owned()],
+    )?;
+    for_each_framed_blob(
+        &mut BufReader::new(fs::File::open(hooks.history_path())?),
+        true,
+        context.scan,
+        &mut |blob| {
+            if let Some(scan) = scan.as_mut() {
+                scan.blob(&blob);
+            }
         },
+    )?;
+    // The same rule for a move a publication already made: a push needing more
+    // than that publication certified could never be certified once the
+    // backend moved it. It reads the tip pointers, so it decides once the
+    // streams are read, ahead of the scan's verdict.
+    if unlandable.is_empty() {
+        unlandable = vault
+            .receive_pack_owner_shortfalls(repo, &request.ref_updates, &lfs_pointers)
+            .unwrap_or_else(|_| vec![InputRefused::Unverified.reason().to_owned()]);
+    }
+    let verdict = match scan {
+        _ if !unlandable.is_empty() => DoorWindowVerdict::Rejected {
+            reasons: unlandable,
+        },
+        Some(scan) => scan.verdict(),
+        None => DoorWindowVerdict::Rejected {
+            reasons: vec!["publication requires the landed scan".to_owned()],
+        },
+    };
+    Ok(WindowScan {
+        request,
+        lfs_pointers,
+        verdict,
+    })
+}
+
+/// The longest record header the door reads: the fixed fields with room to
+/// spare, and the longest path the door scans (4 KiB). A longer header is a
+/// path the door would refuse anyway, so it is refused before it is held.
+const DOOR_MAX_RECORD_HEADER_BYTES: u64 = 8 * 1024;
+
+/// Reads one length-framed blob stream the vetted hook emitted inside the
+/// quarantine window, a record at a time, handing each blob to `each` before
+/// the next is read. A record whose blob is past `scan`'s per-blob bound is
+/// refused before its bytes are read.
+///
+/// One record is `blob <oid> <bytes> <path>\n` followed by exactly `<bytes>`
+/// raw bytes. There is no patch grammar here on purpose: the framing is what
+/// makes the extraction TOTAL. Every blob the hook named is present with its
+/// complete content, so a binary blob, a blob carrying NUL, and a line
+/// beginning `++` or `+++ b/...` are all just bytes — none of them can look
+/// like a header and none of them can go unscanned. The history stream
+/// (`terminated`) carries the same records, each followed by the one `\n`
+/// `git cat-file --batch` writes after an object's bytes.
+///
+/// The door is handed each blob's whole content, because the whole blob is
+/// what the push would make durable. Content the door cannot scan (binary,
+/// invalid UTF-8) is the door's own rejection, and a stream this function
+/// cannot read whole is a refusal at the window — never a silently empty
+/// scan.
+pub(super) fn for_each_framed_blob(
+    stream: &mut dyn BufRead,
+    terminated: bool,
+    scan: ScanBounds,
+    each: &mut dyn FnMut(PushedBlob),
+) -> std::result::Result<(), InputRefused> {
+    let mut header = Vec::new();
+    loop {
+        header.clear();
+        Read::take(&mut *stream, DOOR_MAX_RECORD_HEADER_BYTES).read_until(b'\n', &mut header)?;
+        if header.is_empty() {
+            return Ok(());
+        }
+        // No newline: the stream ends inside a header, or the header is
+        // longer than any the door reads.
+        let header = header
+            .strip_suffix(b"\n")
+            .ok_or_else(|| serve_failed("door blob stream ends inside a record header"))?;
+        let header = std::str::from_utf8(header)
+            .map_err(|_| serve_failed("door blob record header must be UTF-8"))?;
+        let (oid, len, path) = parse_blob_record_header(header)?;
+        if len > scan.blob_bytes() {
+            return Err(InputRefused::BlobTooLarge);
+        }
+        let mut content =
+            Vec::with_capacity(usize::try_from(len).map_err(|_| InputRefused::Unverified)?);
+        Read::take(&mut *stream, len).read_to_end(&mut content)?;
+        if content.len() as u64 != len {
+            return Err(serve_failed("door blob record is truncated").into());
+        }
+        if terminated {
+            let mut end = [0_u8];
+            if stream.read(&mut end)? != 1 || end != [b'\n'] {
+                return Err(serve_failed("door history record is not terminated").into());
+            }
+        }
+        each(PushedBlob { path, oid, content });
+    }
+}
+
+/// The door's verdict over a push's blobs, scanned one at a time as they are
+/// read. A blob the scan cannot run on refuses the push, never passes it; the
+/// blobs after it are read but not scanned.
+struct BlobScan<'a> {
+    hook: &'a dyn DoorHook,
+    repo: &'a RepoRef,
+    reasons: Vec<String>,
+    failed: bool,
+}
+
+impl<'a> BlobScan<'a> {
+    fn new(hook: &'a dyn DoorHook, repo: &'a RepoRef) -> Self {
+        Self {
+            hook,
+            repo,
+            reasons: Vec::new(),
+            failed: false,
+        }
+    }
+
+    fn blob(&mut self, blob: &PushedBlob) {
+        if self.failed {
+            return;
+        }
+        match self
+            .hook
+            .pre_receive_scan(self.repo, std::slice::from_ref(blob))
+        {
+            Ok(DoorScanVerdict::Clean) => {}
+            Ok(DoorScanVerdict::Rejected { proposals }) => self.reasons.extend(
+                proposals
+                    .iter()
+                    .map(|proposal| format!("{}: {}", proposal.path, proposal.reason)),
+            ),
+            Err(_) => self.failed = true,
+        }
+    }
+
+    fn verdict(self) -> DoorWindowVerdict {
+        if self.failed {
+            DoorWindowVerdict::Rejected {
+                reasons: vec!["receive-pack scan could not complete".to_owned()],
+            }
+        } else if self.reasons.is_empty() {
+            DoorWindowVerdict::Clean
+        } else {
+            DoorWindowVerdict::Rejected {
+                reasons: self.reasons,
+            }
+        }
     }
 }
 
@@ -403,68 +532,9 @@ fn parse_optional_oid(value: &str) -> Result<Option<GitOid>> {
     Ok(Some(GitOid::parse_hex(value.to_ascii_lowercase())?))
 }
 
-/// Reads one length-framed blob stream the vetted hook emitted inside the
-/// quarantine window, charging each blob's lines to `lines` before they are
-/// split.
-///
-/// One record is `blob <oid> <bytes> <path>\n` followed by exactly `<bytes>`
-/// raw bytes. There is no patch grammar here on purpose: the framing is what
-/// makes the extraction TOTAL. Every blob the hook named is present with its
-/// complete content, so a binary blob, a blob carrying NUL, and a line
-/// beginning `++` or `+++ b/...` are all just bytes — none of them can look
-/// like a header and none of them can go unscanned. The history stream
-/// (`terminated`) carries the same records, each followed by the one `\n`
-/// `git cat-file --batch` writes after an object's bytes.
-///
-/// The door is handed each blob's whole content, one line per element, because
-/// the whole blob is what the push would make durable. Content the door cannot
-/// scan (binary, invalid UTF-8) is the door's own rejection, and a stream this
-/// function cannot read whole is a refusal at the window — never a silently
-/// empty scan.
-fn parse_framed_blobs(
-    framed: &[u8],
-    terminated: bool,
-    lines: &mut usize,
-) -> Result<Vec<PushedBlob>> {
-    let mut blobs = Vec::new();
-    let mut cursor = 0_usize;
-    while cursor < framed.len() {
-        let end = framed[cursor..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|at| cursor + at)
-            .ok_or_else(|| serve_failed("door blob stream ends inside a record header"))?;
-        let header = std::str::from_utf8(&framed[cursor..end])
-            .map_err(|_| serve_failed("door blob record header must be UTF-8"))?;
-        let (oid, len, path) = parse_blob_record_header(header)?;
-        let start = end + 1;
-        let stop = start
-            .checked_add(len)
-            .filter(|stop| *stop <= framed.len())
-            .ok_or_else(|| serve_failed("door blob record is truncated"))?;
-        let content = &framed[start..stop];
-        *lines = lines
-            .checked_sub(content_line_count(content).max(1))
-            .ok_or_else(|| serve_failed("door scan splits into more lines than it holds"))?;
-        blobs.push(PushedBlob {
-            path,
-            oid,
-            added_lines: content_lines(content),
-        });
-        cursor = stop;
-        if terminated {
-            if framed.get(stop) != Some(&b'\n') {
-                return Err(serve_failed("door history record is not terminated"));
-            }
-            cursor += 1;
-        }
-    }
-    Ok(blobs)
-}
-
 /// `blob <oid> <bytes> <path>` — the path is last because it is the one field
 /// that may carry spaces; the three before it are fixed and are validated here.
-fn parse_blob_record_header(header: &str) -> Result<(String, usize, String)> {
+fn parse_blob_record_header(header: &str) -> Result<(String, u64, String)> {
     let mut fields = header.splitn(4, ' ');
     let unshaped = || serve_failed("door blob record header is not `blob <oid> <bytes> <path>`");
     if fields.next() != Some("blob") {
@@ -477,30 +547,7 @@ fn parse_blob_record_header(header: &str) -> Result<(String, usize, String)> {
         return Err(unshaped());
     }
     let len = len
-        .parse::<usize>()
+        .parse::<u64>()
         .map_err(|_| serve_failed("door blob record declares an unparsable length"))?;
     Ok((oid.to_owned(), len, path.to_owned()))
-}
-
-/// How many lines [`content_lines`] splits `content` into, without splitting.
-fn content_line_count(content: &[u8]) -> usize {
-    if content.is_empty() {
-        return 0;
-    }
-    let trimmed = content.strip_suffix(b"\n").unwrap_or(content);
-    trimmed.iter().filter(|byte| **byte == b'\n').count() + 1
-}
-
-/// One blob's bytes as lines, split on `\n` with no line reshaped: a trailing
-/// newline ends the last line rather than adding an empty one, and CR, NUL and
-/// every other byte survive untouched into the door's hands.
-fn content_lines(content: &[u8]) -> Vec<Vec<u8>> {
-    if content.is_empty() {
-        return Vec::new();
-    }
-    let trimmed = content.strip_suffix(b"\n").unwrap_or(content);
-    trimmed
-        .split(|byte| *byte == b'\n')
-        .map(<[u8]>::to_vec)
-        .collect()
 }

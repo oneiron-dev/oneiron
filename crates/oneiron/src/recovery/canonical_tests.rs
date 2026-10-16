@@ -234,19 +234,12 @@ fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifac
 fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() -> Result<()> {
     use crate::consent::AuthenticatedOwner;
     use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
-    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+    use crate::registry::ENTITY_TYPE_ASSET;
     use crate::store::GateDecisionId;
 
     let source_dir = tempfile::tempdir()?;
     let source = Vault::open(source_dir.path(), VaultConfig::default())?;
-    let author = EntityId::now();
-    source.put_entity(
-        &author,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"author",
-    )?;
+    let author = source.ensure_embedded_owner_actor().unwrap();
     let actor = WriteActor::new(author, EdgeActorClass::Human);
     let owner: AuthenticatedOwner = source.authenticate_owner(
         author,
@@ -588,7 +581,7 @@ fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Resu
     assert_eq!(error.kind(), crate::error::ErrorKind::OverlayLimit);
     assert!(error.is_retryable());
     assert_eq!(fs::read(&path)?, b"bad manifest");
-    assert!(!invalid_artifact_path(&path, 1).exists());
+    assert!(invalid_artifact_siblings(&path).is_empty());
     let prepared = prepare_recovery(&path, snapshot, RecoveryBudget::default())?;
     assert_eq!(prepared.tier, RecoveryTier::FullRebuild);
     assert_eq!(
@@ -999,7 +992,7 @@ fn hard_delete_marker_blocks_soft_shell_recreation_without_quarantining_manifest
     assert!(target.get_raw(&fixture.soft)?.is_none());
     assert!(target.get_raw(&fixture.note)?.is_none());
     assert_eq!(fs::read(&path)?, b"bad");
-    assert!(!invalid_artifact_path(&path, 1).exists());
+    assert!(invalid_artifact_siblings(&path).is_empty());
     Ok(())
 }
 
@@ -1390,7 +1383,7 @@ fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_prefligh
     );
     assert_eq!(target.note_text(fixture.note)?, before);
     assert_eq!(fs::read(&path)?, b"do not quarantine on preflight error");
-    assert!(!invalid_artifact_path(&path, 1).exists());
+    assert!(invalid_artifact_siblings(&path).is_empty());
     Ok(())
 }
 
@@ -1657,5 +1650,102 @@ fn canonical_capture_refuses_a_deleted_row_without_its_tombstone() -> Result<()>
         capture_canonical_window(&vault, "2026-02", &doc).is_err(),
         "a withdrawn delete is not exported as a live row"
     );
+    Ok(())
+}
+
+/// F24 round 9 (Astra r8 R8-1): a build without sync captures too. Its
+/// capture leaves out the carrier of a deleted fact this vault never
+/// admitted, so it marks that fact's task first, and the artifact carries
+/// the refusal. Positive control: a task with no such fact still reads.
+#[test]
+fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
+        put_task_authority_fact_in_txn,
+    };
+    const LEARNED_AT: u64 = 1_772_400_000; // 2026-03 window
+    let at = TimeRange {
+        start: LEARNED_AT,
+        end: LEARNED_AT,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, at, LEARNED_AT, b"x")?;
+    let fact_of = |task_ref, kind| TaskAuthorityFact {
+        task_ref,
+        kind,
+        actor_ref: owner,
+        assigned_ref: None,
+        actor_generation: None,
+        assigned_generation: None,
+        occurred_at: LEARNED_AT,
+    };
+    let window = LoroDoc::new();
+    let entities = window.get_map("entities");
+    let mut carried = vec![owner];
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let task = EntityId::now();
+        vault.put_entity(
+            &task,
+            ENTITY_TYPE_TASK,
+            at,
+            LEARNED_AT,
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+        )?;
+        let owner_fact = vault.with_write_txn(|wtxn| {
+            put_task_authority_fact_in_txn(
+                &vault,
+                wtxn,
+                fact_of(task, TaskAuthorityFactKind::Owner),
+            )
+        })?;
+        carried.extend([task, owner_fact]);
+        tasks.push(task);
+    }
+    for id in &carried {
+        let raw = vault.get_raw(id)?.expect("stored row");
+        entities.insert(&id.to_hex(), &raw[..]).expect("carrier");
+    }
+    // A cancellation of the first task, never admitted here, and the hard
+    // tombstone of its id.
+    let fact = EntityId::now();
+    let body =
+        encode_task_authority_fact_body(&fact_of(tasks[0], TaskAuthorityFactKind::Cancelled));
+    let mut blob = vec![ENTITY_TYPE_TASK];
+    for stamp in [at.start, at.end, LEARNED_AT] {
+        blob.extend_from_slice(&stamp.to_be_bytes());
+    }
+    blob.extend_from_slice(&body);
+    entities
+        .insert(&fact.to_hex(), &blob[..])
+        .expect("fact carrier");
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: LEARNED_AT,
+        request_id: [0x5A; 16],
+    }
+    .encode()
+    .to_vec();
+    window
+        .get_map("tombstones")
+        .insert(&fact.to_hex(), &tombstone[..])
+        .expect("tombstone");
+
+    let snapshot = capture_canonical_window(&vault, "2026-03", &window)?;
+    assert!(
+        matches!(
+            vault.task_authority_state(tasks[0]),
+            Err(crate::error::Error::InvariantViolation(
+                "task authority fact suppressed"
+            ))
+        ),
+        "the capturing vault's task reads as a refusal"
+    );
+    assert_eq!(snapshot.suppressed_tasks, vec![*tasks[0].as_bytes()]);
+    let state = vault.task_authority_state(tasks[1])?.expect("owned task");
+    assert_eq!((state.owner_ref, state.cancelled), (owner, false));
     Ok(())
 }

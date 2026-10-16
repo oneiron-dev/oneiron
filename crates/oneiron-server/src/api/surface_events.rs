@@ -7,6 +7,7 @@
 
 use super::core_engine_error;
 use super::json_payload;
+use super::scoped_read_for_core_auth;
 use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -566,8 +567,8 @@ impl From<oneiron::SurfaceEventHandoffStatus> for SurfaceEventStatusResponse {
         (status = 202, description = "Event committed to the durable queue and acked before any dispatch. A correlation replay returns the original attempt ref with `replayed: true`.", body = SurfaceEventAckResponse, content_type = "application/json"),
         (status = 400, description = "Malformed submission body, or an input the engine refused to normalize.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 422, description = "Identity routing refused the event without queueing. The body is the typed route receipt, naming which of the four rejection reasons applied.", body = SurfaceEventRejectionResponse, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read or core:write. A submitter needs core:read on the identity it addresses: the receiving identity resolves under the submitter's own read, and its acknowledgement points at a status read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 422, description = "Identity routing refused the event without queueing. The body is the typed route receipt, naming which of the four rejection reasons applied. An identity the submitter cannot read is refused as `unknown_receiving_identity`, as a missing one is.", body = SurfaceEventRejectionResponse, content_type = "application/json"),
         (status = 500, description = "Admission failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -575,13 +576,23 @@ pub(crate) async fn submit_core_surface_event(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<SurfaceEventSubmitRequest>, JsonRejection>,
-) -> Result<SurfaceEventSubmitOutcome, EnvelopedApiError> {
+) -> Result<
+    (
+        axum::Extension<crate::idempotency::ServedRows>,
+        SurfaceEventSubmitOutcome,
+    ),
+    EnvelopedApiError,
+> {
+    // The receiving identity resolves under the submitter's own read, and
+    // the ack points at a status read: a submitter reads what it addresses.
+    auth.require(CoreScope::Read)?;
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
+    let read = scoped_read_for_core_auth(&server.vault, &auth)?;
 
     let admission = server
         .vault
-        .enqueue_inbound_surface_event(req.into_engine(), unix_seconds_now())
+        .enqueue_inbound_surface_event_as(&read, req.into_engine(), unix_seconds_now())
         .map_err(|error| {
             tracing::error!(kind = ?error.kind(), "surface event admission failed");
             core_engine_error("surface event admission failed", error)
@@ -589,11 +600,24 @@ pub(crate) async fn submit_core_surface_event(
 
     Ok(match admission {
         oneiron::SurfaceEventAdmission::Accepted(ack) => {
-            SurfaceEventSubmitOutcome::Accepted(ack.into())
+            // A keyed retry replays this ack only while the submitter still
+            // reads the identity it addressed.
+            let identity: Vec<_> = oneiron::EntityId::from_hex(&ack.receiving_identity_ref)
+                .into_iter()
+                .collect();
+            let served = crate::idempotency::ServedRows {
+                rows: identity.clone(),
+                admit: Some(identity),
+            };
+            (
+                axum::Extension(served),
+                SurfaceEventSubmitOutcome::Accepted(ack.into()),
+            )
         }
-        oneiron::SurfaceEventAdmission::Rejected(receipt) => {
-            SurfaceEventSubmitOutcome::Rejected(receipt.into())
-        }
+        oneiron::SurfaceEventAdmission::Rejected(receipt) => (
+            axum::Extension(crate::idempotency::ServedRows::default()),
+            SurfaceEventSubmitOutcome::Rejected(receipt.into()),
+        ),
     })
 }
 
@@ -615,7 +639,7 @@ pub(crate) async fn submit_core_surface_event(
         (status = 400, description = "Blank correlation id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "No surface event was admitted under this correlation id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No surface event was admitted under this correlation id, or its receiving identity is one the caller cannot read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Handoff status read failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -627,9 +651,10 @@ pub(crate) async fn get_core_surface_event(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
 
+    let read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let status = server
         .vault
-        .surface_event_handoff_status(&correlation_id)
+        .surface_event_handoff_status_as(&read, &correlation_id)
         .map_err(|error| {
             tracing::error!(kind = ?error.kind(), "surface event status read failed");
             core_engine_error("surface event status read failed", error)

@@ -114,6 +114,9 @@ fn rewrite(
                     Some("observed ref effect was superseded")
                 }
                 smart_http::ReceivePackRefStatus::NotApplied => Some("ref was not applied"),
+                smart_http::ReceivePackRefStatus::Uncertified => {
+                    Some("ref needs objects its earlier publication never certified")
+                }
                 smart_http::ReceivePackRefStatus::Published if refused.is_some() => {
                     Some("backend refused ref update")
                 }

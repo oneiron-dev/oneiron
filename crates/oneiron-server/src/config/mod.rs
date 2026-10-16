@@ -6,6 +6,7 @@ mod embedder_shape;
 mod embedder_space;
 mod feedback;
 pub mod import;
+mod keystore;
 mod limits;
 mod lookup;
 pub mod merge;
@@ -25,6 +26,7 @@ pub use embedder::{
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
 pub use feedback::FeedbackConfig;
 pub use import::ImportConfig;
+pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};
 pub use limits::LimitsConfig;
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
@@ -42,6 +44,8 @@ pub use trusted_proxy::TrustedProxy;
 
 #[cfg(test)]
 mod embedder_tests;
+#[cfg(test)]
+mod limits_tests;
 #[cfg(test)]
 mod privacy_tests;
 #[cfg(all(test, unix))]

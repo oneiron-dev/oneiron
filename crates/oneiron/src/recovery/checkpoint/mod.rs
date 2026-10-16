@@ -9,7 +9,7 @@ mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody};
+use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
@@ -44,8 +44,8 @@ struct CheckpointImage {
 
 impl CheckpointImage {
     /// A direct restore may land on any install, so the image's machine
-    /// identity stays with the install that minted it: the restored vault
-    /// joins as a new machine. So does a copy served beside a live vault,
+    /// identity, and the root it pins, stay with the install that minted it:
+    /// the restored vault joins as a new machine and opens unpinned. So does a copy served beside a live vault,
     /// whose authority it keeps; only a restore that takes that vault's
     /// place carries its identity (`restore_class`).
     fn drop_machine_identity(&mut self) {
@@ -380,7 +380,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -390,6 +390,7 @@ impl Vault {
             Custody::Keep,
         )?;
         forked.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
@@ -409,7 +410,7 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -419,6 +420,7 @@ impl Vault {
             Custody::Fork(Some(&live)),
         )?;
         forked.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
     /// This vault as the source of a restore beside it
@@ -562,7 +564,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (vault, report, forked) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -571,17 +573,20 @@ impl Vault {
             restored_at,
             custody,
         )?;
-        if let Err(error) = authority_plane::refuse_new_members(current, &vault)
-            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
-        {
-            // This call created the destination; nothing else is in it. The
-            // custody it forked goes with it as `forked` drops.
-            crate::store::discard_restored_copy(vault, destination);
-            return Err(error);
-        }
+        #[cfg(test)]
+        panic_if_armed();
+        // Refused here, or unwound, the bindings above drop in reverse: the
+        // copy closes, the custody it forked goes, and then the directory
+        // made for it, still under the copy's lease (review r3, Sol F4).
+        authority_plane::refuse_new_members(current, &vault)
+            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))?;
         forked.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
+    /// Restores `image` into `destination`. The made directory, the forked
+    /// custody and the copy come back in that order, so a caller's bindings,
+    /// dropped in reverse, close the copy before the others go.
     fn restore_image(
         image: CheckpointImage,
         checkpoint_id: String,
@@ -590,12 +595,21 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
-    ) -> Result<(Self, RestoreReport, ForkedCustody)> {
+    ) -> Result<(MadeDestination, ForkedCustody, Self, RestoreReport)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
             crate::attempt_queue::foreign_row_in_owner_retained_range(key, value)
         }) {
+            return Err(codec_error());
+        }
+        // A signed authority row that fails its key-free checks (an owner
+        // root or a world-key record among them) is refused here as at every
+        // other write door, before any destination exists.
+        if image.databases["entities"]
+            .iter()
+            .any(|(_, blob)| malformed_entity_row(blob))
+        {
             return Err(codec_error());
         }
         // Authenticate every ORCB row against LIVE exterior custody before
@@ -615,10 +629,16 @@ impl Vault {
         // back: one no pin decodes from is refused here, before a
         // destination exists (H215).
         crate::agent_def::refuse_unreadable_agent_id_pins(&image.databases["vault_meta"])?;
-        // Existing content is never replaced or partially restored over.
-        let made = crate::store::MadeDestination::make(destination, home)?;
+        // Existing content is never replaced or partially restored over. A
+        // refusal from here on drops the copy, then the directory made for
+        // it: only a committed restore keeps them (C8). The config is checked
+        // first, as an owned open checks it before it touches the disk.
+        Self::check_open_config(&config)?;
+        let made = MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
-        let vault = Self::open_owned(destination, config.clone())?;
+        let vault = Self::open_under_lease(destination, config.clone(), made.lease()?)?;
+        #[cfg(test)]
+        fail_at(RestoreStep::FirstOpen)?;
         made.holds(&vault.store)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
@@ -667,11 +687,15 @@ impl Vault {
             // Rows came back without a put: each definition pins its id as a
             // put of it would have (H215).
             crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
+            #[cfg(test)]
+            fail_at(RestoreStep::ImageWrite)?;
             Ok(())
         })?;
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
-        let vault = Self::open_owned(destination, config)?;
+        let vault = Self::open_under_lease(destination, config, made.lease()?)?;
+        #[cfg(test)]
+        fail_at(RestoreStep::SecondOpen)?;
         made.holds(&vault.store)?;
         if let Some(home) = home {
             vault.store.unseal_replacement(home)?;
@@ -685,6 +709,8 @@ impl Vault {
             vault
                 .store
                 .for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
+            #[cfg(test)]
+            fail_at(RestoreStep::ReceiptCheck)?;
         }
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;
@@ -711,7 +737,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
-        Ok((vault, report, forked))
+        Ok((made, forked, vault, report))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;
@@ -724,4 +750,22 @@ impl Vault {
     }
 }
 #[cfg(test)]
+mod test_hooks;
+#[cfg(test)]
+use test_hooks::{RestoreStep, fail_at, panic_if_armed};
+
+#[cfg(test)]
 mod tests;
+
+/// A row with no header, which the index rebuild refuses anyway, or an
+/// AUTHORITY_LOG row whose body the shared authority validator refuses, an
+/// empty one included: no authority row is a bodiless shell.
+fn malformed_entity_row(blob: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|header| {
+        header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+            && crate::authority::validate_authority_log_entry_body_bytes(
+                &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .is_err()
+    })
+}

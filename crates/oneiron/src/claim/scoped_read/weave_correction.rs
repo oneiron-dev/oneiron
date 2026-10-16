@@ -43,9 +43,17 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         link: EdgeRef,
     ) -> Result<WeaveLinkCorrection> {
+        // A person reports a link they see as themselves; the owner reader
+        // reads with the owner role, so it takes the owner tier.
+        let as_owner = matches!(reader, WeaveReader::Owner(_));
+        let auth_actor = if as_owner {
+            auth.revalidate(self.vault)?
+        } else {
+            auth.revalidate_person(self.vault)?
+        };
         let bound = match &reader {
-            WeaveReader::Person(id) => *id == auth.actor(),
-            WeaveReader::Owner(owner) => owner.actor() == auth.actor() && *owner == auth,
+            WeaveReader::Person(id) => *id == auth_actor,
+            WeaveReader::Owner(owner) => *owner == auth,
             WeaveReader::Agent(_) => false,
         };
         if !bound {
@@ -61,11 +69,15 @@ impl ScopedRead<'_> {
         // Persist the injected authorization clock in the SAME writer before
         // relationship grants are checked against its floor.
         let now = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
-        auth.revalidate_in_txn(self.vault, &txn)?;
+        let actor = if as_owner {
+            auth.revalidate_in_txn(self.vault, &txn)?
+        } else {
+            auth.revalidate_person_in_txn(self.vault, &txn)?
+        };
         self.require_visible_weave_link_in(&txn, reader, link)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
         let limit = policy
-            .weave_correction_limit(&auth.actor().to_hex())
+            .weave_correction_limit(&actor.to_hex())
             .ok_or(Error::InvalidConfig(
                 "weave correction policy unavailable".into(),
             ))?;
@@ -75,19 +87,19 @@ impl ScopedRead<'_> {
             .vault
             .weave_link_correction_labels_in_txn(&txn, link)?
             .iter()
-            .filter(|label| label.actor == auth.actor())
+            .filter(|label| label.actor == actor)
             .count();
         if own >= limit {
             // Capabilities first: the owner's own reports are never refused
             // on count. Every other reader stays bounded.
-            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &auth.actor())? {
+            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &actor)? {
                 return Err(Error::IndexOverflow("weave correction labels"));
             }
             crate::own_rate::observe_in_txn(
                 &self.vault.store,
                 &mut txn,
                 crate::own_rate::OwnRateKind::WeaveCorrection,
-                auth.actor(),
+                actor,
                 0,
                 u64::try_from(own).unwrap_or(u64::MAX).saturating_add(1),
                 crate::own_rate::OwnRate {
@@ -99,7 +111,7 @@ impl ScopedRead<'_> {
         let correction = WeaveLinkCorrection {
             id: EntityId::now(),
             link,
-            actor: auth.actor(),
+            actor,
             recorded_at: now,
         };
         LABELS.put(

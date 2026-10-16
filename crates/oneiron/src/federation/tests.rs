@@ -2735,6 +2735,251 @@ fn stamping_adds_rows_only_and_never_purges_world_or_claim_entities() -> Result<
     Ok(())
 }
 
+/// The road a terminal federation entry takes into the vault.
+#[derive(Clone, Copy, Debug)]
+enum TerminalRoad {
+    /// The public authority batch door.
+    AuthorityBatch,
+    /// A replicated put applied in a caller-owned writer, as sync replay does.
+    ReplicatedApply,
+    /// A replicated put the batch builder commits itself.
+    ReplicatedCommit,
+}
+
+/// H213: a Disconnect stamps the worlds its pact delivered whichever door
+/// stores it, not only the single-entry door. Before the fix only
+/// `put_authority_log_entry` swept, so these roads left a terminal pact's
+/// world unstamped and its claims in unscoped retrieval.
+#[test]
+fn a_terminal_pact_stamps_its_worlds_through_batch_and_replay() -> Result<()> {
+    for road in [
+        TerminalRoad::AuthorityBatch,
+        TerminalRoad::ReplicatedApply,
+        TerminalRoad::ReplicatedCommit,
+    ] {
+        let fixture = stale_fixture(0x33, 0x39);
+        let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+        let world = foreign_world(0xF6);
+        let grant = entity(0x3B);
+        let connect = fixture.connect(
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            1,
+            authority_entry_hash(&fixture.genesis)?,
+        );
+        let disconnect = fixture.sever(
+            FederationLifecycleKind::Disconnect,
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            2,
+            authority_entry_hash(&connect)?,
+        );
+        store_authority(&vault, &[&fixture.genesis, &connect]);
+        register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+        assert!(foreign_world_stale_stamp(&vault, world.entity_id())?.is_none());
+
+        let at = TimeRange { start: 3, end: 3 };
+        let id = crate::authority::authority_log_entity_id(&disconnect)?;
+        let body = encode_authority_log_entry_body(&disconnect)?;
+        match road {
+            TerminalRoad::AuthorityBatch => {
+                vault.put_authority_log_entries(&[(disconnect.clone(), at, 3)])?;
+            }
+            TerminalRoad::ReplicatedApply => vault.with_write_txn_grouped(|wtxn| {
+                vault
+                    .batch_in()
+                    .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, at, 3, &body)
+                    .apply(wtxn)
+            })?,
+            TerminalRoad::ReplicatedCommit => vault
+                .batch_in()
+                .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, at, 3, &body)
+                .commit()?,
+        }
+        assert!(
+            vault.get_raw(&id)?.is_some(),
+            "{road:?}: the terminal entry is stored"
+        );
+        let stamp = foreign_world_stale_stamp(&vault, world.entity_id())?
+            .unwrap_or_else(|| panic!("{road:?}: the severed pact's world must be stamped"));
+        assert_eq!(stamp.reason, FederationStaleReason::Disconnected);
+    }
+    Ok(())
+}
+
+/// H213 (review r1): a sweep that fails after its terminal entry committed
+/// stays owed. The next commit by any writer runs it, and so does the next
+/// open, which also covers a stop between the commit and its sweep.
+#[test]
+fn a_failed_stale_sweep_stays_owed_until_a_later_commit_or_open() -> Result<()> {
+    for heal in ["later commit", "reopen"] {
+        let fixture = stale_fixture(0x33, 0x39);
+        let (dir, vault) = open_test_vault_with(VaultConfig::device());
+        let world = foreign_world(0xF6);
+        let grant = entity(0x3B);
+        let connect = fixture.connect(
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            1,
+            authority_entry_hash(&fixture.genesis)?,
+        );
+        let disconnect = fixture.sever(
+            FederationLifecycleKind::Disconnect,
+            STALE_PACT_A,
+            STALE_NONCE_A,
+            grant,
+            2,
+            authority_entry_hash(&connect)?,
+        );
+        store_authority(&vault, &[&fixture.genesis, &connect]);
+        register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+        // A corrupt stamp row fails the sweep closed after the entry commits.
+        let key = federation_stale_key(world.entity_id());
+        let healthy = encode_world_stale_stamp(WorldStaleStamp {
+            reason: FederationStaleReason::Disconnected,
+            disconnect_epoch: 1,
+            stamped_at_secs: 9,
+        });
+        write_sync_row(&vault, &key, &healthy[..WORLD_STALE_STAMP_LEN - 1]);
+        assert!(matches!(
+            vault.put_authority_log_entry(&disconnect, TimeRange { start: 3, end: 3 }, 3),
+            Err(Error::CorruptedIndex("federation world stale stamp"))
+        ));
+        let id = crate::authority::authority_log_entity_id(&disconnect)?;
+        assert!(vault.get_raw(&id)?.is_some(), "{heal}: the entry committed");
+        // The row is repaired outside every write door, so nothing sweeps.
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.sync_state.delete(&mut wtxn, key.as_str())?;
+        wtxn.commit()?;
+        assert!(foreign_world_stale_stamp(&vault, world.entity_id())?.is_none());
+
+        let vault = if heal == "reopen" {
+            drop(vault);
+            Vault::open(dir.path(), VaultConfig::device())?
+        } else {
+            vault.with_write_txn(|_| Ok(()))?;
+            vault
+        };
+        let stamp = foreign_world_stale_stamp(&vault, world.entity_id())?
+            .unwrap_or_else(|| panic!("{heal}: the owed sweep must stamp the world"));
+        assert_eq!(stamp.reason, FederationStaleReason::Disconnected);
+    }
+    Ok(())
+}
+
+/// H213 (review r1): a terminal entry stored before its parent comes into the
+/// fold when the parent lands. The parent is not terminal, yet its commit
+/// sweeps, so the pact's worlds are stamped then.
+#[test]
+fn a_late_parent_that_brings_a_terminal_entry_into_force_stamps_its_worlds() -> Result<()> {
+    const LATE_PACT: [u8; 32] = [0xB7; 32];
+    const LATE_NONCE: [u8; 16] = [0xB8; 16];
+    let fixture = stale_fixture(0x33, 0x39);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let world = foreign_world(0xF6);
+    let grant = entity(0x3B);
+    let connect = fixture.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        1,
+        authority_entry_hash(&fixture.genesis)?,
+    );
+    let parent = fixture.connect(
+        LATE_PACT,
+        LATE_NONCE,
+        entity(0x3C),
+        2,
+        authority_entry_hash(&connect)?,
+    );
+    let disconnect = fixture.sever(
+        FederationLifecycleKind::Disconnect,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        3,
+        authority_entry_hash(&parent)?,
+    );
+    store_authority(&vault, &[&fixture.genesis, &connect]);
+    register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+    let replicate = |entry: &AuthorityLogEntry, at: u64| -> Result<EntityId> {
+        let id = crate::authority::authority_log_entity_id(entry)?;
+        let body = encode_authority_log_entry_body(entry)?;
+        let range = TimeRange { start: at, end: at };
+        vault
+            .batch_in()
+            .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, range, at, &body)
+            .commit()?;
+        Ok(id)
+    };
+
+    let id = replicate(&disconnect, 3)?;
+    assert!(vault.get_raw(&id)?.is_some(), "stored ahead of its parent");
+    assert!(
+        foreign_world_stale_stamp(&vault, world.entity_id())?.is_none(),
+        "out of the fold until its parent lands"
+    );
+    replicate(&parent, 4)?;
+    let stamp = foreign_world_stale_stamp(&vault, world.entity_id())?
+        .expect("the parent's commit must stamp the severed pact's world");
+    assert_eq!(stamp.reason, FederationStaleReason::Disconnected);
+    Ok(())
+}
+
+/// H213 (review r2): a severed pact's worlds read as stale in the snapshot its
+/// Disconnect commits in, before any stamp lands. The stamp follows in a later
+/// transaction, or only at a retry when the sweep fails; retrieval reads the
+/// pact's end from its own snapshot's fold meanwhile.
+#[test]
+fn a_severed_pacts_world_reads_stale_before_its_stamp_lands() -> Result<()> {
+    let fixture = stale_fixture(0x33, 0x39);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let world = foreign_world(0xF6);
+    let grant = entity(0x3B);
+    let connect = fixture.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        1,
+        authority_entry_hash(&fixture.genesis)?,
+    );
+    let disconnect = fixture.sever(
+        FederationLifecycleKind::Disconnect,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        2,
+        authority_entry_hash(&connect)?,
+    );
+    store_authority(&vault, &[&fixture.genesis, &connect]);
+    register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+    assert!(
+        read_stale_map(&vault)?.is_empty(),
+        "control: a live pact's world is not stale"
+    );
+
+    // The Disconnect commits in a caller-owned writer that no sweep follows:
+    // the state a failed or not-yet-run sweep leaves.
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.put_authority_log_entries_in_txn(
+        &mut wtxn,
+        &[(disconnect, TimeRange { start: 3, end: 3 }, 3)],
+    )?;
+    wtxn.commit()?;
+    assert!(foreign_world_stale_stamp(&vault, world.entity_id())?.is_none());
+    assert_eq!(
+        read_stale_map(&vault)?
+            .get(&world.entity_id())
+            .map(|stale| stale.reason),
+        Some(FederationStaleReason::Disconnected),
+        "unscoped retrieval must drop the severed pact's world before its stamp"
+    );
+    Ok(())
+}
+
 /// ONE-1411 done-means 8 — malformed LOCAL rows are corruption, not rows to
 /// skip. Silently skipping any of these would un-stale a world whose pact is
 /// provably dead.

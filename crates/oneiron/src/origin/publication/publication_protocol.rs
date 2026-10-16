@@ -1,5 +1,7 @@
 //! Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement projection.
 
+use std::ops::ControlFlow;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -11,9 +13,11 @@ use super::publication_codec::{
     KEEP_OWNER, PUBLICATIONS, keep_owner_key, origin_keep_ref_name, origin_publication_id,
 };
 use super::publication_journal::{origin_receipt, validate_origin_publication_request};
+use super::publication_machine::OriginAdmission;
 use super::publication_types::{
-    OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationReceipt,
-    OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
+    OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationAnswer,
+    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
+    OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // The public protocol surface
@@ -103,6 +107,10 @@ impl Vault {
     ///
     /// Terminal refusals never retry. Published replay uses the original CAS
     /// expectation and proves the live ref again before reporting success.
+    /// The same move under another source resolves to the publication that
+    /// made it when the ref carries its value (observed, never re-run), and
+    /// is refused, naming them, when it needs objects that publication never
+    /// certified.
     pub fn publish_origin_ref(
         &self,
         git: &GitWire<'_>,
@@ -137,7 +145,14 @@ impl Vault {
                 return origin_receipt(record, false, None);
             }
             Some(record) => record,
-            None => self.stage_origin_publication(git, &request, publication_id)?,
+            None => match self.admit_origin_publication(git, &request, publication_id)? {
+                OriginAdmission::Staged(record) => record,
+                OriginAdmission::Resolved(owner) => {
+                    let mut receipt = origin_receipt(owner, true, None)?;
+                    receipt.answer = OriginPublicationAnswer::ResolvedToOwner;
+                    return Ok(receipt);
+                }
+            },
         };
         if record.status.is_terminal() {
             return origin_receipt(record, false, None);
@@ -170,8 +185,10 @@ impl Vault {
         let _guard = lock_repository(repo.common_dir())?;
         self.reconcile_receive_pack_operations(repo.repo_root())?;
         let mut items = Vec::new();
-        for record in self.origin_publication_rows(Some(repo_id))? {
-            let publication_id = record.publication_id;
+        for publication_id in self.origin_publication_ids(Some(repo_id))? {
+            let Some(record) = self.origin_publication(publication_id)? else {
+                continue;
+            };
             let disposition = if record.status == OriginPublicationStatus::Prepared {
                 self.advance_prepared_origin_publication(git, repo, record, learned_at)?
                     .disposition
@@ -201,17 +218,19 @@ impl Vault {
 
     /// Lists durable publication ids for read-only diagnostics, in every status.
     ///
-    /// `None` includes every repository. The scan refuses after
-    /// [`ORIGIN_PUBLICATION_MAX_ROWS`](crate::origin::publication::ORIGIN_PUBLICATION_MAX_ROWS) rows rather than returning a partial list.
+    /// `None` includes every repository. The list is whole: the scan never
+    /// refuses for its length, and past its threshold row it raises an
+    /// [`OriginScanCheck`](crate::origin::scan_check::OriginScanCheck).
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.
     pub fn origin_publication_ids(&self, repo_id: Option<EntityId>) -> Result<Vec<EntityId>> {
-        Ok(self
-            .origin_publication_rows(repo_id)?
-            .into_iter()
-            .map(|record| record.publication_id)
-            .collect())
+        let mut ids = Vec::new();
+        self.visit_origin_publication_rows(repo_id, |record| {
+            ids.push(record.publication_id);
+            ControlFlow::Continue(())
+        })?;
+        Ok(ids)
     }
 
     /// THE advertisement projection, and the only one.
@@ -283,12 +302,13 @@ impl Vault {
 
     /// How many publications for one repository are still `Prepared`.
     pub fn prepared_origin_publication_count(&self, repo_id: EntityId) -> Result<u64> {
-        let prepared = self
-            .origin_publication_rows(Some(repo_id))?
-            .into_iter()
-            .filter(|record| record.status == OriginPublicationStatus::Prepared)
-            .count();
-        u64::try_from(prepared)
-            .map_err(|_| Error::ArithmeticOverflow("prepared origin publication count"))
+        let mut prepared = 0_u64;
+        self.visit_origin_publication_rows(Some(repo_id), |record| {
+            if record.status == OriginPublicationStatus::Prepared {
+                prepared = prepared.saturating_add(1);
+            }
+            ControlFlow::Continue(())
+        })?;
+        Ok(prepared)
     }
 }
