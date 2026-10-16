@@ -765,13 +765,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cluster.rs` | src | m | 6 struct · 2 fn · 2 const | ClaimCohort, ClusterAssignments, ClusterClaim, ClusterOptions, ClusterPartitionKey, CohortId | Pure, deterministic claim clustering — a PROPOSE-ONLY tool |
 | `src/cluster/tests.rs` | test | s | — | — | Deterministic and authority-boundary fixtures for the clustering tool |
 | `src/code_artifact.rs` | src | m | 1 struct · 1 enum · 7 fn · 4 const · 1 crate-vis | CodeArtifactBody, CodeArtifactClass | — |
-| `src/code_document/blame.rs` | src | s | 2 fn · 1 type | — | Per-operation blame over tested file states: which operation wrote each surviving character, and which… |
+| `src/code_document/blame.rs` | src | s | 3 fn · 1 type | — | Per-operation blame over tested file states: which operation wrote each surviving character, and which… |
 | `src/code_document/codec.rs` | src | s | 9 crate-vis | — | Strict durable document rows and canonical operation folds |
 | `src/code_document/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | Base-mode live code files: actor-stamped Loro operations and verified tested frontiers |
 | `src/code_document/session.rs` | src | s | 1 struct · 10 fn | CodeDocumentSession | Private Loro forks and persistent cursor-anchored symbol spans |
 | `src/code_document/storage.rs` | src | m | 9 fn · 14 crate-vis | — | Atomic merge-before-persist of live file edits and immutable tested snapshots |
 | `src/code_document/tests.rs` | test | m | — | — | — |
-| `src/code_document/types.rs` | src | s | 8 struct · 1 enum · 3 fn | CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance, CodeRangeChange, CodeSpanAnchor, CodeSpanBlame +1 | File edit verbs, cursor spans, operation receipts and tested frontiers |
+| `src/code_document/types.rs` | src | s | 8 struct · 1 enum · 3 fn · 1 crate-vis | CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance, CodeRangeChange, CodeSpanAnchor, CodeSpanBlame +1 | File edit verbs, cursor spans, operation receipts and tested frontiers |
 | `src/code_memory.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
 | `src/code_memory/implementation.rs` | src | s | — | — | ARCH-0050 R6 L2 memory-over-code attachment mechanics (ONE-1608) |
 | `src/code_memory/parts/lifecycle-and-tests.rs` | src | m | 1 crate-vis | — | — |
@@ -787,7 +787,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_revision/integrity.rs` | src | m | 11 crate-vis | — | Per-revision integrity records and the fold chain proving a revision's ancestry |
 | `src/code_revision/keys.rs` | src | s | 7 crate-vis | — | Typed side tables for the code-revision row families: finalized records, forks, per-revision integrity… |
 | `src/code_revision/mod.rs` | src | s | 5 re-export · 2 crate-vis | — | — |
-| `src/code_revision/promotion.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | CodeSessionRun | Session provenance claims and promotion guarded by verified revision history |
+| `src/code_revision/promotion.rs` | src | m | 2 struct · 5 fn · 1 crate-vis | CodeRevisionFileOps, CodeSessionRun | Session provenance claims and promotion guarded by verified revision history |
 | `src/code_revision/proposals.rs` | src | s | 1 struct · 1 enum · 2 fn · 2 crate-vis | CodeRevisionProposal, CodeRevisionWriteOutcome | Durable stranded revisions against the new head; reconciliation is explicit |
 | `src/code_revision/storage.rs` | src | m | 8 fn · 6 crate-vis | — | Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes |
 | `src/code_revision/tests.rs` | test | XL | — | — | — |
@@ -868,10 +868,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/wasmtime_runtime/tests.rs` | test | m | — | — | — |
 | `src/code_sandbox/wasmtime_runtime/typed.rs` | src | m | 1 crate-vis | — | Canonical typed WIT imports over the bounded engine-host channel |
 | `src/code_sandbox/wasmtime_runtime/wire.rs` | src | m | 3 crate-vis | — | Internal bounded JSON bridge between typed WIT and the borrowed engine host |
-| `src/code_symbol/codec.rs` | src | m | 2 fn · 4 const · 28 crate-vis | — | Pinned body keys and the manifest / chunk / revision / entity-body encode-decode |
+| `src/code_symbol/codec.rs` | src | m | 2 fn · 4 const · 29 crate-vis | — | Pinned body keys and the manifest / chunk / revision / entity-body encode-decode |
 | `src/code_symbol/document_view.rs` | src | s | 2 struct · 5 fn | CodeAttributedChange, CodeUnitBlame | Semantic diff and blame over tested code documents, named per operation |
 | `src/code_symbol/keys.rs` | src | s | 2 fn · 8 crate-vis | — | Manifest and revision-index key families and the deterministic symbol entity id |
-| `src/code_symbol/mod.rs` | src | s | 8 re-export · 1 crate-vis | — | — |
+| `src/code_symbol/mod.rs` | src | s | 8 re-export · 2 crate-vis | — | — |
 | `src/code_symbol/rust_source.rs` | src | m | 1 fn · 4 crate-vis | — | tree-sitter Rust parsing: definition extraction, identifier references and the derived symbol graph |
 | `src/code_symbol/semantic_diff.rs` | src | m | 2 struct · 3 fn | CodeContentVersion, CodeSemanticChange | Content-addressed semantic changes |
 | `src/code_symbol/storage.rs` | src | m | 11 fn · 2 crate-vis | — | Vault CRUD for symbol manifests and the blame / definition / reference / PPR reads over them |
@@ -883,7 +883,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_view/mod.rs` | src | m | 3 struct · 6 fn · 1 re-export · 2 crate-vis | CodeViewSet, ViewReceipt, VisibleFilePolicy | Per-agent file views over codebase blobs, with one owned shared service set |
 | `src/code_view/tests.rs` | test | m | — | — | — |
 | `src/codebase/ingest.rs` | src | m | 4 struct · 1 enum · 1 trait · 1 fn · 9 crate-vis | HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult | Local-git ingest helpers: blob walk, hosted-media gate, custody scan, and validators |
-| `src/codebase/mod.rs` | src | s | 3 re-export · 2 crate-vis | — | — |
+| `src/codebase/instructions.rs` | src | s | 1 struct · 1 fn · 1 const | CodeInstructionHandle | Index-only handles to the instruction files on a returned code unit's ancestor path in its mounted snapshot |
+| `src/codebase/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | — |
 | `src/codebase/repo_ref.rs` | src | s | 1 enum · 4 fn · 2 const · 3 crate-vis | RepoRef | RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization |
 | `src/codebase/residue.rs` | src | s | 1 crate-vis | — | Reclaim excluded historical codebase assets without deleting retained shared blobs |
 | `src/codebase/serve_lookup.rs` | src | s | 2 crate-vis | — | Transaction-composable lookup of the exact snapshot behind a served fork |
@@ -2646,7 +2647,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_mutation/tests/export_authority.rs` | test | m | — | — | — |
 | `src/repo_mutation/tests/reviewed_stack.rs` | test | m | — | — | — |
 | `src/repo_mutation/trailer.rs` | src | m | 6 fn · 5 const · 3 crate-vis | — | — |
-| `src/repo_mutation/types.rs` | src | s | 6 struct · 2 enum · 6 fn · 1 type · 2 const · 1 crate-vis | RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus | — |
+| `src/repo_mutation/types.rs` | src | s | 6 struct · 2 enum · 7 fn · 1 type · 2 const · 1 crate-vis | RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus | — |
 | `src/repo_mutation/worktree.rs` | src | s | 8 crate-vis | — | — |
 | `src/rerank.rs` | src | s | 2 struct · 1 trait · 1 const · 2 mod | RerankCandidate, RerankOptions, Reranker | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
 | `src/rerank/affect.rs` | src | s | 3 struct · 5 fn | ArousalFloor, ArousalReranker, EmotionSimilarityReranker | Nonblocking affect scorers over host-resolved, authorized edge VAD |
