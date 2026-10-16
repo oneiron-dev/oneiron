@@ -46,6 +46,7 @@ declare namespace self {
     diary(input: { content: string; kind?: string | null }): Promise<unknown>;
   };
   const skills: {
+    call(input: { args: unknown; skill: string }): Promise<unknown>;
     callables(input: object): Promise<unknown>;
     fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
     save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
@@ -110,7 +111,9 @@ declare const vault: {
     route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
-  receipts(input: { limit?: number | null }): Promise<unknown>;
+  receipts: ((input: { limit?: number | null }) => Promise<unknown>) & {
+    get(input: { receipt_ref: string }): Promise<unknown>;
+  };
   rooms: {
     claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
     find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
