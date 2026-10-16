@@ -43282,7 +43282,7 @@
      "surface": {
       "enum": 1,
       "fn": 6,
-      "re-export": 5,
+      "re-export": 7,
       "struct": 28
      }
     },
@@ -43304,6 +43304,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DiaryQueryEntry",
+      "DiaryQueryOutcome",
+      "DiaryQueryRequest"
+     ],
+     "path": "src/task_verb/sdk_diary.rs",
+     "purpose": "`self.memory.diary.query`: the caller reads an agent's private diary, stating a reason the agent sees in its…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -43311,7 +43327,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 128
+      "fn": 142
      }
     },
     {
@@ -43389,6 +43405,28 @@
      "surface": {
       "fn": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HandoffAlarmRequest",
+      "SharedActExecuted",
+      "SharedActRequest",
+      "SharedMemberAddRequest",
+      "SharedMemberRequest",
+      "SharedMemberRoleRequest",
+      "SharedReceiptRequest",
+      "SharedRemoveOwnerRequest",
+      "SharedTransferRequest",
+      "SharedVaultRequest"
+     ],
+     "path": "src/task_verb/sdk_shared.rs",
+     "purpose": "The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset…",
+     "surface": {
+      "fn": 13,
+      "struct": 10
      }
     },
     {
@@ -48822,7 +48860,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 98,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -48978,7 +49016,7 @@
    },
    "over_bar": 99,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2953,
+   "source_files": 2955,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56564,7 +56602,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 106
+      "fn": 120
      }
     },
     {
@@ -57577,7 +57615,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 107
+      "fn": 121
      }
     },
     {
@@ -60016,7 +60054,17 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/shared_act_doors.rs",
+     "purpose": "The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)…",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -60726,7 +60774,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -65656,7 +65704,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 241,
+     "files": 242,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65945,7 +65993,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 456,
+   "source_files": 457,
    "test_files": 182
   },
   "oneiron-spawn": {
