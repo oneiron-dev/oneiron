@@ -313,7 +313,8 @@ fn noul_answer(text: &str) -> Option<ProviderDecision> {
 
 /// The answer's shape: System One's Box answer without its `type`.
 fn box_schema() -> Value {
-    let edge = |what: &str| json!({"type": "number", "minimum": 0, "maximum": 1, "description": what});
+    let edge =
+        |what: &str| json!({"type": "number", "minimum": 0, "maximum": 1, "description": what});
     json!({
         "type": "object",
         "properties": {

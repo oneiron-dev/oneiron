@@ -25,6 +25,7 @@ mod migration;
 pub(crate) use membership::{stage_session_carrier, validate_session_carrier};
 
 mod branch_scope;
+mod participation;
 mod policy;
 mod quote;
 mod quote_strips;

@@ -25,14 +25,16 @@ impl Memory<'_> {
         Ok(roster)
     }
 
-    /// The roster the room's own record holds, for a caller that belongs to
-    /// it. Deriving the room's Scope from it shows the caller nothing.
+    /// The roster the room's own record holds, for a caller that reads it
+    /// ([`room_reader_in`]): a member, or an agent on a Ready join. Deriving
+    /// the room's Scope from it shows the caller nothing.
     fn roster_of(&self, room: EntityId) -> MemoryResult<Vec<RoomPresence>> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let members = room_members_in(vault, &txn, room)?
-            .filter(|members| members.contains(&self.actor()))
-            .ok_or_else(unknown_room)?;
+        let members = room_members_in(vault, &txn, room)?.ok_or_else(unknown_room)?;
+        if !room_reader_in(vault, &txn, room, &members, self.actor())? {
+            return Err(unknown_room());
+        }
         let worlds = reading_defaults_in(vault, &txn, &members)?;
         let clearances = clearances_in(vault, &txn, &members)?;
         drop(txn);
@@ -535,12 +537,44 @@ pub(crate) fn room_roster_in(
     }))
 }
 
+/// Whether `caller` reads `room` as `txn` reads it: a member of the room's
+/// `members`, or an AGENT_DEF standing on an OF-531 Ready join for the room
+/// itself. A join opens the room's reads and takes no seat: the roster, and
+/// with it the audience every disclosure meets, stays the members alone, and
+/// the agent's own grants still bound each read.
+pub(crate) fn room_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    members: &[EntityId],
+    caller: EntityId,
+) -> crate::Result<bool> {
+    if members.contains(&caller) {
+        return Ok(true);
+    }
+    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
+    {
+        return Ok(false);
+    }
+    let agent = crate::workspace_roster::JoinSubject::Agent(caller);
+    match crate::workspace_roster::require_join_for_branch_in_txn(
+        vault, txn, room, None, &agent, None,
+    ) {
+        Ok(_) => Ok(true),
+        Err(crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. })) => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room
 /// (ARCH-0067 §8): `room_scope` over the roster in this snapshot, as its
 /// world ceiling and its clearance, that roster as the audience, and every
 /// other member's read key. One snapshot builds all of it, the same one that
-/// serves the row it is checked against. `None` when the room is not one
-/// `caller` belongs to here.
+/// serves the row it is checked against. `None` when `caller` does not read
+/// the room here ([`room_reader_in`]); an agent on a Ready join reads it
+/// without joining the roster.
 pub(crate) fn room_ceiling_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -550,7 +584,7 @@ pub(crate) fn room_ceiling_in(
     let Some(members) = room_roster_in(vault, txn, room)? else {
         return Ok(None);
     };
-    if members.binary_search(&caller).is_err() {
+    if !room_reader_in(vault, txn, room, &members, caller)? {
         return Ok(None);
     }
     let worlds = reading_defaults_in(vault, txn, &members)?;

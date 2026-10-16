@@ -449,7 +449,10 @@ impl<E> PersonAboutExecutor<'_, E> {
                 })
                 .collect();
             let text = one_line(
-                reply.lines().find(|line| !line.trim().is_empty()).unwrap_or(""),
+                reply
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or(""),
                 ABOUT_MAX_CHARS,
             );
             if text.is_empty() {
