@@ -48,8 +48,7 @@ pub(crate) fn effect_slate_always_allows(
         return Ok(false);
     };
     Ok(key.status == ConnectorKeyStatus::Active
-        && connector_tool_setting_in_txn(store, txn, &key, tool)?
-            == SlateDisposition::AlwaysAllow)
+        && connector_tool_setting_in_txn(store, txn, &key, tool)? == SlateDisposition::AlwaysAllow)
 }
 
 /// `never allow` removes a tool from what the connector lists as callable.

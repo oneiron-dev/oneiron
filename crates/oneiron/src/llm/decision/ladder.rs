@@ -482,6 +482,62 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<Vec<TypedDecision>> {
+        let pack = self.open(
+            questions,
+            principal,
+            evidence,
+            images,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )?;
+        let mut readings = pack.readings();
+        let mut first = Vec::with_capacity(questions.len());
+        if dial.first == DecisionRung::Human {
+            first.extend(questions.iter().map(|_| None));
+        } else {
+            // Past the questions-per-call row the pack goes as several requests in turn.
+            let per_call = policy.questions_per_call();
+            for (chunk, readings) in questions
+                .chunks(per_call)
+                .zip(readings.chunks_mut(per_call))
+            {
+                let call = DecisionPack {
+                    questions: chunk,
+                    evidence,
+                    images,
+                    state,
+                    deadline,
+                };
+                first.extend(
+                    self.read(dial.first, &call, pack.person, readings)?
+                        .into_iter()
+                        .map(Some),
+                );
+            }
+        }
+        self.close(&pack, first, readings)
+    }
+
+    /// A pack's checked routing inputs, before its first read.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the inputs of run_pack_images, checked once for every first read"
+    )]
+    pub(super) fn open<'a>(
+        &'a self,
+        questions: &'a [&'a DecisionQuestion],
+        principal: EntityId,
+        evidence: &'a [EntityId],
+        images: &'a [DecisionImage],
+        state: &'a Value,
+        dial: DecisionDial,
+        policy: &'a DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &'a RetrievalDeadline,
+    ) -> Result<OpenPack<'a>> {
         if questions.is_empty() {
             return Err(invalid("invalid decision pack"));
         }
@@ -524,53 +580,49 @@ impl DecisionLadder<'_> {
             .iter()
             .map(|question| policy.resolve(question, reversibility, dial.band))
             .collect::<Result<Vec<_>>>()?;
-        let mut readings = questions
+        Ok(OpenPack {
+            questions,
+            principal,
+            evidence,
+            images,
+            state,
+            dial,
+            rows,
+            person_row,
+            person,
+            policy,
+            reversibility,
+            deadline,
+        })
+    }
+
+    /// Each question's routing after its first read, `first` (none when the dial starts at
+    /// the person).
+    pub(super) fn close(
+        &self,
+        pack: &OpenPack<'_>,
+        first: Vec<Option<Read>>,
+        readings: Vec<Readings>,
+    ) -> Result<Vec<TypedDecision>> {
+        pack.questions
             .iter()
-            .map(|_| Readings::default())
-            .collect::<Vec<_>>();
-        let mut first = Vec::with_capacity(questions.len());
-        if dial.first == DecisionRung::Human {
-            first.extend(questions.iter().map(|_| None));
-        } else {
-            // Past the questions-per-call row the pack goes as several requests in turn.
-            let per_call = policy.questions_per_call();
-            for (chunk, readings) in questions
-                .chunks(per_call)
-                .zip(readings.chunks_mut(per_call))
-            {
-                let pack = DecisionPack {
-                    questions: chunk,
-                    evidence,
-                    images,
-                    state,
-                    deadline,
-                };
-                first.extend(
-                    self.read(dial.first, &pack, person, readings)?
-                        .into_iter()
-                        .map(Some),
-                );
-            }
-        }
-        questions
-            .iter()
-            .zip(rows)
+            .zip(&pack.rows)
             .zip(first)
             .zip(readings)
-            .map(|(((&question, row), first), readings)| {
+            .map(|(((&question, &row), first), readings)| {
                 let route = Route {
                     question,
-                    principal,
-                    evidence,
-                    images,
-                    state,
-                    dial,
+                    principal: pack.principal,
+                    evidence: pack.evidence,
+                    images: pack.images,
+                    state: pack.state,
+                    dial: pack.dial,
                     row,
-                    person_row,
-                    person,
-                    policy,
-                    reversibility,
-                    deadline,
+                    person_row: pack.person_row,
+                    person: pack.person,
+                    policy: pack.policy,
+                    reversibility: pack.reversibility,
+                    deadline: pack.deadline,
                 };
                 self.route(&route, first, readings)
             })
@@ -822,34 +874,48 @@ impl DecisionLadder<'_> {
         {
             return Err(invalid("decision provider cannot take the question"));
         }
-        let count = pack.questions.len();
         if !pack.deadline.decision_may_start() {
-            return Ok((0..count).map(|_| Read::NotStarted).collect());
+            return Ok((0..pack.questions.len())
+                .map(|_| Read::NotStarted)
+                .collect());
         }
-        let answers = match ask(provider, pack, person) {
-            Ok(answers) => answers,
-            Err(_) if !pack.deadline.decision_may_start() => {
-                return Ok((0..count).map(|_| Read::Cut).collect());
-            }
-            Err(error) => return Err(error),
-        };
-        if pack.deadline.answer_due() {
+        take(&pin, pack, ask(provider, pack, person), readings)
+    }
+}
+
+/// What one provider request, `answered`, gave each pack question on the call's clock. A
+/// failure once the work time is spent, or a reply after the answer's time, is the cut; a
+/// failure with time left fails the call.
+pub(super) fn take(
+    pin: &ProviderPin,
+    pack: &DecisionPack<'_>,
+    answered: Result<Vec<ProviderDecision>>,
+    readings: &mut [Readings],
+) -> Result<Vec<Read>> {
+    let count = pack.questions.len();
+    let answers = match answered {
+        Ok(answers) => answers,
+        Err(_) if !pack.deadline.decision_may_start() => {
             return Ok((0..count).map(|_| Read::Cut).collect());
         }
-        let mut reads = Vec::with_capacity(answers.len());
-        for ((question, answer), readings) in pack.questions.iter().zip(answers).zip(readings) {
-            answer.validate(question)?;
-            if let Some(reading) = answer.paired {
-                readings.paired.push(reading.bind(pin.clone()));
-            }
-            if let Some(reading) = answer.person {
-                readings.person.push(reading.bind(pin.clone()));
-            }
-            readings.pins.push(pin.clone());
-            reads.push(Read::Answer(answer));
-        }
-        Ok(reads)
+        Err(error) => return Err(error),
+    };
+    if pack.deadline.answer_due() {
+        return Ok((0..count).map(|_| Read::Cut).collect());
     }
+    let mut reads = Vec::with_capacity(answers.len());
+    for ((question, answer), readings) in pack.questions.iter().zip(answers).zip(readings) {
+        answer.validate(question)?;
+        if let Some(reading) = answer.paired {
+            readings.paired.push(reading.bind(pin.clone()));
+        }
+        if let Some(reading) = answer.person {
+            readings.person.push(reading.bind(pin.clone()));
+        }
+        readings.pins.push(pin.clone());
+        reads.push(Read::Answer(answer));
+    }
+    Ok(reads)
 }
 
 /// The person question's read shape, the one seam for it (test 6b: a separate read, not
@@ -864,40 +930,78 @@ fn ask(
     let answers = match (person, pack.call(0)) {
         (None, Some(call)) if pack.questions.len() == 1 => vec![provider.decide(&call)?],
         (None, _) => provider.decide_pack(pack)?,
-        (Some(person), _) => {
-            let questions = pack
-                .questions
-                .iter()
-                .copied()
-                .chain([person])
-                .collect::<Vec<_>>();
-            let mut answers = provider.decide_pack(&DecisionPack {
+        (Some(_), _) => {
+            let questions = asked(pack, person);
+            provider.decide_pack(&DecisionPack {
                 questions: &questions,
                 ..*pack
-            })?;
-            if answers.len() != questions.len() {
-                return Err(invalid("a pack answers every question"));
-            }
-            let asked = answers.pop().expect("the person question's answer");
-            asked.validate(person)?;
-            let reading = match (&asked.answer, asked.probability) {
-                (DecisionAnswer::Noul(_), Some(probability)) => Some(PairedAnswer {
-                    question: person.id,
-                    question_version: person.version,
-                    probability,
-                }),
-                _ => None,
-            };
-            for answer in &mut answers {
-                answer.person = reading;
-            }
-            answers
+            })?
         }
     };
-    if answers.len() != pack.questions.len() {
+    joined(answers, pack.questions.len(), person)
+}
+
+/// The questions one read asks: the pack's, then the person question when there is one.
+pub(super) fn asked<'q>(
+    pack: &DecisionPack<'q>,
+    person: Option<&'q DecisionQuestion>,
+) -> Vec<&'q DecisionQuestion> {
+    pack.questions.iter().copied().chain(person).collect()
+}
+
+/// `answers` to [`asked`]'s questions as the pack's `count` answers, the person question's
+/// P(yes) joined to each as its person reading.
+pub(super) fn joined(
+    mut answers: Vec<ProviderDecision>,
+    count: usize,
+    person: Option<&DecisionQuestion>,
+) -> Result<Vec<ProviderDecision>> {
+    if let Some(person) = person {
+        if answers.len() != count + 1 {
+            return Err(invalid("a pack answers every question"));
+        }
+        let asked = answers.pop().expect("the person question's answer");
+        asked.validate(person)?;
+        let reading = match (&asked.answer, asked.probability) {
+            (DecisionAnswer::Noul(_), Some(probability)) => Some(PairedAnswer {
+                question: person.id,
+                question_version: person.version,
+                probability,
+            }),
+            _ => None,
+        };
+        for answer in &mut answers {
+            answer.person = reading;
+        }
+    }
+    if answers.len() != count {
         return Err(invalid("a pack answers every question"));
     }
     Ok(answers)
+}
+
+/// One pack's checked routing inputs, shared by its questions.
+pub(super) struct OpenPack<'a> {
+    questions: &'a [&'a DecisionQuestion],
+    principal: EntityId,
+    evidence: &'a [EntityId],
+    images: &'a [DecisionImage],
+    state: &'a Value,
+    dial: DecisionDial,
+    rows: Vec<LearnedBand>,
+    person_row: Option<PersonThreshold>,
+    /// The person question, asked beside the pack's when the dial reaches the person.
+    pub(super) person: Option<&'a DecisionQuestion>,
+    policy: &'a DecisionBandPolicy,
+    reversibility: Reversibility,
+    deadline: &'a RetrievalDeadline,
+}
+
+impl OpenPack<'_> {
+    /// One empty reading record per question.
+    pub(super) fn readings(&self) -> Vec<Readings> {
+        self.questions.iter().map(|_| Readings::default()).collect()
+    }
 }
 
 /// One question's routing inputs, shared by its reads.
@@ -926,7 +1030,7 @@ fn validate_state(state: &Value) -> Result<()> {
 }
 
 /// What one provider read gave the call.
-enum Read {
+pub(super) enum Read {
     Answer(ProviderDecision),
     /// No work time was left to start it.
     NotStarted,
@@ -967,7 +1071,7 @@ pub(super) fn millis(time: std::time::Duration) -> u64 {
 
 /// What a run's measurements leave on the receipt.
 #[derive(Default)]
-struct Readings {
+pub(super) struct Readings {
     pins: Vec<ProviderPin>,
     paired: Vec<PairedReading>,
     person: Vec<PairedReading>,

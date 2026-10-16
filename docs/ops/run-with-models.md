@@ -885,8 +885,10 @@ bind:
 - **Escalation**: the house model's decision read (section 9), when its
   recipe names the paired question. The recipe's person question becomes the
   ladder's "ask up?" question, and `person_threshold` becomes its row.
-- **The local head and the big model**: no typed provider fills these yet,
-  so the ladder steps past them.
+- **Big**: the big model, through the seat `[models.decisions.big]` names
+  (below).
+- **The local head**: no typed provider fills it yet, so the ladder steps
+  past it.
 - **The owner**: the last rung is a durable queue. Each ask waits in the
   vault until you answer it (owner-actions.md, "Answer the decision
   ladder's asks").
@@ -915,7 +917,23 @@ model = "systemone-head"
 version = "2026-10-01"
 remote_opt_in = false   # a vault that is not hosted sends unit state only with this set
 budget_units = 100000   # its own meter; models.raw_budget_units when unset
+
+[models.decisions.big]
+role = "generative_reasoner"   # the seat whose model answers (the default)
+version = "2026-10"            # the revision the rung's pin names
+wording = "You answer one typed question about the state you are given."
+reply = "json"                 # or "lines"
+budget_units = 50000           # its own meter; models.raw_budget_units when unset
 ```
+
+The Big rung asks each question as one model call on that seat. The call is
+routed against the vault's live model policy, like a chat turn, and sent under
+its own run on the rung's meter. `wording` is the system message. The question,
+what it takes and the state follow as the user message, with the reply format:
+one JSON object `{"answer", "probability"}`, or two lines `answer:` and
+`probability:`. A reply that names nothing the question takes, or no
+probability from 0 to 1, abstains, and the ladder moves on. The rung takes
+noul, choice and score questions, not boxes.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The

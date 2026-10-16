@@ -1,5 +1,10 @@
 use super::bound::{BoundEnvelope, BoundSubject, ConsentDomain};
+use super::contact_clearance::{
+    CONTACT_CLEARANCE_CLASS, CONTACT_CLEARANCE_REVOKE_COMMAND, contact_clearance_ref,
+};
 use super::grant::{ConsentGrantRow, ConsentGrantStatus};
+use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
+use crate::entity_id::EntityId;
 use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 // ---------------------------------------------------------------------------
@@ -93,6 +98,30 @@ impl ConsentRegistryRow {
             },
             grant_ref,
             bypass: row.bypass,
+        }
+    }
+
+    /// One contact's clearance row. Its revoke is the contact clearance
+    /// door's (`consent.revoke_contact_disclosure`), not the grant revoke.
+    pub(super) fn from_contact_clearance(contact: &EntityId, clearance: &DisclosureScope) -> Self {
+        let grant_ref = contact_clearance_ref(contact);
+        Self {
+            domain: ConsentDomain::Disclosure,
+            subject: contact.to_hex(),
+            class: CONTACT_CLEARANCE_CLASS.to_owned(),
+            selectors: render_scope(&clearance.scope),
+            scope: Some(clearance.scope.clone()),
+            status: match clearance.status {
+                DisclosureScopeStatus::Active => ConsentGrantStatus::Active,
+                DisclosureScopeStatus::Revoked => ConsentGrantStatus::Revoked,
+            },
+            created_at: clearance.created_at,
+            revoke_action: ConsentRevokeAction {
+                command: CONTACT_CLEARANCE_REVOKE_COMMAND.to_owned(),
+                grant_ref: grant_ref.clone(),
+            },
+            grant_ref,
+            bypass: None,
         }
     }
 }

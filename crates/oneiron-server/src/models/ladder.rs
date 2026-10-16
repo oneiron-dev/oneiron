@@ -596,6 +596,8 @@ impl OfferLadder {
         may_fall_back: bool,
     ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
+        // The run is live until this call ends: the host stays awake for it.
+        let _awake = oneiron_vault_contract::host_adapters::run_awake();
         let call = Call {
             run,
             request: &request,
