@@ -53,7 +53,7 @@ pub struct TradeoffRule {
 }
 
 /// The preference part of a skill's goal record. The responsible person
-/// authors the rules and the Jev band. Learned rules come only from that
+/// authors the rules and the judgment band. Learned rules come only from that
 /// person's A/B picks and are kept when the rules or band are revised.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

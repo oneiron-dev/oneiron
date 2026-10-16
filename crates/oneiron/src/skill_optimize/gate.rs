@@ -10,7 +10,7 @@
 //!        │              ├─ judged replay: score both bodies on each goal axis
 //!        │              ├─ vector dominance (ties and floor regressions reject; tradeoffs await a decision)
 //!        │              ├─ project goal: its axes join, primary axes from the live report
-//!        │              ├─ tradeoff ladder: preference rule, then bound Jev band, then A/B ask
+//!        │              ├─ tradeoff ladder: preference rule, then judgment band, then A/B ask
 //!        │              │  up the responsible-role chain
 //!        │              ├─ commit-time: held-out set recomputed and compared
 //!        │              ├─ accept-time governance_tier recheck
