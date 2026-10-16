@@ -1090,8 +1090,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/stream/frames.rs` | src | s | 6 struct · 5 enum · 6 fn | AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, DeltaRow, FrameApplyOutcome +3 | Board stream frames, snapshots and carrier coalescing |
 | `src/context_board/stream/mod.rs` | src | s | 5 re-export | — | Board streaming frames, routing and the pending-wake queue |
 | `src/context_board/stream/provenance.rs` | src | s | 2 struct · 13 crate-vis | ChildEvent, VerifiedOwnTaskEvent | Verified own-task and child event minting for routed board events |
-| `src/context_board/stream/publish.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | CommittedTaskBoardState | The own-task producer: committed TASK writes become routed board events |
-| `src/context_board/stream/registry.rs` | src | s | 2 struct · 11 fn · 1 crate-vis | BoardStreamRegistry, StreamConnectionState | The board stream registry: connections, subscriptions and event routing |
+| `src/context_board/stream/publish.rs` | src | s | 1 struct · 5 fn · 1 crate-vis | CommittedTaskBoardState | The own-task producer: committed TASK writes become routed board events |
+| `src/context_board/stream/registry.rs` | src | s | 2 struct · 12 fn · 1 crate-vis | BoardStreamRegistry, StreamConnectionState | The board stream registry: connections, subscriptions and event routing |
 | `src/context_board/stream/routing_tests.rs` | test | s | — | — | Event classification, provenance minting and route_event admission tests |
 | `src/context_board/stream/tests.rs` | test | s | 1 crate-vis | — | Frame, snapshot, coalescing and subscription-lifecycle tests |
 | `src/context_board/stream/wake.rs` | src | s | 1 struct · 2 fn | WakeEnvelope | Wake envelopes and the host's drain |
