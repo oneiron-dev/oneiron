@@ -52,6 +52,27 @@ const NOTICES: SideTable<([u8; 16], [u8; 32]), CooperativeDeletionNotice, Named>
 const INCOMING: SideTable<([u8; 32], [u8; 16]), IncomingCooperativeDeletion, Named> =
     SideTable::new(&side_table::COOPERATIVE_DELETION_INCOMING);
 
+/// The pacts under which the owner kept what an ask covers: each filed ask
+/// whose current answer is any choice but delete (BIZ-LEGAL-0004 B2).
+/// Retrieval keeps those copies out of shared reads (Docs Q09).
+pub(crate) fn courtesy_retained_pacts_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::BTreeSet<[u8; 32]>> {
+    let mut pacts = std::collections::BTreeSet::new();
+    for row in INCOMING.iter_from(store, txn, &[])? {
+        let ((pact, _), filed) = row?;
+        if filed
+            .disposition
+            .as_ref()
+            .is_some_and(|answer| answer.kind != CooperativeDeletionDispositionKind::Delete)
+        {
+            pacts.insert(pact);
+        }
+    }
+    Ok(pacts)
+}
+
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("courtesy delete: {reason}"))
 }
