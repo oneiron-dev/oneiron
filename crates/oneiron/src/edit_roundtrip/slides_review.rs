@@ -229,6 +229,7 @@ pub fn review_slides(
         let mut pins: Vec<Vec<ProviderPin>> = vec![Vec::new(); chunk.len()];
         let mut first_probabilities: Vec<Option<f64>> = vec![None; chunk.len()];
         let mut paired: Vec<Vec<PairedReading>> = vec![Vec::new(); chunk.len()];
+        let mut person: Vec<Vec<PairedReading>> = vec![Vec::new(); chunk.len()];
         for (rung, provider) in providers.iter().enumerate() {
             if pending.is_empty() {
                 break;
@@ -245,6 +246,9 @@ pub fn review_slides(
                 }
                 if let Some(reading) = result.paired {
                     paired[index].push(reading.bind(provider_pins[rung].clone()));
+                }
+                if let Some(reading) = result.person {
+                    person[index].push(reading.bind(provider_pins[rung].clone()));
                 }
                 pins[index].push(provider_pins[rung].clone());
                 if rung == 0 {
@@ -285,7 +289,7 @@ pub fn review_slides(
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
                         paired: paired[index].clone(),
-                        person: Vec::new(),
+                        person: person[index].clone(),
                     },
                     human_ask: None,
                 };
@@ -459,8 +463,9 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
                     || pin.version.trim().is_empty()
                     || pin.rung == DecisionRung::Human
             })
-            || !PairedReading::rows_valid(
+            || !PairedReading::readings_valid(
                 &decision.receipt.paired,
+                &decision.receipt.person,
                 decision.receipt.question,
                 &decision.receipt.providers,
             )

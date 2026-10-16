@@ -430,13 +430,18 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
         question_version: 1,
         probability: 0.2,
     };
+    let person = PairedAnswer {
+        question: EntityId::now(),
+        question_version: 1,
+        probability: 0.6,
+    };
     let house = Fixed {
         rung: DecisionRung::Escalation,
         decision: ProviderDecision {
             answer: DecisionAnswer::Noul(true),
             probability: Some(0.9),
             paired: Some(paired),
-            person: None,
+            person: Some(person),
         },
     };
     let run = review_slides(
@@ -475,6 +480,8 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
         vec![system_one.pin(), house.pin()]
     );
     assert_eq!(decision.receipt.paired, vec![paired.bind(house.pin())]);
+    // The surface has no person rung, so the reading routes nothing, and it stays.
+    assert_eq!(decision.receipt.person, vec![person.bind(house.pin())]);
     vault
         .settle_select_edit_proposal(
             &artifact,

@@ -181,6 +181,8 @@ pub struct HumanDecisionRequest {
     pub evidence: Vec<EntityId>,
     pub reason: HumanAskReason,
     pub prior: Option<ProviderDecision>,
+    /// The provider that read `prior`; the engine sets it with the prior.
+    pub prior_provider: Option<ProviderPin>,
     /// Host-issued versioned queue identity; the host renders its own text.
     pub queue_pin: ProviderPin,
 }
@@ -192,22 +194,30 @@ impl HumanDecisionRequest {
         if person == DecisionAnswer::Abstain || !self.question.contract.accepts(&person) {
             return Err(invalid("invalid person answer"));
         }
-        Ok(self
+        let Some(prior) = self
             .prior
             .as_ref()
             .filter(|prior| prior.answer != DecisionAnswer::Abstain && prior.answer != person)
-            .map(|prior| PersonChangedAnswer {
-                question: self.question.id,
-                question_version: self.question.version,
-                principal: self.principal,
-                reason: self.reason,
-                prior: prior.answer.clone(),
-                prior_probability: prior.probability,
-                person,
-                person_reading: prior.person.map(|reading| reading.probability),
-                paired_reading: prior.paired.map(|reading| reading.probability),
-                queue_pin: self.queue_pin.clone(),
-            }))
+        else {
+            return Ok(None);
+        };
+        let provider = self
+            .prior_provider
+            .clone()
+            .ok_or_else(|| invalid("a prior without its provider"))?;
+        Ok(Some(PersonChangedAnswer {
+            question: self.question.id,
+            question_version: self.question.version,
+            principal: self.principal,
+            reason: self.reason,
+            prior: prior.answer.clone(),
+            prior_probability: prior.probability,
+            prior_paired: prior.paired.map(|reading| reading.bind(provider.clone())),
+            prior_person: prior.person.map(|reading| reading.bind(provider.clone())),
+            prior_provider: provider,
+            person,
+            queue_pin: self.queue_pin.clone(),
+        }))
     }
 }
 
@@ -286,6 +296,8 @@ impl DecisionLadder<'_> {
                 principal,
                 evidence: evidence.to_vec(),
                 reason,
+                // The prior is the last provider read's answer.
+                prior_provider: prior.as_ref().and(readings.pins.last().cloned()),
                 prior,
                 queue_pin: self.human_pin.clone(),
             })?;

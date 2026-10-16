@@ -400,8 +400,9 @@ fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
         assert_eq!(changed.prior, DecisionAnswer::Choice("split".into()));
         assert_eq!(changed.prior_probability, Some(0.7));
         assert_eq!(changed.person, DecisionAnswer::Choice("keep".into()));
-        assert_eq!(changed.person_reading, Some(0.97));
-        assert_eq!(changed.paired_reading, Some(0.3));
+        assert_eq!(changed.prior_provider, pin(DecisionRung::Escalation, "r1"));
+        assert_eq!(changed.prior_person, Some(person_row.clone()));
+        assert_eq!(changed.prior_paired.as_ref(), asked.receipt.paired.first());
         // The same answer changes nothing; an answer outside the labels is refused.
         let same = DecisionAnswer::Choice("split".into());
         assert_eq!(queued[0].changed_by(same).unwrap(), None);

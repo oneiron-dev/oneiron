@@ -50,8 +50,9 @@ pub struct LabelReadResponse {
     pub usage: LlmUsage,
 }
 
-/// A host model in decision-read mode. One call returns both readouts from one forward
-/// evaluation and generates no text.
+/// A host model in decision-read mode. One call returns every readout the request asks
+/// (the primary, the paired and, when asked, the person readout) from one forward
+/// evaluation, and generates no text.
 pub trait LabelReadModel: Send + Sync {
     /// The exact model this reader serves.
     fn model(&self) -> &str;

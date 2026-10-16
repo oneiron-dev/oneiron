@@ -802,9 +802,18 @@ impl UsefulUpstreamJudge for WrongSeat {
     }
 }
 /// The house model's decision read, with its paired reading. `self_paired` makes the
-/// pair read the question being answered, which no receipt may hold.
+/// pair read the question being answered, which no receipt may hold; `person` adds a
+/// person row no receipt may hold either.
 struct HouseRead {
     self_paired: bool,
+    person: Option<BadPerson>,
+}
+#[derive(Clone, Copy)]
+enum BadPerson {
+    /// P(ask a person) out of range.
+    OutOfRange,
+    /// The person row reads the question the same provider's paired row read.
+    ReadsPaired,
 }
 impl UsefulUpstreamJudge for HouseRead {
     fn decide(
@@ -832,6 +841,17 @@ impl UsefulUpstreamJudge for HouseRead {
             question_version: 1,
             probability: 0.3,
         }];
+        if let Some(bad) = self.person {
+            let mut row = answer.receipt.paired[0].clone();
+            match bad {
+                BadPerson::OutOfRange => {
+                    row.question = EntityId::now();
+                    row.probability = 2.0;
+                }
+                BadPerson::ReadsPaired => row.probability = 0.5,
+            }
+            answer.receipt.person = vec![row];
+        }
         Ok(answer)
     }
 }
@@ -883,18 +903,27 @@ fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() ->
             .merge_shared_skill_delta(&ask, &WrongQuestion, &NoReplay, at(21), 21)
             .is_err()
     );
-    assert!(
-        fixture
-            .vault
-            .merge_shared_skill_delta(
-                &ask,
-                &HouseRead { self_paired: true },
-                &NoReplay,
-                at(21),
-                21
-            )
-            .is_err()
-    );
+    for house in [
+        HouseRead {
+            self_paired: true,
+            person: None,
+        },
+        HouseRead {
+            self_paired: false,
+            person: Some(BadPerson::OutOfRange),
+        },
+        HouseRead {
+            self_paired: false,
+            person: Some(BadPerson::ReadsPaired),
+        },
+    ] {
+        assert!(
+            fixture
+                .vault
+                .merge_shared_skill_delta(&ask, &house, &NoReplay, at(21), 21)
+                .is_err()
+        );
+    }
     assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
     assert_eq!(
         fixture
@@ -916,7 +945,10 @@ fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() ->
     // the house model's read answers the merge like System One (PR B2).
     let ruled = fixture.vault.merge_shared_skill_delta(
         &ask,
-        &HouseRead { self_paired: false },
+        &HouseRead {
+            self_paired: false,
+            person: None,
+        },
         &Replay::new(true),
         at(22),
         22,

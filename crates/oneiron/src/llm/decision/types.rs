@@ -235,6 +235,23 @@ impl PairedReading {
                 )
         })
     }
+
+    /// A receipt's paired and person rows: each list valid, and no provider's person row
+    /// reading the question its paired row read.
+    pub(crate) fn readings_valid(
+        paired: &[Self],
+        person: &[Self],
+        answered: EntityId,
+        providers: &[ProviderPin],
+    ) -> bool {
+        Self::rows_valid(paired, answered, providers)
+            && Self::rows_valid(person, answered, providers)
+            && person.iter().all(|asked| {
+                paired
+                    .iter()
+                    .all(|row| row.provider != asked.provider || row.question != asked.question)
+            })
+    }
 }
 
 /// A paired reading reads another question than the one answered, at a real version,
@@ -285,10 +302,13 @@ pub struct PersonChangedAnswer {
     pub reason: HumanAskReason,
     pub prior: DecisionAnswer,
     pub prior_probability: Option<f64>,
+    /// The model and revision that read the prior.
+    pub prior_provider: ProviderPin,
+    /// The prior read's "needs more thinking?" and "ask a person?" readings, when it took
+    /// them, each with its question and version.
+    pub prior_paired: Option<PairedReading>,
+    pub prior_person: Option<PairedReading>,
     pub person: DecisionAnswer,
-    /// The prior read's P(ask a person) and P(needs more thinking), when it took them.
-    pub person_reading: Option<f64>,
-    pub paired_reading: Option<f64>,
     pub queue_pin: ProviderPin,
 }
 
