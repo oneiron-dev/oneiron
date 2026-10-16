@@ -3039,7 +3039,7 @@
      "surface": {
       "const": 4,
       "enum": 1,
-      "mod": 5,
+      "mod": 6,
       "re-export": 4,
       "type": 1
      }
@@ -3100,7 +3100,7 @@
      "path": "src/autoreason_campaign/beam_promotion.rs",
      "purpose": "One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 4,
       "struct": 3
      }
@@ -3208,6 +3208,78 @@
       "enum": 2,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "BranchSnapshot",
+      "CandidateRef",
+      "ExperimentKind",
+      "ExperimentNode",
+      "ForkInput",
+      "ForkKind",
+      "HeldOutEvidence",
+      "InvalidReceipt",
+      "PruneReason",
+      "PruneReceipt",
+      "ResearchBindRequest",
+      "ResearchBinding",
+      "ResearchConfirmationSeat",
+      "ResearchGoalPin",
+      "ResearchStep",
+      "ResearchTarget",
+      "SearchEvidence",
+      "SelectionReceipt",
+      "WeaveInput",
+      "WeaveReceipt"
+     ],
+     "path": "src/autoreason_campaign/research.rs",
+     "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
+     "surface": {
+      "crate-vis": 9,
+      "enum": 5,
+      "fn": 13,
+      "re-export": 2,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResearchBudgetRead",
+      "ResearchReservation",
+      "ResearchReservationLine"
+     ],
+     "path": "src/autoreason_campaign/research/budget.rs",
+     "purpose": "The campaign's spend on the RSI line: reserve-then-spend, fail-closed",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CampaignPromotionReceipt",
+      "ConfirmationOutcome",
+      "ConfirmationReceipt",
+      "HeldOutCall",
+      "PromotionBasis",
+      "PromotionDisposition"
+     ],
+     "path": "src/autoreason_campaign/research/promotion.rs",
+     "purpose": "Promotion under the campaign's goal: an untouched held-out decision, one sealed confirmation on OF-578's…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -9932,7 +10004,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 8,
       "re-export": 1,
       "struct": 1,
@@ -9956,7 +10028,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 4,
       "re-export": 7
      }
@@ -9985,16 +10057,17 @@
       "CodeRunReplayCursor",
       "CodeRunReplayGeneration",
       "CodeRunReplayRecord",
+      "CodeRunResultBinding",
       "CodeRunStepCheckpoint"
      ],
      "path": "src/code_run/replay.rs",
      "purpose": "—",
      "surface": {
-      "const": 7,
-      "crate-vis": 7,
+      "const": 8,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 18,
-      "struct": 10
+      "fn": 20,
+      "struct": 11
      }
     },
     {
@@ -10066,7 +10139,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 11,
       "struct": 2
      }
@@ -10078,7 +10151,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -10446,7 +10519,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EgressConfig",
@@ -11819,13 +11892,13 @@
      "kind": "src",
      "notable": [
       "CompanionExpression",
-      "CompanionRecordKey",
-      "CompanionRecordKind",
       "CompanionScope",
-      "CompanionSubject"
+      "CompanionSubject",
+      "CompanionSubjectKind",
+      "CompanionTaskKey"
      ],
      "path": "src/companion/model.rs",
-     "purpose": "Typed companion record domain: kinds, scopes, subjects, provenance, and records",
+     "purpose": "Typed companion task domain: scopes, PERSON/relationship subjects, and task keys",
      "surface": {
       "crate-vis": 3,
       "enum": 4,
@@ -18782,7 +18855,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 40
      }
     },
     {
@@ -18865,6 +18938,8 @@
       "JsCodeModeStep",
       "JsCodeModeStepOutcome",
       "JsCodeModeStream",
+      "JsResultCall",
+      "JsResultRef",
       "SelfDispatchResponse"
      ],
      "path": "src/engine_executor/types.rs",
@@ -18872,7 +18947,7 @@
      "surface": {
       "const": 6,
       "crate-vis": 3,
-      "enum": 3,
+      "enum": 5,
       "fn": 6,
       "struct": 8,
       "trait": 2,
@@ -37241,7 +37316,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -39345,7 +39420,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/authorize.rs",
@@ -41096,7 +41171,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Coverage",
@@ -44709,9 +44784,9 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 12,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
@@ -46076,7 +46151,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2768,
+   "source_files": 2771,
    "test_files": 903
   },
   "oneiron-android": {
@@ -48156,7 +48231,7 @@
   "oneiron-browser": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cdp.rs",
@@ -48236,7 +48311,7 @@
     "cdp": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…"
     },
@@ -48466,7 +48541,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/linux.rs",
@@ -48499,7 +48574,7 @@
      "path": "src/supervisor.rs",
      "purpose": "Host custody of the seccomp listener and all network transports",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -48548,7 +48623,7 @@
     "linux": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Linux UAPI used on both sides of the seccomp listener"
     },
@@ -56947,7 +57022,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
@@ -58396,7 +58471,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/serve.rs",
@@ -58917,7 +58992,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -59075,7 +59150,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -60957,13 +61032,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GpuDerivationJob",
+      "GpuLeaseGuard",
+      "GpuPodConfig",
+      "GpuPool",
+      "GpuPoolConfig"
+     ],
+     "path": "src/runtime/gpu_pool.rs",
+     "purpose": "The serve host's owner of the per-region GPU registry",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 13,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/runtime/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -61962,7 +62055,7 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "runtime": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -62013,7 +62106,7 @@
    },
    "over_bar": 18,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 401,
+   "source_files": 402,
    "test_files": 182
   },
   "oneiron-spawn": {
