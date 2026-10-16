@@ -21655,7 +21655,27 @@
      "path": "src/ingest/history/codex.rs",
      "purpose": "Codex session rollouts: one JSONL file per session under `sessions/YYYY/MM/DD/`",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/copilot.rs",
+     "purpose": "GitHub Copilot session logs, as a hook hands them over (`transcript_path`): VS Code's own transcript…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/cursor.rs",
+     "purpose": "Cursor agent transcripts, as its hooks hand them over (`transcript_path`), seen at…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21703,7 +21723,7 @@
       "HistoryThreadKind"
      ],
      "path": "src/ingest/history/mod.rs",
-     "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports and the on-device Claude Code…",
+     "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports, the on-device Claude Code and…",
      "surface": {
       "const": 3,
       "crate-vis": 1,
@@ -42960,7 +42980,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 53,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43648,7 +43668,7 @@
    },
    "over_bar": 52,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2617,
+   "source_files": 2619,
    "test_files": 902
   },
   "oneiron-android": {
@@ -55540,7 +55560,7 @@
      "purpose": "The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import…",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
