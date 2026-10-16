@@ -236,7 +236,7 @@ fn indexed_scores(body: &JsonValue, count: usize) -> Option<Vec<f32>> {
     scores.into_iter().collect()
 }
 
-fn transport(failure: HttpFailure) -> LlmError {
+pub(super) fn transport(failure: HttpFailure) -> LlmError {
     match failure {
         HttpFailure::Timeout => RetryableLlmError::Timeout.into(),
         HttpFailure::Connection | HttpFailure::StreamCut => RetryableLlmError::ServerError.into(),

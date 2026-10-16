@@ -1,0 +1,623 @@
+//! The `ai.*` media seats (`[models.media]`): one ladder per operation, each
+//! rung an OpenAI-compatible provider's media wire. A media call goes down
+//! its seat's ladder on the same walk as a text call: each rung it reaches
+//! is admitted on its own permit, sent through the run's media gate and
+//! settled in token units on its own (ARCH-0053 `#run-admission`); an offer
+//! refused for a limit rests and the call goes to the next. A video call is
+//! a job: its permit is held while the provider renders and settled when
+//! the job ends.
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
+
+use oneiron::llm::media::{
+    AiMediaDoor, AiOperation, MediaBackend, MediaCaps, MediaFuture, MediaJobState, MediaRequest,
+    MediaResponse, Modality,
+};
+use oneiron::llm::run_admission::{MediaGate, RunPermit, RunReceiptSink};
+use oneiron::llm::{SingleRouteBackend, SingleSend};
+use oneiron::{
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCatalogEntry,
+    LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
+};
+use oneiron_llm_openai::{
+    OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
+    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
+};
+use serde::Serialize;
+
+use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig};
+
+use super::catalog::{catalog_entry, engine_model_id};
+use super::cooldown::OfferCooldowns;
+use super::http::{KeyStyle, MediaSend, ProviderHttp};
+use super::ladder::{LadderRung, OfferLadder};
+use super::offer::{ServedOffer, media_offer};
+use super::rerank::transport;
+use super::status::{RungStatus, SeatState, SeatStatus};
+use super::{LoggedReceipts, ladder_locality, undeclared_run};
+
+/// The run every media call is admitted under, one run per call.
+const MEDIA_RUN: &str = "ai-media";
+
+/// A media rung's own side: the media wire it sends through, and the row
+/// that says what it serves.
+#[derive(Clone)]
+pub(super) struct MediaRung {
+    pub(super) backend: Arc<dyn MediaBackend>,
+    pub(super) row: LlmCatalogEntry,
+    pub(super) caps: MediaCaps,
+}
+
+/// What a media call down a ladder came to: an answer, or a job the
+/// provider runs on, with the permit that pays for it.
+pub(super) enum MediaAnswer {
+    Done(MediaResponse),
+    Job(HeldJob),
+}
+
+/// A submitted job, its permit held open until the job ends.
+pub(super) struct HeldJob {
+    pub(super) gate: MediaGate,
+    pub(super) permit: Option<RunPermit>,
+    pub(super) provider_job: String,
+    pub(super) model: ModelId,
+    pub(super) operation: AiOperation,
+    pub(super) caps: MediaCaps,
+}
+
+impl HeldJob {
+    /// Where the job stands. A job that ended settles its permit: an answer
+    /// pays its usage, a failure its reservation.
+    async fn poll(&mut self) -> LlmResult<MediaJobState> {
+        let Some(permit) = &self.permit else {
+            return Err(FatalLlmError::InvalidRequest.into());
+        };
+        let state = self
+            .gate
+            .poll(&self.model, &self.provider_job, permit.lease())
+            .await?;
+        match &state {
+            MediaJobState::Done { response } => {
+                let units = response.usage.token_units(self.operation, &self.caps);
+                if let Some(permit) = self.permit.take()
+                    && let Err(denied) = permit.settle_media(units)
+                {
+                    tracing::error!(%denied, "a media job's settlement was refused");
+                }
+            }
+            MediaJobState::Failed { .. } => self.settle_failed(),
+            MediaJobState::Queued | MediaJobState::Running { .. } => {}
+        }
+        Ok(state)
+    }
+
+    /// Stops the job at its provider. It went out, so it pays its
+    /// reservation.
+    async fn cancel(&mut self) -> LlmResult<()> {
+        let Some(permit) = &self.permit else {
+            return Ok(());
+        };
+        let stopped = self
+            .gate
+            .cancel(&self.model, &self.provider_job, permit.lease())
+            .await;
+        self.settle_failed();
+        stopped
+    }
+
+    fn settle_failed(&mut self) {
+        if let Some(permit) = self.permit.take()
+            && let Err(denied) = permit.settle(oneiron::llm::run_admission::CallOutcome::Failed)
+        {
+            tracing::error!(%denied, "a media job's settlement was refused");
+        }
+    }
+}
+
+/// A media rung's chat side: it answers no chat call. A media rung walks
+/// the same ladder as a chat rung, and only its media gate sends.
+struct NoChat;
+
+impl SingleSend for NoChat {}
+
+impl LlmBackend for NoChat {
+    fn generate<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+        Box::pin(async { Err(LlmError::from(FatalLlmError::InvalidRequest)) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+impl SingleRouteBackend for NoChat {
+    fn preflight(&self, _request: &LlmRequest, _stream: bool) -> LlmResult<()> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// One provider's media HTTP leg: one request per call, as every exchange
+/// over [`ProviderHttp`].
+struct MediaHttp {
+    http: ProviderHttp,
+}
+
+impl OpenAiMediaTransport for MediaHttp {
+    fn execute<'a>(
+        &'a self,
+        request: OpenAiMediaHttpRequest,
+        _lease: &'a BudgetLease,
+    ) -> OpenAiMediaTransportFuture<'a> {
+        Box::pin(async move {
+            let send = match (request.method, request.body) {
+                (OpenAiMediaMethod::Get, OpenAiMediaBody::Empty) => MediaSend::Get,
+                (OpenAiMediaMethod::Delete, OpenAiMediaBody::Empty) => MediaSend::Delete,
+                (OpenAiMediaMethod::Post, OpenAiMediaBody::Json(body)) => MediaSend::Json(body),
+                (OpenAiMediaMethod::Post, OpenAiMediaBody::Multipart { fields, files }) => {
+                    let mut form = reqwest::multipart::Form::new();
+                    for (name, value) in fields {
+                        form = form.text(name, value);
+                    }
+                    for file in files {
+                        let part = reqwest::multipart::Part::bytes(file.bytes)
+                            .file_name(file.filename)
+                            .mime_str(&file.media_type)
+                            .map_err(|_| FatalLlmError::InvalidRequest)?;
+                        form = form.part(file.name, part);
+                    }
+                    MediaSend::Multipart(form)
+                }
+                _ => return Err(FatalLlmError::InvalidRequest.into()),
+            };
+            let reply = self
+                .http
+                .send_media(&request.path, send)
+                .await
+                .map_err(transport)?;
+            Ok::<_, LlmError>(OpenAiMediaHttpResponse {
+                status: reply.status,
+                headers: reply.headers,
+                body: reply.body,
+            })
+        })
+    }
+}
+
+/// One operation's seat: its ladder behind one seat id, each rung alone by
+/// its own id, and the rows its rungs serve.
+struct MediaSeat {
+    model: ModelId,
+    locality: ModelLocality,
+    ladder: Arc<OfferLadder>,
+    rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
+    rows: Vec<MediaRow>,
+}
+
+/// One row `GET /v1/ai/options` lists: a model that serves an operation,
+/// where it runs and what it takes.
+#[derive(Clone, Debug, Serialize)]
+pub struct MediaRow {
+    pub operation: AiOperation,
+    /// The id a call names to take this row alone; the seat's id takes its
+    /// whole ladder.
+    pub model: String,
+    pub seat_model: String,
+    pub provider: String,
+    pub wire_model: String,
+    pub locality: ModelLocality,
+    pub inputs: BTreeSet<Modality>,
+    pub outputs: BTreeSet<Modality>,
+    pub native_rates: Vec<oneiron::llm::media::NativeRate>,
+    pub max_references: usize,
+}
+
+/// A media call's job, as its caller polls it.
+#[derive(Clone, Debug, Serialize)]
+pub struct MediaTicket {
+    pub job: String,
+    pub model: String,
+    pub operation: AiOperation,
+}
+
+/// Every media seat the config fills, their meter, and the jobs they run.
+pub struct MediaRuntime {
+    seats: BTreeMap<AiOperation, MediaSeat>,
+    meter: Option<BudgetGuard>,
+    receipts: Arc<dyn RunReceiptSink>,
+    jobs: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>>,
+}
+
+impl MediaRuntime {
+    pub(super) fn empty() -> Self {
+        Self {
+            seats: BTreeMap::new(),
+            meter: None,
+            receipts: Arc::new(LoggedReceipts),
+            jobs: Mutex::default(),
+        }
+    }
+
+    /// Builds each `[models.media]` seat. A rung whose provider cannot
+    /// start drops out of its ladder, and the reason shows in `status`.
+    pub(super) fn build(
+        config: &ModelsConfig,
+        rests: &Arc<OfferCooldowns>,
+        status: &mut Vec<SeatStatus>,
+    ) -> Self {
+        let mut runtime = Self::empty();
+        if config.media.seats.is_empty() {
+            return runtime;
+        }
+        runtime.meter = Some(BudgetGuard::new(
+            MEDIA_RUN,
+            config.media.budget_units,
+            BudgetExhaustionPolicy::Suspend,
+        ));
+        let backends = media_backends(config);
+        for (operation, seat) in &config.media.seats {
+            let mut rungs = Vec::new();
+            let mut rung_status = Vec::new();
+            let mut rows = Vec::new();
+            for (position, model) in seat.rungs.iter().enumerate() {
+                let provider = &config.providers[&model.provider];
+                let mut entry = RungStatus::new(model, provider);
+                match backends
+                    .get(&model.provider)
+                    .and_then(|backend| media_rung(provider, backend, model, position, *operation, &seat.caps))
+                {
+                    Some(rung) => {
+                        rows.push((rung.model.clone(), model.clone(), provider.locality));
+                        rungs.push(rung);
+                    }
+                    None => entry.available = false,
+                }
+                rung_status.push(entry);
+            }
+            let state = if rungs.is_empty() {
+                SeatState::Unavailable
+            } else {
+                SeatState::Ready
+            };
+            let seat_model = media_seat_model(*operation, &rungs);
+            status.push(SeatStatus {
+                role: format!("media.{}", operation.as_str()),
+                seat_model: seat_model.as_ref().map(ToString::to_string),
+                state,
+                rungs: rung_status,
+            });
+            let Some(seat_model) = seat_model.filter(|_| !rungs.is_empty()) else {
+                continue;
+            };
+            let locality = ladder_locality(&rungs, config);
+            let alone = rungs
+                .iter()
+                .map(|rung| {
+                    let ladder = OfferLadder::pinned(rung.clone(), Arc::clone(rests));
+                    (rung.model.clone(), Arc::new(ladder))
+                })
+                .collect();
+            let rows = rows
+                .into_iter()
+                .map(|(id, model, locality)| MediaRow {
+                    operation: *operation,
+                    model: id.to_string(),
+                    seat_model: seat_model.to_string(),
+                    provider: model.provider,
+                    wire_model: model.model,
+                    locality,
+                    inputs: seat.caps.inputs.clone(),
+                    outputs: seat.caps.outputs.clone(),
+                    native_rates: seat.caps.native_rates.clone(),
+                    max_references: seat.caps.max_references,
+                })
+                .collect();
+            runtime.seats.insert(
+                *operation,
+                MediaSeat {
+                    model: seat_model.clone(),
+                    locality,
+                    ladder: Arc::new(OfferLadder::seat(seat_model, rungs, Arc::clone(rests))),
+                    rungs: alone,
+                    rows,
+                },
+            );
+        }
+        runtime
+    }
+
+    pub(super) fn set_receipts(&mut self, receipts: Arc<dyn RunReceiptSink>) {
+        self.receipts = receipts;
+    }
+
+    /// Every row that serves `operation` (every operation when `None`)
+    /// over `inputs`.
+    #[must_use]
+    pub fn options(
+        &self,
+        operation: Option<AiOperation>,
+        inputs: &BTreeSet<Modality>,
+    ) -> Vec<MediaRow> {
+        self.seats
+            .iter()
+            .filter(|(op, _)| operation.is_none_or(|wanted| wanted == **op))
+            .flat_map(|(_, seat)| &seat.rows)
+            .filter(|row| inputs.is_subset(&row.inputs))
+            .cloned()
+            .collect()
+    }
+
+    /// What the media meter has left to spend, in token units.
+    #[must_use]
+    pub fn units_left(&self) -> Option<u64> {
+        self.meter.as_ref().map(|meter| meter.read().remaining_units)
+    }
+
+    /// The seat id and widest locality that serve `operation`.
+    #[must_use]
+    pub fn seat(&self, operation: AiOperation) -> Option<(ModelId, ModelLocality)> {
+        self.seats
+            .get(&operation)
+            .map(|seat| (seat.model.clone(), seat.locality))
+    }
+
+    /// Where `model` runs, when a media seat or one of its rungs has that
+    /// id: the host's attestation for the vault's inference check.
+    #[must_use]
+    pub fn locality(&self, operation: AiOperation, model: &ModelId) -> Option<ModelLocality> {
+        let seat = self.seats.get(&operation)?;
+        if &seat.model == model {
+            return Some(seat.locality);
+        }
+        seat.rows
+            .iter()
+            .find(|row| row.model == model.as_str())
+            .map(|row| row.locality)
+    }
+
+    /// The ladder that serves `request`: its seat's, or one rung alone.
+    fn ladder(&self, request: &MediaRequest) -> LlmResult<Arc<OfferLadder>> {
+        let seat = self
+            .seats
+            .get(&request.operation)
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        if request.model == seat.model {
+            return Ok(Arc::clone(&seat.ladder));
+        }
+        seat.rungs
+            .get(&request.model)
+            .cloned()
+            .ok_or_else(|| FatalLlmError::InvalidRequest.into())
+    }
+
+    fn walk(
+        &self,
+        request: MediaRequest,
+    ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + '_> {
+        let ladder = self.ladder(&request)?;
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        let run = undeclared_run(MEDIA_RUN, meter, Arc::clone(&self.receipts));
+        Ok(async move { ladder.media(&run, request, None).await })
+    }
+
+    /// One call to its answer, on a run of its own on the media meter.
+    pub async fn run(&self, request: MediaRequest) -> LlmResult<MediaResponse> {
+        if request.operation.is_job() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        match self.walk(request)?.await? {
+            MediaAnswer::Done(response) => Ok(response),
+            // Only a job operation is submitted.
+            MediaAnswer::Job(mut job) => {
+                job.settle_failed();
+                Err(FatalLlmError::InvalidRequest.into())
+            }
+        }
+    }
+
+    /// Submits one job (`ai.video`); its caller polls the ticket.
+    pub async fn submit(&self, request: MediaRequest) -> LlmResult<MediaTicket> {
+        if !request.operation.is_job() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let operation = request.operation;
+        let MediaAnswer::Job(job) = self.walk(request)?.await? else {
+            return Err(FatalLlmError::EmptyResponse.into());
+        };
+        let id = job_ticket(&job.provider_job);
+        let ticket = MediaTicket {
+            job: id.clone(),
+            model: job.model.to_string(),
+            operation,
+        };
+        self.lock_jobs()
+            .insert(id, Arc::new(tokio::sync::Mutex::new(job)));
+        Ok(ticket)
+    }
+
+    /// Where job `id` stands. A job that ended is answered once, and leaves
+    /// the table.
+    pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
+        let job = self
+            .lock_jobs()
+            .get(id)
+            .cloned()
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        let state = job.lock().await.poll().await;
+        if state.as_ref().is_ok_and(MediaJobState::ended) {
+            self.lock_jobs().remove(id);
+        }
+        state
+    }
+
+    /// Stops job `id` at its provider and drops it.
+    pub async fn cancel(&self, id: &str) -> LlmResult<()> {
+        let job = self
+            .lock_jobs()
+            .remove(id)
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        let stopped = job.lock().await.cancel().await;
+        stopped
+    }
+
+    fn lock_jobs(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>> {
+        self.jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl super::ModelRuntime {
+    /// Every row of the `ai.*` family that serves `operation` (every one
+    /// when `None`) over `inputs`: each available rung of each text seat,
+    /// then each media row.
+    #[must_use]
+    pub fn ai_options(
+        &self,
+        operation: Option<AiOperation>,
+        inputs: &BTreeSet<Modality>,
+    ) -> Vec<MediaRow> {
+        let mut rows = Vec::new();
+        if operation.is_none_or(|wanted| wanted == AiOperation::Text) {
+            for (role, seat) in &self.seats {
+                if *role == oneiron::llm::manifest::ModelRole::Reranker {
+                    continue;
+                }
+                let mut caps = MediaCaps::for_operation(AiOperation::Text);
+                if seat
+                    .ladder
+                    .supports(&seat.model, &oneiron::LlmCapability::ImageInput)
+                {
+                    caps.inputs.insert(Modality::Image);
+                }
+                if !inputs.is_subset(&caps.inputs) {
+                    continue;
+                }
+                let status = self
+                    .status
+                    .seats
+                    .iter()
+                    .find(|status| status.seat_model.as_deref() == Some(seat.model.as_str()));
+                for rung in status.into_iter().flat_map(|status| &status.rungs) {
+                    let Some(model) = rung.engine_model.clone().filter(|_| rung.available) else {
+                        continue;
+                    };
+                    rows.push(MediaRow {
+                        operation: AiOperation::Text,
+                        model,
+                        seat_model: seat.model.to_string(),
+                        provider: rung.provider.clone(),
+                        wire_model: rung.model.clone(),
+                        locality: rung.locality,
+                        inputs: caps.inputs.clone(),
+                        outputs: caps.outputs.clone(),
+                        native_rates: Vec::new(),
+                        max_references: 0,
+                    });
+                }
+            }
+        }
+        rows.extend(self.media.options(operation, inputs));
+        rows
+    }
+}
+
+/// Engine code's media door (an image asset's generation): each call is a
+/// run of its own on the media meter, rung by rung through the media gate.
+impl AiMediaDoor for MediaRuntime {
+    fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
+        Box::pin(self.run(request))
+    }
+}
+
+/// One media client per provider some media seat names, each serving the
+/// models those seats name on it.
+fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBackend>> {
+    let mut models: BTreeMap<&str, BTreeMap<ModelId, String>> = BTreeMap::new();
+    for model in config.media.seats.values().flat_map(|seat| &seat.rungs) {
+        let provider = &config.providers[&model.provider];
+        if let Ok(id) = engine_model_id(model, provider) {
+            models
+                .entry(model.provider.as_str())
+                .or_default()
+                .insert(id, model.model.clone());
+        }
+    }
+    let mut backends = BTreeMap::new();
+    for (name, wire_models) in models {
+        let provider = &config.providers[name];
+        match ProviderHttp::new(provider, KeyStyle::Bearer) {
+            Ok(http) => {
+                let backend: Arc<dyn MediaBackend> = Arc::new(OpenAiMediaBackend::new(
+                    MediaHttp { http },
+                    wire_models,
+                ));
+                backends.insert(name.to_owned(), backend);
+            }
+            Err(error) => {
+                tracing::warn!(provider = %name, %error, "media provider unavailable");
+            }
+        }
+    }
+    backends
+}
+
+/// `model` on `provider` as a media rung at `position` for `operation`.
+fn media_rung(
+    provider: &ProviderConfig,
+    backend: &Arc<dyn MediaBackend>,
+    model: &ModelRef,
+    position: usize,
+    operation: AiOperation,
+    caps: &MediaCaps,
+) -> Option<LadderRung> {
+    let row = catalog_entry(model, provider).ok()?.with_media(caps);
+    let binding = match media_offer(provider, row.model.clone(), operation) {
+        Ok(binding) => binding,
+        Err(error) => {
+            tracing::warn!(provider = %model.provider, %error, "media model has no offer route");
+            return None;
+        }
+    };
+    Some(LadderRung {
+        provider: model.provider.clone(),
+        position,
+        model: row.model.clone(),
+        wire_model: model.model.clone(),
+        prompt: None,
+        offer: ServedOffer {
+            binding,
+            backend: Arc::new(NoChat),
+        },
+        media: Some(MediaRung {
+            backend: Arc::clone(backend),
+            row,
+            caps: caps.clone(),
+        }),
+    })
+}
+
+/// The seat id names the operation and a digest of its rungs, so a changed
+/// ladder is a new identity.
+fn media_seat_model(operation: AiOperation, rungs: &[LadderRung]) -> Option<ModelId> {
+    let mut digest = blake3::Hasher::new();
+    for rung in rungs {
+        digest.update(rung.model.as_str().as_bytes());
+        digest.update(&[0]);
+        digest.update(rung.wire_model.as_bytes());
+        digest.update(&[0xff]);
+    }
+    let revision = &digest.finalize().to_hex()[..12];
+    ModelId::new(format!("seat/media-{}@{revision}", operation.as_str())).ok()
+}
+
+/// A job's ticket: the server's own id for the provider's job, so a caller
+/// never names a provider's id.
+fn job_ticket(provider_job: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let mut digest = blake3::Hasher::new();
+    digest.update(provider_job.as_bytes());
+    digest.update(&nanos.to_le_bytes());
+    format!("job_{}", &digest.finalize().to_hex()[..24])
+}

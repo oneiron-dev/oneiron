@@ -50,6 +50,25 @@ impl From<reqwest::Error> for HttpFailure {
     }
 }
 
+/// The largest reply one media exchange may carry: a generated clip.
+pub(super) const MAX_MEDIA_REPLY_BYTES: usize = 512 << 20;
+
+/// A finished exchange whose body is whatever the protocol sends: JSON, or
+/// media bytes.
+pub(super) struct BytesReply {
+    pub(super) status: u16,
+    pub(super) headers: BTreeMap<String, String>,
+    pub(super) body: Vec<u8>,
+}
+
+/// What one media exchange sends.
+pub(super) enum MediaSend {
+    Get,
+    Delete,
+    Json(JsonValue),
+    Multipart(reqwest::multipart::Form),
+}
+
 /// A finished, non-streamed exchange.
 pub(super) struct JsonReply {
     pub(super) status: u16,
@@ -173,6 +192,31 @@ impl ProviderHttp {
             }
         };
         Ok(JsonReply {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// One media exchange at `path`, its reply body read whole up to
+    /// [`MAX_MEDIA_REPLY_BYTES`]. One request, as every exchange here.
+    pub(super) async fn send_media(
+        &self,
+        path: &str,
+        send: MediaSend,
+    ) -> Result<BytesReply, HttpFailure> {
+        let url = self.url(path);
+        let request = match send {
+            MediaSend::Get => self.client.get(url),
+            MediaSend::Delete => self.client.delete(url),
+            MediaSend::Json(body) => self.client.post(url).json(&body),
+            MediaSend::Multipart(form) => self.client.post(url).multipart(form),
+        };
+        let response = request.send().await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;
+        Ok(BytesReply {
             status,
             headers,
             body,

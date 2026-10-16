@@ -1,8 +1,9 @@
-//! `/v1/ai`: the server's model-backed surfaces — status, chat turns and
-//! the session hints the Dreamer's triggers read.
+//! `/v1/ai`: the server's model-backed surfaces — status, chat turns, the
+//! session hints the Dreamer's triggers read, and the `ai.*` verbs past
+//! text (options, image, video, speech, transcribe, embed).
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -14,13 +15,35 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 
 mod chat;
+mod media;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/status", get(status))
         .route("/session", post(session))
         .route("/chat", post(chat::chat_turn))
+        .route("/options", get(media::options))
+        .merge(media_routes())
 }
+
+/// The `ai.*` media verbs. Their bodies carry images and audio as base64.
+fn media_routes() -> Router<Arc<SyncServer>> {
+    Router::new()
+        .route("/image", post(media::image))
+        .route("/video", post(media::video))
+        .route(
+            "/video/{job}",
+            get(media::video_job).delete(media::cancel_video_job),
+        )
+        .route("/speech", post(media::speech))
+        .route("/transcribe", post(media::transcribe))
+        .route("/embed", post(media::embed))
+        .layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT))
+}
+
+/// The largest media call body: a few reference images or a long recording,
+/// as base64.
+const MEDIA_BODY_LIMIT: usize = 96 << 20;
 
 pub(super) fn refusal(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
     (

@@ -236,6 +236,12 @@ impl AiHandle {
         self.runtime.status()
     }
 
+    /// The models this server serves, for the `ai.*` verbs.
+    #[must_use]
+    pub(crate) fn model_runtime(&self) -> &ModelRuntime {
+        &self.runtime
+    }
+
     /// Tells the Dreamer's session policy what the app saw. A no-op without
     /// a running Dreamer: no session is opened that nothing would close.
     pub fn session_hint(&self, hint: SessionHint) {

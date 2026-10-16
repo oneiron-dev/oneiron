@@ -22,6 +22,7 @@ use serde::Deserialize;
 mod compaction;
 mod decision_read;
 mod levels;
+mod media;
 mod provider;
 #[cfg(test)]
 mod tests;
@@ -31,6 +32,7 @@ pub use decision_read::{
     DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal,
 };
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
+pub use media::{MediaSeatConfig, MediaSettings};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
 
 use levels::{RoleFile, Shorthand};
@@ -64,6 +66,7 @@ pub(crate) struct ModelsFile {
     recall: RecallFile,
     broker: Option<BrokerFile>,
     decision_read: Option<decision_read::DecisionReadFile>,
+    media: Option<media::MediaFile>,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -153,6 +156,9 @@ pub struct ModelsConfig {
     pub broker: BrokerConfig,
     /// The house model's decision read on the `local_reasoner` rung.
     pub decision_read: Option<DecisionReadSettings>,
+    /// The media seats (`[models.media]`): image, video, speech,
+    /// transcription and embedding ladders, and their meter.
+    pub media: MediaSettings,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -386,6 +392,7 @@ impl ModelsFile {
             );
         }
         let broker = self.broker.unwrap_or_default().resolve()?;
+        let media = self.media.unwrap_or_default().resolve(&providers)?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -399,6 +406,7 @@ impl ModelsFile {
             recall,
             broker,
             decision_read: None,
+            media,
         };
         if let Some(file) = self.decision_read {
             models.decision_read = Some(file.resolve(base, &models)?);

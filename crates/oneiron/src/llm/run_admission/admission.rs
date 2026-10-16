@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 
+use super::super::media::{MediaBackend, MediaRequest};
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
     DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, RetryableLlmError,
@@ -15,6 +16,7 @@ use super::super::{
 use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
 use super::host::{AllocationRefusal, HostAccount, OfferBinding, PaidConnector};
+use super::media::MediaGate;
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
@@ -320,6 +322,32 @@ impl RunAdmission {
     #[must_use]
     pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, offer: &OfferBinding) -> GatedBackend {
         GatedBackend::new(Arc::clone(&self.inner), inner, offer.dispatch_binding())
+    }
+
+    /// Admits one media call (`ai.image`, `ai.video`, `ai.speech`,
+    /// `ai.transcribe`, `ai.embed`) as the text call its admission request
+    /// names: the same teachers, offer, locality and route rules, and one
+    /// permit for one physical call.
+    pub fn admit_media(
+        &self,
+        selector: Option<&str>,
+        request: &MediaRequest,
+        offer: &OfferBinding,
+    ) -> Result<RunPermit, RunDenied> {
+        let admission = request.admission_request();
+        self.admit(RunCall {
+            selector,
+            request: &admission,
+            offer,
+        })
+    }
+
+    /// The only media backend a host hands a run for `offer`: it checks and
+    /// starts a media call's permit before any byte leaves, as
+    /// [`Self::gate`] does for a text call.
+    #[must_use]
+    pub fn media_gate(&self, inner: Arc<dyn MediaBackend>, offer: &OfferBinding) -> MediaGate {
+        MediaGate::new(Arc::clone(&self.inner), inner, offer.dispatch_binding())
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,
