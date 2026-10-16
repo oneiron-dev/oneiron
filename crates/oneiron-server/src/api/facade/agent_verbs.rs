@@ -48,6 +48,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/tasks.outcomes", post(tasks_outcomes))
         .route("/vault.rooms.list", post(vault_rooms_list))
         .route("/vault.rooms.messages", post(vault_rooms_messages))
+        .route("/vault.rooms.participants", post(vault_rooms_participants))
         .route("/vault.rooms.render", post(vault_rooms_render))
         .route("/vault.rooms.find", post(vault_rooms_find))
         .route("/vault.rooms.get", post(vault_rooms_get))
@@ -786,6 +787,26 @@ async fn vault_rooms_messages(
         actor,
         class,
         "vault.rooms.messages",
+        value,
+    )?))
+}
+async fn vault_rooms_participants(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.rooms.participants",
         value,
     )?))
 }

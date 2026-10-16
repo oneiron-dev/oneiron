@@ -1,5 +1,7 @@
 //! Durable actor-scoped state for admitted Context Board plugin blocks.
 //! State is a vault projection, not an ephemeral stream subscription or NOTE.
+//! The session scratchpad itself is the `scratchpad` NOTE (`context_board::scratchpad`);
+//! no production path writes a scratchpad block here.
 
 use super::admission::{AdmittedPluginSection, PluginSectionRegistry};
 use super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
@@ -53,7 +55,7 @@ impl SideKey for BlockKey {
     }
 }
 
-/// The implemented durable block kinds. Scratchpad is board state, not a NOTE.
+/// The implemented durable block kinds: plugin board state, not the session pad.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BoardBlockKind {

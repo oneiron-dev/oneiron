@@ -38,6 +38,7 @@ pub enum AgentVerb {
     TasksOutcomes,
     VaultRoomsList,
     VaultRoomsMessages,
+    VaultRoomsParticipants,
     VaultRoomsRender,
     VaultRoomsFind,
     VaultRoomsGet,
@@ -114,6 +115,7 @@ impl AgentVerb {
         Self::TasksOutcomes,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
+        Self::VaultRoomsParticipants,
         Self::VaultRoomsRender,
         Self::VaultRoomsFind,
         Self::VaultRoomsGet,
@@ -193,6 +195,7 @@ impl AgentVerb {
             Self::TasksOutcomes => "tasks.outcomes",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
+            Self::VaultRoomsParticipants => "vault.rooms.participants",
             Self::VaultRoomsRender => "vault.rooms.render",
             Self::VaultRoomsFind => "vault.rooms.find",
             Self::VaultRoomsGet => "vault.rooms.get",
@@ -268,6 +271,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
@@ -351,6 +355,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
@@ -408,6 +413,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::SelfSkillsCallables
@@ -456,6 +462,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
@@ -583,6 +590,7 @@ impl AgentVerb {
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref"],
+            Self::VaultRoomsParticipants => &["spec", "room_ref"],
             Self::VaultRoomsRender => &["room_ref"],
             Self::VaultRoomsFind => &["room_ref", "turn_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],
@@ -660,6 +668,7 @@ impl AgentVerb {
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
+            Self::VaultRoomsParticipants => &["spec", "room_ref"],
             Self::VaultRoomsRender => &["room_ref"],
             Self::VaultRoomsFind => &["room_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],

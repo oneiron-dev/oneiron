@@ -181,6 +181,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RoomRequest>(),
             ),
             (
+                "vault.rooms.participants",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ParticipantsRequest,
+                >(),
+            ),
+            (
                 "vault.rooms.render",
                 crate::code_run::vault_read::request_schema::<RoomRefRequest>(),
             ),
@@ -653,6 +659,17 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["room_ref"]
         }
+        "vault.rooms.participants" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
         "vault.rooms.render" => {
             properties.insert(
                 "room_ref".to_owned(),
@@ -994,6 +1011,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.messages" => {
             let _input: RoomRequest = decode(value.clone())?;
         }
+        "vault.rooms.participants" => {
+            let _input: crate::workspace_roster::ParticipantsRequest = decode(value.clone())?;
+        }
         "vault.rooms.render" => {
             let _input: RoomRefRequest = decode(value.clone())?;
         }
@@ -1153,6 +1173,7 @@ pub fn invoke(
         "tasks.outcomes" => encode(tasks_outcomes(memory, decode(value)?)?),
         "vault.rooms.list" => encode(vault_rooms_list(memory, decode(value)?)?),
         "vault.rooms.messages" => encode(vault_rooms_messages(memory, decode(value)?)?),
+        "vault.rooms.participants" => encode(vault_rooms_participants(memory, decode(value)?)?),
         "vault.rooms.render" => encode(vault_rooms_render(memory, decode(value)?)?),
         "vault.rooms.find" => encode(vault_rooms_find(memory, decode(value)?)?),
         "vault.rooms.get" => encode(vault_rooms_get(memory, decode(value)?)?),
@@ -1543,6 +1564,12 @@ pub fn vault_rooms_messages(
             .transpose()?,
         input.limit.unwrap_or(256),
     )
+}
+pub fn vault_rooms_participants(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ParticipantsRequest,
+) -> MemoryResult<crate::workspace_roster::ParticipantsPage> {
+    memory.rooms_participants(&input)
 }
 pub fn vault_rooms_render(memory: &Memory<'_>, input: RoomRefRequest) -> MemoryResult<Vec<String>> {
     memory.rooms_render_threads(

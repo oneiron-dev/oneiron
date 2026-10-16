@@ -52,7 +52,7 @@ pub enum JoinCause {
 }
 
 impl JoinCause {
-    const fn kind(&self) -> u8 {
+    pub(super) const fn kind(&self) -> u8 {
         match self {
             Self::Wrote { .. } => 1,
             Self::Addressed { .. } => 2,
@@ -62,7 +62,7 @@ impl JoinCause {
     }
 
     /// The cause's id in a key: its turn or task, or an offer id's digest.
-    fn key_id(&self) -> [u8; 16] {
+    pub(super) fn key_id(&self) -> [u8; 16] {
         match self {
             Self::Wrote { turn } | Self::Addressed { turn } => *turn.as_bytes(),
             Self::Task { task } => *task.as_bytes(),

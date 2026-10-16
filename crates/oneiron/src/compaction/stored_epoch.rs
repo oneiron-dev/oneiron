@@ -4,6 +4,7 @@
 use rmpv::Value;
 
 use super::epoch::KEY_EPOCH_TEXT;
+use super::withdrawn::WithdrawnKeyframe;
 use super::{EPOCH_SUMMARY_BODY_KEYS, decode_epoch_summary_body};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -35,14 +36,15 @@ impl StoredEpoch {
 /// 1384f): a pointer that keeps every keyframe key is an epoch when its head
 /// supplies the text and the strict codec passes with a stand-in there, and
 /// one it cannot place otherwise; a pointer without them is none. No text
-/// edit changes the keyframe, and the document is never loaded.
+/// edit changes the keyframe, and the document is never loaded. A withdrawn
+/// epoch keeps only its keyframe, with no text and no pointer, and is one.
 pub(crate) fn stored_epoch_in(
     dbs: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
 ) -> Result<StoredEpoch> {
-    if decode_epoch_summary_body(body).is_ok() {
+    if decode_epoch_summary_body(body).is_ok() || WithdrawnKeyframe::decode(body).is_ok() {
         return Ok(StoredEpoch::Yes);
     }
     let mut cursor = body;
