@@ -172,7 +172,8 @@ fn an_unrooted_vault_keeps_the_owner_verbs_for_its_embedded_owner() {
 
 /// H149: a deleted embedded owner passes as no one. Deleted or erased, the
 /// owner's id is refused the owner verbs on an unrooted vault, as any other
-/// PERSON is.
+/// PERSON is, and a self-hosted root written later binds no deleted owner
+/// back into them (Bugbot, #1476).
 #[test]
 fn a_deleted_embedded_owner_holds_no_owner_verbs() {
     for reason in [
@@ -187,10 +188,20 @@ fn a_deleted_embedded_owner_holds_no_owner_verbs() {
         vault
             .delete_entity_with_reason(&owner, reason)
             .expect("delete the owner");
-        for verb in owner_verbs(&facade_for(&vault, owner), &claim, subject) {
-            let err = verb.expect_err("a deleted owner's owner verb");
-            if matches!(reason, crate::DeleteReason::UserDelete) {
-                assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
+        for rooted in [false, true] {
+            if rooted {
+                vault
+                    .ensure_host_root_slip(&crate::test_util::test_host_issuer())
+                    .expect("host root");
+            }
+            for verb in owner_verbs(&facade_for(&vault, owner), &claim, subject) {
+                let err = verb.expect_err("a deleted owner's owner verb");
+                if matches!(reason, crate::DeleteReason::UserDelete) {
+                    assert_eq!(
+                        err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+                        "rooted {rooted}"
+                    );
+                }
             }
         }
         assert!(vault.get_raw(&subject).expect("read").is_some());

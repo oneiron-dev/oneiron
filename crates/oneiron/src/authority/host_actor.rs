@@ -13,9 +13,9 @@ use crate::error::Result;
 
 impl Vault {
     /// Binds the embedded owner as `human` under `issuer`, in the transaction
-    /// that wrote this vault's genesis. A hard-deleted owner is not brought
-    /// back: the vault stays rooted with no owner bound, and owner verbs
-    /// refuse.
+    /// that wrote this vault's genesis. A deleted owner, soft or hard, is not
+    /// brought back: the vault stays rooted with no owner bound, and owner
+    /// verbs refuse.
     pub(super) fn bind_rooted_owner_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -30,6 +30,9 @@ impl Vault {
         }
         let now = self.store.clock.now_recorded_at();
         self.stage_embedded_owner_actor_in_txn(txn, now)?;
+        if !crate::consent::person_is_live_in_txn(self, txn, &owner)? {
+            return Ok(());
+        }
         self.append_slip_op_in_txn(
             txn,
             issuer,
