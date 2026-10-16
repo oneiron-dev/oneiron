@@ -5,7 +5,9 @@
 //! checks. Selection never reads a layout's name.
 use super::Rect;
 use super::brief::{Block, BlockContent, Brief, Carrier, Cell, Dataset};
-use crate::deck::{MasterView, Placeholder, RetainedNode, ShapeView, State, TextStyle};
+use crate::deck::{MasterView, Placeholder, RetainedNode, ShapeView, Spacing, State, TextStyle};
+use crate::fonts::{Face, FontBook};
+use std::sync::Arc;
 
 /// EMU per hundredth of a point.
 const EMU_PER_CENTIPOINT: i64 = 127;
@@ -24,6 +26,8 @@ pub(super) enum Carry {
     Text,
     Table,
     Chart,
+    /// A part-of-whole chart.
+    Share,
     Picture,
 }
 
@@ -89,65 +93,181 @@ impl Suits {
             Carry::Title => self.title,
             Carry::Text => self.text,
             Carry::Table => self.table,
-            Carry::Chart => self.chart,
+            Carry::Chart | Carry::Share => self.chart,
             Carry::Picture => self.picture,
         }
     }
 }
 
-/// Resolved first-level text metrics, in EMU.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Resolved first-level text metrics, in EMU. With a face from the font
+/// book, widths and the single line are the face's own; without one, or for
+/// text the face cannot measure, the em rule stands in and the estimate
+/// says it was not measured.
+#[derive(Debug, Clone)]
 pub(super) struct Metrics {
     size: i64,
     indent: i64,
+    first_line: i64,
     insets: [i64; 4],
+    face: Option<Arc<Face>>,
+    line_spacing: Spacing,
+    before: Spacing,
+    after: Spacing,
+}
+
+/// The theme's latin typefaces: `+mj-lt` and `+mn-lt`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ThemeFonts<'a> {
+    pub(super) major: Option<&'a str>,
+    pub(super) minor: Option<&'a str>,
 }
 
 impl Metrics {
     /// `None` when the size or a margin is unresolved: no estimate is made.
-    fn new(style: &TextStyle, insets: [i64; 4]) -> Option<Self> {
+    fn new(
+        style: &TextStyle,
+        insets: [i64; 4],
+        fonts: &FontBook,
+        theme: ThemeFonts<'_>,
+    ) -> Option<Self> {
         let size = i64::from(style.size.value?) * EMU_PER_CENTIPOINT;
         let indent = match style.indent.state {
             State::Unresolved(_) => return None,
             _ => style.indent.value.unwrap_or(0),
         };
+        let typeface = match style.typeface.value.as_deref() {
+            Some("+mj-lt") => theme.major,
+            Some("+mn-lt") | None => theme.minor,
+            Some(name) => Some(name),
+        };
+        let bold = style.bold.value.unwrap_or(false);
         Some(Self {
             size,
             indent,
+            first_line: style.first_line.value.unwrap_or(0),
             insets,
+            face: typeface.and_then(|name| fonts.face(name, bold, false)),
+            line_spacing: style.line_spacing.value.unwrap_or(Spacing::Percent(100_000)),
+            before: style.space_before.value.unwrap_or(Spacing::Points(0)),
+            after: style.space_after.value.unwrap_or(Spacing::Points(0)),
         })
     }
 
-    fn line(&self) -> i64 {
-        self.size * 6 / 5
+    /// The face's family when it measures every one of `texts`.
+    fn measured<T: AsRef<str>>(&self, texts: &[T]) -> Option<String> {
+        let face = self.face.as_ref()?;
+        texts
+            .iter()
+            .all(|text| face.advance(text.as_ref(), self.size).is_some())
+            .then(|| face.family().to_owned())
     }
 
-    /// East Asian wide and fullwidth characters take a full em, others half.
+    /// One single-spaced line: the face's ascent, descent and gap, else 1.2
+    /// times the size.
+    fn single(&self) -> i64 {
+        self.face
+            .as_ref()
+            .map_or(self.size * 6 / 5, |face| face.line(self.size))
+    }
+
+    fn spaced(&self, spacing: Spacing) -> i64 {
+        match spacing {
+            Spacing::Percent(share) => self.single() * share / 100_000,
+            Spacing::Points(centipoints) => centipoints * EMU_PER_CENTIPOINT,
+        }
+    }
+
+    fn line(&self) -> i64 {
+        self.spaced(self.line_spacing).max(1)
+    }
+
+    /// The face's width, else the em rule: East Asian wide and fullwidth
+    /// characters take a full em, others half.
     fn advance(&self, text: &str) -> i64 {
-        text.chars()
-            .map(|ch| if wide(ch) { self.size } else { self.size / 2 })
-            .sum()
+        self.face
+            .as_ref()
+            .and_then(|face| face.advance(text, self.size))
+            .unwrap_or_else(|| {
+                text.chars()
+                    .map(|ch| if wide(ch) { self.size } else { self.size / 2 })
+                    .sum()
+            })
+    }
+
+    /// Lines of `text` wrapped greedily at spaces (and between wide
+    /// characters) in `first` width, then `rest`; at least one. A word
+    /// wider than the line breaks across lines.
+    fn lines_in(&self, text: &str, first: i64, rest: i64) -> i64 {
+        let space = self.advance(" ");
+        let mut lines = 1;
+        let mut used = 0;
+        let mut width = first.max(1);
+        for word in words(text) {
+            let need = self.advance(word);
+            let gap = if used == 0 { 0 } else { space };
+            if used > 0 && used + gap + need > width {
+                lines += 1;
+                used = 0;
+                width = rest.max(1);
+            }
+            let gap = if used == 0 { 0 } else { space };
+            used += gap + need;
+            while used > width {
+                lines += 1;
+                used -= width;
+                width = rest.max(1);
+            }
+        }
+        lines
     }
 
     /// Lines of `text` in `usable` width, at least one.
     fn lines(&self, text: &str, usable: i64) -> i64 {
-        let advance = self.advance(text);
-        ((advance + usable - 1) / usable).max(1)
+        self.lines_in(text, usable, usable)
     }
 
-    /// The height these paragraphs need in `width`, insets included.
+    /// The height these paragraphs need in `width`, insets included: lines
+    /// at the paragraph's line spacing, the space after each paragraph and
+    /// before every one but the first.
     fn height(&self, paragraphs: &[String], width: i64) -> Option<i64> {
         let [left, top, right, bottom] = self.insets;
         let usable = width - left - right - self.indent;
-        if usable <= 0 {
+        let first = usable - self.first_line;
+        if usable <= 0 || first <= 0 {
             return None;
         }
-        let lines: i64 = paragraphs
-            .iter()
-            .map(|paragraph| self.lines(paragraph, usable))
-            .sum();
-        Some(lines * self.line() + top + bottom)
+        let mut height = top + bottom;
+        for (index, paragraph) in paragraphs.iter().enumerate() {
+            if index > 0 {
+                height += self.spaced(self.before);
+            }
+            height += self.lines_in(paragraph, first, usable) * self.line();
+            height += self.spaced(self.after);
+        }
+        Some(height)
     }
+}
+
+/// Break opportunities: runs of non-space text, with every wide character
+/// a word of its own.
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split_whitespace().flat_map(|word| {
+        let mut pieces = Vec::new();
+        let mut start = 0;
+        for (at, ch) in word.char_indices() {
+            if wide(ch) {
+                if start < at {
+                    pieces.push(&word[start..at]);
+                }
+                pieces.push(&word[at..at + ch.len_utf8()]);
+                start = at + ch.len_utf8();
+            }
+        }
+        if start < word.len() {
+            pieces.push(&word[start..]);
+        }
+        pieces
+    })
 }
 
 fn wide(ch: char) -> bool {
@@ -195,7 +315,11 @@ pub(super) struct Template {
 }
 
 impl Template {
-    pub(super) fn read(master: &MasterView) -> Self {
+    pub(super) fn read(master: &MasterView, fonts: &FontBook) -> Self {
+        let theme = ThemeFonts {
+            major: master.major_font.as_deref(),
+            minor: master.minor_font.as_deref(),
+        };
         let master_body = master
             .shapes
             .iter()
@@ -226,7 +350,7 @@ impl Template {
                         shape: shape.node.clone(),
                         bounds,
                         suits,
-                        text: Metrics::new(style, insets(shape)),
+                        text: Metrics::new(style, insets(shape), fonts, theme),
                     };
                     if suits.title {
                         titles.push(slot);
@@ -250,7 +374,7 @@ impl Template {
             .collect();
         Self {
             profiles,
-            ordinary: Metrics::new(&master.ordinary_text, DEFAULT_INSETS),
+            ordinary: Metrics::new(&master.ordinary_text, DEFAULT_INSETS, fonts, theme),
         }
     }
 
@@ -367,6 +491,7 @@ fn carry(carrier: Carrier) -> Carry {
     match carrier {
         Carrier::Chart => Carry::Chart,
         Carrier::Table => Carry::Table,
+        Carrier::Share => Carry::Share,
     }
 }
 
@@ -402,10 +527,30 @@ pub(super) fn fit(need: &Need<'_>, room: &Room<'_>) -> Option<(Carry, i64)> {
             let height = match carrier {
                 Carrier::Table => table_height(dataset, metrics, bounds.cx)?,
                 Carrier::Chart => chart_height(dataset, metrics, bounds.cx)?,
+                Carrier::Share => share_height(dataset, metrics, bounds.cx)?,
             };
             within(height).map(|height| (carry, height))
         }),
         Need::Picture if room.suits.picture => Some((Carry::Picture, 0)),
+        _ => None,
+    }
+}
+
+/// The face that measured `need` in `room` as `carry`, when one measured all
+/// of its text; `None` means the em rule estimated it.
+pub(super) fn measured(need: &Need<'_>, room: &Room<'_>, carry: Carry) -> Option<String> {
+    match (need, carry) {
+        (Need::Title(text), _) => room.text?.measured(&[*text]),
+        (Need::Text(paragraphs), _) => room.text?.measured(paragraphs),
+        (Need::Data { dataset: Some(dataset), .. }, Carry::Table | Carry::Chart | Carry::Share) => {
+            let texts: Vec<String> = dataset
+                .columns
+                .iter()
+                .map(|column| column.name.clone())
+                .chain(dataset.rows.iter().flatten().map(cell_text))
+                .collect();
+            room.ordinary?.measured(&texts)
+        }
         _ => None,
     }
 }
@@ -469,6 +614,13 @@ fn table_height(dataset: &Dataset, metrics: &Metrics, width: i64) -> Option<i64>
 fn chart_height(dataset: &Dataset, metrics: &Metrics, width: i64) -> Option<i64> {
     let categories = i64::try_from(dataset.rows.len()).ok()?;
     (categories * metrics.line() <= width).then_some(CHART_LINES * metrics.line())
+}
+
+/// A pie needs a square of its plot floor beside a legend line per part.
+fn share_height(dataset: &Dataset, metrics: &Metrics, width: i64) -> Option<i64> {
+    let parts = i64::try_from(dataset.rows.len()).ok()?;
+    let plot = CHART_LINES * metrics.line();
+    (plot * 2 <= width).then_some(plot.max(parts * metrics.line()))
 }
 
 fn cell_text(cell: &Cell) -> String {

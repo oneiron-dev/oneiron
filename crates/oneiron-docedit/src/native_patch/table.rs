@@ -61,9 +61,10 @@ pub(super) fn frame_xml(
         }
         grid.push(
             row.iter()
-                .map(|cell| match cell {
+                .zip(&dataset.columns)
+                .map(|(cell, column)| match cell {
                     Cell::Missing => None,
-                    Cell::Number(value) => Some(number(*value)),
+                    Cell::Number(value) => Some(column.display(*value)),
                     Cell::Text(text) | Cell::Date(text) => Some(text.clone()),
                 })
                 .collect(),

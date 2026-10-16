@@ -4,7 +4,7 @@
 //! composition; then a typed decision. Only blocks marked optional may be
 //! left out, and only after the whole ladder failed with them.
 use super::brief::{BlockContent, Brief, Division, Page, Priority};
-use super::capability::{Carry, GUTTER, Need, Profile, Room, Template, fit};
+use super::capability::{Carry, GUTTER, Need, Profile, Room, Template, fit, measured};
 use super::{Composition, Destination, Fallback, Rect, Shortfall, ShortfallReason};
 use std::cmp::Reverse;
 
@@ -25,6 +25,8 @@ pub(super) struct Placed {
     pub(super) destination: Destination,
     pub(super) need: i64,
     pub(super) room: i64,
+    /// The face that measured the estimate; `None` for the em rule.
+    pub(super) font: Option<String>,
 }
 
 pub(super) enum PageOutcome {
@@ -154,6 +156,7 @@ impl Ladder<'_> {
                     },
                     need,
                     room: slot.bounds.cy,
+                    font: measured(&self.needs[block], &self.template.slot(slot), carry),
                 });
             }
             let key = (profile.content.len() - content.len(), Reverse(area), order);
@@ -175,7 +178,8 @@ impl Ladder<'_> {
     /// The title in the layout's first title placeholder it fits.
     fn title_in(&self, title: usize, profile: &Profile) -> Option<Placed> {
         profile.titles.iter().find_map(|slot| {
-            let (carry, need) = fit(&self.needs[title], &self.template.slot(slot))?;
+            let room = self.template.slot(slot);
+            let (carry, need) = fit(&self.needs[title], &room)?;
             Some(Placed {
                 block: title,
                 carry,
@@ -186,6 +190,7 @@ impl Ladder<'_> {
                 },
                 need,
                 room: slot.bounds.cy,
+                font: measured(&self.needs[title], &room, carry),
             })
         })
     }
@@ -211,13 +216,15 @@ impl Ladder<'_> {
             }
             let cells = divide(profile.region?, content.len(), arrangement)?;
             for (&block, cell) in content.iter().zip(cells) {
-                let (carry, need) = fit(&self.needs[block], &self.template.area(cell))?;
+                let room = self.template.area(cell);
+                let (carry, need) = fit(&self.needs[block], &room)?;
                 placements.push(Placed {
                     block,
                     carry,
                     destination: Destination::Shape { bounds: cell },
                     need,
                     room: cell.cy,
+                    font: measured(&self.needs[block], &room, carry),
                 });
             }
             Some(Draft {

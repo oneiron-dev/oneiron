@@ -554,6 +554,27 @@ pub(super) fn create(
     {
         return Err(NativeRefusal::Invalid("sheet name"));
     }
+    // Style 0 is General, style 1 a date; each distinct number format of a
+    // column takes the next style over its own format id from 165.
+    let mut codes: Vec<String> = Vec::new();
+    for column in &dataset.columns {
+        if let Some(code) = column.format.map(|format| format.code())
+            && !codes.contains(&code)
+        {
+            codes.push(code);
+        }
+    }
+    let number_style: Vec<Option<String>> = dataset
+        .columns
+        .iter()
+        .map(|column| {
+            let code = column.format?.code();
+            codes
+                .iter()
+                .position(|held| *held == code)
+                .map(|index| (index + 2).to_string())
+        })
+        .collect();
     let mut data = String::new();
     let names = std::iter::once(
         dataset
@@ -580,7 +601,14 @@ pub(super) fn create(
                     .map_err(|_| NativeRefusal::Invalid("too many columns"))?,
                 row: number,
             };
-            data.push_str(&cell_xml("c", &key, dated.then_some(DATE_STYLE), value)?);
+            let style = if dated {
+                Some(DATE_STYLE)
+            } else if at > 0 && matches!(value, Cell::Number(_)) {
+                number_style.get(col).and_then(Option::as_deref)
+            } else {
+                None
+            };
+            data.push_str(&cell_xml("c", &key, style, value)?);
         }
         data.push_str("</row>");
     }
@@ -606,8 +634,28 @@ pub(super) fn create(
         worksheet.into_bytes(),
     )?;
     // Style 0 is General; style 1 shows a serial as a date.
+    let formats: String = codes
+        .iter()
+        .enumerate()
+        .map(|(index, code)| {
+            format!(
+                "<numFmt numFmtId=\"{}\" formatCode=\"{}\"/>",
+                165 + index,
+                escape_text(code)
+            )
+        })
+        .collect();
+    let number_xfs: String = (0..codes.len())
+        .map(|index| {
+            format!(
+                "<xf numFmtId=\"{}\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>",
+                165 + index
+            )
+        })
+        .collect();
+    let (format_count, xf_count) = (1 + codes.len(), 2 + codes.len());
     let styles = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<styleSheet xmlns=\"{SML}\"><numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"{DATE_FORMAT}\"/></numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<styleSheet xmlns=\"{SML}\"><numFmts count=\"{format_count}\"><numFmt numFmtId=\"164\" formatCode=\"{DATE_FORMAT}\"/>{formats}</numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"{xf_count}\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>{number_xfs}</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>"
     );
     package.add_part("xl/styles.xml", STYLES_TYPE, styles.into_bytes())?;
     Ok(package.export()?)

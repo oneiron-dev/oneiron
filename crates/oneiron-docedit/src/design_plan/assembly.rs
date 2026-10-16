@@ -110,6 +110,7 @@ impl<'a> Assembly<'a> {
                     block: block.id.clone(),
                     need: placed_block.need,
                     room: placed_block.room,
+                    font: placed_block.font.clone(),
                 });
                 placements.push(Placement {
                     block: block.id.clone(),
@@ -165,7 +166,7 @@ impl<'a> Assembly<'a> {
                     .cloned()
                     .collect(),
             ),
-            (BlockContent::Data { dataset, .. }, Carry::Chart) => {
+            (BlockContent::Data { dataset, .. }, Carry::Chart | Carry::Share) => {
                 self.next.chart += 1;
                 self.next.workbook += 1;
                 let folder = &self.next.folder;
@@ -178,7 +179,11 @@ impl<'a> Assembly<'a> {
                 self.package.part(&workbook, WORKBOOK_TYPE);
                 self.package.relate(slide, "chart", &chart);
                 self.package.relate(&chart, "package", &workbook);
-                Content::Chart(dataset.clone())
+                if carry == Carry::Share {
+                    Content::Share(dataset.clone())
+                } else {
+                    Content::Chart(dataset.clone())
+                }
             }
             (BlockContent::Data { dataset, .. }, _) => Content::Table(dataset.clone()),
             (BlockContent::Asset { asset }, _) => {
