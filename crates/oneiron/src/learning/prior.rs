@@ -1,0 +1,127 @@
+//! Priors: everything that is not a cell's own evidence enters with an origin
+//! and a weight in runs (ARCH-0003 "The six prior origins").
+//!
+//! One law covers carried scores, hub imports, type splits and project forks.
+//! The engine door here stores a cell's prior; the owner's seed never comes
+//! through it, because a seed is a setting row the owner writes
+//! ([`crate::learning_setting::put_setting_row`]).
+
+use crate::Vault;
+use crate::error::{Error, Result};
+use crate::learning_setting::{self, SettingSpec};
+use crate::side_table::{self, Named, SideTable};
+
+use super::cell::{LearningCell, LearningPredicate};
+use super::estimate::{EstimateValue, Prior, PriorOrigin};
+use super::evidence::{CellRow, ensure_cell_in_txn};
+use super::project::project_cell_in_txn;
+
+/// A cell's stored prior. Key: the cell digest.
+const PRIOR: SideTable<[u8; 32], Prior, Named> = SideTable::new(&side_table::LEARNING_PRIOR);
+
+/// Stores the prior `cell` starts from and re-projects it.
+///
+/// Callers are the operations the law names: a hub import (`provenance`), an
+/// executor swap (`carried`), a type split or project fork (`parent`), a
+/// model's weak guess (`model`) and a pack default (`shipped`).
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a `seed` origin (the owner's seed is a
+/// setting row), a malformed prior or cell, or a prior in a form the cell does
+/// not carry; storage errors.
+pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u64) -> Result<()> {
+    if prior.origin == PriorOrigin::Seed {
+        return Err(Error::InvalidClaimBody(
+            "the owner's seed is a setting row, never an engine-written prior",
+        ));
+    }
+    prior.validate()?;
+    vault.with_write_txn_grouped(|wtxn| {
+        let digest = ensure_cell_in_txn(vault, wtxn, cell, prior.value.form())?;
+        PRIOR.put(&vault.store, wtxn, &digest, prior)?;
+        project_cell_in_txn(vault, wtxn, &digest, now)?;
+        Ok(())
+    })
+}
+
+/// The prior in force for a registered cell.
+///
+/// A `learning.setting` cell starts from the owner's seed when one is set,
+/// then from a stored prior, then from the catalog seed at the shipped
+/// weight. Every other cell starts from its stored prior, else the shipped
+/// default of its form.
+pub(crate) fn cell_prior_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CellRow,
+    digest: &[u8; 32],
+) -> Result<Prior> {
+    if row.cell.predicate == LearningPredicate::Setting
+        && let Some(spec) = row
+            .cell
+            .setting_key
+            .as_deref()
+            .and_then(learning_setting::setting_spec)
+        && let Some((value, weight_runs)) = learning_setting::owner_seed_in_txn(&vault.store, txn, spec)?
+    {
+        return Ok(Prior {
+            origin: PriorOrigin::Seed,
+            value: point_value(row, value),
+            weight_runs,
+            from: Some(format!("setting row {}", spec.key)),
+        });
+    }
+    if let Some(prior) = PRIOR.get(&vault.store, txn, digest)?
+        && prior.value.form() == row.form
+    {
+        return Ok(prior);
+    }
+    if row.cell.predicate == LearningPredicate::Setting
+        && let Some(spec) = row
+            .cell
+            .setting_key
+            .as_deref()
+            .and_then(learning_setting::setting_spec)
+    {
+        return Ok(shipped_setting_prior(vault, txn, row, spec)?);
+    }
+    Ok(Prior::shipped(row.form))
+}
+
+fn shipped_setting_prior(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CellRow,
+    spec: &SettingSpec,
+) -> Result<Prior> {
+    let weight_runs = learning_setting::setting_value_in_txn(
+        &vault.store,
+        txn,
+        &learning_setting::LEARNING_SHIPPED_PRIOR_RUNS,
+    )?;
+    Ok(Prior {
+        origin: PriorOrigin::Shipped,
+        value: point_value(row, spec.seed),
+        weight_runs,
+        from: Some(format!("catalog {}", spec.key)),
+    })
+}
+
+/// A point value in the cell's form: a mean with no spread, or one count of
+/// the cell's `of` category.
+fn point_value(row: &CellRow, value: f64) -> EstimateValue {
+    match row.form {
+        super::estimate::EstimateForm::Counts => EstimateValue::Counts {
+            counts: std::iter::once((row.of.clone(), 1.0)).collect(),
+        },
+        super::estimate::EstimateForm::Beta => EstimateValue::Beta {
+            alpha: value.clamp(1e-6, 1.0 - 1e-6),
+            beta: (1.0 - value).clamp(1e-6, 1.0 - 1e-6),
+        },
+        super::estimate::EstimateForm::Mean => EstimateValue::Mean {
+            mean: value,
+            spread: 0.0,
+        },
+    }
+}

@@ -164,6 +164,12 @@ pub(super) fn trap_binding_read_in_txn(
     TRAP_BINDING.get(&vault.store, rtxn, anchor)
 }
 
+/// Every trap binding this device holds, by its anchor.
+pub(super) fn trap_bindings(vault: &Vault) -> Result<Vec<(EntityId, TrapBindingRow)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    TRAP_BINDING.scan(&vault.store, &rtxn)
+}
+
 pub(super) fn trap_binding_delete_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

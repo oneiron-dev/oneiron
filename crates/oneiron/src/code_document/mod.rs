@@ -4,15 +4,18 @@
 //! never repository refs. Each session edits its own observed state; persistence
 //! merges those operations, not a replacement file body.
 
+mod blame;
 mod codec;
 mod session;
 mod storage;
 mod types;
 
+pub use blame::CodeRangePair;
 pub use session::CodeDocumentSession;
 pub(crate) use storage::{CodeFileIngress, verify_frontier_in_txn};
 pub use types::{
-    CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeSpanAnchor, CodeSpanResolution,
+    CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance,
+    CodeRangeChange, CodeSpanAnchor, CodeSpanBlame, CodeSpanResolution,
 };
 
 #[cfg(test)]

@@ -541,10 +541,11 @@ pub(super) fn create(
         let name = Range::column(sheet, letter, (1, 1));
         let values = Range::column(sheet, letter, (2, last));
         sers.push_str(&format!(
-            "<c:ser><c:idx val=\"{at}\"/><c:order val=\"{at}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:tx><c:cat>{category}</c:cat><c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>General</c:formatCode>{}</c:numCache></c:numRef></c:val>{smooth}</c:ser>",
+            "<c:ser><c:idx val=\"{at}\"/><c:order val=\"{at}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:tx><c:cat>{category}</c:cat><c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>{}</c:formatCode>{}</c:numCache></c:numRef></c:val>{smooth}</c:ser>",
             escape_text(&name.formula()),
             points("c:", &[Cell::Text(header(col))]),
             escape_text(&values.formula()),
+            escape_text(&col.format.map_or_else(|| "General".to_owned(), |f| f.code())),
             points("c:", &column(at + 1)),
         ));
     }
