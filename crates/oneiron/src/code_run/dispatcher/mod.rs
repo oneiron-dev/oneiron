@@ -439,7 +439,27 @@ impl HostSelfDispatcher<'_> {
         )?;
         if let Some(json) = replacement {
             let next = crate::llm::PurposeDefaultTable::from_json(json.as_bytes())?;
-            vault.set_resident_purpose_default_table(&next)?;
+            #[cfg(test)]
+            if let Some(hook) = vault
+                .test_hooks()
+                .before_resident_defaults_writer
+                .lock()
+                .expect("resident defaults hook poisoned")
+                .take()
+            {
+                hook(vault);
+            }
+            // The check above read its own snapshot. The setter judges the
+            // ceiling again in the transaction that writes, so a narrowing
+            // committed in between holds the rows (H147).
+            vault.set_resident_purpose_default_table(&next, |txn| {
+                crate::code_run::actions::check_ceiling_in_txn(
+                    vault,
+                    txn,
+                    self.actor,
+                    crate::agent_def::AgentCeiling::Auto,
+                )
+            })?;
         }
         let active = vault.purpose_default_table()?;
         Ok(SelfDispatchOutcome::InferenceDefaults(

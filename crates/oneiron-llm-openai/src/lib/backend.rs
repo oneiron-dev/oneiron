@@ -139,6 +139,7 @@ pub(crate) fn validate_capabilities(
     if stream {
         require(catalog, LlmCapability::Streaming, "stream() requested")?;
     }
+    catalog.admit_raw_controls(request)?;
     if !request.tools.is_empty() {
         require(
             catalog,
