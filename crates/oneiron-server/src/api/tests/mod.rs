@@ -16,6 +16,7 @@ mod auth_idempotency;
 mod machine_identity;
 mod off_record_rooms;
 mod org_admin;
+mod owner_authored_writes;
 mod owner_healer;
 mod owner_routes;
 mod owner_secrets;

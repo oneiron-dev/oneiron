@@ -17,9 +17,7 @@ pub(super) fn park_consent_bundle_member(
     body.subject = ClaimSubject::Entity(test_id(subject_seed));
     body.value = Value::from(value);
     body.approval = ClaimApprovalStatus::Proposed;
-    // Dreamer-authored bodies satisfy the evidence floor with their own seeded
-    // subject entity.
-    body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
+    body.evidence = Some(said_evidence(vault)?);
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(vault, &body, actor, run_id)?;
     vault
         .batch()

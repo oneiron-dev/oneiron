@@ -12,6 +12,7 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, unit_interval_f32};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
+use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::identity_topology::EntityLifecycleState;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, Raw, SideTable};
@@ -338,6 +339,16 @@ fn active_priors_for_actor_in_txn(
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.stale
         {
+            continue;
+        }
+        // A prior that landed on a claim still awaiting its owner's answer
+        // is no prior yet.
+        if !claim_consolidation_eligible_in_txn(
+            &vault.store,
+            rtxn,
+            &claim_id,
+            ConsolidationReader::ProviderPrior,
+        )? {
             continue;
         }
         validate_actor_confidence_prior_claim_structure(&body)?;

@@ -651,6 +651,12 @@ pub(crate) fn verify_machine_claim_in_txn(
                     return Err(invalid_origin(replicated));
                 }
             }
+            // A restriction staged while a carrier awaits its owner's answer.
+            Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete))
+                if !replicated
+                    && crate::claim::history_projection::restricts_held_machine_history(
+                        store, txn, &fold, *id, body,
+                    )? => {}
             Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete)) => {
                 if !replicated
                     && !writer_envelope.is_some_and(|envelope| {

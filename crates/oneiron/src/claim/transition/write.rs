@@ -20,8 +20,8 @@ use super::{
 use crate::authority::{AuthorityKey, ROLE_OWNER};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::history_projection::{
-    machine_history_rows, pin_key, project_machine_claim, resolved_machine_history,
-    trusted_machine_handoff,
+    machine_history_for_restriction, machine_history_rows, pin_key, project_machine_claim,
+    resolved_machine_history, trusted_machine_handoff,
 };
 use crate::claim::history_store::{
     MachineHistoryKind, machine_history_claim, machine_history_scope_bytes,
@@ -184,8 +184,18 @@ pub(crate) fn stage_machine_claim_transition(
         }
     }
     // Also require the prior closure's pure fold to prove its claimed tips
-    // and event signatures/authority before extending it.
-    let before = resolved_machine_history(store, txn, &fold, target)?;
+    // and event signatures/authority before extending it. A restriction
+    // stages on the whole history, held carriers included; an approval only
+    // on one whose every carrier is answered.
+    let before = match kind {
+        ClaimTransitionKind::Approve => resolved_machine_history(store, txn, &fold, target)?,
+        ClaimTransitionKind::Reject
+        | ClaimTransitionKind::Retract
+        | ClaimTransitionKind::SupersedeClose
+        | ClaimTransitionKind::Decay
+        | ClaimTransitionKind::Weaken
+        | ClaimTransitionKind::Stale => machine_history_for_restriction(store, txn, &fold, target)?,
+    };
     let prior_tips: Vec<_> = if before.frontier.is_empty() {
         vec![rows.birth.digest]
     } else {
