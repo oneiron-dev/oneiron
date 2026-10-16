@@ -271,7 +271,8 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 }
 
 /// A verb-table call the run answers from its own results: `store`, a
-/// `describe` of a result rather than of a task, and the facets that read
+/// `describe` of a result rather than of a task, a `can` that asks whether
+/// it may read one rather than whether it may ask, and the facets that read
 /// one (`slice`, `search`, `query`, `chunks`), whose input names the result
 /// by its `ref`. `None` for any other call.
 fn result_call(input: &str) -> Result<Option<JsResultCall>> {
@@ -296,8 +297,27 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
             name: decode::<Store>(args.input)?.name,
         }),
         "describe" => result_ref(args.input).map(JsResultCall::Describe),
+        "can" => can_read(args.input)?.map(JsResultCall::CanRead),
         _ => None,
     })
+}
+
+/// The result a `can` input asks to read, when it asks: `{read: r}`, with
+/// `r` a result as `describe` takes one. Any other `can` is the manifest's
+/// ask preflight.
+fn can_read(input: Value) -> Result<Option<JsResultTarget>> {
+    let Value::Object(mut fields) = input else {
+        return Ok(None);
+    };
+    let Some(read) = fields.remove("read") else {
+        return Ok(None);
+    };
+    if !fields.is_empty() {
+        return Err(failure("can({read}) takes only the result to read"));
+    }
+    result_ref(read)
+        .map(Some)
+        .ok_or_else(|| failure("result ref must be a name, handle or card"))
 }
 
 /// The result a `describe` input names, when it names one: a string (a bound

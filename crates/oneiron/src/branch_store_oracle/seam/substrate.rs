@@ -185,7 +185,7 @@ impl SessionVault<'_> {
         storage.put_code_run_replay_record_if_generation(&record, None)?;
         let raw = b"executor raw output".as_slice();
         let output = CodeRunRawOutput::from_bytes("executor/repl/000000.observation.txt", raw)?;
-        storage.put_code_run_raw_output(&output, raw)
+        storage.put_code_run_raw_output(record.run_id, &output, raw)
     }
 
     /// ONE-1729: the session-owned conversation shell a bound run's turns

@@ -455,6 +455,57 @@ impl CodeRunRawOutput {
     }
 }
 
+/// One result occurrence (Docs Q08): what a result's taint and secret mark
+/// bind, as its authority does, never the bytes it shares with another. An
+/// owned output's occurrence is its owner and path, the id its body
+/// descriptor carries; an unowned body (a context output) has no occurrence
+/// beyond its content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ResultOccurrence(EntityId);
+
+impl ResultOccurrence {
+    /// The occurrence of `output` that `owner` holds, or of its bytes alone
+    /// when it has no owner. The one derivation of an occurrence id.
+    pub fn of(owner: Option<EntityId>, output: &CodeRunRawOutput) -> Result<Self> {
+        Ok(Self(match owner {
+            Some(owner) => EntityId::derive(
+                b"oneiron:code-run-output-occurrence:v1",
+                &[owner.as_bytes().as_slice(), output.path.as_bytes()],
+            )?,
+            None => EntityId::derive(
+                b"oneiron:code-run-output-unowned:v1",
+                &[output.raw_blake3.as_slice()],
+            )?,
+        }))
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> EntityId {
+        self.0
+    }
+
+    /// The key of this occurrence's taint and secret rows: the handle of
+    /// its body, so a read naming the bytes alone and the body's collector
+    /// find every occurrence of them together, then the occurrence.
+    pub(crate) fn mark_key(&self, handle: &str) -> String {
+        format!("{}{}", Self::marks_prefix(handle), self.0.to_hex())
+    }
+
+    /// The key prefix the marks of every occurrence of `handle`'s body
+    /// share.
+    pub(crate) fn marks_prefix(handle: &str) -> String {
+        format!("{handle}/")
+    }
+
+    /// The body handle and the occurrence a mark row's key names.
+    pub(crate) fn parse_mark_key(key: &str) -> Result<(&str, Self)> {
+        let (handle, occurrence) = key
+            .rsplit_once('/')
+            .ok_or(Error::CorruptedIndex("code-run result mark key"))?;
+        Ok((handle, Self(EntityId::from_hex(occurrence)?)))
+    }
+}
+
 /// One pinned host/guest record layout check carried by a replay record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

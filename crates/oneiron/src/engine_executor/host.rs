@@ -15,7 +15,7 @@ use crate::code_run::{
     CodeRunResultBinding, ExecutorCallSite, ExecutorStorage, GatedActorWrite, ResultFacet,
     ResultRead, ResultReply, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
     SelfDurableWait, SelfEffect, SelfFailedResult, SelfSkillCall, SelfSkillCallResult,
-    agent_verb_rows_of, result_card, result_refusal,
+    agent_verb_rows_of, result_cannot, result_card, result_refusal,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -509,7 +509,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone());
-        result_card(storage, &output, Some(name.as_str()))
+        result_card(storage, self.run_id, &output, Some(name.as_str()))
     }
 
     /// The result `target` names, read as every read of a result is:
@@ -530,7 +530,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         if self.withholds_results()? {
             return Ok(Err(result_refusal("result_withheld")));
         }
-        ResultRead::new(storage, output, name, target.range)
+        ResultRead::new(storage, self.run_id, output, name, target.range)
     }
 
     /// `describe(r)`: the card of one of the run's results, or of a range
@@ -543,6 +543,19 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             Ok(read) => json!({"output": read.card(storage)?}),
             Err(refused) => refused,
         })
+    }
+
+    /// `can({read: r})`: the verdict of the checks a read of `target` makes
+    /// (resolved in this run, admitted as a read of its recorded outputs,
+    /// its rows and its taint), for this run as the reader, with no preview
+    /// and no byte of the body. A refused admission halts the bridge as a
+    /// read's does.
+    fn can_read_result(&mut self, target: &JsResultTarget) -> Result<serde_json::Value> {
+        let verdict = match self.checked_result(target)? {
+            Ok(read) => read.preflight(),
+            Err(refused) => result_cannot(refused),
+        };
+        Ok(json!({"output": verdict}))
     }
 
     /// One facet of one of the run's results, checked as `describe` is. A
@@ -764,6 +777,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         match call {
             JsResultCall::Store { name } => self.store_result(name),
             JsResultCall::Describe(target) => self.describe_result(&target),
+            JsResultCall::CanRead(target) => self.can_read_result(&target),
             JsResultCall::Read {
                 target,
                 facet,

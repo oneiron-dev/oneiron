@@ -43,13 +43,13 @@ pub use self::replay::{
     CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    code_run_replay_abi_layout_checks,
+    ResultOccurrence, code_run_replay_abi_layout_checks,
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
-    Reply as ResultReply, ResultRead, card as result_card, refusal as result_refusal,
-    resolve as resolve_result, unknown_handle,
+    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
+    refusal as result_refusal, resolve as resolve_result, unknown_handle,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
