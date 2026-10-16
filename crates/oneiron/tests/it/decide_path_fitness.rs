@@ -54,7 +54,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 22;
+const BYPASS_CEILING: usize = 21;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -163,12 +163,6 @@ const BYPASSES: &[Pin] = &[
         "trait FanoutAskClassifier",
         "pub trait FanoutAskClassifier {",
         "fan-out ask: allow, deny or escalate to a person",
-    ),
-    pin(
-        "crates/oneiron/src/self_heal/tiered.rs",
-        "trait TelemetryJudge",
-        "pub trait TelemetryJudge {",
-        "self-heal: whether a telemetry streak raises a proposed diagnostic",
     ),
     pin(
         "crates/oneiron/src/skill_attribution/judge.rs",
