@@ -120,6 +120,9 @@ declare const vault: {
     };
   };
   delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
+  disclosure: {
+    offer(input: { ask?: string | null; beneficiary: string; channel: string; contact: string; expires_at: number; owner_ref: string; purpose: string; scope: unknown }): Promise<unknown>;
+  };
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
@@ -208,6 +211,7 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
+    participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
     reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;
     sharing(input: { room_ref: string }): Promise<unknown>;
@@ -225,6 +229,9 @@ declare const vault: {
     propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
     propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
     receipt(input: { receipt_id: string }): Promise<unknown>;
+  };
+  shares: {
+    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
   };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;

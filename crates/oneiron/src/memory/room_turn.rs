@@ -29,6 +29,7 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.speak",
     "vault.rooms.host",
     "vault.rooms.sharing",
+    "vault.rooms.participants",
 ];
 
 impl<'v> RoomTurnHandle<'v> {

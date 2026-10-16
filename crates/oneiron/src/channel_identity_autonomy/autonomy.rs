@@ -17,11 +17,11 @@ use crate::outbound_grant::{
     standing_outbound_grant_in_txn,
 };
 
-use super::envelopes::AutonomyReader;
 use super::codec::{
     AUTONOMY, action_bound, action_value, address, key, mode_from, mode_key, mode_value,
     read_bound, read_from, read_value,
 };
+use super::envelopes::AutonomyReader;
 use super::invalid_autonomy;
 use super::types::{
     ChannelIdentityActionEnvelope, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRequest,
@@ -442,7 +442,8 @@ impl Vault {
         at: u64,
         recorded_now: u64,
     ) -> Result<ChannelIdentityAutonomyState> {
-        self.autonomy_reader().autonomy_state(txn, mode, at, recorded_now)
+        self.autonomy_reader()
+            .autonomy_state(txn, mode, at, recorded_now)
     }
 
     fn require_autonomy_bound(&self, txn: &heed::RoTxn<'_>, bound: &GrantBound) -> Result<()> {
@@ -455,7 +456,8 @@ impl Vault {
         grant: &StandingOutboundGrant,
         at: u64,
     ) -> Result<ChannelIdentityActionEnvelope> {
-        self.autonomy_reader().validate_autonomy_action(txn, grant, at)
+        self.autonomy_reader()
+            .validate_autonomy_action(txn, grant, at)
     }
 }
 
