@@ -92,7 +92,6 @@ struct Once {
     /// The final merge's revocations, by key.
     revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     settlement: Arc<Settlement>,
-    valid_entries: BTreeSet<AuthorityEntryHash>,
     uncounted: BTreeSet<AuthorityEntryHash>,
     pairs: u64,
     counted_pairs: u64,
@@ -212,7 +211,6 @@ impl Once {
                 marks,
                 floors: super::tier_floor::concurrent_tier_floors(states, by_hash, &|_| true),
             }),
-            valid_entries,
             pairs: entry_ancestors.values().map(|past| past.len() as u64).sum(),
             counted_pairs: counted_ancestor_pairs,
             head_ancestors: head_ancestors.len() as u64,
@@ -546,7 +544,7 @@ impl FoldBase {
             add_writers(&mut writers, &states[hash]);
             add_bound_keys(&mut bound_keys, &states[hash]);
         }
-        let mut valid_entries = once.valid_entries.clone();
+        let mut valid_entries = once.fold.valid_entries.clone();
         valid_entries.extend(chain.iter().copied());
         let rows = Resumed {
             once,
@@ -557,7 +555,7 @@ impl FoldBase {
         let (fold, final_merged) = super::fold_project::project_once(
             Settled {
                 merged: Some(merged.clone()),
-                valid_entries: valid_entries.clone(),
+                valid_entries,
                 by_hash: &by_hash,
                 revoke_facts: &settlement.revoke_facts,
                 retired_keys: settlement.retired_keys.clone(),
@@ -603,7 +601,6 @@ impl FoldBase {
                 merged,
                 revocations: final_merged?.actor_revocation_hashes,
                 settlement: Arc::clone(settlement),
-                valid_entries,
                 uncounted,
                 pairs,
                 counted_pairs,
