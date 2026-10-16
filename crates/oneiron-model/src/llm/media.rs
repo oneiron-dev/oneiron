@@ -22,6 +22,8 @@ use serde_json::Value as JsonValue;
 use super::image::{ImageBackend, ImageBytes, ImageIntent, ImageResponse};
 use super::{BudgetLease, CallEnvelope, FatalLlmError, LlmError, LlmRequest, LlmResult, ModelId};
 
+pub mod wav;
+
 /// One call of the `ai.*` family, by the output it asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -323,6 +325,36 @@ pub struct MediaRequest {
     /// pick the model and its route, as for a text call.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, JsonValue>,
+    /// The voice a speech call renders in, typed: a provider's stock voice,
+    /// or a banked identity's clone on this call's target. A call that
+    /// names one names no `voice` param.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<MediaVoice>,
+}
+
+/// The voice of one speech call. A banked identity (ARCH-0061 §5, the
+/// render-target law) lives in the vault's reference bank; a provider only
+/// ever sees its target's recorded voice id for it, which the host resolved
+/// from the bank for this call's rung.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MediaVoice {
+    /// The provider's own voice, by its name: no banked identity.
+    Stock { name: String },
+    /// A banked identity's clone on this call's target: the provider's
+    /// disposable id for it.
+    Clone { id: String },
+}
+
+impl MediaVoice {
+    /// The name or id the provider's wire carries.
+    #[must_use]
+    pub fn wire_id(&self) -> &str {
+        match self {
+            Self::Stock { name } => name,
+            Self::Clone { id } => id,
+        }
+    }
 }
 
 impl MediaRequest {

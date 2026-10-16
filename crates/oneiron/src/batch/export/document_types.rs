@@ -1,10 +1,11 @@
-//! Versioned seven-part whole-vault interchange document.
+//! The typed whole-vault document: what the archive's JSONL rows assemble
+//! into on import, and what the snapshot builds before the archive is cut.
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ExportAgentBundle, ExportBundleOmission, ExportImportOmission, ExportImportRefusal,
-    ExportManifest, ExportSerializerManifest, ExportSkillBundle, ExportSourceBoundary,
-    VaultImportReceipt,
+    ArchiveFile, ArchiveRecordFile, ExportAgentBundle, ExportBundleOmission, ExportDiaryHold,
+    ExportImportOmission, ExportImportRefusal, ExportManifest, ExportSerializerManifest,
+    ExportSkillBundle, ExportSourceBoundary, VAULT_ARCHIVE_FORMAT, VaultImportReceipt,
 };
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
@@ -29,6 +30,15 @@ pub struct WholeVaultDocumentManifest {
     /// Missing or redacted source bundles, never presented as complete archives.
     pub bundle_omissions: Vec<ExportBundleOmission>,
     pub source_boundaries: Vec<ExportSourceBoundary>,
+    /// The archive's JSONL files, one per record kind.
+    pub records: Vec<ArchiveRecordFile>,
+    /// The attached files, each once under its BLAKE3.
+    pub files: Vec<ArchiveFile>,
+    /// OF-490: agents whose diaries this export holds out.
+    pub diary_holds: Vec<ExportDiaryHold>,
+    /// Whether this archive carries custody secret values (the default for
+    /// the owner's own archive) or each custody record as its handle only.
+    pub secrets_included: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,29 +49,11 @@ pub struct ExportSourceVault {
 }
 
 impl WholeVaultDocumentManifest {
-    pub(crate) fn validate_json(&self) -> Result<()> {
-        self.validate(crate::context_pack::PackFormat::Json)
-    }
-
-    /// Validate the versioned manifest for the format being consumed.
-    pub fn validate(&self, format: crate::context_pack::PackFormat) -> Result<()> {
-        let format = match format {
-            crate::context_pack::PackFormat::Json => "json",
-            crate::context_pack::PackFormat::Yaml => "yaml",
-            crate::context_pack::PackFormat::Toon => "toon",
-            crate::context_pack::PackFormat::Markdown => "markdown",
-            crate::context_pack::PackFormat::Plaintext => "plaintext",
-            crate::context_pack::PackFormat::OpenaiCompat
-            | crate::context_pack::PackFormat::AnthropicMessages
-            | crate::context_pack::PackFormat::Gemini => {
-                return Err(Error::InvalidConfig(
-                    "whole-vault export does not support provider wire formats".to_owned(),
-                ));
-            }
-        };
+    /// Validate the versioned manifest of a whole-vault archive.
+    pub fn validate(&self) -> Result<()> {
         if self.source_boundaries != [ExportSourceBoundary::BuiltinAdapterCodeNotStored]
             || self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
-            || self.format != format
+            || self.format != VAULT_ARCHIVE_FORMAT
             || self.serializer != ExportSerializerManifest::current()
             || !self.secrets_nulled
             || !self.storage.redacted()
@@ -73,7 +65,7 @@ impl WholeVaultDocumentManifest {
                     .map(super::ExportAuthorityManifest::vault_id)
         {
             return Err(Error::InvalidConfig(
-                "unsupported whole-vault JSON manifest".to_owned(),
+                "unsupported whole-vault archive manifest".to_owned(),
             ));
         }
         self.storage.validate_import_supported()
@@ -86,11 +78,17 @@ impl WholeVaultDocumentManifest {
 pub struct WholeVaultExport {
     pub(crate) bytes: Vec<u8>,
     pub(crate) manifest: WholeVaultDocumentManifest,
+    /// OF-490: the diaries this export read, for the vault's own log.
+    pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
 }
 
 impl WholeVaultExport {
+    /// The archive: a ZIP of `manifest.json`, `records/*.jsonl` and `files/*`.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+    pub fn diary_reads(&self) -> &[super::ExportDiaryRead] {
+        &self.diary_reads
     }
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest
@@ -101,7 +99,7 @@ impl WholeVaultExport {
     }
 }
 
-/// Exactly seven sections. Entities occur once. Derived evidence is an index into
+/// Seven sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -251,6 +249,13 @@ pub struct WholeVaultImportReceipt {
     /// withheld (their manifests stay in the archive only).
     pub imported_results: usize,
     pub withheld_results: usize,
+    /// Custody records the owner's own archive carried, restored under their
+    /// own ids, and those already here unchanged.
+    pub restored_secrets: usize,
+    pub unchanged_secrets: usize,
+    /// Custody records the archive carried as handles only: secrets to
+    /// re-enter through the owner's registration door.
+    pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,
 }
 
 impl WholeVaultDocument {

@@ -43,8 +43,9 @@ pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
 pub(crate) use self::endpoint_args::validate_mcp_endpoint_tool_args_as;
 pub use self::endpoint_args::{
-    McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpSetupToolArgs, McpVerbArguments,
-    McpVerbToolArgs, McpVerbToolPayload, validate_mcp_endpoint_tool_args,
+    McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpReadResultToolArgs, McpResultFacet,
+    McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
+    validate_mcp_endpoint_tool_args,
 };
 pub(crate) use self::endpoint_schema::verb_input_unknown_field;
 pub use self::endpoint_schema::{
@@ -72,8 +73,8 @@ pub use self::results::{
 pub use self::surface::{
     MCP_BOARD_BUDGET_TOK, MCP_CODE_HOST_UNBOUND_CODE, MCP_CODE_RUN_SCHEMA_VERSION,
     MCP_EXECUTE_CODE_TOOL, MCP_MAX_LIVE_PAGE_CONTINUATIONS, MCP_PAGE_ITEM_CAP,
-    MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS,
-    MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
+    MCP_READ_RESULT_TOOL, MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION,
+    MCP_RESULT_TTL_MS, MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
     MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool,
     McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily,
     exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,

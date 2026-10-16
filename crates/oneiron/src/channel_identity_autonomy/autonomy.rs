@@ -17,6 +17,7 @@ use crate::outbound_grant::{
     standing_outbound_grant_in_txn,
 };
 
+use super::envelopes::AutonomyReader;
 use super::codec::{
     AUTONOMY, action_bound, action_value, address, key, mode_from, mode_key, mode_value,
     read_bound, read_from, read_value,
@@ -430,6 +431,43 @@ impl Vault {
         at: u64,
         recorded_now: u64,
     ) -> Result<ChannelIdentityAutonomyMode> {
+        self.autonomy_reader()
+            .autonomy_mode_in_txn(txn, identity, context, at, recorded_now)
+    }
+
+    pub(super) fn autonomy_state(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mode: ChannelIdentityAutonomyMode,
+        at: u64,
+        recorded_now: u64,
+    ) -> Result<ChannelIdentityAutonomyState> {
+        self.autonomy_reader().autonomy_state(txn, mode, at, recorded_now)
+    }
+
+    fn require_autonomy_bound(&self, txn: &heed::RoTxn<'_>, bound: &GrantBound) -> Result<()> {
+        self.autonomy_reader().require_autonomy_bound(txn, bound)
+    }
+
+    pub(crate) fn validate_autonomy_action(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant: &StandingOutboundGrant,
+        at: u64,
+    ) -> Result<ChannelIdentityActionEnvelope> {
+        self.autonomy_reader().validate_autonomy_action(txn, grant, at)
+    }
+}
+
+impl AutonomyReader<'_> {
+    pub(crate) fn autonomy_mode_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        identity: EntityId,
+        context: RelationshipContext,
+        at: u64,
+        recorded_now: u64,
+    ) -> Result<ChannelIdentityAutonomyMode> {
         let (_, learned_at, value) = self.autonomy_row(txn, &mode_key(identity, context))?;
         let mode = mode_from(&value)?;
         if learned_at > at || mode.identity_ref != identity || mode.relationship_context != context
@@ -455,7 +493,7 @@ impl Vault {
             .ok_or_else(invalid_autonomy)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT
-            || !crate::vault::live_entity_row_in_txn(&self.store, txn, &reference)?.is_live()
+            || !crate::vault::live_entity_row_in_txn(self.store, txn, &reference)?.is_live()
         {
             return Err(invalid_autonomy());
         }
@@ -491,7 +529,7 @@ impl Vault {
         let (action_grant, action_envelope) = match (mode.rung.verb(), mode.action_grant_ref) {
             (None, None) => (None, None),
             (Some(verb), Some(reference)) => {
-                let action = standing_outbound_grant_in_txn(&self.store, txn, &reference)?
+                let action = standing_outbound_grant_in_txn(self.store, txn, &reference)?
                     .ok_or_else(invalid_autonomy)?;
                 let envelope = self.validate_autonomy_action(txn, &action, at)?;
                 if envelope.identity_ref != identity_ref
@@ -513,9 +551,12 @@ impl Vault {
         })
     }
 
-    fn require_autonomy_bound(&self, txn: &heed::RoTxn<'_>, bound: &GrantBound) -> Result<()> {
-        if !self
-            .active_standing_consent_grants_in_txn(txn)?
+    pub(super) fn require_autonomy_bound(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        bound: &GrantBound,
+    ) -> Result<()> {
+        if !crate::consent::load_active_standing_grants(self.store, txn)?
             .iter()
             .any(|g| g.bound() == bound)
         {
@@ -553,7 +594,7 @@ impl Vault {
             || grant.created_at > at
             || grant.binding_diff_handle != bound.digest().as_bytes().to_vec()
             || !grant.is_active_under_policy(
-                &crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?,
+                &crate::gate::resolve_policy_manifest(self.store, txn)?.read_frontier_hash()?,
             )
         {
             return Err(invalid_autonomy());

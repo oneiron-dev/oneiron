@@ -4,7 +4,7 @@
 use super::admission::{PACK_INSTALL, PackCommit, pack_permissions, refuse_engine_namespace};
 use super::{
     PackAdapter, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackInstallStatus,
-    PackKind, PackQualification, PackQualifier, PackSource,
+    PackKind, PackQualification, PackQualifier, PackSource, PackTree,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::{HubFile, HubPin, HubRef};
@@ -32,13 +32,14 @@ impl Vault {
     /// `vault.packs.put`: the owner installs a pack folder, or replaces the
     /// one installed under its name. The put is the consent for its hooks.
     /// A script adapter still lands Candidate until its sandbox qualifies it.
+    /// Organ builds in the folder are held as blob assets of the source.
     pub fn put_pack(
         &self,
         owner: &AuthenticatedOwner,
         files: Vec<HubFile>,
     ) -> Result<PackInstallDisposition> {
-        let source = PackSource::from_files(files)?;
-        self.put_pack_source(owner, source, None)
+        let tree = PackSource::from_tree(files)?;
+        self.put_pack_source(owner, tree, None)
     }
 
     /// Owner-authored connectors use the same source-bound qualification as
@@ -49,36 +50,38 @@ impl Vault {
         files: Vec<HubFile>,
         qualifier: &dyn PackQualifier,
     ) -> Result<PackInstallDisposition> {
-        let source = PackSource::from_files(files)?;
-        refuse_engine_namespace(&source)?;
-        let qualification = qualifier.qualify(&source)?;
-        super::qualify::validate_qualification(&source, &qualification)?;
-        self.put_pack_source(owner, source, Some(qualification))
+        let tree = PackSource::from_tree(files)?;
+        refuse_engine_namespace(&tree.source)?;
+        let qualification = qualifier.qualify(&tree.source)?;
+        super::qualify::validate_qualification(&tree.source, &qualification)?;
+        self.put_pack_source(owner, tree, Some(qualification))
     }
 
     fn put_pack_source(
         &self,
         owner: &AuthenticatedOwner,
-        source: PackSource,
+        tree: PackTree,
         qualification: Option<PackQualification>,
     ) -> Result<PackInstallDisposition> {
-        refuse_engine_namespace(&source)?;
-        let hub = put_ref(&source)?;
+        let source = &tree.source;
+        refuse_engine_namespace(source)?;
+        let hub = put_ref(source)?;
         // The put is the owner's consent, advisories included: the tree's OSV
         // row is evidence on its hash, and holds nothing here.
-        let advisories = self.pack_advisories(&source, false, crate::unix_seconds_now())?;
+        let advisories = self.pack_advisories(source, false, crate::unix_seconds_now())?;
         self.with_write_txn_grouped(|txn| {
             let holder = owner.revalidate_in_txn(self, txn)?.to_hex();
             let at = crate::unix_seconds_now();
             let occurred = TimeRange { start: at, end: at };
-            let source_id = self.stage_pack_source_in_txn(txn, &source, occurred, at)?;
-            self.scan_and_ingest_pack_source_in_txn(txn, &source, occurred, at)?;
+            let source_id = self.stage_pack_source_in_txn(txn, source, occurred, at)?;
+            self.hold_organ_builds_in_txn(txn, &source_id, &tree, occurred, at)?;
+            self.scan_and_ingest_pack_source_in_txn(txn, source, occurred, at)?;
             self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, at)?;
-            if let Some(reason) = self.screen_pack_in_txn(txn, &source, &[], &holder)? {
+            if let Some(reason) = self.screen_pack_in_txn(txn, source, &[], &holder)? {
                 return Ok(PackInstallDisposition::Blocked { reason });
             }
             let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
-            let permissions = pack_permissions(&source, prior.as_ref())?;
+            let permissions = pack_permissions(source, prior.as_ref())?;
             let verdict = PackFitVerdict {
                 fits: true,
                 rules_hit: false,
@@ -87,7 +90,7 @@ impl Vault {
             };
             let disposition = self.commit_pack_install_in_txn(
                 txn,
-                &source,
+                source,
                 &PackCommit {
                     source_id,
                     hub: &hub,
@@ -99,7 +102,7 @@ impl Vault {
                 },
             )?;
             if matches!(disposition, PackInstallDisposition::Installed(_)) {
-                self.bind_pack_hooks_in_txn(txn, owner, source_id, &source)?;
+                self.bind_pack_hooks_in_txn(txn, owner, source_id, source)?;
             }
             Ok(disposition)
         })

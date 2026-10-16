@@ -131,6 +131,7 @@ pub(super) fn decode_ask(value: &Value) -> Result<TaskAskReceipt> {
         task_refs: decode_array(map_get(m, "tasks")?, entity_value)?,
         hold: hold_decode(map_get(m, "hold")?)?,
         idempotent_replay: bool_value(map_get(m, "replay")?)?,
+        statement: None,
     })
 }
 pub(super) fn status_value(result: &TaskAskStatus) -> Result<Value> {

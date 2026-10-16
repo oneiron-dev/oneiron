@@ -93,6 +93,7 @@ pub(crate) mod gate;
 pub mod policy_model;
 pub mod receipt;
 pub mod share;
+pub mod share_travel;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -365,7 +366,8 @@ pub use crate::deletion::{
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
-    ConsolidationExecutor, ConsolidationSink, plan_partitions, read_watermark, scan_dirty_turns,
+    ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, plan_partitions,
+    read_watermark, scan_dirty_turns,
 };
 pub use crate::dreamer_prefilter::{
     NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,

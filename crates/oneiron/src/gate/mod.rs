@@ -47,6 +47,7 @@ pub(crate) use policy_upgrade::readable;
 mod project_conversion;
 pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
+pub(crate) mod record_references;
 mod repair;
 mod replicated_confirm;
 mod resolution;

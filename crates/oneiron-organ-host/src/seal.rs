@@ -18,8 +18,11 @@
 //! Calls block, as every host call does: run them off any async runtime.
 
 mod binding;
+mod file_keys;
 
-use std::path::PathBuf;
+pub use file_keys::{FileSealKeys, pem_certificates};
+
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -28,13 +31,14 @@ use oneiron::blob_artifact::esign::{
     EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
     SealDegrade, SealProfile, SealVerdict,
 };
-use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError};
+use oneiron::skill_hub::pack_catalog::PackOrganBinary;
+use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use self::binding::{RevisionArgs, SealCall};
-use crate::asks::{Answered, AskHandler, AskHandlers, AskRequest};
+use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::error::{HostError, Unavailable};
 use crate::fetch::GuardedFetch;
 use crate::host::OrganHost;
@@ -209,6 +213,24 @@ pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     }
     spec.fetch = fetch;
     spec
+}
+
+/// The seal organ from a pack's build for this host (OF-575 pinned
+/// install): the build written under `dir` by its blake3, and
+/// [`seal_spec`] pinned to that binary and to the version the pack names.
+///
+/// # Errors
+/// The build could not be written.
+pub fn seal_spec_from_pack(
+    binary: &PackOrganBinary,
+    dir: &Path,
+    fetch: FetchGrant,
+) -> Result<OrganSpec, HostError> {
+    let program = binary.materialize(dir)?;
+    let mut spec = seal_spec(program, fetch);
+    spec.program_hash = Some(Hash32::of(&binary.bytes));
+    spec.version_pin = binary.organ.version.clone();
+    Ok(spec)
 }
 
 /// [`EsignSealer`] over the seal organ.

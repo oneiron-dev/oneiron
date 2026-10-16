@@ -600,18 +600,16 @@ impl Refusal {
             Self::Server(message, body) => {
                 rpc_error(id, -32000, "server_error", message, Some(body.clone()))
             }
-            Self::Unreachable(message) => {
-                rpc_error(
-                    id,
-                    -32000,
-                    "server_unreachable",
-                    &format!(
-                        "{message}; start the vault with `oneiron serve --config <vault-config>` \
+            Self::Unreachable(message) => rpc_error(
+                id,
+                -32000,
+                "server_unreachable",
+                &format!(
+                    "{message}; start the vault with `oneiron serve --config <vault-config>` \
                          and check --url matches its host and port; MCP does not start a vault"
-                    ),
-                    None,
-                )
-            }
+                ),
+                None,
+            ),
             Self::TooLarge => rpc_error(
                 id,
                 -32000,
@@ -659,14 +657,13 @@ fn credential_env(name: &str) -> anyhow::Result<String> {
 /// its owner may read it, by its mode and by any ACL: a file the agent's
 /// other users can read is a credential they hold too.
 fn read_credential_file(path: &Path) -> anyhow::Result<(String, String)> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "open {}: {error}; pass the file written by `oneiron token agent --name \
+    let mut file = std::fs::File::open(path).map_err(|error| {
+        anyhow::anyhow!(
+            "open {}: {error}; pass the file written by `oneiron token agent --name \
                  <name> --out <new-file> --config <vault-config>` (with the vault stopped)",
-                path.display()
-            )
-        })?;
+            path.display()
+        )
+    })?;
     super::credential_file::admit(path, &file)?;
     let mut text = String::new();
     file.read_to_string(&mut text)

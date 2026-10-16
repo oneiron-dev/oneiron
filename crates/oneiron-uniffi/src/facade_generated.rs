@@ -4,7 +4,6 @@ export_facade! {
 "vault.claims.upsert" => fn vault_claims_upsert(&self, claim: ClaimInput) -> CommitReceipt;
 "vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>) -> MemoryPack;
 "vault.receipts" => fn vault_receipts(&self, limit: u32) -> Vec<FacadeReceipt>;
-"connector.outbound.schedule" => fn connector_outbound_schedule(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt;
 "vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt>;
 "vault.remember" => fn vault_remember(&self, claim: ClaimInput) -> CommitReceipt;
 "vault.claims.retract" => fn vault_claims_retract(&self, claim_ref: String) -> CommitReceipt;
@@ -23,6 +22,7 @@ export_facade! {
 "vault.artifacts.put" => fn vault_artifacts_put(&self, input: BlobArtifactInput) -> EntityRefReceipt;
 "vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView;
 "vault.artifacts.read" => fn vault_artifacts_read(&self, artifact_ref: String, version: u64) -> Option<Vec<u8>>;
+"connector.outbound.schedule" => fn connector_outbound_schedule(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt;
 "vault.consolidation.enqueue" => fn vault_consolidation_enqueue(&self, input: ConsolidationJobInput) -> DreamerJobRef;
 "vault.consolidation.status" => fn vault_consolidation_status(&self, job_ref: String) -> Option<DreamerJobView>;
 "vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt>;

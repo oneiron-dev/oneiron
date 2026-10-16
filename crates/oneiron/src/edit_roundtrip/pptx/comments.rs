@@ -1,7 +1,7 @@
 //! Modern threaded comments using retained XML surgery and a derived part allowlist.
 
 use super::archive::{Archive, enforce_allowlist};
-use super::identities::{inspect_parts, resolve_anchor, text};
+use super::identities::{inspect_parts, resolve_anchor, resolve_positions, text};
 use super::limits::PptxOperationalLimits;
 use super::links::{self, Parts, comment_part, put};
 use super::package::*;
@@ -40,6 +40,7 @@ pub(super) fn patch_with_mints(
     }
     let archive = Archive::read(base)?;
     let mut inspection = inspect_parts(&archive.parts, limits)?;
+    resolve_positions(base, &archive.parts, &mut inspection, limits);
     let mut parts = archive.parts.clone();
     let mut allowed = BTreeSet::new();
     let mut minted = Vec::new();
