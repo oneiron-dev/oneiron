@@ -107,6 +107,8 @@ pub use owner::{
 };
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
+mod seat;
+pub use self::seat::{seat_login_plan, seat_routes};
 
 pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     let vault_args = VaultArgs {

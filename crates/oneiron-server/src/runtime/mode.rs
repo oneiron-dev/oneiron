@@ -44,6 +44,23 @@ impl RuntimeMode {
         }
     }
 
+    /// The vault hosting posture official-seat placement is judged under
+    /// (OF-375): only the Oneiron-hosted mode is a hosted runtime. Local and
+    /// bring-your-own-key modes run on the person's own runtime, which is
+    /// where a ChatGPT-plan login may live.
+    pub fn hosting_posture(self) -> oneiron::HostingPrivacyPosture {
+        match self {
+            Self::OneironCloud => oneiron::HostingPrivacyPosture::Hosted,
+            Self::LocalFree | Self::ByoCloudKey => oneiron::HostingPrivacyPosture::SelfHostLocal,
+        }
+    }
+
+    /// Whether work runs on the person's own machine or self-hosted runtime
+    /// rather than an Oneiron-hosted one.
+    pub fn runs_on_persons_runtime(self) -> bool {
+        !matches!(self, Self::OneironCloud)
+    }
+
     pub(super) fn provider_kind(self) -> RuntimeProviderKind {
         match self {
             Self::LocalFree => RuntimeProviderKind::Local,

@@ -56,7 +56,19 @@ mod connector;
 mod dispatcher;
 mod error;
 mod exhaust;
+pub mod official_seats;
 mod validate;
+
+pub use self::official_seats::{
+    ANTHROPIC_API_BASE_URL, ClaudeAgentSdkSeatAdapter, ClaudeCodeSeatAdapter, CodexSeatAdapter,
+    DispatchOfficialSeat, DrySeatDecision, DrySeatFallback, GrokApiKeySeatAdapter,
+    OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatInput, OfficialSeatRegistry,
+    OfficialSeatRoute, OfficialSeatSpec, OfficialSeatStamp, OfficialSeatVendor,
+    SIWC_AUTHORIZE_ENDPOINT, SIWC_RESPONSES_BASE_URL, SeatLoginPlan, SeatPlacementApproval,
+    SeatPlanWindow, SignInWithChatGptAdapter, SiwcAuthorizeRequest, XAI_API_BASE_URL,
+    check_seat_placement, decide_dry_seat, pkce_s256_challenge, seat_login_plan,
+    siwc_authorize_url, validate_official_seat,
+};
 
 pub use self::connector::{
     BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE,
