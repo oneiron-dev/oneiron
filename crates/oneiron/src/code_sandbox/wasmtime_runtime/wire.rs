@@ -1,6 +1,6 @@
 //! Internal bounded JSON bridge between typed WIT and the borrowed engine host.
 
-use super::{Bridge, failure};
+use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
     MemoryTimeRange, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall,
@@ -436,10 +436,14 @@ fn json_value(value: Value) -> rmpv::Value {
     }
 }
 
+/// What a step returns beside its streamed result: whether it finished. A
+/// component that does not stream may still return its observation and
+/// files here.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Output {
     done: bool,
+    #[serde(default)]
     observation: String,
     #[serde(default)]
     outputs: Vec<OutputFile>,
@@ -449,6 +453,30 @@ struct Output {
 struct OutputFile {
     path: String,
     bytes: Vec<u8>,
+}
+
+/// Takes one frame of the step's streamed result: into the host's body
+/// store, or held for the step's outcome when the host keeps none. A file
+/// frame must name a file under `/mnt/outputs`.
+pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u8>) -> Result<u64> {
+    if frame.len() > bridge.message_bytes {
+        return Err(failure("streamed output frame exceeds the message limit"));
+    }
+    let target = match target {
+        StreamTarget::File(path) => {
+            let path = SandboxVirtualPath::try_new(&path)?;
+            if path.mount() != crate::code_sandbox::SandboxMount::Outputs {
+                return Err(failure("component output must be under /mnt/outputs"));
+            }
+            StreamTarget::File(path.as_str().to_owned())
+        }
+        other => other,
+    };
+    let len = frame.len() as u64;
+    if !bridge.host.write_output(target.stream(), &frame)? {
+        bridge.held.take(target, frame, bridge.held_limit)?;
+    }
+    Ok(len)
 }
 
 pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStepOutcome> {

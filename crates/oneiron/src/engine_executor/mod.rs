@@ -27,7 +27,7 @@ pub use self::types::{
     EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
     EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
     JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    SelfDispatchResponse, guest_response_with_budget,
+    JsCodeModeStream, SelfDispatchResponse, guest_response_with_budget,
 };
 
 #[cfg(test)]
