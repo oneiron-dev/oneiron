@@ -569,23 +569,26 @@ pub(super) fn filter_window_doc(
         };
         // Facet rule C: a text is never a candidate, so never kept, seeded
         // or shipped, unless every source it was written from is a live row
-        // this export reads, judged on its stored row.
-        match text_backed(vault, &rtxn, &id, Some(blob), |source, raw| {
-            source_selected(
-                vault,
-                &rtxn,
-                (source, raw),
-                &grant.authority_scope,
-                selector,
-                scope_position,
-                &facet_scope,
-            )
-        }) {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(error) => {
-                scope_error = Some(error);
-                return;
+        // this export reads, judged on its stored row. A tombstone carries
+        // no text, so it still propagates its delete.
+        if !is_tombstoned {
+            match text_backed(vault, &rtxn, &id, Some(blob), |source, raw| {
+                source_selected(
+                    vault,
+                    &rtxn,
+                    (source, raw),
+                    &grant.authority_scope,
+                    selector,
+                    scope_position,
+                    &facet_scope,
+                )
+            }) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
             }
         }
         candidates.insert(id);
