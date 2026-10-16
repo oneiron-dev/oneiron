@@ -3039,7 +3039,7 @@
      "surface": {
       "const": 4,
       "enum": 1,
-      "mod": 5,
+      "mod": 6,
       "re-export": 4,
       "type": 1
      }
@@ -3100,7 +3100,7 @@
      "path": "src/autoreason_campaign/beam_promotion.rs",
      "purpose": "One-shot, one-way promotion from held-out KEEP to a sealed BEAM referee",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 4,
       "struct": 3
      }
@@ -3208,6 +3208,78 @@
       "enum": 2,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "BranchSnapshot",
+      "CandidateRef",
+      "ExperimentKind",
+      "ExperimentNode",
+      "ForkInput",
+      "ForkKind",
+      "HeldOutEvidence",
+      "InvalidReceipt",
+      "PruneReason",
+      "PruneReceipt",
+      "ResearchBindRequest",
+      "ResearchBinding",
+      "ResearchConfirmationSeat",
+      "ResearchGoalPin",
+      "ResearchStep",
+      "ResearchTarget",
+      "SearchEvidence",
+      "SelectionReceipt",
+      "WeaveInput",
+      "WeaveReceipt"
+     ],
+     "path": "src/autoreason_campaign/research.rs",
+     "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
+     "surface": {
+      "crate-vis": 9,
+      "enum": 5,
+      "fn": 13,
+      "re-export": 2,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResearchBudgetRead",
+      "ResearchReservation",
+      "ResearchReservationLine"
+     ],
+     "path": "src/autoreason_campaign/research/budget.rs",
+     "purpose": "The campaign's spend on the RSI line: reserve-then-spend, fail-closed",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CampaignPromotionReceipt",
+      "ConfirmationOutcome",
+      "ConfirmationReceipt",
+      "HeldOutCall",
+      "PromotionBasis",
+      "PromotionDisposition"
+     ],
+     "path": "src/autoreason_campaign/research/promotion.rs",
+     "purpose": "Promotion under the campaign's goal: an untouched held-out decision, one sealed confirmation on OF-578's…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -44712,9 +44784,9 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 12,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
@@ -46077,9 +46149,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 69,
+   "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2768,
+   "source_files": 2771,
    "test_files": 903
   },
   "oneiron-android": {
