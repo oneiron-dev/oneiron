@@ -33,6 +33,12 @@ pub const DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND: &str = "dreamer.consolidation
 pub const DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND: &str = "dreamer.consolidation.macro";
 /// A per-vault, owner-admitted workflow skill executed under the Dreamer stamp.
 pub const DREAMER_WEAVE_RECIPE_ATTEMPT_KIND: &str = "dreamer.weave_recipe";
+/// The wake policy's recipe lane (ARCH-0026 #wake): one attempt per policy
+/// decision, naming the recipe whose input row the policy outbox holds.
+/// Vault-local, like maintenance: it is never a partition and needs no home
+/// election, though a recipe body may queue Macro work that does. Doubles as
+/// the payload `job_type`.
+pub const DREAMER_RECIPE_WAKE_ATTEMPT_KIND: &str = "dreamer.recipe_wake";
 /// SKILL-OPT maintenance queue kind (ONE-1448). Private per-device attempt
 /// rows, like MICRO/MESO: the job only DRAFTS gated proposals, so a second
 /// device drafting one is a second question for a human, never a second edit.
