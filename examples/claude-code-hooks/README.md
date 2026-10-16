@@ -4,7 +4,9 @@ Hooks that give a Claude Code session your vault: a recall at session start,
 and the session's log handed to the running `serve` for import at each stop and
 before compaction.
 
-- `oneiron_hook.py`: the hooks (`session-start`, `hand-over`).
+The hooks are in the `oneiron` binary: `oneiron hook --host claude-code
+<session-start|prompt|hand-over>`.
+
 - `settings.json`: the snippet to merge into your Claude Code settings.
 - `check.sh`: the end-to-end check on invented data.
 

@@ -13,7 +13,7 @@ async fn server_startup_refuses_held_writer_before_opening_lmdb() {
     };
     let error = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        serve_with_config(config),
+        serve_with_config(config, None),
     )
     .await
     .expect("lease refusal must not start serving")

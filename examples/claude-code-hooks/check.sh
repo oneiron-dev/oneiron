@@ -6,11 +6,11 @@
 #
 # 1. A Stop hook fires while the vault is down: the session waits in the queue.
 # 2. serve starts and imports it.
-# 3. A SessionStart hook in the same project recalls what the session said.
+# 3. A SessionStart hook in the same project binds that serve by its runtime
+#    file and recalls what the session said.
 set -euo pipefail
 
 ONEIRON=${1:?usage: check.sh /path/to/oneiron}
-HOOK="$(cd "$(dirname "$0")" && pwd)/oneiron_hook.py"
 T=$(mktemp -d)
 SERVE=
 cleanup() {
@@ -19,7 +19,10 @@ cleanup() {
 }
 trap cleanup EXIT
 export ONEIRON_AUTH_SECRET=claude-code-hooks-check-secret-0001
-unset ONEIRON_VAULT_PATH ONEIRON_URL ONEIRON_SECRET ONEIRON_BINDING_KEY
+unset ONEIRON_VAULT_PATH ONEIRON_URL ONEIRON_SECRET ONEIRON_BINDING_KEY ONEIRON_CONFIG
+# Runtime files and the pin stay in the temporary folder.
+export XDG_RUNTIME_DIR=$T/runtime XDG_CONFIG_HOME=$T/xdg-config
+mkdir -m 700 "$XDG_RUNTIME_DIR"
 CONFIG=$T/oneiron.toml
 PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 
@@ -70,7 +73,7 @@ event() { python3 -I -c 'import json, sys; print(json.dumps(dict(zip(sys.argv[1:
 echo "1. Stop while the vault is down"
 event hook_event_name Stop session_id "$SESSION" transcript_path "$LOG" cwd /tmp/heron-lantern \
   stop_hook_active false |
-  python3 -I "$HOOK" hand-over --oneiron "$ONEIRON" --config "$CONFIG"
+  "$ONEIRON" hook --host claude-code hand-over --config "$CONFIG"
 ls "$T/queue"
 [ "$(ls "$T/queue" | wc -l)" -eq 1 ] || { echo "FAIL: nothing queued"; exit 1; }
 
@@ -87,8 +90,7 @@ grep -o 'queued import landed.*' "$T/serve.log" | head -1 || true
 echo "3. A new session in the same project starts"
 OUT=$(event hook_event_name SessionStart session_id 0b5e55e0-2222-4333-8444-a55566667777 \
   source startup cwd /tmp/heron-lantern transcript_path /dev/null |
-  python3 -I "$HOOK" session-start --oneiron "$ONEIRON" --url "http://127.0.0.1:$PORT" \
-    --credential-file "$T/claude-code-hooks.cred")
+  "$ONEIRON" hook --host claude-code session-start --credential-file "$T/claude-code-hooks.cred")
 echo "$OUT"
 grep -q 'pier nine order' <<<"$OUT" || { echo "FAIL: the session was not recalled"; exit 1; }
 echo "CHECK OK"

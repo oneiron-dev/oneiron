@@ -41,6 +41,19 @@ pub use self::host_re_root::host_re_root;
 pub use self::api::api;
 mod mcp_bridge;
 pub use self::mcp_bridge::mcp;
+// Runtime files and the import queue are Unix-only.
+#[cfg(unix)]
+mod hook;
+// The runtime files `serve` registers in and `oneiron hook` reads.
+#[cfg(unix)]
+mod local_servers;
+#[cfg(unix)]
+pub use self::hook::hook;
+
+/// `oneiron hook` binds through runtime files and queues through the import
+/// queue, both Unix-only: elsewhere it does nothing, and exits 0.
+#[cfg(not(unix))]
+pub fn hook(_: crate::cli::HookArgs) {}
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 /// Below this the auth secret is weak MAC key material; warn, do not refuse.
@@ -65,7 +78,11 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     }
     let config = resolve_serve_config(&args)?;
     init_tracing(&config.log_level);
-    serve_with_config(config).await
+    #[cfg(unix)]
+    let config_file = local_servers::config_file(&args);
+    #[cfg(not(unix))]
+    let config_file = None;
+    serve_with_config(config, config_file).await
 }
 
 mod history_import;
