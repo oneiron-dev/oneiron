@@ -267,6 +267,9 @@ class Oneiron:
         @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
+        @property
+        def conversations(self) -> "Oneiron._VaultConversationsVerbs":
+            return Oneiron._VaultConversationsVerbs(self._client)
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -310,5 +313,18 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+    class _VaultConversationsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def turn(self) -> "Oneiron._VaultConversationsTurnVerbs":
+            return Oneiron._VaultConversationsTurnVerbs(self._client)
+    class _VaultConversationsTurnVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def continue_(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_conversations_turn_continue(json.dumps(spec))))
+        def retry(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_conversations_turn_retry(json.dumps(spec))))
 
 # END GENERATED FACADE VERBS

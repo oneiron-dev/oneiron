@@ -407,9 +407,10 @@ fn collect_with(
         let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, &id)?;
         #[cfg(not(feature = "sync"))]
         let frontier = None;
-        // Finality is read in this snapshot, beside the row it qualifies.
+        // Finality and completion are read in this snapshot, beside the row
+        // they qualify: only a complete reply's words reach extraction.
         let stream = crate::memory::message_stream_finality_in_txn(vault, txn, &id)?;
-        let words = stream.is_none_or(|(finality, _)| finality == StreamFinality::Final);
+        let words = !crate::memory::message_completion_in_txn(vault, txn, &id)?.incomplete;
         messages.push(MessagePin {
             id,
             learned_at,

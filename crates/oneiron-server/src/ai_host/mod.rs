@@ -40,6 +40,7 @@ mod sync_wake;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+mod turn_actions;
 mod turns;
 mod workflows;
 
@@ -427,6 +428,7 @@ impl AiHost {
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
         host.handle = handle;
+        turn_actions::spawn(&vault, &host.handle);
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn. It
         // settles before start returns, so it reads only those turns: one

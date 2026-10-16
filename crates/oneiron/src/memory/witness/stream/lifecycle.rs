@@ -1,5 +1,6 @@
 //! Terminal transitions and the host-driven quiet-stream pump.
 use super::*;
+use crate::FinishReason;
 use crate::error::Error;
 use crate::memory::MemoryResult;
 use crate::store::Callback;
@@ -34,8 +35,11 @@ impl Memory<'_> {
         self.vault.finish_stream_entry(
             &entry,
             handle,
-            StreamFinality::Final,
-            StreamFinalityReason::ExplicitFinalize,
+            (
+                StreamFinality::Final,
+                StreamFinalityReason::ExplicitFinalize,
+            ),
+            None,
             None,
         )
     }
@@ -51,10 +55,51 @@ impl Memory<'_> {
         self.vault.finish_stream_entry(
             &entry,
             handle,
-            StreamFinality::Final,
-            StreamFinalityReason::ExplicitFinalize,
+            (
+                StreamFinality::Final,
+                StreamFinalityReason::ExplicitFinalize,
+            ),
+            None,
             Some(&admit),
         )
+    }
+    /// Ends a stream a model wrote, recording why the model stopped. A stop or
+    /// a tool call finalizes it, committed only while `admit` holds inside the
+    /// write transaction; a length cut, a filter or another stop leaves it
+    /// partial under the same condition, so it reads incomplete; a cancelled
+    /// terminal keeps its text and is recorded as cancelled.
+    pub fn finalize_model_stream_if(
+        &self,
+        handle: MessageStreamHandle,
+        finish_reason: FinishReason,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        let entry = self.stream_entry(handle)?;
+        let (outcome, gate): (_, TerminalGate<'_>) = match finish_reason {
+            FinishReason::Stop | FinishReason::ToolCalls => (
+                (
+                    StreamFinality::Final,
+                    StreamFinalityReason::ExplicitFinalize,
+                ),
+                Some(&admit),
+            ),
+            FinishReason::Length | FinishReason::ContentFiltered | FinishReason::Other { .. } => (
+                (
+                    StreamFinality::Partial,
+                    StreamFinalityReason::ExplicitFinalize,
+                ),
+                Some(&admit),
+            ),
+            FinishReason::Cancelled => (
+                (
+                    StreamFinality::Cancelled,
+                    StreamFinalityReason::ExternalSignal,
+                ),
+                None,
+            ),
+        };
+        self.vault
+            .finish_stream_entry(&entry, handle, outcome, Some(finish_reason), gate)
     }
     pub fn cancel_stream(
         &self,
@@ -75,8 +120,13 @@ impl Memory<'_> {
             }
         };
         let entry = self.stream_entry(handle)?;
-        self.vault
-            .finish_stream_entry(&entry, handle, StreamFinality::Cancelled, reason, None)
+        self.vault.finish_stream_entry(
+            &entry,
+            handle,
+            (StreamFinality::Cancelled, reason),
+            None,
+            None,
+        )
     }
 }
 impl Vault {
@@ -84,13 +134,13 @@ impl Vault {
         &self,
         entry: &Arc<Mutex<State>>,
         handle: MessageStreamHandle,
-        finality: StreamFinality,
-        reason: StreamFinalityReason,
+        outcome: (StreamFinality, StreamFinalityReason),
+        finish_reason: Option<FinishReason>,
         gate: TerminalGate<'_>,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
         state.check(handle)?;
-        let receipt = commit_terminal(self, &state, finality, reason, false, gate)?;
+        let receipt = commit_terminal(self, &state, outcome, finish_reason, false, gate)?;
         // Storage success is authoritative. No output is removed on an error.
         state.terminal = true;
         #[cfg(feature = "sync")]
@@ -124,14 +174,17 @@ impl Vault {
             match commit_terminal(
                 self,
                 &state,
-                StreamFinality::Partial,
-                if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
-                    StreamFinalityReason::IdleTimeout30s
-                } else {
-                    StreamFinalityReason::IdleTimeout {
-                        timeout_ms: state.seed.idle_timeout_ms,
-                    }
-                },
+                (
+                    StreamFinality::Partial,
+                    if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
+                        StreamFinalityReason::IdleTimeout30s
+                    } else {
+                        StreamFinalityReason::IdleTimeout {
+                            timeout_ms: state.seed.idle_timeout_ms,
+                        }
+                    },
+                ),
+                None,
                 false,
                 None,
             ) {
@@ -149,7 +202,9 @@ impl Vault {
     }
     /// Open-time recovery after all read-only compatibility gates passed.
     /// Surviving seeds prove an interrupted process, even if it restarted inside
-    /// the quiet interval. No durable token heartbeat or text copy is invented.
+    /// the quiet interval. Each MESSAGE is born, or its continuation appended,
+    /// with exactly the text its seed checkpointed, and left partial; nothing
+    /// past the checkpoint is invented, and saved text is never dropped.
     /// A policy refusal aborts open and retains the seed for explicit repair.
     pub(crate) fn recover_message_streams(&self) -> MessageStreamResult<()> {
         // However many seeds survived, each is retired: none is refused for
@@ -187,12 +242,12 @@ impl Vault {
             let Some(last) = seeds.last().map(|seed| seed.message_id) else {
                 return Ok(());
             };
-            for seed in seeds {
+            for mut seed in seeds {
                 let state = State {
                     last_op_at_ms: seed.created_at_ms,
+                    pending: std::mem::take(&mut seed.saved),
                     seed,
                     base: String::new(),
-                    pending: String::new(),
                     sequence: 0,
                     emitted_chars: 0,
                     dirty: false,
@@ -202,8 +257,11 @@ impl Vault {
                 commit_terminal(
                     self,
                     &state,
-                    StreamFinality::Partial,
-                    StreamFinalityReason::ProcessCrashRecovery,
+                    (
+                        StreamFinality::Partial,
+                        StreamFinalityReason::ProcessCrashRecovery,
+                    ),
+                    None,
                     true,
                     None,
                 )?;
@@ -217,8 +275,8 @@ const RECOVERY_PAGE: usize = 256;
 fn commit_terminal(
     vault: &Vault,
     state: &State,
-    finality: StreamFinality,
-    reason: StreamFinalityReason,
+    (finality, reason): (StreamFinality, StreamFinalityReason),
+    finish_reason: Option<FinishReason>,
     recovered: bool,
     gate: TerminalGate<'_>,
 ) -> MessageStreamResult<MessageStreamReceipt> {
@@ -239,9 +297,12 @@ fn commit_terminal(
         generation: seed.generation,
         finality,
         finality_reason: reason,
+        finish_reason,
         bytes: state.text().len() as u64,
         recovered,
-        ephemeral_text_lost: recovered,
+        // Every accepted delta was checkpointed before it was accepted, so a
+        // recovered stream's text is all its process ever accepted.
+        ephemeral_text_lost: false,
         receipt_ref: format!(
             "stream:v1:{}:{}",
             seed.message_id.to_hex(),
@@ -262,8 +323,8 @@ fn commit_terminal(
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
             admission::authorize(vault, txn, seed, &text)?;
-            let was_final = storage::receipt(vault, txn, seed.message_id)?
-                .is_none_or(|prior| prior.finality == StreamFinality::Final);
+            let was_final =
+                storage::receipt(vault, txn, seed.message_id)?.is_none_or(|prior| prior.complete());
             #[cfg(feature = "sync")]
             crate::entity_doc::append_message_stream_in_txn(
                 vault,
@@ -281,12 +342,12 @@ fn commit_terminal(
             }
             receipt.bytes = text.len() as u64;
             storage::finish(vault, txn, seed, &receipt)?;
-            // Readers see only final words: a finalize that adds some, or
-            // makes a non-final MESSAGE final again, re-dirties its TURN.
-            // One that ends a final MESSAGE as non-final takes its words out
+            // Readers see only complete words: a finalize that adds some, or
+            // makes an incomplete MESSAGE complete again, re-dirties its TURN.
+            // One that ends a complete MESSAGE incomplete takes its words out
             // of the transcript: no new words for a branch, but the sieve and
             // the projector read what the turn says now.
-            let now_final = finality == StreamFinality::Final;
+            let now_final = receipt.complete();
             if now_final && (!state.pending.is_empty() || !was_final) {
                 storage::redirty_turn(vault, txn, seed)?;
             } else if was_final && !now_final {
@@ -295,11 +356,8 @@ fn commit_terminal(
             Ok(())
         })
     } else {
-        let text = if recovered {
-            String::new()
-        } else {
-            state.text()
-        };
+        // A recovered stream's `pending` is its seed's checkpoint.
+        let text = state.text();
         receipt.bytes = text.len() as u64;
         memory
             .witness_with_route_and_txn_effect(

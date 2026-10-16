@@ -692,6 +692,30 @@
       "section": false
     },
     {
+      "name": "vault.conversations.turn.continue",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_continue(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turn.retry",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_retry(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "self.browser.open",
       "input": "oneiron_browser::OpenInput",
       "output": "oneiron_browser::Observation",

@@ -55,6 +55,8 @@ vaultRoomsGet(input: unknown): unknown
 vaultRoomsTrunk(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
+vaultConversationsTurnContinue(input: unknown): unknown
+vaultConversationsTurnRetry(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

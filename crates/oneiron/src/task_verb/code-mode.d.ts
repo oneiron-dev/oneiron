@@ -33,6 +33,12 @@ declare const vault: {
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
     upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   };
+  conversations: {
+    turn: {
+      continue(input: { turn_id: string }): Promise<unknown>;
+      retry(input: { turn_id: string }): Promise<unknown>;
+    };
+  };
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };

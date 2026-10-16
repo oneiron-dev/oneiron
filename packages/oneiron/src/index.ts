@@ -186,6 +186,12 @@ export class Oneiron {
       claim: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
     },
+    conversations: {
+      turn: {
+        continue: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnContinue(input) as unknown),
+        retry: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as unknown),
+      },
+    },
   }
   /** Read-only ask routing or attributed partial answers. */
   can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
