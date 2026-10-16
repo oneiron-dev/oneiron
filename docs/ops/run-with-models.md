@@ -811,6 +811,31 @@ here. Each rung served and each pull (view,
 crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
 which rung each image got and whether the pixels were pulled afterwards.
 
+The same seat answers `ai.verdict` over an image: name its view handle as
+`"image"` (the question calls it `image`). The pixels are pulled through the
+caller's own scoped read, the image rides the receipt as an evidence ref
+with its body version, and the call starts at the Local rung on a run of its
+own. There the seat answers a Choice (`{"choice", "confidence"}`), a yes/no
+(`{"p_yes"}`) or, with `"locate": true`, a Box. A Score abstains. A rung
+above Local that reads no image is skipped.
+
+A code-mode program drives a routine browser or computer step through the
+same verb (the CUA-S1 pattern): `"routine": true` makes `options` the step's
+candidates (1 to 61), and the ladder also offers `NONE`, `reobserve` and
+`too complicated, ask up`. The answer gains an `outcome`: one of
+`{"outcome": "act", "candidate"}`, `{"outcome": "point", "x", "y", "found"}`
+(a routine Box's centre, as fractions of the image), `{"outcome": "none"}`,
+`{"outcome": "reobserve"}` or `{"outcome": "ask_up", "reason"}`. A routine
+step's Box that finds no target reads as `none`. A ladder abstain reads as
+`ask_up`, with the ladder's reason (uncertain, deadline, no rung). The
+program passes the count of NONE and reobserve outcomes in a row as
+`"misses"`, and `"screenshot": true` says the next observation takes a
+screenshot (the second miss in a row). One subgoal shares one clock: the
+answer's `until_ms` (Unix milliseconds) goes into the next step's request,
+so a reobserve or a retry never restarts it. One call still runs at most
+60 seconds. Name `"reversibility": "outbound_effect"` for a step whose
+effect leaves the vault: at a cut it abstains and goes up.
+
 ## 11. When a provider refuses for a limit
 
 A rung refused for a limit hands the call to the next rung of its ladder, and
