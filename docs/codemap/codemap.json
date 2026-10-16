@@ -46334,7 +46334,7 @@
      "purpose": "Typed, read-only deck views over a retained OPC package (ARCH-0077, \"The typed deck model\")",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 7,
       "fn": 4,
       "re-export": 3,
@@ -46358,7 +46358,7 @@
      "path": "src/deck/shapes.rs",
      "purpose": "The shape walk: every shape in document order with its identity evidence, placeholder, resolved geometry and…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -46501,6 +46501,165 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/edit/check.rs",
+     "purpose": "The independent passthrough check (ARCH-0077, \"Transactions and allowed part changes\")",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/media.rs",
+     "purpose": "`set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EditRefusal",
+      "EditReport",
+      "Effect",
+      "FitUnverified",
+      "Picture",
+      "Target",
+      "ValueEdit",
+      "Xfrm"
+     ],
+     "path": "src/edit/mod.rs",
+     "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/check.rs",
+     "purpose": "The independent check for structural edits",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "NewShape",
+      "Preset",
+      "StructureEdit",
+      "StructureReport"
+     ],
+     "path": "src/edit/structure/mod.rs",
+     "purpose": "Structural edits (ONE-2529; ARCH-0077, \"Edit in place with passthrough\"): `add_shape` from a preset…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/slides/check.rs",
+     "purpose": "The independent check for slide-level edits",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/slides/mod.rs",
+     "purpose": "Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit/structure/slides/tests.rs",
+     "purpose": "Slide-level acceptance: a copy repairs its notes backlink, leaves the comments behind, keeps every…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit/structure/tests.rs",
+     "purpose": "ONE-2529 acceptance, first half (add, delete, reparent): high-water id allocation, the supported delete…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/timing.rs",
+     "purpose": "The delete cascade over a small, tested timing subset (ARCH-0077, \"Animation dependencies\")",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit/tests.rs",
+     "purpose": "ONE-2528 acceptance: per verb, the edit changes only the declared fields and parts (exact part sets), keeps…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/text.rs",
+     "purpose": "`set_text` and `replace_run_text`",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/xfrm.rs",
+     "purpose": "`set_xfrm` and `move_in_slide_space`: a shape's own transform, attribute by attribute",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/xml.rs",
+     "purpose": "Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/emit/check.rs",
      "purpose": "The candidate checks, run on the exported bytes and independent of the writer's bookkeeping: the write set…",
      "surface": {
@@ -46529,6 +46688,7 @@
      "path": "src/emit/mod.rs",
      "purpose": "Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 \"Creation result and checks\")",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
       "fn": 1,
       "struct": 11
@@ -46550,7 +46710,9 @@
      "notable": [],
      "path": "src/emit/tests.rs",
      "purpose": "ONE-2536 acceptance: an end-to-end plan over the ONE-2533 template is emitted into a candidate that places…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -46660,7 +46822,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "mod": 8,
+      "mod": 9,
       "re-export": 4
      }
     },
@@ -46788,7 +46950,7 @@
      "path": "src/retained_opc/package/parts.rs",
      "purpose": "The add-part door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "struct": 1
      }
@@ -46911,6 +47073,13 @@
      "layout": "dir",
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
     },
+    "edit": {
+     "files": 14,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…"
+    },
     "emit": {
      "files": 4,
      "impl_vault": false,
@@ -46956,8 +47125,8 @@
    },
    "over_bar": 1,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 39,
-   "test_files": 11
+   "source_files": 50,
+   "test_files": 14
   },
   "oneiron-driver": {
    "files": [
