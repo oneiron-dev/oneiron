@@ -15529,7 +15529,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -15620,6 +15620,16 @@
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/note_review.rs",
+     "purpose": "ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -16278,7 +16288,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 17
+      "fn": 18
      }
     },
     {
@@ -16405,7 +16415,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 20,
+      "const": 21,
       "crate-vis": 34
      }
     },
@@ -16672,7 +16682,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 14,
       "struct": 1
      }
@@ -21835,7 +21845,7 @@
      "path": "src/git_wire/wire_stage.rs",
      "purpose": "Two-phase staging: stage, commit-prepared, recovery, and keep-ref naming",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -21846,7 +21856,7 @@
      "path": "src/git_wire/wire_store.rs",
      "purpose": "Vault record IO: load, scan, put, drop, and the terminal-state transition",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -45310,7 +45320,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46285,7 +46295,7 @@
    },
    "over_bar": 72,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2780,
+   "source_files": 2781,
    "test_files": 903
   },
   "oneiron-android": {
