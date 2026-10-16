@@ -33,7 +33,7 @@ pub(crate) use self::lifecycle::{
 pub(crate) use self::storage::{
     counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,
     counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
-    read_counterparty_contact_in_txn,
+    party_has_contact_on_class_in_claims_in_txn, read_counterparty_contact_in_txn,
 };
 pub use self::storage::{counterparty_contact_party_channel_index_key, normalize_channel_class};
 pub(crate) use self::trusted_contact::TrustedContactFire;
