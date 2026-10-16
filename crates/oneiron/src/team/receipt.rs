@@ -210,6 +210,9 @@ impl TeamReceipt {
 /// exists; storage errors.
 pub fn record_team_receipt(vault: &Vault, receipt: &TeamReceipt) -> Result<()> {
     receipt.validate()?;
+    // The stamp names a node of the tree in force for its project, at that
+    // tree's version: an unknown node is invalid, never untyped.
+    crate::task_type::validate_type_ref(vault, receipt.project, &receipt.type_ref)?;
     vault.with_write_txn_grouped(|wtxn| {
         if TEAM_RECEIPT.contains(&vault.store, wtxn, &receipt.team_ref)? {
             return Err(Error::InvalidClaimBody("a team receipt is written once"));
