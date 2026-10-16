@@ -327,7 +327,7 @@ const OUTSIDE: &[Pin] = &[
     pin(
         "crates/oneiron-server/src/models/ladder.rs",
         "generate",
-        "match gate.generate(call, permit.lease()).await {",
+        "match gate.generate(bound, permit.lease()).await {",
         "offer ladder: one gated attempt",
     ),
     pin(

@@ -85,10 +85,9 @@ impl<T: ManifestDbs> EntityStoreRead for T {
                 .map(|row| crate::vault::entity_id_from_type_index_key(&row?.0)),
         ))
     }
-    fn port_entity_long_spanning<'a>(
+    fn port_entity_long_ending_after<'a>(
         &self,
         txn: &'a RoTxn<'_>,
-        started_before: u64,
         ended_after: u64,
     ) -> Result<PortRows<'a, (EntityId, crate::TimeRange)>> {
         use std::ops::Bound;
@@ -98,34 +97,28 @@ impl<T: ManifestDbs> EntityStoreRead for T {
             txn,
             &(Bound::Excluded(lower.as_slice()), Bound::<&[u8]>::Unbounded),
         )?;
-        Ok(Box::new(rows.filter_map(move |row| {
-            let decoded = (|| {
-                let (key, value) = row?;
-                if key.len() != 24 || value.len() != 8 {
-                    return Err(Error::CorruptedIndex("temporal long interval"));
-                }
-                let start = u64::from_be_bytes(
-                    value
-                        .as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("interval start"))?,
-                );
-                let end = u64::from_be_bytes(
-                    key[..8]
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("interval end"))?,
-                );
-                let id = EntityId::from_bytes(
-                    key[8..]
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("interval id"))?,
-                )?;
-                Ok((id, crate::TimeRange { start, end }))
-            })();
-            match decoded {
-                Ok((_, range)) if range.start >= started_before => None,
-                other => Some(other),
+        Ok(Box::new(rows.map(|row| {
+            let (key, value) = row?;
+            if key.len() != 24 || value.len() != 8 {
+                return Err(Error::CorruptedIndex("temporal long interval"));
             }
+            let start = u64::from_be_bytes(
+                value
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("interval start"))?,
+            );
+            let end = u64::from_be_bytes(
+                key[..8]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("interval end"))?,
+            );
+            let id = EntityId::from_bytes(
+                key[8..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("interval id"))?,
+            )?;
+            Ok((id, crate::TimeRange { start, end }))
         })))
     }
 
@@ -207,14 +200,12 @@ impl EntityStoreRead for Vault {
     ) -> Result<PortRows<'a, EntityId>> {
         self.store.port_entity_ids_by_type_descending(txn, kind)
     }
-    fn port_entity_long_spanning<'a>(
+    fn port_entity_long_ending_after<'a>(
         &self,
         txn: &'a RoTxn<'_>,
-        started_before: u64,
         ended_after: u64,
     ) -> Result<PortRows<'a, (EntityId, crate::TimeRange)>> {
-        self.store
-            .port_entity_long_spanning(txn, started_before, ended_after)
+        self.store.port_entity_long_ending_after(txn, ended_after)
     }
 
     fn port_entity_timeline<'a>(
