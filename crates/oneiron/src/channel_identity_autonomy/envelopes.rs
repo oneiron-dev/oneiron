@@ -173,10 +173,15 @@ impl Vault {
         if !crate::vault::live_entity_row_in_txn(&self.store, txn, &identity)?.is_live() {
             return Err(invalid_autonomy());
         }
-        let record = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if record.state() != ChannelIdentityState::Active {
+        // State and binding are the identity's claim heads (OF-272); the row
+        // is read for a delegated identity's custody re-proof.
+        let facts =
+            crate::channel_identity::channel_identity_facts_in_txn(&self.store, txn, &identity)?
+                .ok_or_else(invalid_autonomy)?;
+        if facts.state != ChannelIdentityState::Active {
             return Err(invalid_autonomy());
         }
+        let record = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if record.is_delegated() {
             crate::channel_identity::admit_channel_identity_transition_in_txn(
                 &self.store,
@@ -188,7 +193,7 @@ impl Vault {
                 },
             )?;
         }
-        match record.binding() {
+        match facts.binding {
             ChannelIdentityBinding::Actor { actor_ref, .. } => Ok(actor_ref),
             ChannelIdentityBinding::Vault { .. } => Err(invalid_autonomy()),
         }

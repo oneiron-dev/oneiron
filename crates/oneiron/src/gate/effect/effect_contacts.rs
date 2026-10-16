@@ -2,10 +2,7 @@
 
 use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
-    counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,
-    counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
-    normalize_channel_class, read_counterparty_contact_in_txn,
+    CounterpartyContactStatus, CounterpartyFirstTouch, normalize_channel_class,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -54,12 +51,11 @@ pub(crate) fn hydrate_external_effect_contact(
 
     let channel_class = normalize_channel_class(&effect.channel);
     let mut any_revoked = false;
-    for record in counterparty_contacts_for_send(
+    for record in crate::counterparty_contact::counterparty_contacts_for_send_in_claims_in_txn(
         store,
         txn,
         party_ref,
         &channel_class,
-        effect.channel_identity_ref.as_ref(),
     )? {
         hydrated.counterparty_first_touch = hydrated
             .counterparty_first_touch
@@ -184,81 +180,6 @@ fn comm_result<T>(result: crate::comm::CommResult<T>) -> Result<T> {
         crate::comm::CommError::Engine(error) => error,
         _ => Error::CorruptedIndex("comm send override head"),
     })
-}
-
-/// Every contact record that participates in this send's restrictive aggregate.
-///
-/// Three CANDIDATE sources, de-duplicated by contact ref and ordered by it so
-/// the folded first-touch and receipt reason are deterministic:
-///
-/// 1. the identity-independent `(party_ref, channel_class)` index;
-/// 2. the legacy identity+counterparty index, when an identity is known — it may
-///    only ADD candidates;
-/// 3. an unbounded COUNTERPARTY_CONTACT scan, which is MANDATORY: the party-channel index
-///    cannot prove its own completeness at HEAD, and a bounded fallback that
-///    missed one opted-out row would answer a false "no".
-///
-/// Channel scope is then applied ONCE, here, to the merged set. Sources find
-/// rows for the party; this predicate decides which are in scope for the class.
-/// Keeping it at the single fold point is what makes `channel_identity_ref`
-/// enrichment rather than a verdict input: source 2 is keyed by identity alone,
-/// so a stale or explicitly-pinned cross-class identity would otherwise drag a
-/// foreign-channel opt-out into the aggregate and let enrichment move the
-/// verdict. A per-source predicate is one forgotten call from that bug; this is
-/// zero.
-fn counterparty_contacts_for_send(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    party_ref: &str,
-    channel_class: &str,
-    channel_identity_ref: Option<&EntityId>,
-) -> Result<Vec<CounterpartyContactRecord>> {
-    let mut candidates =
-        counterparty_contacts_by_party_channel(store, txn, party_ref, channel_class)?;
-    if let Some(identity_ref) = channel_identity_ref
-        && let Some(hit) =
-            counterparty_contact_by_identity_index(store, txn, identity_ref, party_ref)?
-    {
-        candidates.push(hit);
-    }
-    candidates.extend(counterparty_contacts_by_party_full_scan(
-        store, txn, party_ref,
-    )?);
-
-    candidates.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
-    candidates.dedup_by(|(left, _), (right, _)| left == right);
-
-    let mut records = Vec::with_capacity(candidates.len());
-    for (_, record) in candidates {
-        if counterparty_contact_matches_channel_class(store, txn, &record, channel_class)? {
-            records.push(record);
-        }
-    }
-    Ok(records)
-}
-
-/// Legacy identity+counterparty index hit, when a channel identity is known.
-fn counterparty_contact_by_identity_index(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    identity_ref: &EntityId,
-    counterparty: &str,
-) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
-    let Some(id) = counterparty_contact_by_index_in_txn(store, txn, identity_ref, counterparty)?
-    else {
-        return Ok(None);
-    };
-    let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact lookup index entity row",
-        ));
-    };
-    if !record.matches_counterparty(identity_ref, counterparty) {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact lookup index assignment",
-        ));
-    }
-    Ok(Some((id, record)))
 }
 
 /// OR-folds CA-01's `comm.do_not_contact` heads into the hydrated effect.

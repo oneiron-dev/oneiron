@@ -39,6 +39,7 @@ mod auth_mode;
 mod binding;
 mod codec;
 mod custody;
+mod facts;
 mod keys;
 mod lifecycle;
 mod record;
@@ -74,6 +75,8 @@ pub use self::keys::{
     PREDICATE_CHANNEL_IDENTITY_STATE, PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
     SUBJECT_CLASS_SELF_HELD, WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
 };
+pub(crate) use self::facts::channel_identity_facts_in_txn;
+pub use self::facts::ChannelIdentityFacts;
 pub use self::lifecycle::{ChannelIdentityState, ChannelIdentityStep};
 pub use self::record::ChannelIdentity;
 pub use self::shape::{ChannelIdentityShape, SelfHeldShape};

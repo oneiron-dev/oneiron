@@ -196,11 +196,46 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
-    let mut heads: Vec<Option<Value>> = vec![None; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
+    let mut bodies = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+        if let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? {
+            bodies.push(body);
+        }
+    }
+    counterparty_contact_record_from_heads(bodies)
+}
+
+/// [`counterparty_contact_record_from_claims_in_txn`] for a reader that holds
+/// a `Store` and no `Vault`: the external-effect gate door (OF-272).
+pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<CounterpartyContactRecord> {
+    let mut bodies = Vec::new();
+    for entry in crate::ports::EdgeStoreRead::port_edges(
+        store,
+        rtxn,
+        contact_id,
+        crate::ports::EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
+        let Some(raw) = store.port_entity_record(rtxn, &entry?.target)? else {
             continue;
         };
+        if raw.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            bodies.push(crate::claim::decode_claim_body(&raw.body, true)?);
+        }
+    }
+    counterparty_contact_record_from_heads(bodies)
+}
+
+fn counterparty_contact_record_from_heads(
+    bodies: Vec<crate::claim::ClaimBody>,
+) -> Result<CounterpartyContactRecord> {
+    let mut heads: Vec<Option<Value>> = vec![None; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
+    for body in bodies {
         let Some(index) = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
             .iter()
             .position(|predicate| *predicate == body.predicate)

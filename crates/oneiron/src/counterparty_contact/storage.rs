@@ -5,15 +5,12 @@ use super::types::{
     CounterpartyContactRecord, PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
     PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
 };
-use crate::channel_identity::decode_channel_identity_body;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
-use crate::registry::{
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
@@ -44,20 +41,6 @@ pub(super) fn counterparty_contact_index_key_for_record(
     record: &CounterpartyContactRecord,
 ) -> Result<(EntityId, [u8; 32])> {
     counterparty_contact_index_key_parts(&record.identity_ref, &record.counterparty)
-}
-
-/// The contact id the (identity, counterparty) lookup row names, if any.
-pub(crate) fn counterparty_contact_by_index_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    identity_ref: &EntityId,
-    counterparty: &str,
-) -> Result<Option<EntityId>> {
-    CONTACT_INDEX.get(
-        store,
-        txn,
-        &counterparty_contact_index_key_parts(identity_ref, counterparty)?,
-    )
 }
 
 /// Canonical channel-class normalization for the party-channel index.
@@ -189,20 +172,17 @@ pub(super) fn counterparty_contact_channel_class(
     identity_channel_class(store, txn, &record.identity_ref)
 }
 
+/// The class the identity's `channel_identity.channel` head names (OF-272);
+/// an identity with no heads is UNKNOWN.
 fn identity_channel_class(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
 ) -> Result<Option<String>> {
-    let Some(raw) = store.port_entity_record(txn, identity_ref)? else {
-        return Ok(None);
-    };
-
-    if raw.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-        return Ok(None);
-    }
-    let identity = decode_channel_identity_body(&raw.body)?;
-    Ok(Some(normalize_channel_class(identity.channel())))
+    Ok(
+        crate::channel_identity::channel_identity_facts_in_txn(store, txn, identity_ref)?
+            .map(|facts| normalize_channel_class(&facts.channel)),
+    )
 }
 
 /// Whether a record participates in the `(party_ref, channel_class)` aggregate.
@@ -227,9 +207,9 @@ pub(crate) fn counterparty_contact_matches_channel_class(
 /// The index is a CANDIDATE source, never a verdict source: a hit is re-validated
 /// against the party, so an entry left behind by a record that later changed
 /// identity is filtered rather than mis-attributed. Channel scope is NOT applied
-/// here — every candidate source funnels through the single class predicate in
-/// `gate::counterparty_contacts_for_send`, so no source can ship a row into the
-/// aggregate that skipped it.
+/// here. The gate reads contact claims now (OF-272); this row reader stays for
+/// the index's own checks.
+#[cfg(test)]
 pub(crate) fn counterparty_contacts_by_party_channel(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -331,6 +311,69 @@ pub(crate) fn party_has_contact_on_class_in_claims_in_txn(
     };
     count.defer(store);
     Ok(found)
+}
+
+/// Every contact of `party_ref` that a send on `channel_class` reaches, each
+/// rebuilt from its live `counterparty_contact.*` heads: the external-effect
+/// gate's contact facts (OF-272, ARCH-0057 §3). First-touch, status and the
+/// contact's own opt-out come from claims, never from type-132 rows or their
+/// indexes; a cache drop removes nothing the gate reads. A contact is found
+/// through its live `counterparty_contact.counterparty` head, ordered by id so
+/// the gate's fold is deterministic, and scoped by the class rule above:
+/// UNKNOWN matches every class.
+pub(crate) fn counterparty_contacts_for_send_in_claims_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+) -> Result<Vec<CounterpartyContactRecord>> {
+    const PAGE: usize = 256;
+    let party_ref = party_ref.trim();
+    let mut contacts = std::collections::BTreeSet::new();
+    let mut count = ScanCount::start(store, txn, EngineScan::PartyContactClaims, &[])?;
+    let mut after = None;
+    loop {
+        let page = crate::claim::claim_ids_for_predicate_page_in_txn(
+            store,
+            txn,
+            PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+            after,
+            PAGE,
+        )?;
+        count.rows(page.len());
+        for claim_id in &page {
+            let Some(body) = claim_body_in_txn(store, txn, claim_id)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY
+                || body.value.as_str() != Some(party_ref)
+                || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+                || body.stale
+            {
+                continue;
+            }
+            if let ClaimSubject::Entity(contact_id) = body.subject {
+                contacts.insert(*contact_id.as_bytes());
+            }
+        }
+        if page.len() < PAGE {
+            break;
+        }
+        after = page.last().copied();
+    }
+    count.defer(store);
+    let mut records = Vec::with_capacity(contacts.len());
+    for contact in contacts {
+        let record = super::lifecycle::counterparty_contact_record_from_store_claims_in_txn(
+            store,
+            txn,
+            &EntityId::from_bytes(contact)?,
+        )?;
+        if counterparty_contact_matches_channel_class(store, txn, &record, channel_class)? {
+            records.push(record);
+        }
+    }
+    Ok(records)
 }
 
 /// Whether one of the contact's `identity_ref` claims names an identity on

@@ -289,6 +289,9 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        // The row's facts move as claim heads in this same transaction (OF-272).
+        let identity = decode_channel_identity_body(&data)?;
+        self.supersede_channel_identity_claim_heads_in_txn(wtxn, id, &identity, learned_at)?;
         apply_ops(
             &self.store,
             &self.config,
