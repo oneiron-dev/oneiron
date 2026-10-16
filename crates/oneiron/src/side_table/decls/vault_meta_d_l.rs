@@ -560,6 +560,8 @@ side_tables! {
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson;
+    /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
+    LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
