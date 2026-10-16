@@ -9096,7 +9096,7 @@
      "path": "src/code_document/blame.rs",
      "purpose": "Per-operation blame over tested file states: which operation wrote each surviving character, and which…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "type": 1
      }
     },
@@ -9170,6 +9170,7 @@
      "path": "src/code_document/types.rs",
      "purpose": "File edit verbs, cursor spans, operation receipts and tested frontiers",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 8
@@ -9365,17 +9366,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CodeRevisionFileOps",
       "CodeSessionRun"
      ],
      "path": "src/code_revision/promotion.rs",
      "purpose": "Session provenance claims and promotion guarded by verified revision history",
      "surface": {
       "crate-vis": 1,
-      "fn": 4,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -10437,7 +10439,7 @@
      "purpose": "Pinned body keys and the manifest / chunk / revision / entity-body encode-decode",
      "surface": {
       "const": 4,
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 2
      }
     },
@@ -10473,7 +10475,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 8
      }
     },
@@ -10633,12 +10635,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeInstructionHandle"
+     ],
+     "path": "src/codebase/instructions.rs",
+     "purpose": "Index-only handles to the instruction files on a returned code unit's ancestor path in its mounted snapshot",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -32294,7 +32310,7 @@
       "const": 2,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 6,
       "type": 1
      }
@@ -43322,7 +43338,7 @@
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44479,7 +44495,7 @@
    },
    "over_bar": 61,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2668,
+   "source_files": 2669,
    "test_files": 903
   },
   "oneiron-android": {
