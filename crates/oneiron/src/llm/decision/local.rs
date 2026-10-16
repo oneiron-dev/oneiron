@@ -173,6 +173,7 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                 evidence_versions: Vec::new(),
                 cost_per_thousand: None,
                 paired: Vec::new(),
+                person: Vec::new(),
             },
         })
     }

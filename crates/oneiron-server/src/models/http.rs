@@ -115,6 +115,19 @@ impl ProviderHttp {
         }
     }
 
+    /// The server's own root: a base that ends in `/v1` drops it, so a
+    /// llama.cpp native path (`/completion`) is reached under any prefix.
+    pub(super) fn native(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            base_url: self
+                .base_url
+                .strip_suffix("/v1")
+                .unwrap_or(&self.base_url)
+                .to_owned(),
+        }
+    }
+
     fn post(
         &self,
         path: &str,
@@ -134,10 +147,22 @@ impl ProviderHttp {
         headers: &BTreeMap<String, String>,
         body: &JsonValue,
     ) -> Result<JsonReply, HttpFailure> {
+        self.post_json_within(path, headers, body, MAX_REPLY_BYTES)
+            .await
+    }
+
+    /// [`Self::post_json`], with a reply bound of the caller's.
+    pub(super) async fn post_json_within(
+        &self,
+        path: &str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        max_bytes: usize,
+    ) -> Result<JsonReply, HttpFailure> {
         let response = self.post(path, headers, body).send().await?;
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
-        let bytes = bounded_body(response).await?;
+        let bytes = bounded_body(response, max_bytes).await?;
         let body = if bytes.is_empty() {
             JsonValue::Null
         } else {
@@ -182,17 +207,20 @@ fn reply_headers(response: &reqwest::Response) -> BTreeMap<String, String> {
 }
 
 /// Reads a whole reply body. One whose declared length, or whose bytes so
-/// far, pass [`MAX_REPLY_BYTES`] is refused there; the rest is never read.
-async fn bounded_body(mut response: reqwest::Response) -> Result<Vec<u8>, HttpFailure> {
+/// far, pass `max_bytes` is refused there; the rest is never read.
+async fn bounded_body(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, HttpFailure> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_REPLY_BYTES as u64)
+        .is_some_and(|length| length > max_bytes as u64)
     {
         return Err(HttpFailure::BodyTooLarge);
     }
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await? {
-        if body.len() + chunk.len() > MAX_REPLY_BYTES {
+        if body.len() + chunk.len() > max_bytes {
             return Err(HttpFailure::BodyTooLarge);
         }
         body.extend_from_slice(&chunk);
@@ -227,7 +255,7 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
             if !response.status().is_success() {
                 let status = response.status().as_u16();
                 let headers = reply_headers(&response);
-                let body = match bounded_body(response).await {
+                let body = match bounded_body(response, MAX_REPLY_BYTES).await {
                     Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(JsonValue::Null),
                     Err(HttpFailure::BodyTooLarge) => {
                         return Some((Err(HttpFailure::BodyTooLarge), SseState::Done));

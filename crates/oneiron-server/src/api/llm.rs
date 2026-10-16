@@ -1,5 +1,7 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
 use crate::models::{OfferLadder, RawInference};
+
+pub(super) mod decision_read;
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -18,6 +20,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/generate", post(generate))
         .route("/stream", post(stream))
+        // A probe of the house model's decision read; its state is bounded.
+        .route(
+            "/decision_read",
+            post(decision_read::decision_read).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
         // Owner-grade credentials can hand an agent a real read/replace tool;
         // scoped core tokens cannot edit vault policy.
         .route(
@@ -46,6 +53,8 @@ fn failure(error: LlmError) -> Response {
     let (status, code) = match &error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
         LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::UNAUTHORIZED, "auth"),
+        // The model's answer failed a read check: an upstream fault, never a p = 0.
+        LlmError::Fatal(FatalLlmError::LabelRead(_)) => (StatusCode::BAD_GATEWAY, "label_read"),
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
         LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")

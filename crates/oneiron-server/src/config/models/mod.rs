@@ -20,12 +20,16 @@ use oneiron_code_check::{BackendKind, CheckMode};
 use serde::Deserialize;
 
 mod compaction;
+mod decision_read;
 mod levels;
 mod provider;
 #[cfg(test)]
 mod tests;
 
 pub use compaction::CompactionSettings;
+pub use decision_read::{
+    DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal,
+};
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
 
@@ -59,6 +63,7 @@ pub(crate) struct ModelsFile {
     #[serde(default)]
     recall: RecallFile,
     broker: Option<BrokerFile>,
+    decision_read: Option<decision_read::DecisionReadFile>,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -146,6 +151,8 @@ pub struct ModelsConfig {
     pub recall: RecallModelSettings,
     /// The credential broker that sends every `key_secret` provider's calls.
     pub broker: BrokerConfig,
+    /// The house model's decision read on the `local_reasoner` rung.
+    pub decision_read: Option<DecisionReadSettings>,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -379,7 +386,7 @@ impl ModelsFile {
             );
         }
         let broker = self.broker.unwrap_or_default().resolve()?;
-        Ok(ModelsConfig {
+        let mut models = ModelsConfig {
             providers,
             roles,
             stays_on_device,
@@ -391,7 +398,12 @@ impl ModelsFile {
             code_mode,
             recall,
             broker,
-        })
+            decision_read: None,
+        };
+        if let Some(file) = self.decision_read {
+            models.decision_read = Some(file.resolve(base, &models)?);
+        }
+        Ok(models)
     }
 }
 

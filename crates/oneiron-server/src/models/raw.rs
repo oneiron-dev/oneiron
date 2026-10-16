@@ -49,6 +49,11 @@ impl RawInference {
         }
     }
 
+    /// The raw routes' meter.
+    pub(crate) fn meter(&self) -> &BudgetGuard {
+        &self.meter
+    }
+
     /// The ladder that serves `request`'s model, and the run the call is
     /// admitted under. `None` when no configured model has that id.
     pub(crate) fn call(

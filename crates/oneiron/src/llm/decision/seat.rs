@@ -195,6 +195,7 @@ pub async fn decide_at_remote_seat(
             evidence_versions: Vec::new(),
             cost_per_thousand: None,
             paired: Vec::new(),
+            person: Vec::new(),
         },
         human_ask,
     })

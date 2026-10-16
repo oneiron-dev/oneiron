@@ -153,6 +153,7 @@ impl DeterministicRunner for JsonRules {
             FatalLlmError::ContentFiltered => "content_filtered",
             FatalLlmError::EmptyResponse => "empty_response",
             FatalLlmError::Unsupported(_) => "unsupported",
+            FatalLlmError::LabelRead(_) => "label_read",
         };
         let row = rules
             .rows

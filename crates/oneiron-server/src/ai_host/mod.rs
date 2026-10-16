@@ -641,6 +641,10 @@ fn start_workflows(
 
 impl AiHandle {
     /// The router the raw `/v1/llm` routes call, with its own meter.
+    pub(crate) fn decision_read(&self) -> Option<crate::models::DecisionReadDoor> {
+        self.runtime.decision_read().cloned()
+    }
+
     pub(crate) fn raw_inference(&self) -> Option<RawInference> {
         let router = self.runtime.router()?;
         let units = self.raw_budget_units?;

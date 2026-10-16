@@ -38,6 +38,7 @@ fn ruling(candidate: EntityId, id: EntityId, claim: bool) -> RefinementReceipt {
             evidence_versions: Vec::new(),
             cost_per_thousand: None,
             paired: Vec::new(),
+            person: Vec::new(),
         },
         human_ask: None,
     };

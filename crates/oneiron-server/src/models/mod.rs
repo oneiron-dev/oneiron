@@ -32,6 +32,7 @@ mod anthropic;
 mod broker;
 mod catalog;
 mod cooldown;
+mod decision_read;
 mod declared;
 mod driven;
 #[cfg(test)]
@@ -59,6 +60,7 @@ mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub use cooldown::OfferCooldowns;
+pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use ladder::OfferLadder;
 pub use offer::ServedOffer;
@@ -103,6 +105,8 @@ pub struct ModelRuntime {
     router: Option<Arc<ModelRouter>>,
     status: ModelsStatus,
     receipts: Arc<dyn RunReceiptSink>,
+    /// The house model's decision read (`[models.decision_read]`).
+    decision_read: Option<DecisionReadDoor>,
     /// The roles whose work never leaves the device.
     stays_on_device: BTreeSet<ModelRole>,
 }
@@ -116,6 +120,7 @@ impl ModelRuntime {
             router: None,
             status: ModelsStatus::unconfigured(),
             receipts: Arc::new(LoggedReceipts),
+            decision_read: None,
             stays_on_device: BTreeSet::new(),
         }
     }
@@ -306,13 +311,32 @@ impl ModelRuntime {
             }
         }
         status.configured = true;
+        // A read blocks on the runtime its reader was built on; a build with
+        // none has no reader.
+        let decision_read = tokio::runtime::Handle::try_current()
+            .map_err(anyhow::Error::from)
+            .and_then(|runtime| decision_read::bind(config, runtime))
+            .unwrap_or_else(|error| {
+                if config.decision_read.is_some() {
+                    tracing::warn!(%error, "decision read unavailable");
+                }
+                None
+            });
         Self {
             seats,
             router: (!router.is_empty()).then(|| Arc::new(router)),
             status,
             receipts: Arc::new(LoggedReceipts),
+            decision_read,
             stays_on_device: config.stays_on_device.clone(),
         }
+    }
+
+    /// The house model's decision read, when `[models.decision_read]` binds
+    /// one.
+    #[must_use]
+    pub fn decision_read(&self) -> Option<&DecisionReadDoor> {
+        self.decision_read.as_ref()
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.

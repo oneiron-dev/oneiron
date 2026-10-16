@@ -130,6 +130,7 @@ lfs_transfers = 2048              # LFS uploads, downloads and verifies at once;
 lfs_memory_bytes = 2147483648     # bytes LFS transfers hold in memory: half reads, half installs (default: an eighth of memory)
 embedder_requests = 2048          # requests `embedder serve` holds at once; past it they queue
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
+decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)

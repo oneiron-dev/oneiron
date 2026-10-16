@@ -162,6 +162,7 @@ pub fn refresh_question(
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
                         paired: p.proposal.paired.clone(),
+                        person: Vec::new(),
                     },
                     human_ask: None,
                 },

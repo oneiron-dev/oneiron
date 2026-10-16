@@ -28,14 +28,40 @@ pub struct LearnedBand {
     pub mode: BandMode,
 }
 
+/// The owner's "ask a person?" row. A read whose P(ask a person) reaches `threshold`
+/// goes to the person rung at the start. It starts high so asks stay rare; the Coach
+/// tunes it from cases where a person changed the answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PersonThreshold {
+    pub threshold: f64,
+    pub version: u32,
+}
+
 /// Vault-owned policy snapshot. No learned row means shadow at the dial's
 /// seed band, not an implicit permission to enforce a global threshold.
+/// No person row means a person reading never routes.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionBandPolicy {
     rows: BTreeMap<(EntityId, u32, Reversibility), LearnedBand>,
+    person: Option<PersonThreshold>,
 }
 
 impl DecisionBandPolicy {
+    pub fn set_person_threshold(&mut self, threshold: f64, version: u32) -> Result<()> {
+        if !(threshold > 0.0 && threshold <= 1.0) || version == 0 {
+            return Err(invalid("invalid person threshold"));
+        }
+        if self.person.is_some_and(|row| row.version >= version) {
+            return Err(invalid("person threshold version must advance"));
+        }
+        self.person = Some(PersonThreshold { threshold, version });
+        Ok(())
+    }
+
+    pub fn person_threshold(&self) -> Option<PersonThreshold> {
+        self.person
+    }
+
     pub fn learn_shadow(
         &mut self,
         question: &DecisionQuestion,

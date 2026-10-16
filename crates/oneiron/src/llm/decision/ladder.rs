@@ -1,10 +1,10 @@
 //! Host-injected, one-step decision ladder. The engine owns routing and receipts.
 
-use super::policy::{BandMode, DecisionBandPolicy, Reversibility};
+use super::policy::{BandMode, DecisionBandPolicy, PersonThreshold, Reversibility};
 use super::types::{invalid, paired_valid};
 use super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung, HumanAskReason,
-    PairedReading, ProviderPin, TypedDecision,
+    PairedReading, PersonChangedAnswer, ProviderPin, TypedDecision,
 };
 use crate::{EntityId, Result};
 use std::collections::BTreeMap;
@@ -16,9 +16,12 @@ pub struct ProviderDecision {
     pub probability: Option<f64>,
     /// The paired question's reading from the same measurement, when the provider takes one.
     pub paired: Option<PairedAnswer>,
+    /// The person question's reading ("ask a person?") from that same measurement.
+    pub person: Option<PairedAnswer>,
 }
 
-/// The paired "does this need more thinking?" answer. It is never an answer option.
+/// A yes/no reading beside the answer ("does this need more thinking?" or "ask a
+/// person?"). It is never an answer option.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PairedAnswer {
     pub question: EntityId,
@@ -48,14 +51,21 @@ impl ProviderDecision {
                     .probability
                     .is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p)),
             }
-            || self.paired.is_some_and(|paired| {
-                !paired_valid(
-                    question.id,
-                    paired.question,
-                    paired.question_version,
-                    paired.probability,
-                )
-            })
+            || [self.paired, self.person]
+                .into_iter()
+                .flatten()
+                .any(|reading| {
+                    !paired_valid(
+                        question.id,
+                        reading.question,
+                        reading.question_version,
+                        reading.probability,
+                    )
+                })
+            || self
+                .paired
+                .zip(self.person)
+                .is_some_and(|(paired, person)| paired.question == person.question)
         {
             return Err(invalid("invalid provider decision"));
         }
@@ -171,8 +181,44 @@ pub struct HumanDecisionRequest {
     pub evidence: Vec<EntityId>,
     pub reason: HumanAskReason,
     pub prior: Option<ProviderDecision>,
+    /// The provider that read `prior`; the engine sets it with the prior.
+    pub prior_provider: Option<ProviderPin>,
     /// Host-issued versioned queue identity; the host renders its own text.
     pub queue_pin: ProviderPin,
+}
+
+impl HumanDecisionRequest {
+    /// The record of the person's answer changing the model's. None when there was no model
+    /// answer to change or the person gave the same one.
+    pub fn changed_by(&self, person: DecisionAnswer) -> Result<Option<PersonChangedAnswer>> {
+        if person == DecisionAnswer::Abstain || !self.question.contract.accepts(&person) {
+            return Err(invalid("invalid person answer"));
+        }
+        let Some(prior) = self
+            .prior
+            .as_ref()
+            .filter(|prior| prior.answer != DecisionAnswer::Abstain && prior.answer != person)
+        else {
+            return Ok(None);
+        };
+        let provider = self
+            .prior_provider
+            .clone()
+            .ok_or_else(|| invalid("a prior without its provider"))?;
+        Ok(Some(PersonChangedAnswer {
+            question: self.question.id,
+            question_version: self.question.version,
+            principal: self.principal,
+            reason: self.reason,
+            prior: prior.answer.clone(),
+            prior_probability: prior.probability,
+            prior_paired: prior.paired.map(|reading| reading.bind(provider.clone())),
+            prior_person: prior.person.map(|reading| reading.bind(provider.clone())),
+            prior_provider: provider,
+            person,
+            queue_pin: self.queue_pin.clone(),
+        }))
+    }
 }
 
 pub trait HumanDecisionQueue: Send + Sync {
@@ -208,20 +254,36 @@ impl DecisionLadder<'_> {
             return Err(invalid("invalid decision dial"));
         }
         let row = policy.resolve(question, reversibility, dial.band)?;
-        let mut pins = Vec::new();
-        let mut paired = Vec::new();
+        // Only a surface whose dial reaches the person rung routes on a person reading.
+        let person_row = policy
+            .person_threshold()
+            .filter(|_| dial.ceiling == DecisionRung::Human);
+        let mut readings = Readings::default();
         let mut rung = dial.first;
         let mut prior = None;
         let mut in_band = false;
+        let mut needs_person = false;
         let mut unavailable = false;
         if rung != DecisionRung::Human {
-            let answer = self.run_provider(rung, question, evidence, &mut pins, &mut paired)?;
+            let answer = self.run_provider(rung, question, evidence, &mut readings)?;
             in_band = answer.probability.is_some_and(|p| row.band.contains(p));
+            needs_person = asks_person(&answer, person_row);
             prior = Some(answer);
-            if in_band && row.mode == BandMode::Enforce && rung < dial.ceiling {
+            if needs_person {
+                rung = DecisionRung::Human;
+            } else if in_band && row.mode == BandMode::Enforce && rung < dial.ceiling {
                 match self.next_available(rung, dial.ceiling) {
-                    Some(next) => rung = next,
                     None => unavailable = true,
+                    Some(DecisionRung::Human) => rung = DecisionRung::Human,
+                    Some(next) => {
+                        rung = next;
+                        let answer = self.run_provider(rung, question, evidence, &mut readings)?;
+                        if asks_person(&answer, person_row) {
+                            needs_person = true;
+                            rung = DecisionRung::Human;
+                        }
+                        prior = Some(answer);
+                    }
                 }
             }
         }
@@ -233,10 +295,13 @@ impl DecisionLadder<'_> {
                 answer: DecisionAnswer::Abstain,
                 probability: None,
                 paired: None,
+                person: None,
             }
         } else if rung == DecisionRung::Human {
             validate_pin(&self.human_pin, DecisionRung::Human)?;
-            let reason = if prior.is_some() {
+            let reason = if needs_person {
+                HumanAskReason::NeedsPerson
+            } else if prior.is_some() {
                 HumanAskReason::Uncertain
             } else {
                 HumanAskReason::OwnerSelected
@@ -246,20 +311,21 @@ impl DecisionLadder<'_> {
                 principal,
                 evidence: evidence.to_vec(),
                 reason,
+                // The prior is the last provider read's answer.
+                prior_provider: prior.as_ref().and(readings.pins.last().cloned()),
                 prior,
                 queue_pin: self.human_pin.clone(),
             })?;
-            pins.push(self.human_pin.clone());
+            readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
             ProviderDecision {
                 answer: DecisionAnswer::Abstain,
                 probability: None,
                 paired: None,
+                person: None,
             }
-        } else if rung == dial.first {
-            prior.expect("non-human first rung has an answer")
         } else {
-            self.run_provider(rung, question, evidence, &mut pins, &mut paired)?
+            prior.expect("a non-human rung has an answer")
         };
         Ok(TypedDecision {
             answer: outcome.answer,
@@ -271,12 +337,13 @@ impl DecisionLadder<'_> {
                 question: question.id,
                 question_version: question.version,
                 principal,
-                providers: pins,
+                providers: readings.pins,
                 band: row.band,
                 band_version: row.version,
                 evidence_versions: Vec::new(),
                 cost_per_thousand: None,
-                paired,
+                paired: readings.paired,
+                person: readings.person,
             },
         })
     }
@@ -314,8 +381,7 @@ impl DecisionLadder<'_> {
         rung: DecisionRung,
         question: &DecisionQuestion,
         evidence: &[EntityId],
-        pins: &mut Vec<ProviderPin>,
-        paired: &mut Vec<PairedReading>,
+        readings: &mut Readings,
     ) -> Result<ProviderDecision> {
         let provider = self
             .slot(rung)
@@ -325,11 +391,28 @@ impl DecisionLadder<'_> {
         let answer = provider.decide(question, evidence)?;
         answer.validate(question)?;
         if let Some(reading) = answer.paired {
-            paired.push(reading.bind(pin.clone()));
+            readings.paired.push(reading.bind(pin.clone()));
         }
-        pins.push(pin);
+        if let Some(reading) = answer.person {
+            readings.person.push(reading.bind(pin.clone()));
+        }
+        readings.pins.push(pin);
         Ok(answer)
     }
+}
+
+/// What a run's measurements leave on the receipt.
+#[derive(Default)]
+struct Readings {
+    pins: Vec<ProviderPin>,
+    paired: Vec<PairedReading>,
+    person: Vec<PairedReading>,
+}
+
+/// A missing person reading never asks; it is not P(yes) = 0, it is no reading.
+fn asks_person(answer: &ProviderDecision, row: Option<PersonThreshold>) -> bool {
+    row.zip(answer.person)
+        .is_some_and(|(row, person)| person.probability >= row.threshold)
 }
 
 fn next_rung(rung: DecisionRung) -> DecisionRung {
