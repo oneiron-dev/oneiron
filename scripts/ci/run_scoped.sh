@@ -48,6 +48,9 @@ clippy)
     run cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     run cargo clippy --locked -p oneiron "${lower[@]}" --all-targets --no-default-features -- -D warnings
     run cargo clippy --locked -p oneiron-server --all-features -- -D warnings
+    # Check the libraries cargo doc needs first, so it only runs rustdoc: otherwise it checks `oneiron` (rustc, about
+    # 6.5 GiB) while it documents it (rustdoc, about 6 GiB), which ran 16G gate hosts out of memory (10-16).
+    run env RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" cargo check --locked --workspace --all-features --lib
     run env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
     exit 0
   fi
