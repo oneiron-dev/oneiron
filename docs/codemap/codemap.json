@@ -1464,13 +1464,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
      "purpose": "Enqueue doors plus kind-scoped claim machinery and read-repair scans",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 5
      }
     },
@@ -16436,6 +16436,17 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/admission/buckets.rs",
+     "purpose": "MACRO admission shares the queue's leases: one attempt per partition",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -17044,6 +17055,16 @@
       "crate-vis": 2,
       "fn": 9,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/concurrent.rs",
+     "purpose": "Poll disjoint MACRO buckets together, with one wake snapshot and meter",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -27044,7 +27065,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 36,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -35492,6 +35513,7 @@
       "SessionEndReason",
       "SessionEndWake",
       "SessionHintTimestamp",
+      "SessionKey",
       "SessionLifecycleRecord",
       "SessionMintOutcome"
      ],
@@ -35500,8 +35522,8 @@
      "surface": {
       "crate-vis": 6,
       "enum": 3,
-      "fn": 11,
-      "struct": 6
+      "fn": 13,
+      "struct": 7
      }
     },
     {
@@ -39412,6 +39434,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/connection/node_batch.rs",
+     "purpose": "One bounded node proposal batch per sync tick",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
@@ -40374,8 +40406,8 @@
      "path": "src/sync/transport/documents.rs",
      "purpose": "Entity-key frames and bounded, non-nesting document batches",
      "surface": {
-      "const": 10,
-      "fn": 4,
+      "const": 11,
+      "fn": 6,
       "mod": 1,
       "struct": 1
      }
@@ -45835,7 +45867,7 @@
     "attempt_queue": {
      "files": 39,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
@@ -46267,7 +46299,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46281,7 +46313,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47051,7 +47083,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 146,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47226,9 +47258,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 77,
+   "over_bar": 78,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2843,
+   "source_files": 2846,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57117,7 +57149,7 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -57137,7 +57169,7 @@
      "path": "src/api/ai/mod.rs",
      "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns, the session hints the Dreamer's triggers…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
