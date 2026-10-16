@@ -101,6 +101,22 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Does this candidate violate one owner-authored policy row? Keyed by the
+/// document hash, row reference and action; wording comes from the row.
+pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {
+    name: "policy_model.owner_row",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does this candidate violate one attested hosted-legal policy row? Never
+/// assembled on a local/BYO path. Keyed as the owner question is.
+pub const POLICY_HOSTED_ROW: QuestionFamily = QuestionFamily {
+    name: "policy_model.hosted_row",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -111,4 +127,6 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    POLICY_OWNER_ROW,
+    POLICY_HOSTED_ROW,
 ];
