@@ -17,7 +17,7 @@
 //! The core's edit round trip wraps every host session in this engine unless
 //! the host opts out, so this crate does not depend on the core.
 //!
-//! The corpus rule is met at fork rev `23207d03` (0.9.3-oneiron.12): through
+//! The corpus rule is met at fork rev `f01d8eff` (0.9.3-oneiron.13): through
 //! the writer, all 2,967 scored fresh-Excel SpreadsheetBench workbooks (Excel
 //! for Windows truth) are fully Excel-identical (LibreOffice 25.8 matched
 //! 2,648 of the 2,951 it was measured on), and all 811 pinned goldens (Excel
@@ -36,7 +36,8 @@
 //! does not implement, calls an XLL add-in or the workbook's VBA project may
 //! resolve, workbook and linked-workbook names used as functions (LAMBDA
 //! names, add-in workbooks' functions), string escapes the
-//! writer's reader decodes differently from Excel, precision-as-displayed,
+//! writer's reader decodes differently from Excel, under precision as
+//! displayed a number format whose stored values the writer does not know,
 //! what the writer cannot write exactly, a result over the host's limits, and
 //! a recalculation the edit round trip's corruption gate would refuse.
 //! Malformed content is refused outright, as before the writer.
