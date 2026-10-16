@@ -82,7 +82,11 @@ impl WithdrawnKeyframe {
             let index = key
                 .as_str()
                 .filter(|key| *key != KEY_EPOCH_TEXT)
-                .and_then(|key| EPOCH_SUMMARY_BODY_KEYS.iter().position(|known| *known == key));
+                .and_then(|key| {
+                    EPOCH_SUMMARY_BODY_KEYS
+                        .iter()
+                        .position(|known| *known == key)
+                });
             match index {
                 Some(index) => {
                     if held[index].replace(value).is_some() {
