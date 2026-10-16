@@ -93,6 +93,13 @@ pub struct ServeArgs {
     #[arg(long = "credentials-fd")]
     pub credentials_fd: Option<i32>,
 
+    /// Managed mode as a Firecracker vault VM's only process. The credential
+    /// frame and the ready byte ride the vsock boot channel instead of
+    /// `--credentials-fd` and `--ready-fd`, and the host reaches the HTTP and
+    /// ctl sockets through vsock ports (`oneiron_vault_contract::vm`).
+    #[arg(long = "vsock-guest")]
+    pub vsock_guest: bool,
+
     /// This install's key directory, an absolute path outside the vault: where
     /// the this-device-only keystore keeps the machine encryption seed. Managed
     /// mode installs a keystore only from this flag; unmanaged serve reads it
@@ -320,6 +327,7 @@ impl fmt::Debug for ServeArgs {
             .field("hypnos_socket", &self.hypnos_socket)
             .field("ready_fd", &self.ready_fd)
             .field("credentials_fd", &self.credentials_fd)
+            .field("vsock_guest", &self.vsock_guest)
             .field("keystore_dir", &self.keystore_dir)
             .field("host", &self.host)
             .field("port", &self.port)

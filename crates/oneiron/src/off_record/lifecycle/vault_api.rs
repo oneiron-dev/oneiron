@@ -119,6 +119,14 @@ impl Vault {
         Ok(self.store.off_record_sessions.record(session_ref))
     }
 
+    /// Whether any off-record stretch is open. A host that would write this
+    /// process's RAM to disk, a vault VM's snapshot, asks first: no snapshot
+    /// while a stretch is open (OFFREC-SNAPSHOT = A).
+    #[must_use]
+    pub fn has_open_off_record_session(&self) -> bool {
+        self.store.off_record_sessions.any_live()
+    }
+
     /// Takes the session back off record (ARCH-0052 D5 / K10). Rows already
     /// in the room stay in the room across the flip.
     ///

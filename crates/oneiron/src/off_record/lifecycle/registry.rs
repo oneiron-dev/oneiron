@@ -244,6 +244,14 @@ impl OffRecordSessionRegistry {
         Ok(None)
     }
 
+    /// Whether any session is live, overlay rows or not.
+    pub(crate) fn any_live(&self) -> bool {
+        self.published
+            .load()
+            .values()
+            .any(|entry| entry.published_record.load().is_some())
+    }
+
     pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
         let sessions = self.published.load();
         for entry in sessions.values() {

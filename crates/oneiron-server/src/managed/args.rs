@@ -119,8 +119,12 @@ pub struct ManagedArgs {
     pub http_socket: PathBuf,
     pub ctl_socket: PathBuf,
     pub hypnos_socket: PathBuf,
+    /// [`NO_FD`] in a vault VM, whose boot channel carries the ready byte.
     pub ready_fd: RawFd,
+    /// [`NO_FD`] in a vault VM, whose boot channel carries the frame.
     pub credentials_fd: RawFd,
+    /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
+    pub vsock_guest: bool,
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore.
     pub keystore_dir: Option<PathBuf>,
@@ -158,6 +162,25 @@ impl ManagedArgs {
         }
         let owner = decode_hex(owner_text).ok_or(ManagedError::InvalidDerivationOwner)?;
 
+        let (ready_fd, credentials_fd) = if args.vsock_guest {
+            for (flag, given) in [
+                ("ready-fd", args.ready_fd.is_some()),
+                ("credentials-fd", args.credentials_fd.is_some()),
+            ] {
+                if given {
+                    return Err(ManagedError::ConflictingFlag {
+                        flag,
+                        reason: VSOCK_BOOT_REASON,
+                    });
+                }
+            }
+            (NO_FD, NO_FD)
+        } else {
+            (
+                require_fd(args.ready_fd, "ready-fd")?,
+                require_fd(args.credentials_fd, "credentials-fd")?,
+            )
+        };
         let managed = Self {
             vault_name,
             derivation_owner: DerivationOwner(owner),
@@ -169,8 +192,9 @@ impl ManagedArgs {
             http_socket: require(args.http_socket.clone(), "http-socket")?,
             ctl_socket: require(args.ctl_socket.clone(), "ctl-socket")?,
             hypnos_socket: require(args.hypnos_socket.clone(), "hypnos-socket")?,
-            ready_fd: require_fd(args.ready_fd, "ready-fd")?,
-            credentials_fd: require_fd(args.credentials_fd, "credentials-fd")?,
+            ready_fd,
+            credentials_fd,
+            vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
         };
         if managed
@@ -187,10 +211,12 @@ impl ManagedArgs {
         // frame's descriptor is closed under the ready write, or the ready byte
         // lands in the number the supervisor is still reading credentials from.
         // Refused here, before either is consumed.
-        refuse_fd_alias(
-            ("--ready-fd", managed.ready_fd),
-            ("--credentials-fd", managed.credentials_fd),
-        )?;
+        if !managed.vsock_guest {
+            refuse_fd_alias(
+                ("--ready-fd", managed.ready_fd),
+                ("--credentials-fd", managed.credentials_fd),
+            )?;
+        }
         Ok(Some(managed))
     }
 
@@ -288,6 +314,13 @@ fn refuse_fd_alias(
     Ok(())
 }
 
+/// A vault VM inherits no descriptors: its vsock boot channel carries the
+/// credential frame in and the ready byte out.
+pub const NO_FD: RawFd = -1;
+
+const VSOCK_BOOT_REASON: &str =
+    "a vault VM reads its credentials and signals ready over the vsock boot channel";
+
 const NO_HOST_PORT_REASON: &str =
     "managed mode serves the supervisor's socket, never a host:port bind";
 
@@ -376,6 +409,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
         "keystore-dir",
         |args| args.keystore_dir.is_some(),

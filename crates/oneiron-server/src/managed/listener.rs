@@ -177,7 +177,7 @@ impl BoundServeListener {
 /// with no way back. So the gate below is the whole difference between reusing
 /// a stale socket and destroying a file, and it runs before this function
 /// creates or tightens a directory, so a mistyped path changes nothing at all.
-fn bind_unix_socket(path: &Path) -> Result<UnixListener, ManagedError> {
+pub(super) fn bind_unix_socket(path: &Path) -> Result<UnixListener, ManagedError> {
     // `symlink_metadata`, not `metadata`: a symlink is refused as itself rather
     // than judged by what it points at, so a link aimed at a live socket cannot
     // talk this into unlinking a path it never inspected.

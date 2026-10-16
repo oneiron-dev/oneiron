@@ -20,6 +20,8 @@ mod limits;
 mod managed_holder;
 mod secrets;
 mod version;
+/// The vault-VM wire shared by the guest adapter and the host's VMM driver.
+pub mod vm;
 mod wake;
 
 /// The commitment RECURRENCE vocabulary (CMT-2, ONE-1539).
