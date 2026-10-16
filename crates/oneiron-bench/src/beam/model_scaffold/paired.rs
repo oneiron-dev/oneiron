@@ -1,6 +1,8 @@
 //! Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A). Every arm
 //! of one reader is paired, question by question, with the same reader given
-//! no optional memory, per task family and per comparison regime.
+//! no optional memory, per task family and per comparison regime. Every
+//! score carries two columns, and the pick rests on `beam-fixed`
+//! (ARCH-0042 `beam:D9`).
 use super::{AnswererArm, Effort, ModelRow, model_params_hash};
 use crate::beam::{BeamResult, model::ArmKind};
 use oneiron::ModelId;
@@ -16,6 +18,37 @@ pub(in crate::beam) enum Regime {
     FixedTotalTokens,
 }
 
+/// One score in two columns. `beam-fixed` is the float nugget score with
+/// half credit, from a judge shown the real question: the column a claim
+/// rests on. The int-cast column drops a 0.5 to 0 over the same verdicts. It
+/// is not `beam-replicate@3e12035`, whose judge sees a placeholder question.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub(in crate::beam) struct BeamColumns {
+    #[serde(rename = "int-cast-saw-question")]
+    pub int_cast: f64,
+    #[serde(rename = "beam-fixed")]
+    pub fixed: f64,
+}
+
+impl BeamColumns {
+    pub(in crate::beam) fn of(score: &crate::beam::nuggets::NuggetMean) -> Self {
+        Self {
+            int_cast: score.official_int_cast,
+            fixed: score.fixed_float_clamped,
+        }
+    }
+}
+
+impl std::ops::Sub for BeamColumns {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        Self {
+            int_cast: self.int_cast - other.int_cast,
+            fixed: self.fixed - other.fixed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(in crate::beam) struct PairedRow {
     pub regime: Regime,
@@ -25,10 +58,10 @@ pub(in crate::beam) struct PairedRow {
     pub arm: ArmKind,
     pub effort: String,
     pub pairs: usize,
-    pub score: f64,
-    pub solo_score: f64,
+    pub score: BeamColumns,
+    pub solo_score: BeamColumns,
     /// Mean over questions of this arm's score minus backbone-solo's.
-    pub paired_difference: f64,
+    pub paired_difference: BeamColumns,
     pub mean_input_tokens: f64,
     pub mean_output_tokens: f64,
     pub context_truncation_rate: f64,
@@ -51,7 +84,7 @@ pub(in crate::beam) struct ReaderPick {
     pub optional_memory_tokens: Option<usize>,
     /// The pack view an engine-pack arm served; `None` for every other arm.
     pub tier: Option<&'static str>,
-    pub paired_difference: f64,
+    pub paired_difference: BeamColumns,
 }
 
 pub(super) fn paired_rows(
@@ -98,6 +131,11 @@ pub(super) fn paired_rows(
                     let rate =
                         |f: &dyn Fn(&ModelRow) -> bool| mean(&|row, _| f64::from(u8::from(f(row))));
                     let score = |row: &ModelRow| regime_score(regime, effort, row);
+                    let columns =
+                        |f: &dyn Fn(BeamColumns, BeamColumns) -> BeamColumns| BeamColumns {
+                            int_cast: mean(&|row, solo| f(score(row), score(solo)).int_cast),
+                            fixed: mean(&|row, solo| f(score(row), score(solo)).fixed),
+                        };
                     out.push(PairedRow {
                         regime,
                         answerer: arm.model.model_id.clone(),
@@ -106,9 +144,9 @@ pub(super) fn paired_rows(
                         arm: arm.arm,
                         effort: effort.name.clone(),
                         pairs: pairs.len(),
-                        score: mean(&|row, _| score(row)),
-                        solo_score: mean(&|_, solo| score(solo)),
-                        paired_difference: mean(&|row, solo| score(row) - score(solo)),
+                        score: columns(&|row, _| row),
+                        solo_score: columns(&|_, solo| solo),
+                        paired_difference: columns(&|row, solo| row - solo),
                         mean_input_tokens: mean(&|row, _| row.query_cost.input_tokens as f64),
                         mean_output_tokens: mean(&|row, _| row.query_cost.output_tokens as f64),
                         context_truncation_rate: rate(&|row| row.context_truncated),
@@ -123,9 +161,9 @@ pub(super) fn paired_rows(
     Ok(out)
 }
 
-/// Zero optional memory stays the pick unless an arm beats it strictly.
-/// On a tie, an arm without vault recall wins, then the smaller memory
-/// budget, then the cheaper row.
+/// Zero optional memory stays the pick unless an arm beats it strictly on
+/// `beam-fixed`. On a tie, an arm without vault recall wins, then the smaller
+/// memory budget, then the cheaper row.
 pub(super) fn picks(paired: &[PairedRow], efforts: &[Effort]) -> Vec<ReaderPick> {
     let memory_tokens = |row: &PairedRow| {
         efforts
@@ -152,10 +190,11 @@ pub(super) fn picks(paired: &[PairedRow], efforts: &[Effort]) -> Vec<ReaderPick>
             let best = rows
                 .iter()
                 .copied()
-                .filter(|row| row.paired_difference > 0.0)
+                .filter(|row| row.paired_difference.fixed > 0.0)
                 .max_by(|a, b| {
                     a.paired_difference
-                        .total_cmp(&b.paired_difference)
+                        .fixed
+                        .total_cmp(&b.paired_difference.fixed)
                         .then(memory_tokens(b).cmp(&memory_tokens(a)))
                         .then(b.query_cost_usd.total_cmp(&a.query_cost_usd))
                 });
@@ -170,7 +209,7 @@ pub(super) fn picks(paired: &[PairedRow], efforts: &[Effort]) -> Vec<ReaderPick>
                 tier: best
                     .filter(|row| matches!(row.arm, ArmKind::Deterministic | ArmKind::Agentic))
                     .map(|_| crate::beam::arms::BEAM_PACK_VIEW.1),
-                paired_difference: best.map_or(0.0, |row| row.paired_difference),
+                paired_difference: best.map_or(BeamColumns::default(), |row| row.paired_difference),
             }
         })
         .collect()
@@ -184,14 +223,15 @@ fn over_allowance(effort: &Effort, row: &ModelRow) -> bool {
     row.query_cost.input_tokens + row.query_cost.output_tokens > effort.total_token_allowance
 }
 
-fn regime_score(regime: Regime, effort: &Effort, row: &ModelRow) -> f64 {
+fn regime_score(regime: Regime, effort: &Effort, row: &ModelRow) -> BeamColumns {
     if regime == Regime::FixedTotalTokens && over_allowance(effort, row) {
-        return 0.0;
+        return BeamColumns::default();
     }
-    row.scoring
-        .beam
-        .as_ref()
-        .expect("FixedBeamScorer produces BEAM columns")
-        .aggregate
-        .official_int_cast
+    BeamColumns::of(
+        &row.scoring
+            .beam
+            .as_ref()
+            .expect("FixedBeamScorer produces BEAM columns")
+            .aggregate,
+    )
 }

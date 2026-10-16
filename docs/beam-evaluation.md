@@ -34,6 +34,14 @@ the effort's `total_token_allowance`. `picks` names the setting per reader and
 family: the arm, its optional memory budget and its pack view. Backbone-solo
 stays the pick unless an arm beats it strictly.
 
+Each score in `paired`, `picks`, `points`, `frontier` and `agency_lift` has
+two columns (ARCH-0042 `beam:D9`). `beam-fixed` is the float nugget score with
+half credit, from a judge shown the real question. The picks, the frontier and
+the agency lift rest on it. `int-cast-saw-question` takes the same verdicts
+and drops each 0.5 to 0. Neither column is `beam-replicate@3e12035`, whose
+judge sees the placeholder `<question>`. This harness does not run that
+judge pass yet.
+
 `crates/oneiron-bench/fixtures/beam_measure.example.json` is a runnable plan
 shape for an OpenAI-compatible local relay. Before using it for real numbers,
 set the endpoint, provide the named key environment variable, and replace the
