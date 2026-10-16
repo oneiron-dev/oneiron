@@ -117,6 +117,10 @@ pub struct DescribeRequest {
     /// The board frame the card key was read from; a stale one is refused.
     #[serde(default)]
     pub frame_epoch: Option<u64>,
+    /// A fold of the run's own log (`f1`): its span, its stub and the ids it
+    /// holds. Only the run that folded it answers this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fold: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -187,6 +191,25 @@ pub use super::sdk_self::*;
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
+}
+/// `inbox.list`'s one input (OF-221): the exclusive entity-ID cursor a
+/// previous page returned as `next_after`, and a page size
+/// ([`crate::inbox::INBOX_PAGE_DEFAULT`] when absent).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InboxListRequest {
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+/// `inbox.mark`'s one input (OF-221): one delivered notification and the
+/// mark to record for the caller.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InboxMarkRequest {
+    pub notification_ref: String,
+    pub mark: crate::inbox::NotificationMark,
 }
 
 include!("verb_catalog.rs");

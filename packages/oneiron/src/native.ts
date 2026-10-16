@@ -44,6 +44,15 @@ vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
 vaultPacksPut(input: unknown): unknown
+vaultArtifactsView(requestJson: string): string
+vaultArtifactsExport(requestJson: string): string
+vaultArtifactsBornFrom(requestJson: string): string
+vaultArtifactsProposals(requestJson: string): string
+vaultArtifactsProposeDeck(requestJson: string): string
+vaultArtifactsProposeOutput(requestJson: string): string
+vaultArtifactsKeep(requestJson: string): string
+vaultArtifactsDiscard(requestJson: string): string
+vaultArtifactsUndo(requestJson: string): string
 can(requestJson: string): string
 peek(requestJson: string): string
 ask(input: unknown): unknown

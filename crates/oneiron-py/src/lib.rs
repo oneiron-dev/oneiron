@@ -362,6 +362,76 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_artifacts_view(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.export")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_born_from(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.born_from")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.born_from", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_proposals(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.proposals")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.proposals", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_propose_deck(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.propose_deck")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.propose_deck", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_propose_output(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.propose_output")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.propose_output", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_keep(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.keep")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.keep", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_discard(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.discard")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.discard", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_undo(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.undo")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.undo", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn can(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "can")?;
         let output = py
