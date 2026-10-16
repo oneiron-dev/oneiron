@@ -17,6 +17,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_memory_diary_reads(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.diary.reads", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_memory_diary_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.diary.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("cancel", input).map_err(facade_error)
     }
@@ -117,6 +135,26 @@ impl NativeClient {
             .into_iter()
             .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
             .collect()
+    }
+    #[napi]
+    pub fn vault_images_view(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.images.view", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
     pub fn vault_receipts_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
@@ -307,6 +345,46 @@ impl NativeClient {
         let output = self
             .inner
             .agent_verb("vault.artifacts.proposals", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_waits(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.waits", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_release_wait(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.release_wait", input)
             .map_err(facade_error)?;
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
