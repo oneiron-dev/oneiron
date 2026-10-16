@@ -1,6 +1,7 @@
 //! Canonical pair identity and resident-owned submission witnesses.
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::vault::LiveEntityRow;
 use crate::{EntityId, Vault};
@@ -19,8 +20,13 @@ impl DiaryPair {
         Some(Self { left, right })
     }
     pub(super) fn linked_in(self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
-        let key = crate::store::Store::encode_edge_key(&self.left, EdgeKind::SameAs, &self.right);
-        Ok(vault.store.edges_out.get(txn, &key)?.is_some())
+        vault.port_edge_present(
+            txn,
+            &self.left,
+            EdgeDirection::Out,
+            EdgeKind::SameAs,
+            &self.right,
+        )
     }
 }
 
@@ -41,8 +47,13 @@ pub(super) fn author_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> R
             "coreference endpoint is not a diary NOTE",
         ));
     }
-    let key = crate::store::Store::encode_edge_key(&id, EdgeKind::AuthoredBy, &note.author_ref);
-    if vault.store.edges_out.get(txn, &key)?.is_none() {
+    if !vault.port_edge_present(
+        txn,
+        &id,
+        EdgeDirection::Out,
+        EdgeKind::AuthoredBy,
+        &note.author_ref,
+    )? {
         return Err(Error::InvalidClaimBody("diary author edge is missing"));
     }
     Ok(note.author_ref)
