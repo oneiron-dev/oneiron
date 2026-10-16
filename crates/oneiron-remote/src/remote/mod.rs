@@ -196,7 +196,7 @@ impl RemoteClient {
                     .map_err(|_| transport_error("could not name the room turn"))?,
             );
         }
-        let response = (if verb == "export" {
+        let response = (if verb == "vault.export" {
             &self.export_agent
         } else {
             &self.agent
@@ -217,7 +217,7 @@ impl RemoteClient {
         // streams JSON directly into its required result, under its own
         // larger ceiling: there is no second whole-body buffer. The
         // export-specific total timeout still refuses a stalled peer.
-        if verb == "export" {
+        if verb == "vault.export" {
             read_export(response, status, self.export_limit)
         } else {
             let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| {

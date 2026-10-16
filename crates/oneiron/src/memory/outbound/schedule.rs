@@ -262,22 +262,6 @@ impl Memory<'_> {
             return Ok((self.already_scheduled_outbound_receipt(attempt.id), None));
         }
 
-        // CAL-04 (ONE-1786) chokepoint admission, in its fixed order: exact
-        // decode (the typed payload is already decoded above), emit/state
-        // validation against the live outbound passport, vault-only hygiene
-        // hydration, hygiene evaluation. It runs AFTER the dedupe returns
-        // above — a coalesced re-schedule must not re-check or re-bump anything
-        // — and BEFORE the gate, so a refused invite consumes no gate decision,
-        // no budget, and no queue row. The passport head it produces is applied
-        // inside the durable transaction below.
-        let invite_admission = match calendar_invite {
-            Some(payload) => Some(
-                crate::calendar::admit_calendar_invite(self.vault, self.actor, payload, now)
-                    .map_err(facade_error_from_calendar)?,
-            ),
-            None => None,
-        };
-
         let gate_intent_ref = format!("intent:task:{}", task_ref.to_hex());
         let actor = OutboundDispatchActor {
             actor_class: self.actor_class.gate_actor_class().to_owned(),
@@ -373,7 +357,11 @@ impl Memory<'_> {
                 // attempt and the connector TASK that will replay it. No
                 // bumped sequence can survive without its frozen intent,
                 // because both commit here or neither does.
-                if let Some(admission) = invite_admission.as_ref() {
+                if let Some(payload) = calendar_invite {
+                    let admission = crate::calendar::invite::admit_calendar_invite_in_txn(
+                        self.vault, wtxn, self.actor, payload, now,
+                    )
+                    .map_err(facade_error_from_calendar)?;
                     admission
                         .commit_in_txn(self.vault, wtxn, now)
                         .map_err(facade_error_from_calendar)?;

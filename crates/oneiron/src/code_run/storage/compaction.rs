@@ -1,12 +1,13 @@
 //! Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY.
 //! Raw outputs cannot write or impersonate this disjoint vault-meta keyspace.
 
-use crate::code_run::CodeRunReplayRecord;
+use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::compaction::EpochMint;
 use crate::compaction::{CompactionRequest, EpochSummaryBody, decode_epoch_summary_body};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::ManifestDbs;
 use crate::{EntityId, Error, Result, Vault};
 
 /// One coverage row per (run id, minted SUMMARY id), in the fixed frame
@@ -183,16 +184,15 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
 /// the gate never judged. A withdrawn summary leaves its steps covered (as
 /// references) and renders no words.
 fn verify_summary(
-    vault: &Vault,
+    dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     row: &CodeRunCompactionCoverage,
 ) -> Result<Option<String>> {
     let corrupt = || Error::CorruptedIndex("code-run compaction summary binding");
-    let Some(summary) = vault.store.port_entity_record(txn, &row.summary_id)? else {
+    let Some(summary) = dbs.port_entity_record(txn, &row.summary_id)? else {
         return Ok(None);
     };
-    let state =
-        crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &row.summary_id)?;
+    let state = crate::ports::TombstoneStoreRead::port_deletion_state(dbs, txn, &row.summary_id)?;
     if state.deleted || state.stale || summary.body.is_empty() {
         return Ok(None);
     }
@@ -213,90 +213,149 @@ fn verify_summary(
     Ok(Some(body.text))
 }
 
-impl Vault {
+impl ExecutorOutputSpan {
     /// Called only by the epoch mint's transaction, after its actual SUMMARY
-    /// row has been put. A post-write refusal rolls back both rows.
+    /// row has been put, on the target it was put on: base, or the run's
+    /// room. A post-write refusal rolls back both rows.
+    pub(crate) fn put_coverage_in(
+        &self,
+        dbs: &impl ManifestDbs,
+        txn: &mut heed::RwTxn<'_>,
+        mint: &EpochMint,
+    ) -> Result<()> {
+        put_coverage_in(dbs, txn, self, mint)
+    }
+}
+
+fn put_coverage_in(
+    dbs: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    span: &ExecutorOutputSpan,
+    mint: &EpochMint,
+) -> Result<()> {
+    if span.session_ref != mint.session_ref()
+        || span.first != mint.turn_start()
+        || span.last != mint.turn_end()
+    {
+        return Err(Error::InvariantViolation(
+            "executor coverage differs from minted summary",
+        ));
+    }
+    let replay = super::records::REPLAY_RECORDS
+        .get(dbs, txn, &span.run_id)?
+        .ok_or(Error::CorruptedIndex("missing executor replay record"))?;
+    let completed = u64::try_from(replay.step_checkpoints.len())
+        .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;
+    if replay.run_id != span.run_id || span.last >= completed {
+        return Err(Error::InvariantViolation(
+            "executor coverage exceeds durable replay",
+        ));
+    }
+    let minted =
+        dbs.port_entity_record(&*txn, &mint.summary_id())?
+            .ok_or(Error::InvariantViolation(
+                "executor coverage names no live summary",
+            ))?;
+    let row = CodeRunCompactionCoverage {
+        run_id: span.run_id,
+        session_ref: span.session_ref,
+        summary_id: mint.summary_id(),
+        epoch: mint.epoch(),
+        first: span.first,
+        last: span.last,
+        calls: span.calls,
+        digest: *blake3::hash(&minted.body).as_bytes(),
+    };
+    verify_summary(dbs, &*txn, &row)?.ok_or(Error::InvariantViolation(
+        "executor coverage names no live summary",
+    ))?;
+    // The mint took its epoch and boundary from the run's rows; they
+    // must still be the run's last ones in this transaction.
+    let mut last = None;
+    for item in COVERAGE.iter_from(dbs, &*txn, span.run_id.as_bytes())? {
+        let (_, prior) = item?;
+        last = last.max(Some((prior.epoch, prior.last, prior.calls)));
+    }
+    let continues = match last {
+        None => row.epoch == 1,
+        Some((epoch, end, calls)) => {
+            epoch.checked_add(1) == Some(row.epoch)
+                && end.checked_add(1) == Some(row.first)
+                && calls <= row.calls
+        }
+    };
+    if !continues {
+        return Err(Error::InvariantViolation(
+            "executor coverage does not continue the run's last epoch",
+        ));
+    }
+    let key = (row.run_id, row.summary_id);
+    if COVERAGE.contains(dbs, txn, &key)? {
+        return Err(Error::InvariantViolation(
+            "duplicate executor compaction coverage",
+        ));
+    }
+    COVERAGE.put(dbs, txn, &key, &row)?;
+    #[cfg(test)]
+    if span.fail_after_write {
+        return Err(Error::InvariantViolation(
+            "injected executor coverage write failure",
+        ));
+    }
+    Ok(())
+}
+
+/// Every coverage row of `run_id` with its summary's prose, `None` when the
+/// summary is withdrawn. Read-time verification never trusts the coverage
+/// bytes alone: the keyed run/summary and the minted SUMMARY must agree.
+///
+/// A room's summary and its lineage live in the room's overlay, where base
+/// erasure cannot reach them, so on a room's union read its words show only
+/// while no record they came from is withdrawn, through nested epochs.
+fn code_run_compaction_epochs_in(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    run_id: EntityId,
+) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
+    let mut rows = Vec::new();
+    for item in COVERAGE.iter_from(dbs, txn, run_id.as_bytes())? {
+        let ((key_run, key_summary), row) = item?;
+        if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
+            return Err(Error::CorruptedIndex("code-run compaction coverage key"));
+        }
+        let mut text = verify_summary(dbs, txn, &row)?;
+        if text.is_some() && dbs.is_union() {
+            let summary = dbs
+                .port_entity_record(txn, &row.summary_id)?
+                .ok_or(Error::CorruptedIndex("code-run compaction summary binding"))?;
+            if !crate::compaction::epoch_exportable_in(
+                dbs,
+                txn,
+                &row.summary_id,
+                summary.entity_type,
+                &summary.body,
+                |_, _| Ok(true),
+            )? {
+                text = None;
+            }
+        }
+        rows.push((row, text));
+    }
+    Ok(rows)
+}
+
+impl Vault {
+    /// [`ExecutorOutputSpan::put_coverage_in`] on base.
     pub(crate) fn put_code_run_compaction_coverage_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         span: &ExecutorOutputSpan,
         mint: &EpochMint,
     ) -> Result<()> {
-        if span.session_ref != mint.session_ref()
-            || span.first != mint.turn_start()
-            || span.last != mint.turn_end()
-        {
-            return Err(Error::InvariantViolation(
-                "executor coverage differs from minted summary",
-            ));
-        }
-        let replay = super::records::REPLAY_RECORDS
-            .get(&self.store, txn, &span.run_id)?
-            .ok_or(Error::CorruptedIndex("missing executor replay record"))?;
-        let completed = u64::try_from(replay.step_checkpoints.len())
-            .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;
-        if replay.run_id != span.run_id || span.last >= completed {
-            return Err(Error::InvariantViolation(
-                "executor coverage exceeds durable replay",
-            ));
-        }
-        let minted = self
-            .store
-            .port_entity_record(&*txn, &mint.summary_id())?
-            .ok_or(Error::InvariantViolation(
-                "executor coverage names no live summary",
-            ))?;
-        let row = CodeRunCompactionCoverage {
-            run_id: span.run_id,
-            session_ref: span.session_ref,
-            summary_id: mint.summary_id(),
-            epoch: mint.epoch(),
-            first: span.first,
-            last: span.last,
-            calls: span.calls,
-            digest: *blake3::hash(&minted.body).as_bytes(),
-        };
-        verify_summary(self, &*txn, &row)?.ok_or(Error::InvariantViolation(
-            "executor coverage names no live summary",
-        ))?;
-        // The mint took its epoch and boundary from the run's rows; they
-        // must still be the run's last ones in this transaction.
-        let mut last = None;
-        for item in COVERAGE.iter_from(&self.store, &*txn, span.run_id.as_bytes())? {
-            let (_, prior) = item?;
-            last = last.max(Some((prior.epoch, prior.last, prior.calls)));
-        }
-        let continues = match last {
-            None => row.epoch == 1,
-            Some((epoch, end, calls)) => {
-                epoch.checked_add(1) == Some(row.epoch)
-                    && end.checked_add(1) == Some(row.first)
-                    && calls <= row.calls
-            }
-        };
-        if !continues {
-            return Err(Error::InvariantViolation(
-                "executor coverage does not continue the run's last epoch",
-            ));
-        }
-        let key = (row.run_id, row.summary_id);
-        if COVERAGE.contains(&self.store, txn, &key)? {
-            return Err(Error::InvariantViolation(
-                "duplicate executor compaction coverage",
-            ));
-        }
-        COVERAGE.put(&self.store, txn, &key, &row)?;
-        #[cfg(test)]
-        if span.fail_after_write {
-            return Err(Error::InvariantViolation(
-                "injected executor coverage write failure",
-            ));
-        }
-        Ok(())
+        span.put_coverage_in(&self.store, txn, mint)
     }
 
-    /// Read-time verification never trusts the coverage bytes alone: the
-    /// keyed run/summary and the durable minted SUMMARY must all agree.
+    /// The run's coverage rows, verified as [`Self::code_run_compaction_epochs`].
     pub(crate) fn code_run_compaction_coverage(
         &self,
         run_id: EntityId,
@@ -315,16 +374,38 @@ impl Vault {
         run_id: EntityId,
     ) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
         let txn = self.store.env.read_txn()?;
-        let mut rows = Vec::new();
-        for item in COVERAGE.iter_from(&self.store, &txn, run_id.as_bytes())? {
-            let ((key_run, key_summary), row) = item?;
-            if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
-                return Err(Error::CorruptedIndex("code-run compaction coverage key"));
-            }
-            let text = verify_summary(self, &txn, &row)?;
-            rows.push((row, text));
+        code_run_compaction_epochs_in(&self.store, &txn, run_id)
+    }
+}
+
+impl ExecutorStorage<'_> {
+    /// The run's coverage rows with their summaries' prose, read where the
+    /// run's rows are: base, or its room's overlay over base, as the run's
+    /// participant stands.
+    pub(crate) fn code_run_compaction_epochs(
+        &self,
+        run_id: EntityId,
+    ) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_compaction_epochs(run_id),
+            Self::Session(binding) => binding.answered(|| {
+                let view = binding.session.read_view()?;
+                let txn = view.read().base().env.read_txn()?;
+                code_run_compaction_epochs_in(&view, &txn, run_id)
+            }),
         }
-        Ok(rows)
+    }
+
+    /// [`Self::code_run_compaction_epochs`] without the prose.
+    pub(crate) fn code_run_compaction_coverage(
+        &self,
+        run_id: EntityId,
+    ) -> Result<Vec<CodeRunCompactionCoverage>> {
+        Ok(self
+            .code_run_compaction_epochs(run_id)?
+            .into_iter()
+            .map(|(row, _)| row)
+            .collect())
     }
 }
 

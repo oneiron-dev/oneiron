@@ -42,6 +42,7 @@ mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
 mod ladder;
+mod media;
 mod offer;
 mod openai;
 mod output_cap;
@@ -59,10 +60,11 @@ mod tests;
 mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub use cooldown::OfferCooldowns;
+pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use ladder::OfferLadder;
+pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
 pub(crate) use raw::{InjectedRuns, RawInference};
 pub(crate) use receipts::ServerReceipts;
@@ -109,6 +111,11 @@ pub struct ModelRuntime {
     decision_read: Option<DecisionReadDoor>,
     /// The roles whose work never leaves the device.
     stays_on_device: BTreeSet<ModelRole>,
+    /// The `ai.*` media seats (`[models.media]`).
+    media: MediaRuntime,
+    /// Where offers refused for a limit rest, and the owner's quota
+    /// questions about the parked ones.
+    rests: Arc<OfferCooldowns>,
 }
 
 impl ModelRuntime {
@@ -122,6 +129,8 @@ impl ModelRuntime {
             receipts: Arc::new(LoggedReceipts),
             decision_read: None,
             stays_on_device: BTreeSet::new(),
+            media: MediaRuntime::empty(),
+            rests: OfferCooldowns::unkept(),
         }
     }
 
@@ -129,6 +138,7 @@ impl ModelRuntime {
     /// instead of the log.
     #[must_use]
     pub fn with_receipts(mut self, receipts: Arc<dyn RunReceiptSink>) -> Self {
+        self.media.set_receipts(Arc::clone(&receipts));
         self.receipts = receipts;
         self
     }
@@ -310,6 +320,7 @@ impl ModelRuntime {
                     .push(SeatStatus::new(*role, None, state, rung_status));
             }
         }
+        let media = MediaRuntime::build(config, &rests, &mut status.seats);
         status.configured = true;
         // A read blocks on the runtime its reader was built on; a build with
         // none has no reader.
@@ -329,6 +340,8 @@ impl ModelRuntime {
             receipts: Arc::new(LoggedReceipts),
             decision_read,
             stays_on_device: config.stays_on_device.clone(),
+            media,
+            rests,
         }
     }
 
@@ -337,6 +350,27 @@ impl ModelRuntime {
     #[must_use]
     pub fn decision_read(&self) -> Option<&DecisionReadDoor> {
         self.decision_read.as_ref()
+    }
+
+    /// The `ai.*` media seats: image, video, speech, transcription and
+    /// embedding.
+    #[must_use]
+    pub fn media(&self) -> &MediaRuntime {
+        &self.media
+    }
+
+    /// The owner's open quota questions (OF-305): each offer parked on a
+    /// spent usage window or spent credit, and the choices it offers.
+    #[must_use]
+    pub fn quota_questions(&self) -> Vec<QuotaQuestion> {
+        self.rests.questions()
+    }
+
+    /// The owner's answer to quota question `id`; a top-up or pay-as-you-go
+    /// puts its offer back in rotation now. `false` when no such question is
+    /// open or it offers no such choice.
+    pub fn answer_quota(&self, id: &str, choice: QuotaChoice) -> oneiron::Result<bool> {
+        self.rests.answer(id, choice)
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.
@@ -499,6 +533,7 @@ fn rung(
             binding,
             backend: Arc::clone(backend),
         },
+        media: None,
     })
 }
 

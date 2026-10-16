@@ -21,8 +21,8 @@ pub fn execute_emergency_plan(
         ));
     }
     if !item.calendar_delivered {
-        // CAL hydrates current hygiene again. Replay is lawful here: the
-        // passport and checkpoint deliberately precede the frozen intent.
+        // Recheck the pinned bytes. The outbound writer admits and publishes
+        // the passport with its frozen intent; this checkpoint does not advance it.
         verify_plan_blob(vault, plan)?;
         crate::calendar::admit_calendar_invite(
             vault,
