@@ -28,6 +28,10 @@ pub(super) async fn serve_with_config(
     mut config: ServeConfig,
     config_file: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
+        "a relay host never opens a vault; use `oneiron host relay --config <room.json>`"
+    );
     use oneiron_vault_contract::host::Host;
     use oneiron_vault_contract::host_adapters::{ActivatedListener, AwakePolicy, DesktopHost};
 
@@ -267,7 +271,7 @@ fn refuse_unauthenticated_public_bind(
 
 /// Ctrl-C, or SIGTERM where there is one: the stop an operator or a service
 /// manager sends.
-async fn stop_requested() {
+pub(crate) async fn stop_requested() {
     let interrupt = async {
         if tokio::signal::ctrl_c().await.is_err() {
             std::future::pending::<()>().await;
