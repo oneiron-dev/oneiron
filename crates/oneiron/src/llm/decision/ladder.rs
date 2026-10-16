@@ -828,6 +828,28 @@ impl DecisionLadder<'_> {
         }
     }
 
+    /// The first rung from `dial.first` to its ceiling, short of the person, whose provider
+    /// takes `question` over `images`. The ladder fails a call whose first rung cannot take
+    /// it, so a caller with images starts there, or asks without them and says so.
+    pub fn first_taking(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+    ) -> Option<DecisionRung> {
+        let mut rung = dial.first;
+        while rung <= dial.ceiling && rung != DecisionRung::Human {
+            if self
+                .slot(rung)
+                .is_some_and(|provider| takes(provider, question, images))
+            {
+                return Some(rung);
+            }
+            rung = next_rung(rung);
+        }
+        None
+    }
+
     /// The next rung above `rung` that can answer `question`, up to `ceiling`. The person's
     /// queue is always present (ARCH-0076 #posture: no house model sends the step to the
     /// big model or the person).

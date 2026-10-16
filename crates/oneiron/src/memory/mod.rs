@@ -76,7 +76,7 @@ pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_resolve::{
     AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
-    pull_image,
+    pull_image, resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::asset_image_in_lane;
 pub use authorship::MemoryAuthoringAction;

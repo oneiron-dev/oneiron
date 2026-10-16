@@ -2,10 +2,12 @@
 //!
 //! Every unit is one call through the shared decide() ladder (ARCH-0076 §2).
 //! The engine reads each unit's identity and text from the typed deck view; the
-//! host supplies only the rendered image, which stays host-side and reaches a
-//! provider by its key in `state.media`. No provider output may select the
-//! principal, receipt, comment anchor, or settle authority. The existing PPTX
-//! writer owns OOXML.
+//! host supplies only the rendered image. Its ref (what it was rendered from or
+//! the ASSET it is, its hash and size) sits in `state.media`, and its pixels ride
+//! beside the state to a rung that reads images (owner point 3). When no rung up
+//! to the ceiling reads one, the entry says so and the call stands on the text.
+//! No provider output may select the principal, receipt, comment anchor, or
+//! settle authority. The existing PPTX writer owns OOXML.
 
 use super::EditProposal;
 use super::pptx::{
@@ -15,10 +17,11 @@ use super::pptx::{
 use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionLadder, DecisionQuestion, DecisionRung, EvidenceVersion, MAX_DECISION_STATE_BYTES,
-    PairedReading, Reasoning, ReasoningCause, Reversibility, SlideReviewLimits, StopCause,
-    TypedDecision,
+    DecisionLadder, DecisionMedia, DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef,
+    MAX_DECISION_IMAGE_BYTES, MAX_DECISION_STATE_BYTES, MediaServed, PairedReading, Reasoning,
+    ReasoningCause, ResolvedMedia, Reversibility, SlideReviewLimits, StopCause, TypedDecision,
 };
+use crate::llm::image::ImageBytes;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result, Vault};
 use oneiron_docedit::deck::{DeckView, ShapeView, SlideView};
@@ -30,6 +33,9 @@ use std::time::{Duration, Instant};
 /// Persisted-row structural ceiling; a decoder must accept every row we write.
 pub(crate) const MAX_JUDGMENTS: usize = 4096;
 
+/// The name a unit's image goes by in its `state.media` and its call.
+pub const REVIEW_IMAGE: &str = "review_image";
+
 /// One caller-approved unit and its rendered image. The renderer must have
 /// rendered these exact `base` bytes; its identity is saved beside the deck
 /// frontier, not treated as PowerPoint oracle evidence. The unit's text is
@@ -37,15 +43,36 @@ pub(crate) const MAX_JUDGMENTS: usize = 4096;
 #[derive(Debug, Clone)]
 pub struct SlideReviewUnit {
     pub target: PptxCommentTarget,
-    /// Kept by the host: a provider resolves it by [`review_image_key`].
-    pub review_image: Vec<u8>,
+    pub image: SlideReviewImage,
     pub renderer: String,
 }
 
-/// The key a review image goes by in a unit's `state.media`; the host's
-/// providers look its bytes up by this key.
-pub fn review_image_key(image: &[u8]) -> String {
-    blake3::hash(image).to_hex().to_string()
+/// A unit's rendered image.
+#[derive(Debug, Clone)]
+pub enum SlideReviewImage {
+    /// PNG or JPEG bytes the host rendered from the base deck, handed in with
+    /// the call; empty when it has none. Its ref is the deck at its frontier.
+    Rendered(Vec<u8>),
+    /// A stored image, resolved through the asker's own lane under its
+    /// [`REVIEW_IMAGE`] name; its ref is the ASSET at its hash.
+    Stored(ResolvedMedia),
+}
+
+impl SlideReviewImage {
+    fn len(&self) -> usize {
+        match self {
+            Self::Rendered(bytes)
+            | Self::Stored(ResolvedMedia::Audio { bytes, .. })
+            | Self::Stored(ResolvedMedia::Image {
+                image: ImageBytes { bytes, .. },
+                ..
+            }) => bytes.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// User-configured display words, including the severity words in comments.
@@ -132,8 +159,12 @@ pub struct SlideJudgment {
     pub band_mode: BandMode,
     pub renderer: String,
     pub frontier: [u8; 32],
+    /// The unit's `state.media`: its image's ref and whether its pixels rode
+    /// with the call.
+    #[serde(default)]
+    pub media: Vec<DecisionMedia>,
     /// Hash of the exact state the providers read: the unit, its text and its
-    /// image key.
+    /// media entries.
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
     pub comment: String,
@@ -150,7 +181,8 @@ pub struct SlideReviewRun {
 }
 
 /// A unit the ladder left unanswered. The decision carries its typed reason and
-/// clock (a cut, no rung able to take it); none when the host had no image.
+/// clock (a cut, no rung able to take it); none when the host had no image, or
+/// no rung reads one for a Box question.
 #[derive(Debug, Clone)]
 pub struct SlideAbstention {
     pub target: PptxCommentTarget,
@@ -177,8 +209,11 @@ pub enum SlideUnitRefusalReason {
     TargetChanged,
     /// The writer cannot verify the shape's slide-space position.
     UnresolvedGeometry,
-    /// The unit's text or state exceeds the evidence budget; nothing is trimmed.
+    /// The unit's text, state or image exceeds the evidence budget; nothing is
+    /// trimmed or scaled to fit.
     EvidenceBudget,
+    /// The rendered image is not PNG or JPEG whose header gives its size.
+    UnreadableImage,
 }
 
 /// The exact deck a review reads.
@@ -187,8 +222,8 @@ pub struct SlideReviewBase<'a> {
     pub bytes: &'a [u8],
     pub version: Option<u64>,
     /// The artifact these bytes are a version of: each call's evidence id,
-    /// pinned to the frontier on its receipt.
-    pub artifact: Option<EntityId>,
+    /// pinned to the frontier on its receipt, and what a rendered image is of.
+    pub artifact: EntityId,
     pub package_limits: Limits,
 }
 
@@ -273,7 +308,15 @@ pub fn review_slides(
         .map_err(|_| invalid("slide review package"))?;
     let view = DeckView::read(&package).map_err(|_| invalid("slide review deck view"))?;
     let frontier = *blake3::hash(base.bytes).as_bytes();
-    let evidence: Vec<EntityId> = evidence.iter().copied().chain(base.artifact).collect();
+    let deck = EvidenceVersion {
+        id: base.artifact,
+        body_hash: frontier,
+    };
+    let evidence: Vec<EntityId> = evidence
+        .iter()
+        .copied()
+        .chain(std::iter::once(base.artifact))
+        .collect();
     let mut seen = HashSet::new();
     let mut abstained = Vec::new();
     let mut refused = Vec::new();
@@ -304,7 +347,7 @@ pub fn review_slides(
                 .slide_creation_id
                 .is_some_and(|id| slide.creation_id != Some(id))
             || !seen.insert((target.slide, shape_key.clone()))
-            || unit.review_image.len() > limits.max_image_bytes
+            || unit.image.len() > limits.max_image_bytes
             || unit.renderer.len() > 256
         {
             return Err(invalid("invalid slide review unit or exceeded evidence budget").into());
@@ -317,30 +360,69 @@ pub fn review_slides(
             }
         };
         // An unavailable image is not a negative answer or a malformed call.
-        if unit.review_image.is_empty() || unit.renderer.trim().is_empty() {
+        if unit.image.is_empty() || unit.renderer.trim().is_empty() {
             abstained.push(SlideAbstention {
                 target: target.clone(),
                 decision: None,
             });
             continue;
         }
-        let state = serde_json::json!({
-            "unit": {
-                "slide": target.slide,
-                "sld_id": slide.sld_id,
-                "slide_creation_id": slide.creation_id,
-                "shape_creation_id": shape_key,
-                "shape_id": read.anchor.shape.as_ref().and_then(|shape| shape.shape_id),
-                "shape_name": read.name,
-            },
-            "text": read.text,
-            "media": [{
-                "kind": "image",
-                "key": review_image_key(&unit.review_image),
-                "bytes": unit.review_image.len(),
+        // A decision reads an image whole or not at all: none is scaled to fit.
+        if unit.image.len() > MAX_DECISION_IMAGE_BYTES {
+            refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
+            continue;
+        }
+        let medium = match &unit.image {
+            SlideReviewImage::Rendered(bytes) => {
+                let media_type = match image::guess_format(bytes) {
+                    Ok(image::ImageFormat::Png) => "image/png",
+                    Ok(image::ImageFormat::Jpeg) => "image/jpeg",
+                    _ => {
+                        refused.push(refusal(target, SlideUnitRefusalReason::UnreadableImage));
+                        continue;
+                    }
+                };
+                let image = ImageBytes {
+                    bytes: bytes.clone(),
+                    media_type: media_type.to_owned(),
+                };
+                let Ok(reference) = ImageRef::of(deck.clone(), &image, None) else {
+                    refused.push(refusal(target, SlideUnitRefusalReason::UnreadableImage));
+                    continue;
+                };
+                ResolvedMedia::Image {
+                    name: REVIEW_IMAGE.to_owned(),
+                    reference,
+                    image,
+                }
+            }
+            SlideReviewImage::Stored(medium) => medium.clone(),
+        };
+        let call = ladder
+            .media_call(question, dial, vec![medium])
+            .map_err(|_| invalid("invalid slide review image"))?;
+        // A Box question locates in pixels: with none sent, nothing is asked.
+        if call.images.is_empty() && question.contract == AnswerContract::Box {
+            abstained.push(SlideAbstention {
+                target: target.clone(),
+                decision: None,
+            });
+            continue;
+        }
+        let state = call
+            .state(serde_json::json!({
+                "unit": {
+                    "slide": target.slide,
+                    "sld_id": slide.sld_id,
+                    "slide_creation_id": slide.creation_id,
+                    "shape_creation_id": shape_key,
+                    "shape_id": read.anchor.shape.as_ref().and_then(|shape| shape.shape_id),
+                    "shape_name": read.name,
+                },
+                "text": read.text,
                 "renderer": unit.renderer,
-            }],
-        });
+            }))
+            .map_err(|_| invalid("slide review unit state"))?;
         let state_bytes =
             serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
         if read.text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
@@ -350,24 +432,21 @@ pub fn review_slides(
         let now = Instant::now();
         let clock =
             RetrievalDeadline::hard(now, budget.min(deadline.saturating_duration_since(now)));
-        let mut decision = ladder.run(
+        let mut decision = ladder.run_images(
             question,
             principal,
             &evidence,
+            &call.images,
             &state,
-            dial,
+            call.dial,
             policy,
             reversibility,
             &clock,
         )?;
-        decision.receipt.evidence_versions = base
-            .artifact
-            .map(|id| EvidenceVersion {
-                id,
-                body_hash: frontier,
-            })
-            .into_iter()
-            .collect();
+        // The images' versions stand; the deck's frontier joins them.
+        if !decision.receipt.evidence_versions.contains(&deck) {
+            decision.receipt.evidence_versions.push(deck.clone());
+        }
         if decision.answer == DecisionAnswer::Abstain {
             abstained.push(SlideAbstention {
                 target: target.clone(),
@@ -401,6 +480,7 @@ pub fn review_slides(
             band_mode: band_policy.mode,
             renderer: unit.renderer.clone(),
             frontier,
+            media: call.entries,
             evidence_hash: *blake3::hash(&state_bytes).as_bytes(),
             judged_version: base.version,
             comment,
@@ -525,7 +605,10 @@ fn shape_text(shape: &ShapeView) -> Option<String> {
 
 fn refusal(target: &PptxCommentTarget, reason: SlideUnitRefusalReason) -> SlideUnitRefusal {
     let offer = (target.shape_creation_id.is_some()
-        && reason != SlideUnitRefusalReason::EvidenceBudget)
+        && !matches!(
+            reason,
+            SlideUnitRefusalReason::EvidenceBudget | SlideUnitRefusalReason::UnreadableImage
+        ))
         .then(|| PptxCommentTarget {
             shape_creation_id: None,
             shape_fingerprint: None,
@@ -633,10 +716,12 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
                 &receipt.providers,
             )
             || receipt.question_version == 0
-            || receipt
-                .evidence_versions
-                .iter()
-                .any(|version| version.body_hash != row.frontier)
+            || receipt.evidence_versions.iter().any(|version| {
+                version.body_hash != row.frontier
+                    && !row.media.iter().any(|entry| {
+                        entry.served == MediaServed::Full && entry.reference.evidence() == version
+                    })
+            })
             || row.anchor.slide_part.is_empty()
             || row.anchor.shape.is_some() != target.shape_creation_id.is_some()
             || row.frontier != proposal.base_content_hash
@@ -750,7 +835,7 @@ impl Vault {
         let base = SlideReviewBase {
             bytes: &bytes,
             version: Some(head.version),
-            artifact: Some(*artifact),
+            artifact: *artifact,
             package_limits: self.docedit_package_limits()?,
         };
         review_slides(&base, &effective)

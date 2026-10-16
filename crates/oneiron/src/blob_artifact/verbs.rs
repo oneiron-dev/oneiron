@@ -11,7 +11,8 @@ use super::{ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, B
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
-    SlideReviewError, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
+    REVIEW_IMAGE, SlideReviewError, SlideReviewImage, SlideReviewLabels, SlideReviewRequest,
+    SlideReviewUnit,
 };
 use crate::edit_roundtrip::{DeckEditContext, EditOutcome};
 use crate::edit_settle::{
@@ -23,7 +24,10 @@ use crate::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionQuestion, Reversibility,
     SlideReviewLimits,
 };
-use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
+use crate::claim::ClaimReadStatus;
+use crate::memory::{
+    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
+};
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
 use crate::share_travel::{BornWith, TravelChoice, TravelKind};
@@ -173,12 +177,18 @@ pub struct SlideReviewSubmit {
 }
 
 /// One unit to judge: a slide or a shape (`PptxCommentTarget`, as JSON),
-/// its rendered image (base64) and the renderer that made it.
+/// its rendered image and the renderer that made it. The image is one of
+/// `review_image`, the PNG or JPEG bytes in base64, or `review_image_ref`, a
+/// stored image's view handle (`<asset>@<hash>`) read through the caller's
+/// own lane.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlideReviewUnitInput {
     pub target: serde_json::Value,
-    pub review_image: String,
+    #[serde(default)]
+    pub review_image: Option<String>,
+    #[serde(default)]
+    pub review_image_ref: Option<String>,
     pub renderer: String,
 }
 
@@ -417,22 +427,44 @@ impl Memory<'_> {
             json_field(input.reversibility.clone(), "reversibility")?
                 .unwrap_or(Reversibility::ReversibleRead);
         let made_by: Option<MadeBy> = json_field(input.made_by.clone(), "made_by")?;
+        // A stored image is read, and its pull recorded, through the caller's
+        // own lane before any rung is asked.
+        let lane = input
+            .units
+            .iter()
+            .any(|unit| unit.review_image_ref.is_some())
+            .then(|| self.read_lane(ClaimReadStatus::Recorded))
+            .transpose()?;
         let units = input
             .units
             .iter()
             .map(|unit| {
                 let target: PptxCommentTarget = json_field(Some(unit.target.clone()), "target")?
                     .ok_or_else(|| invalid("a slide review unit names its target"))?;
-                let review_image = base64::engine::general_purpose::STANDARD
-                    .decode(&unit.review_image)
-                    .map_err(|_| invalid("a unit's review image is not base64"))?;
+                let image = match (&unit.review_image, &unit.review_image_ref, &lane) {
+                    (Some(encoded), None, _) => SlideReviewImage::Rendered(
+                        base64::engine::general_purpose::STANDARD
+                            .decode(encoded)
+                            .map_err(|_| invalid("a unit's review image is not base64"))?,
+                    ),
+                    (None, Some(handle), Some(lane)) => SlideReviewImage::Stored(
+                        resolve_image_ref(lane, REVIEW_IMAGE, handle, None)?.value,
+                    ),
+                    _ => {
+                        return Err(invalid(
+                            "a slide review unit names one image: review_image or review_image_ref",
+                        )
+                        .into());
+                    }
+                };
                 Ok(SlideReviewUnit {
                     target,
-                    review_image,
+                    image,
                     renderer: unit.renderer.clone(),
                 })
             })
             .collect::<MemoryResult<Vec<_>>>()?;
+        drop(lane);
         let evidence = input
             .evidence_refs
             .iter()

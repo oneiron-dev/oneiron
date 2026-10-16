@@ -48,7 +48,6 @@ const SEAM_SUFFIXES: &[&str] = &[
 const SEAM_TRAITS: &[&str] = &[
     "ReviewNotes",
     "AttributionNotes",
-    "SlideReviewProvider",
     "SeatNotes",
     "DescriptionNotes",
     "AutoCheckNotes",
@@ -62,7 +61,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 1;
+const BYPASS_CEILING: usize = 0;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -93,12 +92,7 @@ const fn pin(
 }
 
 /// Typed decisions made outside `decide()`. Each one leaves this list when its surface moves.
-const BYPASSES: &[Pin] = &[pin(
-    "crates/oneiron/src/edit_roundtrip/slides_review.rs",
-    "trait SlideReviewProvider",
-    "pub trait SlideReviewProvider {",
-    "slide review: a second typed ladder (band escalation and receipt) beside decide()",
-)];
+const BYPASSES: &[Pin] = &[];
 
 /// Model calls and seams that are not typed decisions. They stay outside `decide()`.
 const OUTSIDE: &[Pin] = &[

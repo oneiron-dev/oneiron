@@ -443,6 +443,11 @@ impl DecisionProvider for SystemOneRung {
         }
     }
 
+    /// The seat sends a call's images as named wire assets.
+    fn reads_images(&self) -> bool {
+        true
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
         let request = SeatRequest {
