@@ -18,6 +18,7 @@ doctest = false
 anyhow = "1"
 blake3 = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 subtle = "2"
 zeroize = "1"
 

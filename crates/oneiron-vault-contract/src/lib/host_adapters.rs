@@ -19,6 +19,10 @@ pub use desktop::{
     ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost,
     SecretSource, SystemdHost,
 };
+#[cfg(target_os = "linux")]
+mod vsock;
+#[cfg(target_os = "linux")]
+pub use vsock::{FirecrackerGuest, GuestLink, VsockListener, VsockStream, connect_blocking};
 
 /// The embedding WASM runtime supplies only its sandbox capabilities. It may
 /// implement sleep with a browser timer or WASI poll; it must not exit on idle.
