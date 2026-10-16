@@ -1219,3 +1219,32 @@ fn a_dry_run_over_two_sources_keeps_their_messages_apart() {
     assert_eq!((chatgpt.new, chatgpt.skipped), (1, 0));
     assert_eq!((claude.new, claude.skipped), (1, 0));
 }
+
+/// F18 tier flip: an import writes this vault's memory on its owner's
+/// authority, so a live person who does not own the vault imports nothing.
+/// Positive control: the owner's import of the same session lands it new.
+#[test]
+fn a_non_owner_persons_proof_imports_no_history() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let person = crate::test_util::non_owner_proof(&vault);
+    let conversation = session(
+        "session-tier",
+        vec![message(
+            "u1",
+            HistoryRole::User,
+            "A line to import.",
+            1_700_000_000_000,
+        )],
+    );
+    let Err(refusal) = vault.import_history(&person, SOURCE, &conversation, IMPORTED_AT) else {
+        panic!("a non-owner imports nothing");
+    };
+    assert!(
+        format!("{refusal:?}").contains("not an owner of this vault"),
+        "{refusal:?}"
+    );
+    let report = vault
+        .import_history(&owner, SOURCE, &conversation, IMPORTED_AT)
+        .expect("the owner imports");
+    assert_eq!((report.new, report.refused), (1, 0));
+}

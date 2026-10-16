@@ -7,7 +7,7 @@ use super::codec::{
 use super::storage::{
     CONTACT_INDEX, counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
     counterparty_contact_matches_channel_class, counterparty_contacts_by_party_full_scan,
-    read_counterparty_contact_in_txn, remove_counterparty_contact_party_channel_index,
+    read_counterparty_contact_in_txn, remove_counterparty_contact_from_every_party_channel,
 };
 use super::types::{
     COUNTERPARTY_CONTACT_CLAIM_PREDICATES, COUNTERPARTY_CONTACT_SCHEMA_VERSION,
@@ -364,20 +364,10 @@ pub fn rematerialize_contact_cache(
 /// row's absence observable, which is exactly what type-132-is-cache denies.
 pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let Some(record) = read_counterparty_contact_in_txn(&vault.store, &wtxn, contact_id)? else {
+    if read_counterparty_contact_in_txn(&vault.store, &wtxn, contact_id)?.is_none() {
         return Ok(());
-    };
-    let index_key = counterparty_contact_index_key_for_record(&record)?;
-    CONTACT_INDEX.delete(&vault.store, &mut wtxn, &index_key)?;
-    if let Some(channel_class) = counterparty_contact_channel_class(&vault.store, &wtxn, &record)? {
-        remove_counterparty_contact_party_channel_index(
-            &vault.store,
-            &mut wtxn,
-            &record.counterparty,
-            &channel_class,
-            *contact_id,
-        )?;
     }
+    drop_contact_index_rows_in_txn(&vault.store, &mut wtxn, contact_id)?;
     // Retain the lazy revision before the cache port removes its projection.
     crate::vault::entity_revision::ensure_document(vault, &mut wtxn, contact_id)?;
     crate::ports::EntityStoreMaintenance::port_contact_cache_evict(
@@ -386,5 +376,34 @@ pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()
         contact_id,
     )?;
     wtxn.commit()?;
+    Ok(())
+}
+
+/// Drop both index legs of the contact row at `contact_id`. The cache drop and
+/// every delete door share it, so no leg outlives its row (H105).
+pub(crate) fn drop_contact_index_rows_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<()> {
+    // A soft-erased shell left its legs at the soft erase; an undecodable
+    // body was never indexed.
+    let Some(raw) = store.port_entity_record(&*wtxn, contact_id)? else {
+        return Ok(());
+    };
+    if raw.entity_type != crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT {
+        return Ok(());
+    }
+    let Ok(record) = super::codec::decode_counterparty_contact_body(&raw.body) else {
+        return Ok(());
+    };
+    let index_key = counterparty_contact_index_key_for_record(&record)?;
+    if CONTACT_INDEX.get(store, &*wtxn, &index_key)? == Some(*contact_id) {
+        CONTACT_INDEX.delete(store, wtxn, &index_key)?;
+    }
+    // The class the party leg was filed under is the identity's at write
+    // time; the identity at `identity_ref` now (gone, a shell, or a later row
+    // at the same id) cannot name it, so no pair may keep the id.
+    remove_counterparty_contact_from_every_party_channel(store, wtxn, *contact_id)?;
     Ok(())
 }

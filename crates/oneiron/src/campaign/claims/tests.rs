@@ -1005,3 +1005,44 @@ fn do_not_contact_scope_and_channel_gate_the_deny() -> Result<()> {
     );
     Ok(())
 }
+
+/// H174: the party shortcut is a node-local cache. Missing (a PERSON that
+/// synced in, a restore, a wiped cache) or naming another PERSON, it must not
+/// hide the do-not-contact claim on the PERSON that carries the party key.
+#[test]
+fn do_not_contact_holds_when_the_party_shortcut_is_missing_or_stale() -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let (_dir, vault, person) = gate_vault();
+    write_do_not_contact(
+        &vault,
+        &entity(0x6D),
+        person,
+        Some(GATE_CHANNEL),
+        GATE_VERB,
+        ClaimApprovalStatus::Approved,
+    )?;
+    assert_eq!(
+        evaluate(&vault, &gate_effect(Some(COUNTERPARTY)))?,
+        deny_opt_out()
+    );
+
+    let shortcut: crate::side_table::SideTable<[u8; 32], EntityId, crate::side_table::Raw> =
+        crate::side_table::SideTable::new(&crate::side_table::COMM_PARTY_INDEX);
+    let digest: [u8; 32] = Sha256::digest(COUNTERPARTY.as_bytes()).into();
+    let other = crate::comm::resolve_or_create_comm_party(&vault, "other@example.com")
+        .expect("mint other comm party");
+    vault.with_write_txn(|wtxn| shortcut.put(&vault.store, wtxn, &digest, &other))?;
+    assert_eq!(
+        evaluate(&vault, &gate_effect(Some(COUNTERPARTY)))?,
+        deny_opt_out(),
+        "a shortcut naming another PERSON"
+    );
+
+    vault.with_write_txn(|wtxn| shortcut.delete(&vault.store, wtxn, &digest))?;
+    assert_eq!(
+        evaluate(&vault, &gate_effect(Some(COUNTERPARTY)))?,
+        deny_opt_out(),
+        "no shortcut at all"
+    );
+    Ok(())
+}

@@ -147,6 +147,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
+    let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     // Open sockets may never close by themselves, so the drain is bounded.
@@ -156,16 +157,15 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     };
     let (api_stop, artifact_stop) = (stop(stopped.clone()), stop(stopped.clone()));
     // Connections are admitted, and their headers timed, before any route
-    // runs. Both listeners draw on one pool, so the configured bound holds
-    // for the daemon, not for each socket.
+    // runs. Both listeners draw on one pool, so the descriptor floor and each
+    // address's unauthenticated share hold for the daemon, not per socket.
     let limits = config.limits.connections();
-    let admission = crate::http_listener::connection_admission(limits);
-    let api =
-        crate::http_listener::serve_with_admission(listener, app, &admission, limits, api_stop);
-    let artifacts = crate::http_listener::serve_with_admission(
+    let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
+    let api = crate::http_listener::serve_with_pool(listener, app, &pool, limits, api_stop);
+    let artifacts = crate::http_listener::serve_with_pool(
         artifact_listener,
         artifact_app,
-        &admission,
+        &pool,
         limits,
         artifact_stop,
     );
