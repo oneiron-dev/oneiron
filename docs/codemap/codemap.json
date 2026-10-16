@@ -23538,7 +23538,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 182,
+      "mod": 184,
       "re-export": 72
      }
     },
@@ -27245,6 +27245,64 @@
      "path": "src/off_record/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BodyBlock",
+      "BodyBlockKind",
+      "DocxBody",
+      "DocxBodyOp"
+     ],
+     "path": "src/office_body/docx.rs",
+     "purpose": "The DOCX body inside its Loro document, schema 1",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BlockChange",
+      "BodyConflict",
+      "ChangeKind",
+      "ConflictKind",
+      "OfficeBodyDiff"
+     ],
+     "path": "src/office_body/fork.rs",
+     "purpose": "Three-way reads of a fork against the live body (ARCH-0077, \"Machine work as fork and diff\"): base is the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ForkState",
+      "OfficeBodyEdit",
+      "OfficeBodyExport",
+      "OfficeBodyExportRecord",
+      "OfficeBodyExportRequest",
+      "OfficeBodyFork",
+      "OfficeBodyHead",
+      "OfficeBodyKind"
+     ],
+     "path": "src/office_body/mod.rs",
+     "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX as a typed…",
+     "surface": {
+      "enum": 2,
+      "fn": 13,
+      "re-export": 2,
+      "struct": 6
+     }
     },
     {
      "bucket": "s",
@@ -39977,6 +40035,106 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LedgerEntry",
+      "LedgerKind",
+      "Market",
+      "MarketMode",
+      "MarketResult",
+      "Participant",
+      "RefereeKind",
+      "SignedReferee",
+      "Submission"
+     ],
+     "path": "src/team/market.rs",
+     "purpose": "The MARKET pattern's ledger (ARCH-0079 #market, OF-540)",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 8,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/team/mod.rs",
+     "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
+     "surface": {
+      "mod": 5,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PatternSkill",
+      "TeamAxis",
+      "TeamPattern"
+     ],
+     "path": "src/team/pattern.rs",
+     "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PatternCardEntry",
+      "PayoffRow",
+      "PlannerCard"
+     ],
+     "path": "src/team/payoff.rs",
+     "purpose": "The payoff table and the planner card (ARCH-0003 #learning-views, ARCH-0079 #scoring, #works-well-for)",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Coverage",
+      "DecidedBy",
+      "PatternSkillRef",
+      "TeamOutcome",
+      "TeamReceipt",
+      "TeamShape"
+     ],
+     "path": "src/team/receipt.rs",
+     "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BranchResult",
+      "NodeComparison"
+     ],
+     "path": "src/team/stack.rs",
+     "purpose": "Stacking (ARCH-0079 #stacking): a sub-project may run a different pattern from its parent, and every node…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -44296,6 +44454,13 @@
      "layout": "dir",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
+    "office_body": {
+     "files": 3,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX as a typed…"
+    },
     "origin": {
      "files": 60,
      "impl_vault": true,
@@ -44737,6 +44902,13 @@
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
+    "team": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)"
+    },
     "temporal": {
      "files": 1,
      "impl_vault": false,
@@ -44866,7 +45038,7 @@
    },
    "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2692,
+   "source_files": 2701,
    "test_files": 903
   },
   "oneiron-android": {
@@ -48816,6 +48988,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocxAnchor",
+      "DocxBlock",
+      "DocxBlockKind",
+      "DocxCell",
+      "DocxChange",
+      "DocxLock",
+      "DocxParagraph",
+      "DocxRevision"
+     ],
+     "path": "src/docx_body.rs",
+     "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")",
+     "surface": {
+      "enum": 4,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -49192,7 +49385,7 @@
      "surface": {
       "enum": 1,
       "fn": 8,
-      "mod": 10,
+      "mod": 11,
       "re-export": 5
      }
     },
@@ -49443,6 +49636,13 @@
      "layout": "dir",
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
     },
+    "docx_body": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
+    },
     "edit": {
      "files": 15,
      "impl_vault": false,
@@ -49502,7 +49702,7 @@
    },
    "over_bar": 3,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 52,
+   "source_files": 53,
    "test_files": 14
   },
   "oneiron-driver": {

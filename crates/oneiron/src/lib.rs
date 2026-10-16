@@ -125,6 +125,7 @@ pub mod human_task;
 pub mod linear_sync;
 pub mod task_authority;
 pub mod task_verb;
+pub mod team;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
 pub mod comm;
@@ -202,6 +203,7 @@ pub mod conversation_dag;
 pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;
+pub mod office_body;
 pub mod edit_settle;
 pub mod git_wire;
 pub mod merge_queue;
