@@ -562,6 +562,9 @@ side_tables! {
     VOICE_REF_IDENTITY: VaultMeta b"voice:ref_identity:v1:" Named;
     /// Voice identity incarnation (16 random bytes), fresh at every birth. Key: string (voice id).
     VOICE_REF_INCARNATION: VaultMeta b"voice:ref_incarnation:v1:" Raw;
+    /// A banked voice's current render/provisioning consent decision, apart from recognition
+    /// consent. Key: string (voice id).
+    VOICE_REF_RENDER_CONSENT: VaultMeta b"voice:ref_render_consent:v1:" Named;
     /// Cached voice render-target pointer. Key: string (voice id) "\0" string (target).
     VOICE_REF_TARGET: VaultMeta b"voice:ref_target:v1:" Named;
     /// Voice consent decision event. Key: id16 + digest16.
