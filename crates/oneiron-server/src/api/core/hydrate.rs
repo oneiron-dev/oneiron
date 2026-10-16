@@ -335,13 +335,14 @@ pub(crate) async fn core_batch_short_id_hydrate(
                     short_id,
                     content_hash,
                     view,
+                    mode,
                     values.next().flatten(),
                     staged_observations.as_mut(),
                     ItemReceipts {
                         start: narrowing.clone(),
                         response: &mut batch_narrowing,
                     },
-                    Some((&mut bodies, mode)),
+                    Some(&mut bodies),
                 )? {
                     Some(result) => CoreBatchShortIdHydrateItem {
                         reference,
@@ -412,6 +413,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
         short_id,
         content_hash,
         view,
+        mode,
         read.value,
         observations,
         ItemReceipts {
@@ -432,17 +434,18 @@ pub(crate) struct ItemReceipts<'a> {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "one hydrated item: its ref, its row, its receipts and the batch's body budget"
+    reason = "one hydrated item: its ref, mode, row and receipts, and the batch's body budget"
 )]
 pub(crate) fn project_hydrated_short_id(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     short_id: String,
     content_hash: u8,
     view: View,
+    mode: oneiron::memory::ReadMode,
     hydrated: Option<oneiron::claim::ReadRow>,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
     receipts: ItemReceipts<'_>,
-    bodies: Option<(&mut projection::BodyBudget<'_>, oneiron::memory::ReadMode)>,
+    bodies: Option<&mut projection::BodyBudget<'_>>,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let ItemReceipts {
         start: mut narrowing,
@@ -475,9 +478,26 @@ pub(crate) fn project_hydrated_short_id(
     // One of a batch decodes its body, to project it or to observe it, only
     // while the batch's budget holds it.
     let (decoded, bodies) = match bodies {
-        Some((bodies, mode)) => (bodies.admits(body.len()), Some((bodies, mode))),
+        Some(bodies) => (bodies.admits(body.len()), Some(bodies)),
         None => (true, None),
     };
+    // A live generated image is served the form a reader that declared no
+    // image input reads (OF-329): its ASSET_TEXT, read through this lane.
+    let mut served = None;
+    if decoded
+        && matches!(mode, oneiron::memory::ReadMode::Live)
+        && entity_type == oneiron::registry::ENTITY_TYPE_ASSET
+    {
+        let asset = oneiron::memory::hydrated_asset(scoped_read, id)
+            .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
+        narrowing.restrict_with(&asset.receipt);
+        response.restrict_with(&asset.receipt);
+        match asset.value {
+            oneiron::memory::HydratedAsset::Stored => {}
+            oneiron::memory::HydratedAsset::Text { body, .. } => served = Some(body),
+            oneiron::memory::HydratedAsset::NoForm => return Ok(None),
+        }
+    }
     if decoded
         && let Some(observations) = observations
         && let Some(successor) = observations
@@ -494,10 +514,14 @@ pub(crate) fn project_hydrated_short_id(
         response.restrict_with(&successor);
     }
     let item = match bodies {
-        Some((bodies, mode)) if !decoded => {
-            bodies.omitted(&id, entity_type, learned_at, &body, view, mode)
-        }
-        _ => projection::project_entity_parts(&id, entity_type, learned_at, &body, view),
+        Some(bodies) if !decoded => bodies.omitted(&id, entity_type, learned_at, &body, view, mode),
+        _ => projection::project_entity_parts(
+            &id,
+            entity_type,
+            learned_at,
+            served.as_deref().unwrap_or(&body),
+            view,
+        ),
     };
     Ok(Some(CoreHydrateResponse {
         narrowing,
