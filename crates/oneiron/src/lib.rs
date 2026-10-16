@@ -183,6 +183,7 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+pub mod training_pack;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ===== Code, artifacts & custody ===== code memory, git wire, build cache, artifacts, secrets

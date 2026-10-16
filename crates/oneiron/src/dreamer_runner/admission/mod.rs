@@ -23,9 +23,9 @@ use super::codec::{
 };
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
-    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
-    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
-    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_NOTE_REVIEW_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -221,6 +221,19 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, input)
+    }
+
+    /// Atomically admits the next queued NOTE review (OF-073). Like cleanup,
+    /// no home gate: every belief it draws lands through the promotion gate.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_note_review(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_NOTE_REVIEW_ATTEMPT_KIND, input)
     }
 
     /// Atomically admits the next queued Coach heal attempt for a host Coach.
