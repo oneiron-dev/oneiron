@@ -996,6 +996,18 @@
       "section": false
     },
     {
+      "name": "vault.rooms.reply_strips",
+      "input": "crate::conversation_dag::ReplyStripsRequest",
+      "output": "crate::conversation_dag::ReplyStripsPage",
+      "call": "memory.rooms_reply_strips(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "page": {"rows": "groups", "cursor": "next_after"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.claim",
       "input": "RoomClaimRequest",
       "output": "crate::workspace_roster::RoomClaimOutcome",

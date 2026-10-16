@@ -459,6 +459,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_get(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def trunk(self, room_ref, turn_ref):
             return json.loads(_translate(lambda: self._client.vault_rooms_trunk(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
+        def reply_strips(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_reply_strips(json.dumps(spec))))
         def claim(self, room_ref, turn_ref):
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
