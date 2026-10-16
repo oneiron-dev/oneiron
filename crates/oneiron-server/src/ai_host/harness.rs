@@ -29,6 +29,10 @@ pub(super) fn record_tuning_config(
         .map(|(role, route)| format!("{}={}", role_key(*role), route.model))
         .collect::<Vec<_>>()
         .join(",");
+    let task = settings
+        .task_instruction
+        .as_deref()
+        .unwrap_or(oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION);
     let prompts = settings
         .summary_instruction
         .iter()
@@ -38,6 +42,10 @@ pub(super) fn record_tuning_config(
                 blake3::hash(text.as_bytes()).to_hex()
             )
         })
+        .chain(std::iter::once(format!(
+            "task_instruction:{}",
+            blake3::hash(task.as_bytes()).to_hex()
+        )))
         .collect();
     #[allow(clippy::cast_precision_loss, reason = "dials far below 2^52")]
     let manifest_thresholds = BTreeMap::from([
