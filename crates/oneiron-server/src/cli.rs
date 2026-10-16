@@ -11,10 +11,11 @@ pub use hook_args::{
     HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs,
 };
 pub use owner_args::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
-    SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, ImportArchiveArgs, ImportBatchArgs, ImportCommand,
+    ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs,
+    RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass,
+    SecretRegisterArgs, SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand,
+    ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;

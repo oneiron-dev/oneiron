@@ -1,4 +1,4 @@
-//! Validating JSON import through ordinary admission doors, never sync replay.
+//! Validating archive import through ordinary admission doors, never sync replay.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
@@ -22,19 +22,20 @@ use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
 impl Vault {
-    /// Validates a JSON document and its seven-part shape without writing anything.
-    /// The returned data remains untrusted. A manifest is not an approval grant.
-    pub fn read_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
-        let document: WholeVaultDocument = serde_json::from_slice(bytes)
-            .map_err(|_| invalid("invalid whole-vault document JSON"))?;
+    /// Validates a whole-vault archive (OF-222) and the document its records
+    /// assemble into, without writing anything. The returned data remains
+    /// untrusted. A manifest is not an approval grant.
+    pub fn read_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
+        let document = super::read_vault_archive(bytes)?;
         document.validate(self)?;
         Ok(document)
     }
 
-    /// Reimports a JSON export atomically. IDs, times, ordinary body fields and
+    /// Reimports a whole-vault archive atomically, into a fresh vault or
+    /// beside rows it already holds. IDs, times, ordinary body fields and
     /// public edges survive. Ordinary claims become Imported + Proposed (Rejected
     /// stays Rejected); lifecycle and scope are retained. Expression histories
-    /// require [`Self::import_whole_vault_json_with_actor`] and a local Auto grant.
+    /// require [`Self::import_whole_vault_archive_with_actor`] and a local Auto grant.
     /// Skills return as candidates;
     /// agent definitions are disabled and proposed until locally reviewed.
     ///
@@ -45,28 +46,28 @@ impl Vault {
     /// The manifest explicitly marks hub configuration and foreign skill signals
     /// archive-only. They are never restored as local policy or trusted verdicts;
     /// imported file bundles run the native scanner and Candidate admission door.
-    pub fn import_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_json_as(bytes, None)
+    pub fn import_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_archive_as(bytes, None)
     }
 
     /// Imports with a current local actor authenticated by the host. Never use
     /// an actor taken from the archive. The actor must already exist locally.
     /// Expression preferences require a local Imported-source Auto grant; this
     /// argument confers no grant and cannot restore foreign author authority.
-    pub fn import_whole_vault_json_with_actor(
+    pub fn import_whole_vault_archive_with_actor(
         &self,
         bytes: &[u8],
         actor: &WriteActor,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_json_as(bytes, Some(actor))
+        self.import_whole_vault_archive_as(bytes, Some(actor))
     }
 
-    fn import_whole_vault_json_as(
+    fn import_whole_vault_archive_as(
         &self,
         bytes: &[u8],
         actor: Option<&WriteActor>,
     ) -> Result<WholeVaultImportReceipt> {
-        let mut document = self.read_whole_vault_json(bytes)?;
+        let mut document = self.read_whole_vault_archive(bytes)?;
         if actor.is_none()
             && document
                 .entities()

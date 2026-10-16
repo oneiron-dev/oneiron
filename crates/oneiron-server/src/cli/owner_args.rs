@@ -153,8 +153,9 @@ pub struct RecoverClockArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct ExportArgs {
-    /// `toon`, `md`, `json`, `yaml` or `txt`.
-    #[arg(long, default_value = "toon")]
+    /// `archive`: the whole vault as one re-importable ZIP (JSONL per record
+    /// kind, files by BLAKE3, manifest). Export is not a backup.
+    #[arg(long, default_value = "archive")]
     pub format: String,
 
     /// Write the export to this new file (owner-only); stdout when omitted.
@@ -274,6 +275,18 @@ pub enum ImportCommand {
     Approve(Box<ImportDecisionArgs>),
     /// Decline the whole previewed batch; nothing is admitted.
     Decline(Box<ImportDecisionArgs>),
+    /// A whole-vault archive `oneiron export` wrote (OF-222): checks every
+    /// member against its manifest, then re-imports it in one transaction.
+    Archive(Box<ImportArchiveArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportArchiveArgs {
+    /// The archive (a ZIP).
+    pub path: PathBuf,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]

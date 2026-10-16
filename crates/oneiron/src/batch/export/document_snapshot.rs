@@ -3,13 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    ExportAdapterDescriptor, ExportEdge, ExportManifest, ExportSecretsNulledManifest,
-    WholeVaultExport, whole_vault_export_excludes_entity,
+    ExportAdapterDescriptor, ExportDiaryHold, ExportDiaryLedger, ExportDiaryRead, ExportEdge,
+    ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
+    whole_vault_export_excludes_entity,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::CallerLocality;
-use crate::context_pack::PackFormat;
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -29,6 +29,8 @@ pub(crate) struct ExportSnapshot {
     pub(crate) archived_receipts: BTreeMap<EntityId, BTreeMap<String, super::ExportReceiptSource>>,
     pub(crate) run_results: Vec<ExportSnapshotRun>,
     pub(crate) result_bodies: BTreeMap<[u8; 32], ExportSnapshotBody>,
+    pub(crate) diary_reads: Vec<ExportDiaryRead>,
+    pub(crate) diary_holds: Vec<ExportDiaryHold>,
 }
 
 /// One run's result manifests, as its replay record names them.
@@ -52,12 +54,23 @@ pub(crate) struct ExportSnapshotEntity {
 }
 
 impl Vault {
-    /// Exports all live base entities and their graph, not a retrieval selection.
-    /// Live off-record overlay rows, deleted shells, archive tombstones,
-    /// credential custody rows and unpublished LFS chunks are excluded. No
-    /// caller can disable nulling.
-    pub fn export_whole_vault(&self, format: PackFormat) -> Result<WholeVaultExport> {
-        self.export_whole_vault_with_admission(format, CallerLocality::OnDevice, |_| Ok(()))
+    /// Exports all live base entities and their graph as the whole-vault
+    /// archive (OF-222), not a retrieval selection. Live off-record overlay
+    /// rows, deleted shells, archive tombstones, credential custody rows and
+    /// unpublished LFS chunks are excluded. No caller can disable nulling.
+    pub fn export_whole_vault(&self) -> Result<WholeVaultExport> {
+        self.export_whole_vault_with_admission(CallerLocality::OnDevice, |_| Ok(()))
+    }
+
+    /// The archive of exactly `records` and the graph between them, for a
+    /// reader off this device: an export-first removal's export (OF-163),
+    /// in the same shape as a whole-vault archive and re-importable alike.
+    /// No run's results go with it; a run names no world to scope it by.
+    pub(crate) fn export_records_archive(
+        &self,
+        records: &BTreeSet<EntityId>,
+    ) -> Result<WholeVaultExport> {
+        self.export_archive_snapshot(CallerLocality::OffDevice, Some(records), |_| Ok(()))
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME
@@ -68,8 +81,16 @@ impl Vault {
     /// follows; one whose world cannot be read stays too.
     pub(crate) fn export_whole_vault_with_admission<E: From<Error>>(
         &self,
-        format: PackFormat,
         locality: CallerLocality,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
+    ) -> std::result::Result<WholeVaultExport, E> {
+        self.export_archive_snapshot(locality, None, admit)
+    }
+
+    fn export_archive_snapshot<E: From<Error>>(
+        &self,
+        locality: CallerLocality,
+        only: Option<&BTreeSet<EntityId>>,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
     ) -> std::result::Result<WholeVaultExport, E> {
         let artifact = self.whole_vault_export_manifest_artifact(
@@ -80,7 +101,8 @@ impl Vault {
         admit(&rtxn)?;
         // A run names no world, so a caller off this device gets no run's
         // results: none of a device-local world's may leave it (DEC-0005).
-        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice {
+        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice && only.is_none()
+        {
             self.export_run_results_in_txn(&rtxn)?
         } else {
             (Vec::new(), BTreeMap::new())
@@ -92,9 +114,12 @@ impl Vault {
         let mut agent_fork_hashes = BTreeMap::new();
         let mut task_receipts = BTreeMap::new();
         let mut archived_receipts = BTreeMap::new();
+        let mut diaries = ExportDiaryLedger::default();
         for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
             let (id, raw) = entry?;
-            if whole_vault_export_excludes_entity(self, &id)? {
+            if only.is_some_and(|only| !only.contains(&id))
+                || whole_vault_export_excludes_entity(self, &id)?
+            {
                 continue;
             }
             if crate::settings::device_only_withholds_raw(
@@ -141,6 +166,15 @@ impl Vault {
                     &rtxn,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )?
+            {
+                continue;
+            }
+            // OF-490: a diary goes out only as a read the owner's grant
+            // covers and its agent has not asked to review first.
+            if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && let Some(author) =
+                    note_diary_author(self, &rtxn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])?
+                && !diaries.admit(self, &rtxn, author)?
             {
                 continue;
             }
@@ -257,23 +291,23 @@ impl Vault {
             .filter(|(id, _)| included.contains(id))
             .collect();
         drop(rtxn);
-        crate::serialize::serialize_vault_snapshot(
-            ExportSnapshot {
-                entities,
-                edges,
-                adapters,
-                storage,
-                exported_at: crate::unix_seconds_now(),
-                skill_packages,
-                agent_fork_hashes,
-                pack_sources,
-                task_receipts,
-                archived_receipts,
-                run_results,
-                result_bodies,
-            },
-            format,
-        )
+        let (diary_reads, diary_holds) = diaries.finish();
+        crate::serialize::serialize_vault_snapshot(ExportSnapshot {
+            entities,
+            edges,
+            adapters,
+            storage,
+            exported_at: crate::unix_seconds_now(),
+            skill_packages,
+            agent_fork_hashes,
+            pack_sources,
+            task_receipts,
+            archived_receipts,
+            run_results,
+            result_bodies,
+            diary_reads,
+            diary_holds,
+        })
         .map_err(E::from)
     }
 
@@ -312,4 +346,18 @@ impl Vault {
         }
         Ok((runs, bodies))
     }
+}
+
+/// The author of a NOTE row when it is a diary, read from its committed text.
+fn note_diary_author(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<EntityId>> {
+    #[cfg(feature = "sync")]
+    let body = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, body)?;
+    #[cfg(not(feature = "sync"))]
+    let _ = (vault, rtxn, id);
+    Ok(super::diary_author(&body))
 }

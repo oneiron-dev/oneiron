@@ -273,15 +273,31 @@ the repair for a vault refused after an analyzer or dictionary change. A running
 ## Export
 
 ```sh
-oneiron export --format md --out vault.md      # toon (default), md, json, yaml or txt
-oneiron export --format json > vault.json      # stdout when --out is omitted
+oneiron export --out vault.zip                 # the whole-vault archive (format `archive`)
+oneiron export > vault.zip                     # stdout when --out is omitted
 ```
 
-On a running server, `POST /v1/core/facade/vault.export` with `{"format": "md"}` and an owner
-credential. Each export tries to write a receipt (time, format, bytes, digest, who), and
-`doctor` shows the latest one recorded. The receipt is best effort: if it cannot be written the
-export still succeeds, a warning is logged, and `last_export` stays as it was. An export is a
-readable archive of your knowledge. It is not a backup: restore from a backup file.
+The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per record kind under
+`records/` (`records/entity/<kind>.jsonl` per entity type, then `edge`, `pack`, `agent_pack`,
+`derivation_envelope`, `run` and `result_body`), and each attached file once under
+`files/<blake3>` (skill and pack source files, code-run result bodies). The manifest lists every
+record file and attached file with its length and BLAKE3, and an import refuses an archive whose
+members disagree with it. It is plaintext and re-imports into a fresh vault
+(`Vault::import_whole_vault_archive`). Credentials are nulled by the serializer; tainted,
+secret-marked, credential-bearing and binary result bodies are withheld and named in
+`result_body.jsonl`.
+
+A diary is exported as a read of it (OF-490): only diaries the owner's grant covers, logged on the
+receipt with the reason `export`. An agent that reviews each read of its diary first
+(`Vault::set_agent_diary_read_review`, on for Eiri) has its diaries held out of the archive, and
+the manifest's `diary_holds` names it.
+
+On a running server, `POST /v1/core/facade/vault.export` with `{}` (or `{"format": "archive"}`)
+and an owner credential; the reply's `archive` is the ZIP in standard base64. Each export tries to
+write a receipt (time, format, bytes, digest, who, diary reads), and `doctor` shows the latest one
+recorded. The receipt is best effort: if it cannot be written the export still succeeds, a warning
+is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
+from a backup file, the vault's encrypted snapshot.
 
 ## Secret scan switch
 
