@@ -117,6 +117,10 @@ pub struct DescribeRequest {
     /// The board frame the card key was read from; a stale one is refused.
     #[serde(default)]
     pub frame_epoch: Option<u64>,
+    /// A fold of the run's own log (`f1`): its span, its stub and the ids it
+    /// holds. Only the run that folded it answers this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fold: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

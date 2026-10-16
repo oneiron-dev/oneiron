@@ -1,7 +1,7 @@
 declare function ask(input: object): Promise<unknown>;
 declare function can(input: { ask: object }): Promise<unknown>;
 declare function cancel(input: { task_ref: string }): Promise<unknown>;
-declare function describe(input: { frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
+declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare namespace self {
   const browser: {
@@ -15,11 +15,15 @@ declare namespace self {
     type(input: { clear?: boolean; ref: string; text: string }): Promise<unknown>;
     wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
   };
+  const compact: (input: { note?: string | null }) => Promise<unknown>;
   const focus: {
     refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
+  const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
+  const folds: (input: object) => Promise<unknown>;
+  const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;

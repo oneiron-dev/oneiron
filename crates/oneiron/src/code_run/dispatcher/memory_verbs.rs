@@ -92,7 +92,10 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::Context
             | SelfEffect::Speak
             | SelfEffect::Think
-            | SelfEffect::Express => Ok(()),
+            | SelfEffect::Express
+            // A fold is the run's own view of its own log: its ledger rides
+            // the room's route into the overlay and evaporates with it.
+            | SelfEffect::Fold => Ok(()),
         }
     }
 

@@ -146,6 +146,10 @@ pub struct CompactionRequest {
     /// `DerivedFrom` set, so erasing one retires the summary and a reader
     /// who may not read one reads no summary.
     pub sources: Vec<EntityId>,
+    /// What the agent asked the summary to keep (`self.compact({note})`,
+    /// `self.fold(span, {note})`), as free text. Unlike a pin it need not
+    /// occur in the window, and no check holds the summary to it.
+    pub note: Option<String>,
     /// Whose log the window is cut from.
     pub(crate) log: WindowLog,
 }
@@ -660,6 +664,7 @@ impl CompactionDriver {
             pins,
             sources,
             prior,
+            None,
             log,
         )
     }
@@ -676,6 +681,7 @@ impl CompactionDriver {
         pins: Vec<String>,
         sources: Vec<EntityId>,
         prior: Option<crate::compaction::PriorEpoch>,
+        note: Option<String>,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, request } = &self.state else {
@@ -701,6 +707,7 @@ impl CompactionDriver {
             watermark,
             pins,
             sources,
+            note,
             log,
         };
         self.state = CompactionState::Compacting {

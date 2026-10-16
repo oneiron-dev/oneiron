@@ -139,6 +139,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),
+            SelfDispatchOutcome::Fold(_) if self.effect != SelfEffect::Fold => Err(
+                invalid_code_run_replay("fold answer belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(

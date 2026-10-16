@@ -73,6 +73,13 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("weight", Value::F32(call.weight)),
         ]),
         SelfCall::InferenceDefaultsRead => request_map(vec![]),
+        SelfCall::Fold(call) => request_map(vec![(
+            "call",
+            Value::from(
+                serde_json::to_string(call)
+                    .map_err(|_| invalid_code_run_replay("fold call does not encode"))?,
+            ),
+        )]),
         SelfCall::InferenceDefaultsReplace(json) => {
             request_map(vec![("json", Value::from(json.as_str()))])
         }
@@ -252,6 +259,10 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("kind", Value::from("inference_defaults")),
             ("json", Value::from(json.as_str())),
         ]),
+        SelfDispatchOutcome::Fold(json) => request_map(vec![
+            ("kind", Value::from("fold")),
+            ("json", Value::from(json.as_str())),
+        ]),
         SelfDispatchOutcome::WakePolicyWritten(policy) => {
             request_map(vec![
                 ("kind", Value::from("wake_policy_written")),
@@ -282,6 +293,9 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
     let kind = str_value(map_get(entries, "kind")?)?;
     match kind {
         "inference_defaults" => Ok(SelfDispatchOutcome::InferenceDefaults(
+            str_value(map_get(entries, "json")?)?.to_owned(),
+        )),
+        "fold" => Ok(SelfDispatchOutcome::Fold(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
         "wake_policy_written" => {
@@ -472,6 +486,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.inference_defaults.replace" => Ok(SelfEffect::InferenceDefaultsReplace),
         "dreamer.wake_policy.set" => Ok(SelfEffect::WakePolicyWrite),
         "self.verbs.call" => Ok(SelfEffect::AgentVerb),
+        "self.fold" => Ok(SelfEffect::Fold),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }

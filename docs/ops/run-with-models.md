@@ -410,8 +410,10 @@ tries = 3
 
 The summary prompt is `blocks/engine-executor-compaction.md` in the same
 prompt package as the wire prompt. Its user message is one JSON object
-(`from`, `through`, `max_summary_tokens`, `pins`, `retry`, `steps`) and the
-reply is `{"from", "through", "summary"}`; the test package's block,
+(`from`, `through`, `max_summary_tokens`, `pins`, `note`, `retry`, `steps`)
+and the reply is `{"from", "through", "summary"}`. `note` is what the agent
+asked the summary to keep, as free text, or null; unlike a pin it need not
+occur in the steps, and the gate does not check it. The test package's block,
 `crates/oneiron/tests/fixtures/prompts/blocks/engine-executor-compaction.md`,
 is a working example. Passes are metered on `budget_units`. Without the
 block, a seat for the role, or `[models]`, compaction is off and never calls
@@ -442,6 +444,26 @@ closed or flipped on record while a pass runs refuses its summary, and the
 run keeps its raw window. An anonymous room keeps no summary, and a room
 already on record when the run started does not compact yet: both report
 `sticky` with `why: "off_record_run"`.
+
+The run can also fold spans of its own log (ARCH-0067 §2.2).
+`self.fold({from, through, note?})` marks steps `from`–`through` and returns
+the fold's handle (`f1`); the log does not change yet. `self.compact({note?})`
+asks for a pass at the next step boundary. It is the same seat, backend,
+single flight and gate as a crossing, it compacts the settled steps (the hot
+steps stay raw), and it folds every pending mark in one batch. A crossing
+folds the pending marks too. Each fold leaves one stub where its span was:
+`⟨f1 · t5–t8⟩`, the summary, the ids its steps name that the summary does
+not, and a read handle to each step's output and each stored result the span
+names. The stub is written once and kept byte for byte.
+`self.unfold({fold})` appends the fold's raw steps after the step that
+called it, labelled `unfolded from t5–t8`, and they stay there.
+`self.folds()` lists the folds and the pending marks, and
+`describe({fold: "f1"})` returns one fold's span, stub, ids and handles. The
+log's tail carries one line naming the folds and pending marks, never a
+summary. A mark that fails its pass keeps why and waits for the next
+`self.compact`. A run whose compaction is off answers its marks with
+`compaction is off for this run`. The ledger is node-local and follows the
+run's route, so an off-record room's folds stay in its overlay.
 
 ### Type check (shadow mode)
 
