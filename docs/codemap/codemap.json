@@ -9653,7 +9653,7 @@
      "path": "src/code_run/storage/compaction.rs",
      "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -10349,7 +10349,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/wasmtime_runtime/typed.rs",
@@ -10365,7 +10365,7 @@
      "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
      "purpose": "Internal bounded JSON bridge between typed WIT and the borrowed engine host",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -11148,7 +11148,7 @@
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 23,
       "struct": 8,
@@ -11165,7 +11165,7 @@
      "purpose": "Epoch-summary codec and transactional lineage mint",
      "surface": {
       "const": 5,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 2,
       "struct": 1
      }
@@ -13026,7 +13026,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 60,
+      "fn": 62,
       "struct": 1
      }
     },
@@ -17968,7 +17968,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -17988,7 +17988,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -18003,13 +18003,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 26
      }
     },
     {
@@ -18091,6 +18091,7 @@
       "JsCodeModeRuntime",
       "JsCodeModeStep",
       "JsCodeModeStepOutcome",
+      "JsCodeModeStream",
       "SelfDispatchResponse"
      ],
      "path": "src/engine_executor/types.rs",
@@ -18098,7 +18099,7 @@
      "surface": {
       "const": 6,
       "crate-vis": 3,
-      "enum": 2,
+      "enum": 3,
       "fn": 6,
       "struct": 8,
       "trait": 2,
@@ -28657,6 +28658,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AffectRetrievalPolicy"
+     ],
+     "path": "src/pipeline/affect.rs",
+     "purpose": "Affect-weighted retrieval availability (OF-423; ARCH-0034 `scour:A53`, eiri pick A66)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/pipeline/authority.rs",
      "purpose": "Enforcement of gate-resolved retrieval authority",
@@ -28714,7 +28730,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15,
-      "fn": 39,
+      "fn": 41,
       "struct": 1
      }
     },
@@ -28972,7 +28988,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 6,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -43704,7 +43720,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 55,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44203,7 +44219,7 @@
    },
    "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2650,
+   "source_files": 2651,
    "test_files": 903
   },
   "oneiron-android": {
@@ -49420,7 +49436,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/runtime.rs",
-     "purpose": "Canonical typed Component Model execution with four read-only imports",
+     "purpose": "Canonical typed Component Model execution with six non-write imports",
      "surface": {
       "crate-vis": 1
      }
@@ -49476,7 +49492,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Canonical typed Component Model execution with four read-only imports"
+     "purpose": "Canonical typed Component Model execution with six non-write imports"
     },
     "tests": {
      "files": 1,
