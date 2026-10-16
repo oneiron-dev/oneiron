@@ -618,7 +618,7 @@ impl Rollout {
 /// An id for a message the rollout recorded without one: its side and the id
 /// of the message before it (for the first, of the session its history began
 /// in). A copied history reproduces both; another session does not.
-fn chained_id(role: HistoryRole, previous: &str) -> String {
+pub(super) fn chained_id(role: HistoryRole, previous: &str) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(match role {
         HistoryRole::User => b"user\0",

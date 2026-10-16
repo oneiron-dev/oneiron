@@ -80,8 +80,9 @@ pub enum Command {
     #[command(subcommand)]
     Secrets(SecretsCommand),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
-    /// exports, Claude Code and Codex sessions, a folder of markdown notes),
-    /// or preview, approve or decline one whole import batch.
+    /// exports, Claude Code and Codex sessions, a Copilot or Cursor hook
+    /// transcript, a folder of markdown notes), or preview, approve or decline
+    /// one whole import batch.
     #[command(subcommand)]
     Import(ImportCommand),
     /// Agent runs waiting for consent: list, review, approve or decline whole.
