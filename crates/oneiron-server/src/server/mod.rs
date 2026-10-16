@@ -14,6 +14,7 @@ mod presence;
 mod read_shape;
 mod recall;
 mod recall_rerank;
+mod resident_pump;
 mod tagging;
 mod windows;
 
