@@ -1113,3 +1113,143 @@ async fn a_propose_only_narrowed_create_is_refused() {
     assert_eq!(output["effected"], Value::from(false), "{wide}");
     assert_eq!(parked(), 1, "the vault-wide create parks its proposal");
 }
+
+/// A one-member room with `count` turns, for the room paging checks.
+async fn mcp_room_with_turns(
+    count: u64,
+    credential: &str,
+) -> (
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    oneiron::EntityId,
+    oneiron::EntityId,
+    Vec<oneiron::EntityId>,
+) {
+    use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    use oneiron::workspace_roster::ProjectRecord;
+
+    let (dir, server) = auth_test_server();
+    let owner = seeded_test_entity_id(0x2570_0001);
+    register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
+    let project = oneiron::EntityId::now();
+    let root = server.vault.root_project().expect("root");
+    let record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    bind_room_owner(&server, owner);
+    create_owned_project(&server, owner, project, &record);
+    let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
+    let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
+    let mut turns = Vec::new();
+    for at in 0..count {
+        let turn = oneiron::EntityId::now();
+        memory
+            .rooms_speak(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                messages: vec![WitnessMessage {
+                    id: Some(oneiron::EntityId::now().to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "text".to_owned(),
+                    content: "room message".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: at + 2,
+            })
+            .expect("speak");
+        turns.push(turn);
+    }
+    (dir, server, owner, room, turns)
+}
+
+/// One `rooms.messages` call; `arguments` joins the room it reads.
+async fn mcp_room_messages(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    owner: oneiron::EntityId,
+    request_id: &str,
+    arguments: Value,
+    page: Value,
+) -> Value {
+    let (_, reply) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            request_id,
+            "rooms.messages",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({"arguments": arguments, "page": page}),
+            ),
+        ),
+    )
+    .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    reply["result"]["structuredContent"].clone()
+}
+
+#[tokio::test]
+async fn mcp_rooms_messages_past_one_page_is_not_degraded() {
+    let credential = "mcp-room-past-one-page";
+    let (_dir, server, owner, room, _turns) = mcp_room_with_turns(257, credential).await;
+    let first = mcp_room_messages(
+        &server,
+        credential,
+        owner,
+        "room-past-one-page",
+        json!({"room_ref": room.to_hex()}),
+        json!({"limit": 50}),
+    )
+    .await;
+    // A room longer than one engine page is a page that continues, not a
+    // broken read path.
+    assert_ne!(first["meta"]["retrieval_health"], "degraded", "{first}");
+    assert_eq!(first["meta"]["retrieval_health"], "partial", "{first}");
+    assert_eq!(first["meta"]["end"], "More", "{first}");
+    // Inside the retained window the opaque cursor is the way on; the
+    // engine's own cursor would skip the rows still retained.
+    assert!(first["meta"]["page"]["cursor"].is_string(), "{first}");
+    assert!(first["output"]["next_after"].is_null(), "{first}");
+}
+
+#[tokio::test]
+async fn mcp_rooms_messages_page_two_follows_the_continuation() {
+    let credential = "mcp-room-page-two";
+    let (_dir, server, owner, room, turns) = mcp_room_with_turns(257, credential).await;
+    let whole = json!({"limit": 256, "forceful_override": true});
+    let first = mcp_room_messages(
+        &server,
+        credential,
+        owner,
+        "room-page-one",
+        json!({"room_ref": room.to_hex()}),
+        whole.clone(),
+    )
+    .await;
+    assert_eq!(first["meta"]["end"], "More", "{first}");
+    assert_ne!(first["meta"]["retrieval_health"], "degraded", "{first}");
+    assert!(
+        first["meta"]["page"]["continuation_unavailable"].is_null(),
+        "{first}"
+    );
+    let resume = first["meta"]["page"]["resume"]["turn_ref"].clone();
+    assert_eq!(resume, Value::from(turns[255].to_hex()), "{first}");
+    assert_eq!(first["output"]["next_after"], resume, "{first}");
+    assert_eq!(first["output"]["rows"].as_array().map(Vec::len), Some(256));
+
+    let second = mcp_room_messages(
+        &server,
+        credential,
+        owner,
+        "room-page-two",
+        json!({"room_ref": room.to_hex(), "turn_ref": resume}),
+        whole,
+    )
+    .await;
+    let rows = second["output"]["rows"].as_array().expect("rows");
+    assert_eq!(rows.len(), 1, "{second}");
+    assert_eq!(rows[0]["turn_id"], Value::from(turns[256].to_hex()));
+    assert_eq!(second["meta"]["end"], "Complete", "{second}");
+    assert_eq!(second["meta"]["retrieval_health"], "healthy", "{second}");
+}

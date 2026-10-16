@@ -46,6 +46,24 @@ impl Vault {
         self.get_entity_vad_annotation(turn_id, ENTITY_TYPE_TURN)
     }
 
+    /// [`Vault::get_turn_vad_annotation`] for a reader that folds it in: an
+    /// annotation whose owner confirmation is outstanding reads as absent.
+    pub(super) fn turn_vad_annotation_for_consolidation(
+        &self,
+        turn_id: &EntityId,
+    ) -> Result<Option<VadAnnotation>> {
+        let Some(annotation) = self.get_turn_vad_annotation(turn_id)? else {
+            return Ok(None);
+        };
+        let claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, turn_id)?;
+        Ok(self
+            .claim_consolidation_eligible(
+                &claim_id,
+                crate::gate::ConsolidationReader::VadAnnotation,
+            )?
+            .then_some(annotation))
+    }
+
     /// Writes or replaces the VAD annotation metadata for a MESSAGE entity.
     pub fn annotate_message_vad(
         &self,
@@ -138,7 +156,14 @@ impl Vault {
     ) -> Result<ClaimVadConsolidation> {
         let mut wtxn = self.store.env.write_txn()?;
         let claim_body = self.claim_body_for_claim_vad_in_txn(&wtxn, claim_id)?;
-        if !claim_consolidatable(&claim_body) {
+        if !claim_consolidatable(&claim_body)
+            || !crate::gate::claim_consolidation_eligible_in_txn(
+                &self.store,
+                &wtxn,
+                claim_id,
+                crate::gate::ConsolidationReader::ClaimVad,
+            )?
+        {
             if claim_body.lifecycle != ClaimLifecycleStatus::Active {
                 return Err(Error::Claim(ClaimError::ClaimAlreadyClosed {
                     status: claim_body.lifecycle,
@@ -441,7 +466,14 @@ impl Vault {
             {
                 return Err(Error::CorruptedIndex("VAD annotation claim"));
             }
-            if body.lifecycle != ClaimLifecycleStatus::Active {
+            if body.lifecycle != ClaimLifecycleStatus::Active
+                || !crate::gate::claim_consolidation_eligible_in_txn(
+                    &self.store,
+                    txn,
+                    &claim_id,
+                    crate::gate::ConsolidationReader::VadAnnotation,
+                )?
+            {
                 return Ok(None);
             }
             return vad_annotation_from_value(&body.value).map(Some);
