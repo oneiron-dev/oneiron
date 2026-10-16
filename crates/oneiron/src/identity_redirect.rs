@@ -512,6 +512,55 @@ fn inbound_redirect_shells_with_ledger_in_txn(
     Ok(shells)
 }
 
+/// Every entity one of `shells` points at, directly or through a chain: the
+/// forward twin of [`inbound_redirect_shells_in_txn`], read through the same
+/// two structural witnesses, UNIONED (each shell's outbound `merged_into` /
+/// `split_into` edges and its table row). Within the shared bound, an entity
+/// reached here is exactly one whose inbound walk reaches the shell, with the
+/// table present or dropped, so a caller refreshing what a shell's claims stand
+/// for touches every entity that reads them through.
+///
+/// Unlike [`Vault::resolve_entity`], every entity on the way is returned, not
+/// only the terminal heads, and neither a cycle nor the depth bound is an
+/// error: each entity is expanded at most ONCE, for at most
+/// [`MAX_REDIRECT_CHAIN_DEPTH`] frontier steps. A restrictive write that needs
+/// this set can then never be refused by a chain the topology door accepted.
+///
+/// `shells` themselves are never returned.
+pub(crate) fn outbound_redirect_heads_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    shells: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut reached = shells.clone();
+    let mut heads = BTreeSet::new();
+    let mut frontier: Vec<EntityId> = shells.iter().copied().collect();
+    for _ in 0..MAX_REDIRECT_CHAIN_DEPTH {
+        if frontier.is_empty() {
+            break;
+        }
+        let mut found = BTreeSet::new();
+        for shell in &frontier {
+            for kind in SHELL_EDGE_KINDS {
+                found.extend(identity_topology_shell_peers_for_store_in_txn(
+                    store, rtxn, shell, kind,
+                )?);
+            }
+            if let Some(row) = redirect_row_in_txn(store, rtxn, shell)? {
+                found.extend(row);
+            }
+        }
+        frontier = Vec::new();
+        for head in found {
+            if reached.insert(head) {
+                heads.insert(head);
+                frontier.push(head);
+            }
+        }
+    }
+    Ok(heads)
+}
+
 /// Bytes of `id` still readable as content: the entity body past the fixed
 /// metadata header. An absent row and a SoftErased 25 B shell both read
 /// zero, which is the point — ARCH-0055 §9 asks whether anything is left to

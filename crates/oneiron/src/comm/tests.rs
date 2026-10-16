@@ -1917,6 +1917,9 @@ fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<
 #[path = "thread_alias_tests.rs"]
 mod thread_alias_tests;
 
+#[path = "consent_projection_tests.rs"]
+mod consent_projection_tests;
+
 /// Insert the real node-local receipt shape without a transport adapter, so
 /// comm tests exercise the receipt importer rather than the manual event door.
 fn delivered_connector_receipt(
