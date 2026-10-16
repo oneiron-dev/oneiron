@@ -71,7 +71,9 @@ mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_resolve::{
-    AssetConsumer, HydratedAsset, LandedImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
+    LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    pull_image,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
@@ -101,7 +103,9 @@ pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptVi
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
-pub use export::{EXPORT_TARGET_ARCHIVE, ExportOptions, ExportReceipt, MemoryExport};
+pub use export::{
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, ExportReceipt, MemoryExport,
+};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };

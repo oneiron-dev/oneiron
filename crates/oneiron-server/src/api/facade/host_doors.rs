@@ -1,5 +1,6 @@
 //! The host doors of the verb-table rows only a server's own state answers:
-//! the owner's `vault.packs.put` and the `ai.*` model calls past text. The
+//! the owner's `vault.packs.put` and `vault.hooks.replay`, the `ai.*` model
+//! calls past text, and `ai.verdict` through the host's decision ladder. The
 //! generated HTTP facade handler and the MCP dispatcher both call these, so
 //! a tool call, a code-mode call and an SDK call meet one admission.
 //!
@@ -15,12 +16,13 @@ use oneiron::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::task_verb::sdk::{
-    AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVideoCancelled, AiVideoJob,
-    AiVideoJobRequest, AiVideoTicket, PackPutReceipt, PackPutRequest,
+    AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVerdict, AiVerdictRequest,
+    AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
+    HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
 use oneiron::{
-    CallClass, CallEnvelope, CallPurpose, FatalLlmError, LlmError, ModelId, ModelTierRef,
-    ResponseFormat, RetryableLlmError, TierPrecedence,
+    CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
+    ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
 };
 
 use crate::auth::CoreAuth;
@@ -219,20 +221,99 @@ pub(crate) async fn self_memory_diary_query(
             &["Present a slip paired with a principal ref and an actor class."],
         )
     })?;
-    let read_proof = auth.verified_slip().cloned();
-    let locality = auth.locality();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     tokio::task::spawn_blocking(move || {
-        let memory = server.vault().memory(actor, class);
-        let memory = match &read_proof {
-            Some(proof) => memory.with_read_proof(proof),
-            None => memory,
-        }
-        .at(locality);
+        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality());
         oneiron::task_verb::sdk::diary_query_as(&memory, owner.as_ref(), input)
     })
     .await
     .map_err(|_| internal("self.memory.diary.query"))?
+}
+
+/// `ai.verdict`: the caller's own typed question through the host's
+/// decision ladder, asked for the caller: the slip's principal, or the
+/// vault's own owner for an owner-grade credential that names none. Its
+/// evidence is read under the caller's own scoped read
+/// ([`crate::decision_verdict::run_verdict`]).
+pub(crate) async fn ai_verdict(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AiVerdictRequest,
+) -> MemoryResult<AiVerdict> {
+    let (principal, class) = asking(auth, server)?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let reader = crate::api::credential_memory(&server.vault, Some(&auth), principal, class)
+            .at(auth.locality());
+        crate::decision_verdict::run_verdict(&server, principal, &reader, &input)
+    })
+    .await
+    .map_err(|_| internal("ai.verdict"))?
+}
+
+/// `vault.hooks.replay`: the owner replays a fact hook over past facts, under
+/// the proof `/v1/owner` takes from the request, on the hook sandbox serve
+/// runs its fact hooks on. A dry run: nothing lands.
+pub(crate) async fn vault_hooks_replay(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HooksReplayRequest,
+) -> MemoryResult<Vec<HookReplayRow>> {
+    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "vault.hooks.replay is the vault owner's",
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })?;
+    let Some(runtime) = server.hook_runtime.get().cloned() else {
+        return Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "no hook sandbox runs on this server",
+            &["Serve with fact hooks on (no --no-hooks), on a build with the code sandbox."],
+        ));
+    };
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::replay_hooks_as_owner(
+            server.vault(),
+            &owner,
+            runtime.as_ref(),
+            &input,
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.hooks.replay"))?
+}
+
+/// Whom a host-door question is asked for: the slip's principal, or the
+/// vault's own owner for an owner-grade credential that names none, as a
+/// chat turn's writer is.
+fn asking(auth: &CoreAuth, server: &SyncServer) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "ai.verdict is asked for an authenticated principal",
+            &["Present a slip that names its principal, or the owner's own credential."],
+        )
+    };
+    let actor = match auth.principal_ref() {
+        Some(reference) => EntityId::from_hex(reference).map_err(|_| refused())?,
+        None if auth.is_owner_grade() => server
+            .vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| refused())?,
+        None => return Err(refused()),
+    };
+    let class = match auth.actor_class() {
+        Some("agent") => EdgeActorClass::Agent,
+        Some("system") => EdgeActorClass::System,
+        _ => EdgeActorClass::Human,
+    };
+    Ok((actor, class))
 }
 
 fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
