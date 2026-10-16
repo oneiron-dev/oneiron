@@ -96,11 +96,14 @@ pub(super) fn session(flag: Option<&str>, oneiron: &Path, deadline: Instant) -> 
     start(oneiron, deadline)
 }
 
-/// The vault a prompt recalls from: the pin, else the newest running local
-/// vault. A prompt never starts a server and prints no line of its own.
+/// The vault a prompt recalls from: the pin, when it answers, else the
+/// newest running local vault. A prompt never starts a server and prints no
+/// line of its own.
 pub(super) fn quietly(flag: Option<&str>, deadline: Instant) -> Option<String> {
     if let Some(pin) = pin(flag) {
-        return Some(pin.url);
+        // One probe, as at session start: a pin that does not answer would
+        // hold the prompt for the whole recall budget.
+        return answers(&pin.url, deadline).then_some(pin.url);
     }
     running(deadline)
         .into_iter()
@@ -222,21 +225,24 @@ fn uses(server: &LocalServer, running: usize) -> String {
 /// Step 4: starts `serve` from the config every command reads when none is
 /// named, on loopback, in a process group of its own, and waits for it to
 /// answer until `deadline`. It runs on after the hook exits; the next
-/// session finds it by its runtime file.
+/// session finds it by its runtime file. When it cannot open the vault
+/// because another process holds it, the session binds the server there
+/// once one answers.
 fn start(oneiron: &Path, deadline: Instant) -> Bound {
     let Some(config) = local_servers::config_file(&ServeArgs::default()) else {
         return Bound::none(NO_VAULT.to_owned());
     };
     // `serve` creates a vault that is not there; the hook only starts one
     // that is (no vault is made without `oneiron init`).
-    let vault = resolve_serve_config(&ServeArgs {
+    let Some(vault) = resolve_serve_config(&ServeArgs {
         config: Some(config.clone()),
         ..ServeArgs::default()
     })
-    .map(|serve| serve.vault_path);
-    if !vault.is_ok_and(|vault| vault.join(STORE_FILE).is_file()) {
+    .ok()
+    .map(|serve| serve.vault_path)
+    .filter(|vault| vault.join(STORE_FILE).is_file()) else {
         return Bound::none(NO_VAULT.to_owned());
-    }
+    };
     if Instant::now() >= deadline {
         return Bound::none(format!(
             "Oneiron: no vault answered in time; the local vault in {} was not started.",
@@ -276,8 +282,32 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
             ));
         }
     };
+    let did_not_start = || {
+        let log = log
+            .as_deref()
+            .map_or_else(String::new, |log| format!(" (its log: {})", log.display()));
+        Bound::none(format!(
+            "Oneiron: no vault bound; the local vault in {} did not start{log}.",
+            config.display()
+        ))
+    };
     loop {
-        if let Some(server) = local_servers::listed()
+        let exited = matches!(child.try_wait(), Ok(Some(_)));
+        if exited {
+            // Most often another session started a `serve` a moment before,
+            // which holds the vault and is not ready yet, so this one could
+            // not open it: bind that one once it answers.
+            if !held_by_another(&vault, child.id()) {
+                return did_not_start();
+            }
+            let running = running(deadline);
+            if let Some(newest) = running.first() {
+                return Bound {
+                    lines: vec![uses(newest, running.len())],
+                    url: Some(newest.url.clone()),
+                };
+            }
+        } else if let Some(server) = local_servers::listed()
             .into_iter()
             .map(|(_, server)| server)
             .find(|server| server.pid == child.id())
@@ -292,16 +322,10 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
                 url: Some(server.url),
             };
         }
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            let log = log
-                .as_deref()
-                .map_or_else(String::new, |log| format!(" (its log: {})", log.display()));
-            return Bound::none(format!(
-                "Oneiron: no vault bound; the local vault in {} did not start{log}.",
-                config.display()
-            ));
-        }
         if Instant::now() >= deadline {
+            if exited {
+                return did_not_start();
+            }
             return Bound::none(format!(
                 "Oneiron: no vault bound yet; the local vault in {} is starting and the next \
                  session will find it.",
@@ -310,6 +334,19 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// Whether a live process other than `child` holds the vault's writer
+/// lease, by the pid the lease's lock file records for whoever took it.
+fn held_by_another(vault: &Path, child: u32) -> bool {
+    let mut pid = String::new();
+    let read = std::fs::File::open(vault.join(oneiron::VAULT_WRITER_LOCK_FILE))
+        .and_then(|file| file.take(32).read_to_string(&mut pid));
+    read.is_ok()
+        && pid
+            .trim()
+            .parse::<u32>()
+            .is_ok_and(|pid| pid != child && local_servers::alive(pid))
 }
 
 /// Whether an Oneiron server answers at `url`: `GET /.well-known/oneiron`

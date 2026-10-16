@@ -93,6 +93,32 @@ impl Home {
         std::fs::write(config, format!("port = 0\n{body}")).expect("test fixture");
     }
 
+    /// Mints the agent credential the hooks read, for the vault at `config`.
+    fn credential(&self, config: &Path) -> PathBuf {
+        let credential = self.path("claude-code-hooks.cred");
+        let minted = self
+            .oneiron(&[
+                "token",
+                "agent",
+                "--name",
+                "claude-code-hooks",
+                "--tier",
+                "read-only",
+            ])
+            .arg("--out")
+            .arg(&credential)
+            .arg("--config")
+            .arg(config)
+            .output()
+            .expect("run oneiron token agent");
+        assert!(
+            minted.status.success(),
+            "token agent: {}",
+            String::from_utf8_lossy(&minted.stderr)
+        );
+        credential
+    }
+
     /// Runs one hook with `event` on stdin.
     fn hook(&self, event: &str, args: &[&str], payload: &Value) -> Output {
         let mut child = self
@@ -269,11 +295,15 @@ impl Drop for Server {
 }
 
 fn sigterm(pid: u32) {
+    signal(pid, libc::SIGTERM);
+}
+
+fn signal(pid: u32, signal: libc::c_int) {
     let pid = libc::pid_t::try_from(pid).expect("pid fits pid_t");
     // SAFETY: `kill` takes plain integers and touches no memory; `pid` is a
     // server this test started.
-    let sent = unsafe { libc::kill(pid, libc::SIGTERM) };
-    assert_eq!(sent, 0, "SIGTERM could not be sent");
+    let sent = unsafe { libc::kill(pid, signal) };
+    assert_eq!(sent, 0, "signal {signal} could not be sent");
 }
 
 #[test]
@@ -373,6 +403,100 @@ fn with_no_vault_running_the_session_starts_the_configured_one() {
 }
 
 #[test]
+fn a_session_whose_started_server_cannot_open_the_vault_binds_the_one_that_holds_it() {
+    let home = Home::new();
+    let vault = home.path("vault");
+    let config = home.user_dir().join("oneiron.toml");
+    home.init(&vault, &config);
+
+    // A server another session started: it holds the vault but does not
+    // answer yet (stopped once it has registered).
+    let log_path = home.path("first-serve.log");
+    let serve_log = std::fs::File::create(&log_path).expect("server log file");
+    let first = Server(
+        home.oneiron(&["serve", "--host", "127.0.0.1"])
+            .arg("--config")
+            .arg(&config)
+            .stdout(serve_log.try_clone().expect("server log file"))
+            .stderr(serve_log)
+            .spawn()
+            .expect("spawn oneiron serve"),
+    );
+    let registered = home.wait_for_runtime_file(first.0.id(), &log_path);
+    let url = registered["url"].as_str().expect("url").to_owned();
+    signal(first.0.id(), libc::SIGSTOP);
+
+    // This session passes it over and starts its own `serve`, which cannot
+    // open the vault and exits; the first server then goes on.
+    let said = std::thread::scope(|scope| {
+        let session = scope.spawn(|| home.session_start(&["--timeout", "120"]));
+        // The hook opens the run folder's `serve.log` as it starts its own.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !home.run_dir().join("serve.log").exists() {
+            assert!(
+                Instant::now() < deadline,
+                "the session never started a server of its own"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        signal(first.0.id(), libc::SIGCONT);
+        session.join().expect("the session start")
+    });
+
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].contains(&url),
+        "the session binds the server that holds the vault: {said:?}"
+    );
+    let files = home.runtime_files();
+    assert_eq!(
+        files.len(),
+        1,
+        "only the first server registered: {files:?}"
+    );
+    sigterm(first.0.id());
+    home.wait_for_no_runtime_file(first.0.id());
+}
+
+#[test]
+fn a_prompt_pinned_to_a_vault_that_does_not_answer_gives_up_after_one_probe() {
+    let home = Home::new();
+    let config = home.path("oneiron.toml");
+    home.init(&home.path("vault"), &config);
+    let credential = home.credential(&config);
+    // A pinned origin that takes the connection and never answers.
+    let hung = TcpListener::bind("127.0.0.1:0").expect("test fixture");
+    let url = format!("http://{}", hung.local_addr().expect("test fixture"));
+    let prompt = json!({
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "0b5e55e0-3333-4444-8555-a66677778888",
+        "cwd": "/tmp/heron-lantern",
+        "prompt": "heron lantern ferry bell",
+    });
+
+    let asked = Instant::now();
+    let output = home.hook(
+        "prompt",
+        &[
+            "--url",
+            &url,
+            "--credential-file",
+            credential.to_str().expect("UTF-8 path"),
+            "--timeout",
+            "30",
+        ],
+        &prompt,
+    );
+    let took = asked.elapsed();
+
+    assert!(output.stdout.is_empty(), "{:?}", lines(&output));
+    assert!(
+        took < Duration::from_secs(10),
+        "the prompt waited {took:?} on a pinned vault that does not answer"
+    );
+}
+
+#[test]
 fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() {
     let home = Home::new();
     let vault = home.path("vault");
@@ -391,27 +515,7 @@ fn a_stopped_session_is_queued_then_imported_and_recalled_by_the_next_session() 
         projects.display()
     )
     .expect("test fixture");
-    let credential = home.path("claude-code-hooks.cred");
-    let minted = home
-        .oneiron(&[
-            "token",
-            "agent",
-            "--name",
-            "claude-code-hooks",
-            "--tier",
-            "read-only",
-        ])
-        .arg("--out")
-        .arg(&credential)
-        .arg("--config")
-        .arg(&config)
-        .output()
-        .expect("run oneiron token agent");
-    assert!(
-        minted.status.success(),
-        "token agent: {}",
-        String::from_utf8_lossy(&minted.stderr)
-    );
+    let credential = home.credential(&config);
 
     // An invented session in Claude Code's own log layout.
     let session = "0b5e55e0-1111-4222-8333-944455556666";
