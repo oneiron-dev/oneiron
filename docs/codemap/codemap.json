@@ -489,7 +489,24 @@
      "surface": {
       "crate-vis": 15,
       "mod": 1,
-      "re-export": 3
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OptionalMemory",
+      "OptionalMemoryProfile"
+     ],
+     "path": "src/agent_def/optional_memory.rs",
+     "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -566,9 +583,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 13,
-      "crate-vis": 47,
+      "crate-vis": 48,
       "enum": 5,
-      "fn": 19,
+      "fn": 20,
       "struct": 4
      }
     },
@@ -12866,7 +12883,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 59,
+      "fn": 60,
       "struct": 1
      }
     },
@@ -12910,7 +12927,7 @@
      "path": "src/context_pack/empty_pack.rs",
      "purpose": "Why a context pack came back empty, at each serialization stage",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -41742,7 +41759,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43116,7 +43133,7 @@
    },
    "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2594,
+   "source_files": 2595,
    "test_files": 880
   },
   "oneiron-android": {
@@ -52729,7 +52746,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -52749,7 +52766,17 @@
      "path": "src/api/context_pack/mod.rs",
      "purpose": "Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/reader.rs",
+     "purpose": "The reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the named agent…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -53936,6 +53963,14 @@
      "notable": [],
      "path": "src/api/tests/reactive.rs",
      "purpose": "Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/reader_optional_memory.rs",
+     "purpose": "A reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): zero optional memory…",
      "surface": {}
     },
     {
@@ -57557,7 +57592,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 198,
+     "files": 200,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57797,8 +57832,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 355,
-   "test_files": 170
+   "source_files": 356,
+   "test_files": 171
   },
   "oneiron-spawn": {
    "files": [
