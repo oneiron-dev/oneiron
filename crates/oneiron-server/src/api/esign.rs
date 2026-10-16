@@ -3,6 +3,7 @@
 use crate::server::SyncServer;
 mod editor_budget;
 mod presentation;
+pub(crate) mod hold_worker;
 #[cfg(unix)]
 pub(crate) mod seal_worker;
 use axum::extract::{DefaultBodyLimit, State};

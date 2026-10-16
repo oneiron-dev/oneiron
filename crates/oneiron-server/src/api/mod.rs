@@ -88,6 +88,7 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 mod off_record_rooms;
