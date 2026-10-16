@@ -51,7 +51,7 @@ pub(crate) struct VaultKeyReport {
 }
 
 pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> {
-    let vault_id = *vault.vault_id().as_bytes();
+    let vault_id = vault.vault_key_vault_id();
     Ok(VaultKeyReport {
         vault_id: hex(&vault_id),
         status: vault.vault_key_status()?,

@@ -305,7 +305,7 @@ pub(crate) fn rehearse(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
-    rehearse_in(&std::env::temp_dir(), backup, config, keep_at, source, None)
+    rehearse_in(&std::env::temp_dir(), backup, config, keep_at, source)
 }
 
 /// [`rehearse`] with a key the caller unlocked and pinned, in place of the
@@ -317,7 +317,7 @@ pub(crate) fn rehearse_keyed(
     source: &SideRestoreSource,
     key: CheckpointKey,
 ) -> anyhow::Result<Rehearsal> {
-    rehearse_in(
+    rehearse_in_with(
         &std::env::temp_dir(),
         backup,
         config,
@@ -329,6 +329,16 @@ pub(crate) fn rehearse_keyed(
 
 /// [`rehearse`], with a scratch directory it does not keep made under `temp`.
 pub(crate) fn rehearse_in(
+    temp: &Path,
+    backup: &Path,
+    config: oneiron::VaultConfig,
+    keep_at: Option<&Path>,
+    source: &SideRestoreSource,
+) -> anyhow::Result<Rehearsal> {
+    rehearse_in_with(temp, backup, config, keep_at, source, None)
+}
+
+fn rehearse_in_with(
     temp: &Path,
     backup: &Path,
     config: oneiron::VaultConfig,

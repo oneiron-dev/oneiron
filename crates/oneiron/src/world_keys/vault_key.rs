@@ -479,6 +479,11 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(key));
     }
 
+    /// The vault id its data key, wraps and sealed artifacts are bound to.
+    pub fn vault_key_vault_id(&self) -> [u8; 32] {
+        *self.vault_id().as_bytes()
+    }
+
     /// Whether this vault has a data key, and whether this handle holds it.
     pub fn vault_key_status(&self) -> Result<VaultKeyStatus> {
         if self.held_vault_key().is_some() {

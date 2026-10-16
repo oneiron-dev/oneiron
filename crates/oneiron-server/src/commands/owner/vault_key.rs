@@ -143,7 +143,7 @@ fn add_escrow(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
     let recipient = oneiron::world_keys::escrow_recipient(&seed)?;
     // The box keeps the seed before the vault seals to it: a wrap no box can
     // open is never made.
-    recovery_box.store(vault.vault_id().as_bytes(), &args.name, &seed)?;
+    recovery_box.store(&vault.vault_key_vault_id(), &args.name, &seed)?;
     let wrap = vault.add_vault_key_wrap_as(
         &owner,
         NewVaultKeyWrap::Escrow {
