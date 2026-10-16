@@ -220,8 +220,12 @@ impl Memory<'_> {
                     )
                 })?;
             let held = self.held_erase_in_txn(&txn, &act)?;
-            if let Some(execution) = &act.execution {
-                return self.executed_erase_in_txn(&txn, &held.holder, execution);
+            if act.execution.is_some()
+                || self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(&txn, &held.holder)?
+            {
+                return self.executed_erase_in_txn(&txn, &held.holder, act.execution.as_ref());
             }
             if !self.vault.authority_act_completed_in_txn(&txn, &act)? {
                 return Err(MemoryError::new(
@@ -235,7 +239,7 @@ impl Memory<'_> {
                 ..held
             }
         };
-        self.unshare_and_erase_match(&planned, EraseReason::UserHardDelete)
+        self.unshare_and_erase_match(&planned, EraseReason::UserHardDelete, Some(owner))
     }
 
     /// A held match's own `erase` act, its payload the record and the bytes the preview named.
@@ -289,27 +293,26 @@ impl Memory<'_> {
         })
     }
 
-    /// A claimed act's erase: its receipt once written, the record's local
-    /// hard delete once its recovery finished it without one.
+    /// An erase already done: the claimed request's receipt once written, or
+    /// the record's local hard delete when a recovery finished it without one.
+    /// A recovery that finished a request whose claim never committed leaves
+    /// the record erased and the act unclaimed; it reads as erased too.
     fn executed_erase_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: &EntityId,
-        execution: &ActExecution,
+        execution: Option<&ActExecution>,
     ) -> MemoryResult<DeleteReceipt> {
-        let reason = SafeDeleteReason::UserHardDelete.as_str().to_owned();
-        if execution.receipt.is_some()
+        let receipt = execution.and_then(|execution| execution.receipt.as_ref());
+        if receipt.is_some()
             || self
                 .vault
                 .local_hard_delete_marker_exists_in_txn(txn, holder)?
         {
             return Ok(DeleteReceipt {
                 existed: true,
-                reason,
-                receipt_ref: execution
-                    .receipt
-                    .as_ref()
-                    .map(|receipt| format!("redaction:{receipt}")),
+                reason: SafeDeleteReason::UserHardDelete.as_str().to_owned(),
+                receipt_ref: receipt.map(|receipt| format!("redaction:{receipt}")),
             });
         }
         Err(MemoryError::new(
@@ -321,7 +324,7 @@ impl Memory<'_> {
 
     /// One planned match through its own checked delete.
     fn erase_match(&self, planned: &PlannedMatch, reason: EraseReason) -> SameBytesOutcome {
-        match self.unshare_and_erase_match(planned, reason) {
+        match self.unshare_and_erase_match(planned, reason, None) {
             Ok(receipt) => SameBytesOutcome::Erased(receipt),
             Err(error) => SameBytesOutcome::Failed(error),
         }
@@ -330,14 +333,21 @@ impl Memory<'_> {
     /// As for the confirmed record: the match's own live brief grants are
     /// revoked first, then every destructive transaction of its delete
     /// refuses while a grant on it is live. A match an act lifts claims that
-    /// act in its delete's linearizing write.
+    /// act in its delete's linearizing write, and `owner`'s proof is
+    /// revalidated wherever the rest is rechecked.
     fn unshare_and_erase_match(
         &self,
         planned: &PlannedMatch,
         reason: EraseReason,
+        owner: Option<&AuthenticatedOwner>,
     ) -> MemoryResult<DeleteReceipt> {
         let store = &self.vault.store;
-        let check = |txn: &heed::RoTxn<'_>| self.still_erasable_in_txn(txn, planned, reason);
+        let check = |txn: &heed::RoTxn<'_>| {
+            if let Some(owner) = owner {
+                self.require_own_proof_in_txn(txn, owner)?;
+            }
+            self.still_erasable_in_txn(txn, planned, reason)
+        };
         let claim: crate::deletion::DeletionClaim<'_> = &|txn, request, receipt| {
             let Some(act) = &planned.act else {
                 return Ok(());
