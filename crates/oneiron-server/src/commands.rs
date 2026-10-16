@@ -76,7 +76,8 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     if let Some(managed) = managed::ManagedArgs::from_serve_args(&args)? {
         return managed::serve_managed(&args, managed).await;
     }
-    let config = resolve_serve_config(&args)?;
+    let mut config = resolve_serve_config(&args)?;
+    config.hooks = !args.no_hooks;
     init_tracing(&config.log_level);
     #[cfg(unix)]
     let config_file = local_servers::config_file(&args);

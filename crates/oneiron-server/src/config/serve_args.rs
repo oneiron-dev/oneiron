@@ -311,6 +311,11 @@ pub struct ServeArgs {
     /// `relay` and `self-host`.
     #[arg(long)]
     pub hosted_kms_key_ref: Option<String>,
+
+    /// Start no fact-hook runner for this run: the clean baseline
+    /// (ARCH-0080 §10).
+    #[arg(long = "no-hooks")]
+    pub no_hooks: bool,
 }
 
 impl fmt::Debug for ServeArgs {
@@ -402,6 +407,7 @@ impl fmt::Debug for ServeArgs {
                 "hosted_kms_key_ref",
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
+            .field("no_hooks", &self.no_hooks)
             .finish()
     }
 }

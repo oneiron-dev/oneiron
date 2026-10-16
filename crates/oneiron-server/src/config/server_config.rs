@@ -300,6 +300,8 @@ pub struct ServeConfig {
     /// posture; relay and self-host keep no host reference at all. Never key
     /// material, and redacted in this struct's `Debug`.
     pub hosted_kms_key_ref: Option<String>,
+    /// Whether serve starts the fact-hook runner; `--no-hooks` turns it off.
+    pub hooks: bool,
 }
 
 impl Default for ServeConfig {
@@ -358,6 +360,7 @@ impl Default for ServeConfig {
             failure_signal_export: false,
             failure_signal_training: false,
             hosted_kms_key_ref: None,
+            hooks: true,
         }
     }
 }
@@ -423,6 +426,7 @@ impl fmt::Debug for ServeConfig {
                 "hosted_kms_key_ref",
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
+            .field("hooks", &self.hooks)
             .finish()
     }
 }
