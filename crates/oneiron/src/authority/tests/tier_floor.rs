@@ -248,3 +248,174 @@ fn hardware_floor_counts_no_software_cosigner_toward_quorum() {
             .contains(&authority_entry_hash(&hardware_quorum).unwrap())
     );
 }
+
+/// H411 (F18): a software owner key the vault has since outranked keeps its
+/// old signatures. Its `RevokeActor` on a branch from before the hardware
+/// floor is refused by the fold (below a concurrent floor), yet the
+/// independent revoke proof used to project it anyway, at the epoch the key
+/// chose, and so killed the hardware owner's binding for good. The same holds
+/// for a revoke whose quorum rested on that key as a cosigner (H71).
+#[test]
+fn an_outranked_key_cannot_revoke_from_a_branch_below_the_floor() {
+    let software = ed_key(92);
+    let hardware = p256_key(93);
+    let second = p256_key(94);
+    let software_key = authority_key_from_ed(&software);
+    let hardware_key = authority_key_from_p256(&hardware);
+    let second_key = authority_key_from_p256(&second);
+    let p256_sig = |key: &P256SigningKey, transcript: &[u8]| {
+        let mut signature: P256Signature = key.sign(transcript);
+        if let Some(normalized) = signature.normalize_s() {
+            signature = normalized;
+        }
+        signature.to_bytes().to_vec()
+    };
+    let genesis = genesis_entry(92, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault = genesis_vault_id(&genesis).unwrap();
+    let genesis_hash = authority_entry_hash(&genesis).unwrap();
+    let enroll = sign_ed(
+        unsigned_entry(
+            Some(vault),
+            1,
+            vec![genesis_hash],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    hardware_key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Hardware,
+                ),
+            },
+            software_key.clone(),
+            2,
+        ),
+        &software,
+    );
+    // A roster of two keys or more needs two participants: a hardware signer
+    // and one cosigner.
+    // `None` cosigns with the software key.
+    let cosigned = |parent: &AuthorityLogEntry,
+                    signer: &P256SigningKey,
+                    seq,
+                    op,
+                    ts,
+                    cosigner: Option<&P256SigningKey>| {
+        let mut entry = unsigned_entry(
+            Some(vault),
+            seq,
+            vec![authority_entry_hash(parent).unwrap()],
+            op,
+            authority_key_from_p256(signer),
+            ts,
+        );
+        let cosigner_key = cosigner.map_or_else(|| software_key.clone(), authority_key_from_p256);
+        entry.cosigns.push(AuthoritySignature {
+            suite: cosigner_key.suite(),
+            public_key: cosigner_key,
+            signature: vec![0; 64],
+        });
+        let transcript = authority_transcript(&entry).unwrap();
+        entry.signer.signature = p256_sig(signer, &transcript);
+        entry.cosigns[0].signature = match cosigner {
+            Some(key) => p256_sig(key, &transcript),
+            None => software.sign(&transcript).to_bytes().to_vec(),
+        };
+        entry
+    };
+    let enroll_second = cosigned(
+        &enroll,
+        &hardware,
+        1,
+        AuthorityOp::EnrollDevice {
+            device: device(second_key, ROLE_OWNER | ROLE_ADMIN, AuthorityTier::Hardware),
+        },
+        3,
+        None,
+    );
+    let bind = cosigned(
+        &enroll_second,
+        &hardware,
+        2,
+        bind_op(&hardware_key, scope_entity(0x93), "human", 1),
+        4,
+        None,
+    );
+    let floor = cosigned(
+        &bind,
+        &hardware,
+        3,
+        AuthorityOp::SetTierFloor {
+            tier_floor: AuthorityTier::Hardware,
+        },
+        5,
+        None,
+    );
+    // The outranked key alone, on the branch from before the hardware owner.
+    let stale_revoke = sign_ed(
+        unsigned_entry(
+            Some(vault),
+            2,
+            vec![genesis_hash],
+            revoke_actor_op(&hardware_key, u64::MAX),
+            software_key.clone(),
+            6,
+        ),
+        &software,
+    );
+    // A hardware key whose quorum rests on the outranked cosigner, on the
+    // branch from before the floor.
+    let cosigned_stale_revoke = cosigned(
+        &bind,
+        &second,
+        1,
+        revoke_actor_op(&hardware_key, u64::MAX),
+        6,
+        None,
+    );
+    let mut entries = vec![
+        genesis,
+        enroll,
+        enroll_second,
+        bind,
+        floor.clone(),
+        stale_revoke.clone(),
+        cosigned_stale_revoke.clone(),
+    ];
+
+    let fold = fold_legacy_authority_log(&entries);
+    assert_eq!(fold.tier_floor, Some(AuthorityTier::Hardware));
+    for refused in [&stale_revoke, &cosigned_stale_revoke] {
+        assert!(
+            !fold
+                .valid_entries
+                .contains(&authority_entry_hash(refused).unwrap()),
+            "the fold refuses a revoke below the floor"
+        );
+    }
+    assert_eq!(
+        folded_status(&fold, &hardware_key),
+        Some(ActorBindingStatus::Active),
+        "a revoke the fold refused must not land through the revoke proof"
+    );
+    entries.reverse();
+    assert_eq!(fold, fold_legacy_authority_log(&entries));
+
+    // Positive control: a revoke the live floor admits still lands.
+    let live_revoke = cosigned(
+        &floor,
+        &hardware,
+        4,
+        revoke_actor_op(&hardware_key, 1),
+        7,
+        Some(&second),
+    );
+    entries.push(live_revoke.clone());
+    let fold = fold_legacy_authority_log(&entries);
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&live_revoke).unwrap())
+    );
+    assert_eq!(
+        folded_status(&fold, &hardware_key),
+        Some(ActorBindingStatus::Revoked)
+    );
+}

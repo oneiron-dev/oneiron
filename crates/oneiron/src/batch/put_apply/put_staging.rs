@@ -574,6 +574,14 @@ pub(super) fn stage_task_and_turn(
     Ok(())
 }
 
+pub(super) fn normalized_policy_scope(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+    if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
+        crate::gate::normalize_policy_manifest_scope(data)
+    } else {
+        None
+    }
+}
+
 /// The staged-row wipe hook, so a test can see that a row holding a value
 /// went through [`RowEnvelope`]'s wipe.
 #[cfg(test)]

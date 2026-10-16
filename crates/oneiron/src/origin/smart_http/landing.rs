@@ -270,11 +270,19 @@ impl Vault {
                     authority,
                     learned_at,
                 )?,
-                None => landed_wire_outcome(wire.publish_refs(
-                    handle,
-                    vec![update.publication()?],
-                    learned_at,
-                )?)?,
+                None => {
+                    let deletion = update.publication()?;
+                    let name = deletion.name().clone();
+                    let landed = landed_wire_outcome(wire.publish_refs(
+                        handle,
+                        vec![deletion],
+                        learned_at,
+                    )?)?;
+                    // A deleted name keeps no visible slot. Whatever recreates
+                    // it at a published tip reinstalls that owner's slot first.
+                    self.retire_origin_visible_ref(wire, handle, repo_id, &name)?;
+                    landed
+                }
             };
             // One publication per ref, not an atomic multi-ref push. Preserve
             // each successful ref's attachment even if a later ref is refused.
