@@ -871,3 +871,54 @@ an answer that names another model, or makes vectors another way, is refused
 as the endpoint's would be. On a vault bound to an account, each pod's answer
 is sealed to that account before it is read. Pod URLs follow the endpoint's
 rules: HTTPS unless loopback, and no credential or query in the URL.
+
+## 13. The decision ladder
+
+Every typed decision the server asks (decide()) goes through one ladder,
+built when the server starts and lent to each caller
+(`SyncServer::decision_ladder()`; the queue, dials and bands are on
+`SyncServer::decision_host()`). Its rungs come from the seats you already
+bind:
+
+- **Rule**: the host's rule table, always first. It abstains on a question
+  it holds no row for, so the call goes to the next rung.
+- **System One**: the seat `[models.decisions.system_one]` binds (below).
+- **Escalation**: the house model's decision read (section 9), when its
+  recipe names the paired question. The recipe's person question becomes the
+  ladder's "ask up?" question, and `person_threshold` becomes its row.
+- **The local head and the big model**: no typed provider fills these yet,
+  so the ladder steps past them.
+- **The owner**: the last rung is a durable queue. Each ask waits in the
+  vault until you answer it (owner-actions.md, "Answer the decision
+  ladder's asks").
+
+`[models.decisions]` binds the System One seat and words the host's own
+questions. A question you don't word is not asked, and its hook stays
+unbound:
+
+```toml
+[models.decisions]
+# The write gate's auto check through the ladder: allow or hold.
+auto_check = "Should this claim land without the owner's review?"
+
+[models.decisions.seat]
+# A manifest-backed execute_code run picks its seat through the ladder:
+# a model among those described under `facet`, then one of its efforts.
+facet = "code-task"
+model = "Which model should run this task?"
+effort = "At which effort should it run?"
+budget_ms = 2000        # each pick's anytime budget
+
+[models.decisions.system_one]
+endpoint = "https://systemone.example/v1/systemone"   # HTTPS, or HTTP on loopback
+key_env = "ONEIRON_SYSTEMONE_KEY"                     # its bearer token
+model = "systemone-head"
+version = "2026-10-01"
+remote_opt_in = false   # a vault that is not hosted sends unit state only with this set
+budget_units = 100000   # its own meter; models.raw_budget_units when unset
+```
+
+The System One seat takes noul and choice questions. Each is one call,
+admitted and settled on its meter. It never runs on a relay vault. The
+escalation read is metered on `models.raw_budget_units`. A model rung blocks
+on the server's runtime, so a caller runs a ladder call on a blocking thread.

@@ -74,6 +74,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::ImageViewRequest>(),
             ),
             (
+                "vault.receipts.get",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
                 "vault.kv.get",
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueAddress>(),
             ),
@@ -374,6 +378,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "tasks.refuse",
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
+            (
+                "self.skills.call",
+                crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)
@@ -510,6 +518,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.images.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.receipts.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -950,6 +965,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.images.view" => {
             let _input: crate::memory::ImageViewRequest = decode(value.clone())?;
         }
+        "vault.receipts.get" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
         "vault.kv.get" => {
             let _input: crate::memory::KeyValueAddress = decode(value.clone())?;
         }
@@ -1153,6 +1171,7 @@ pub fn invoke(
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
+        "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
         "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
@@ -1434,6 +1453,12 @@ pub fn vault_images_view(
     input: crate::memory::ImageViewRequest,
 ) -> MemoryResult<crate::memory::PulledImage> {
     memory.view_image(&input)
+}
+pub fn vault_receipts_get(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<crate::receipt::CallReceipt>> {
+    memory.call_receipt(&input.receipt_ref)
 }
 pub fn vault_kv_get(
     memory: &Memory<'_>,

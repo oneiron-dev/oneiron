@@ -388,7 +388,9 @@ impl AiHost {
                 &server.reassert_manager,
             ));
         }
-        let server = server.with_ai(host.handle.clone());
+        let server = server
+            .with_ai(host.handle.clone())
+            .with_decision_config(models);
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
             code_mode::bind(server, &host.handle.runtime, models, &host.handle.status).await;

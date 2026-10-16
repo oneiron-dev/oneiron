@@ -9,6 +9,7 @@ pub mod gmail;
 mod gmail_header;
 mod inbound_types;
 mod line_adapter;
+pub(crate) mod member_mail;
 pub mod mail_placement;
 pub mod mailbox_cursor;
 mod shared_validate;
@@ -22,8 +23,8 @@ pub use self::email_adapter::{
 };
 pub use self::inbound_types::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision, EmailProviderInbound, LineOfficialAccountInbound,
-    SlackProviderInbound,
+    ChannelIdentityProviderProvision, EmailProviderInbound, EmailThreadHeaders,
+    LineOfficialAccountInbound, SlackProviderInbound,
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
