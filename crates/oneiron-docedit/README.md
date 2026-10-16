@@ -27,6 +27,11 @@ own. `src/lib.rs` exports these surfaces:
   `PROVENANCE.md` records the fork, its licenses and local changes.
 - `ooxml` and `xlfn`: the offset-preserving OOXML reader and Excel's `_xlfn.`
   storage qualifiers, shared by the writers.
+- `contract`: the engine contract over all of the above. It is one versioned
+  op table (`docx.*`, `xlsx.*`, `deck.*`, `contract.describe`) with typed JSON
+  args, byte inputs named by index, typed replies, named outputs and closed
+  refusal codes. The hosted documents API serves the same table;
+  `docs/ops/documents-api-handoff.md` is the handoff.
 
 ## Retained OPC substrate
 

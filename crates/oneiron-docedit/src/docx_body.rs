@@ -6,11 +6,13 @@
 //! knows only DOCX.
 
 use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits, revise_with_limits};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use stemma::view::{BlockRole, BlockView, SegmentView, TrackStatus};
 
 /// One top-level block of the imported document, in document order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DocxBlock {
     /// The document's stable block id: the body's id for it and the projection's target.
     pub id: String,
@@ -26,7 +28,8 @@ pub struct DocxBlock {
     pub locked: Option<DocxLock>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DocxBlockKind {
     Paragraph,
     Heading(u8),
@@ -34,14 +37,15 @@ pub enum DocxBlockKind {
     Opaque,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DocxCell {
     pub row: usize,
     pub col: usize,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DocxLock {
     /// The block carries pending tracked changes; another author's revision is
     /// never resolved as a side effect of an export.
@@ -124,7 +128,8 @@ fn tracked(view: &BlockView) -> bool {
 }
 
 /// One body-to-file change against the imported blocks, applied in order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum DocxChange {
     /// Replace a paragraph's text, keeping its role.
     SetText {
@@ -154,13 +159,15 @@ pub enum DocxChange {
 }
 
 /// A place beside an imported block, as the native writer addresses it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DocxAnchor {
     After(String),
     Before(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DocxParagraph {
     pub role: Option<String>,
     pub text: String,
@@ -168,7 +175,8 @@ pub struct DocxParagraph {
 
 /// The one revision every change of a projection is authored under. The date
 /// is pinned by the caller, so a projection never reads the clock.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DocxRevision {
     pub author: String,
     /// RFC 3339.

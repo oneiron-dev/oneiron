@@ -13,6 +13,8 @@ use crate::ooxml::{
 };
 use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 /// Excel's ceiling on one cell's text.
@@ -34,7 +36,7 @@ const ERRORS: &[&str] = &[
 ];
 
 /// A workbook as the body imports it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxBook {
     /// Serial days count from 1904-01-01 rather than 1900-01-01.
     pub date1904: bool,
@@ -45,7 +47,7 @@ pub struct XlsxBook {
     pub styles: Vec<XlsxStyle>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxSheet {
     pub name: String,
     /// Stored cells in row-major order.
@@ -55,7 +57,7 @@ pub struct XlsxSheet {
     pub locked: Vec<XlsxArea>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxCell {
     pub col: u32,
     pub row: u32,
@@ -69,7 +71,8 @@ pub struct XlsxCell {
     pub locked: Option<XlsxLock>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum XlsxValue {
     Blank,
     Number(f64),
@@ -79,7 +82,8 @@ pub enum XlsxValue {
     Error(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum XlsxLock {
     /// A shared formula's anchor or member: one text serves the whole range.
     SharedFormula,
@@ -98,7 +102,7 @@ pub enum XlsxLock {
 }
 
 /// A rectangular range, 1-based `(column, row)` corners.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxArea {
     pub first: (u32, u32),
     pub last: (u32, u32),
@@ -133,7 +137,7 @@ impl XlsxArea {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxName {
     pub name: String,
     /// The sheet a local name belongs to; `None` for a workbook name.
@@ -144,7 +148,7 @@ pub struct XlsxName {
     pub locked: Option<XlsxLock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxStyle {
     pub num_fmt: u32,
     /// The workbook's own format code; a built-in format id has none.
@@ -152,7 +156,8 @@ pub struct XlsxStyle {
 }
 
 /// One change a body makes to its imported workbook.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum XlsxChange {
     /// The cell's whole new state: a formula is written without a cached
     /// value; a blank cell without a format is removed.

@@ -21,6 +21,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   the running `serve` for import (`[import] queue`, `oneiron import claude-code <log> --queue`).
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
+- [Documents API handoff](documents-api-handoff.md) — the document engine's contract
+  (`oneiron_docedit::contract`, schema 1): ops, media types, limits, refusal codes, and what the
+  hosted documents API in oneiron-cloud owns (auth, metering, hosting, session images).
 - [Load bench](load-bench.md) — `oneiron-bench load` runs the shipped server under synthetic
   load (facade ingest, recall per grade and agent count, fairness, memory) and compares two
   commits' JSON results.
