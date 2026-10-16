@@ -377,12 +377,14 @@ pub(super) fn bring_companion(
                 "a brought companion's actor must be anchored to her PERSON",
             ));
         }
+        // Her member's profile grant over her, person-wide or at the work
+        // facet she wears here.
         if crate::gate::companion_profile_access_grant(
             &vault.store,
             txn,
             &intent.person_ref,
-            &intent.person_ref,
             person,
+            Some(work_facet),
             authorized_at,
         )?
         .is_none()
