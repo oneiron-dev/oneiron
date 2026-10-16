@@ -362,8 +362,10 @@ fn only_the_gates_route_to_help_fires_the_notify() -> Result<()> {
     let fx = fixture()?;
     fx.imminent()?;
     fx.live(TrustedContactDial::JustCall)?;
+    // The fixture has no model, so a turn no pattern flags is a skipped pass,
+    // not an allow. Neither is a help card.
     for (content, action) in [
-        ("nothing to flag here", PolicyEnforcementAction::Allow),
+        ("nothing to flag here", PolicyEnforcementAction::Skipped),
         ("warn-marker on this one", PolicyEnforcementAction::Warn),
         ("block-marker on this one", PolicyEnforcementAction::Block),
     ] {
