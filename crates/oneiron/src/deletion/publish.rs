@@ -11,7 +11,7 @@ use super::gate::GatedDeletion;
 // Publication-time authority re-verification only exists where there is a
 // publication; the no-feature arm publishes nothing.
 #[cfg(feature = "sync")]
-use super::gate::reverify_deletion_authority_before_publication;
+use super::gate::{claim_in_txn, reverify_deletion_authority_before_publication};
 // Both cfg arms of this shim require the `sync` feature, and its only call
 // site below is sync-gated with it; the import carries the same gate so a
 // no-feature build does not resolve a name that does not exist.
@@ -463,6 +463,8 @@ impl Vault {
                         ))
                     }
                 })
+                // This commit linearizes the delete, so its claim rides it.
+                .and_then(|()| claim_in_txn(gate, &mut wtxn, value, None))
         {
             self.discard_staged_deletion_gate_recovery_in_txn(&mut wtxn, id, value, gate_decision)?;
             self.withdraw_own_pending_tombstone_in_txn(&mut wtxn, window_key.as_str(), id, value)?;

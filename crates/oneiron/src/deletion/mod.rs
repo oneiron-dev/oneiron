@@ -43,7 +43,7 @@ pub use tombstone::{
 };
 
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
-pub(crate) use gate::{DeletionGateContext, GatedDeletion};
+pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
 pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
