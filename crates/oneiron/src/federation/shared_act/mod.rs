@@ -9,7 +9,7 @@ mod membership;
 use super::FederationGrantRole as Role;
 use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, key};
 use super::record_scope::ScopedRecord;
-use crate::authority::HostSlipIssuer;
+use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -329,7 +329,9 @@ impl Vault {
     /// is still a live Owner. The claim, the effect, the receipt and every
     /// recipient's notice commit in one writer, so the act takes effect at
     /// most once; running it again returns the same receipt. With `slips`,
-    /// the capability slips of anyone who lost a role are revoked with it.
+    /// the capability slips of anyone who lost a role are revoked with it,
+    /// and the host signs an ownership change into the authority log as an
+    /// `OwnerHandover` naming the act and its receipt.
     /// An export-first removal exports what its target could read before
     /// the writer opens, and records that export's digest in the receipt.
     pub fn execute_completed_shared_act(
@@ -462,6 +464,41 @@ impl Vault {
             }
             SharedActKind::Erase => return Err(invalid()),
         };
+        if let Some(issuer) = slips {
+            let handover = match &effect.change {
+                SharedVaultChange::OwnershipTransferred {
+                    from,
+                    to,
+                    from_keeps,
+                } => Some((OwnerHandoverCause::Transfer, from, Some(to), from_keeps)),
+                SharedVaultChange::OwnerRemoved {
+                    target,
+                    successor,
+                    target_keeps,
+                } => Some((
+                    OwnerHandoverCause::Removal,
+                    target,
+                    successor.as_ref(),
+                    target_keeps,
+                )),
+                _ => None,
+            };
+            if let Some((cause, from, to, keeps)) = handover {
+                self.append_owner_handover_in_txn(
+                    &mut txn,
+                    issuer,
+                    OwnerHandover {
+                        shared_vault: act.vault_id,
+                        cause,
+                        from: hex_id(from)?,
+                        to: to.map(|to| hex_id(to)).transpose()?,
+                        from_keeps: keeps.map(|role| role.as_str().to_owned()),
+                        act: Some(act.id.clone()),
+                        receipt: receipt_id.clone(),
+                    },
+                )?;
+            }
+        }
         let export = export.take().map(|(member, records)| {
             let mut digest = blake3::Hasher::new();
             for record in &records {
