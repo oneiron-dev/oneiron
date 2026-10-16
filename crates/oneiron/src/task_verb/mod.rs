@@ -45,6 +45,7 @@ mod project_ask;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+mod refusal;
 mod room_thread;
 mod route_receipts;
 mod scheduling;
@@ -53,7 +54,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
-pub(crate) use wire_decode::{TaskBinding, task_binding};
+pub(crate) use wire_decode::{TaskBinding, leader_task_body_in, task_binding};
 mod wire_encode;
 
 #[cfg(test)]
@@ -73,6 +74,7 @@ pub use consult_result::{
     ConsultResultInput, ConsultResultKind, TaskResultReceipt,
 };
 pub use create_spec::{TaskCreateRateLimit, TaskCreateSpec};
+pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub use create_validation::check_task_label;
 pub use dormant_magistrate::{
     apply_magistrate_verdict, decide_magistrate, decode_human_verdict, enqueue_magistrate,
