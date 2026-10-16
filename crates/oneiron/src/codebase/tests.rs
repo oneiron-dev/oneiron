@@ -338,6 +338,42 @@ fn codebase_snapshot_codec_rejects_unsorted_or_duplicate_manifest() {
     assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
 }
 
+// F04 H39: a manifest body is refused on its shape before it unfolds into a
+// value tree. Three million nils are 3 MB on disk; decoded first, as main
+// did, they held well over 100 MB before the schema check refused them.
+#[test]
+fn a_snapshot_body_wider_than_any_manifest_is_refused_before_it_is_decoded() {
+    use crate::session_overlay::hygiene_tests::peak_allocated;
+    let count: u32 = 3_000_000;
+    let mut wide = vec![0xdd];
+    wide.extend_from_slice(&count.to_be_bytes());
+    wide.resize(wide.len() + count as usize, 0xc0);
+    let (decoded, peak) = peak_allocated(|| decode_codebase_snapshot(&wide));
+    let err = decoded.expect_err("a body wider than any manifest is refused");
+    assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
+    assert!(
+        err.to_string()
+            .contains("more values than its manifest allows"),
+        "{err}"
+    );
+    assert!(peak < 1 << 20, "refused after holding {peak} bytes");
+
+    // The largest manifest the schema admits still decodes.
+    let files = (0..CODEBASE_SNAPSHOT_MAX_FILES)
+        .map(|n| file(&format!("f/{n:06}"), 0))
+        .collect();
+    let largest = CodebaseSnapshot::new(
+        "project.alpha",
+        repo_ref(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+        files,
+    )
+    .expect("a manifest at the file cap");
+    let bytes = encode_codebase_snapshot(&largest).expect("encode");
+    let back = decode_codebase_snapshot(&bytes).expect("the largest manifest decodes");
+    assert_eq!(back.files.len(), CODEBASE_SNAPSHOT_MAX_FILES);
+}
+
 #[test]
 fn codebase_snapshot_codec_rejects_backslash_manifest_paths() {
     let raw = CodebaseSnapshot {
