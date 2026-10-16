@@ -263,6 +263,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::LensDefaultRequest>(),
             ),
             (
+                "vault.disclosure.offer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::DisclosureOfferRequest,
+                >(),
+            ),
+            (
+                "vault.shares.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareCreateRequest,
+                >(),
+            ),
+            (
                 "vault.hooks.replay",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::HooksReplayRequest,
@@ -1151,6 +1163,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.disclosure.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shares.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1952,6 +1978,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.lenses.default" => {
             let _input: crate::lens::LensDefaultRequest = decode(value.clone())?;
         }
+        "vault.disclosure.offer" => {
+            let _input: crate::task_verb::sdk::DisclosureOfferRequest = decode(value.clone())?;
+        }
+        "vault.shares.create" => {
+            let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
+        }
         "vault.hooks.replay" => {
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
             input.limit()?;
@@ -2348,6 +2380,8 @@ pub fn invoke(
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
         "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
+        "vault.disclosure.offer" => encode(vault_disclosure_offer(memory, decode(value)?)?),
+        "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
@@ -3005,6 +3039,18 @@ pub fn vault_lenses_default(
     input: crate::lens::LensDefaultRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
     memory.lenses_default(input)
+}
+pub fn vault_disclosure_offer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::DisclosureOfferRequest,
+) -> MemoryResult<crate::task_verb::sdk::DisclosureOffered> {
+    crate::task_verb::sdk::offer_contact_disclosure_as_caller(memory, input)
+}
+pub fn vault_shares_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareCreateRequest,
+) -> MemoryResult<crate::task_verb::sdk::ShareCreated> {
+    crate::task_verb::sdk::create_share_as_caller(memory, input)
 }
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,

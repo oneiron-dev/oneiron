@@ -55,6 +55,7 @@ mod machine_write;
 mod notes;
 mod outbound;
 mod owner_door;
+mod presented_credential;
 mod read_lane;
 mod reads;
 mod recall;
