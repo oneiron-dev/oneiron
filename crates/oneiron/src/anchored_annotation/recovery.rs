@@ -180,17 +180,10 @@ fn pair_paragraph(
 
 impl Vault {
     pub(super) fn text_limits_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<TextLimits> {
-        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-        let package = policy
-            .docedit_resource_policy()
-            .ok_or_else(|| {
-                Error::InvalidConfig(
-                    "document resource policy is unavailable or fail-closed".to_owned(),
-                )
-            })?
-            .organ_limits();
+        // Reading a spot's words is read-only: the shipped package ceilings
+        // bound it, and the vault's live Word archive policy.
         Ok(TextLimits {
-            package,
+            package: crate::gate::shipped_docedit_package_limits(),
             docx: self.docx_archive_limits_in_txn(txn, None)?,
         })
     }
