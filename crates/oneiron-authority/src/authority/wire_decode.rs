@@ -119,24 +119,6 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 revoked_key: decode_key(required(entries, "revoked_key")?)?,
             })
         }
-        OP_KIND_RETIRED_CEILING => {
-            validate_keys(
-                entries,
-                &[OP_KEY_KIND, "authority_key", "actor_class", "ceiling"],
-            )?;
-            let ceiling_u64 = required(entries, "ceiling")?
-                .as_u64()
-                .ok_or_else(invalid_authority)?;
-            let ceiling = u8::try_from(ceiling_u64).map_err(|_| invalid_authority())?;
-            Ok(AuthorityOp::RetiredCeiling {
-                authority_key: decode_key(required(entries, "authority_key")?)?,
-                actor_class: required(entries, "actor_class")?
-                    .as_str()
-                    .ok_or_else(invalid_authority)?
-                    .to_owned(),
-                ceiling,
-            })
-        }
         OP_KIND_ROTATE_KEY => {
             validate_keys(entries, &[OP_KEY_KIND, "old_key", "new_device"])?;
             Ok(AuthorityOp::RotateKey {
