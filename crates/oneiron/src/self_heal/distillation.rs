@@ -196,7 +196,11 @@ impl Vault {
         {
             return Err(Error::InvalidConfig("T2 examples changed".into()));
         }
-        for id in current.positive_events.iter().chain(&current.negative_events) {
+        for id in current
+            .positive_events
+            .iter()
+            .chain(&current.negative_events)
+        {
             let event = self.reviewed_diagnostic(id)?;
             let mut rows = Vec::new();
             for run_ref in &event.evidence_refs {

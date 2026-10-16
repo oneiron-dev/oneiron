@@ -33,7 +33,9 @@ impl DecisionProvider for LabeledGrade {
         question: &DecisionQuestion,
         evidence: &[EntityId],
     ) -> Result<ProviderDecision> {
-        let reviewed = question.text.ends_with("2 positive and 1 negative reviewed findings.");
+        let reviewed = question
+            .text
+            .ends_with("2 positive and 1 negative reviewed findings.");
         Ok(noul(reviewed && evidence.len() == 4))
     }
 }

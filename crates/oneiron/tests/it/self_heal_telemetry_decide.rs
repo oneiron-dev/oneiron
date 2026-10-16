@@ -43,7 +43,7 @@ impl DecisionProvider for HostHead {
     ) -> Result<ProviderDecision> {
         self.asked
             .lock()
-            .unwrap()
+            .expect("the asked log is never poisoned")
             .push((question.clone(), evidence.to_vec()));
         let probability = (self.answer != DecisionAnswer::Abstain).then_some(0.9);
         Ok(ProviderDecision {
