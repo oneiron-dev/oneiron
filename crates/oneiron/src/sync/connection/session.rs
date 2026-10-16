@@ -32,6 +32,9 @@ pub(super) fn residence_update_frame(
 pub(super) const MAX_CONVERGENCE_ROUNDS: u32 = 5;
 
 pub(super) const EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS: u64 = 1;
+/// How often a live lane relays its sealed private-world windows through the
+/// home (OF-534 G7).
+pub(super) const SEALED_RELAY_INTERVAL_SECS: u64 = 300;
 
 pub(super) type WsSink = SplitSink<WsStream, Message>;
 

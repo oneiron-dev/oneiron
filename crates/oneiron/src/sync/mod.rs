@@ -65,8 +65,8 @@ pub(crate) mod window_rows;
 
 pub use client::{
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
-    ResidenceSearch, SearchSource, SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode,
-    SyncStatus, SyncTransportCredential, ThinItem,
+    ResidenceSearch, SealedRelay, SearchSource, SyncClient, SyncClientConfig, SyncEvent,
+    SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{
     ConnectionConfig, HomeNodeTopology, LocalUpdate, ResidenceModeChange, SyncConnection,

@@ -2,7 +2,10 @@
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 
 mod index;
+mod sealed;
 pub use index::ResidenceIndexWindow;
+pub use sealed::SealedRelay;
+pub(crate) use sealed::relay_sealed_windows;
 
 use std::collections::HashSet;
 use std::time::Duration;

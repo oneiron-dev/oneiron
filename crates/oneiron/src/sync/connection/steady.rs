@@ -13,7 +13,9 @@ use crate::sync::window::UpdateVerdict;
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
 
-use super::session::{EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, residence_update_frame};
+use super::session::{
+    EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS, residence_update_frame,
+};
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
 impl SyncConnection {
@@ -45,6 +47,10 @@ impl SyncConnection {
         let mut ephemeral_housekeeping =
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // One sealed relay at a time, on its own socket, off this loop.
+        let mut sealed_relay = tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
+        sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
         // A residence-mode switch closes this socket; the next connect sends
         // the new mode's hello. A live lane never changes mode.
         let mut mode_rx = self.mode.subscribe();
@@ -316,6 +322,26 @@ impl SyncConnection {
                         // Also flush any remaining debounce buffer
                         flush_to_queue(&self.queue, &mut debounce_buffer);
                         return LoopExit::Disconnected(err);
+                    }
+                }
+
+                _ = sealed_relay.tick() => {
+                    if self.config.client_config.federation_peer.is_none()
+                        && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
+                    {
+                        let manager = std::sync::Arc::clone(&self.manager);
+                        let config = self.client_config();
+                        let events = event_tx.clone();
+                        sealed_task = Some(tokio::spawn(async move {
+                            match crate::sync::client::relay_sealed_windows(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Sealed window relay failed: {error}"
+                                    )));
+                                }
+                            }
+                        }));
                     }
                 }
 
