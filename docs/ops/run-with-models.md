@@ -331,7 +331,8 @@ off.
 
 `execute_code` runs a task as generated JavaScript: each step's program comes
 from the `generative_reasoner` seat and runs in the checked-in QuickJS
-component, calling the vault through `self.memory.<verb>` under the
+component, calling the vault through each verb at its SDK path
+(`vault.recall(...)`, `self.focus.refresh(...)`) under the
 connector's own grants. It is listed on `tools/list` only when the seat has a
 rung and a prompt package for the executor is named:
 
