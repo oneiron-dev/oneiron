@@ -202,3 +202,32 @@ proposed again from the same words. A large import drains over several Dreamer
 passes, each reading about one round of turns. Each import takes a second of
 its own on the vault's clock: if that clock is ahead of the machine's (the
 system clock moved back), the import is refused until the machine catches up.
+
+## Keep a folder of notes attached
+
+`oneiron import notes` reads a folder once. To keep a folder of markdown
+notes (an Obsidian vault, an agent's memory folder) attached instead:
+
+```sh
+oneiron import folder attach ~/notes [--include 'journal/**/*.md'] [--kind observation]
+oneiron import folder rescan [~/notes]     # one folder now, or every attached one
+oneiron import folder list
+oneiron import folder detach ~/notes       # rescans stop; the notes stay
+```
+
+`attach` records the folder and lands its notes the way `import notes` lands
+them. From then on `oneiron serve` rescans every attached folder when it starts
+and every five minutes (a local vault only). Each rescan:
+
+- lands a new file as a new note, with its title and links;
+- supersedes what a changed file landed: when the note still holds that text,
+  the file's text replaces it through the note edit door, which keeps its
+  history; when you edited the note since, the file's text waits as a fork for
+  review and your edits stay;
+- retracts the note of a file that left the folder. The note is archived, a
+  local marker that keeps its text, and comes back when the file does. Nothing
+  is erased, and a note you deleted or archived yourself is left alone.
+
+Nothing is ever written to the folder: it feeds the vault, it is not the vault.
+A folder that is missing or reads empty retracts nothing. The CLI opens the
+vault itself, so run `attach`, `rescan` and `detach` with `serve` stopped.
