@@ -88,7 +88,7 @@ pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use support::*;
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
-    live_turn_text_in, projected_turn_text_in,
+    live_turn_text_in, projected_turn_text_in, whole_turn_text_as_in,
 };
 pub(crate) use wake_plan::AttemptPreparation;
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};

@@ -5,6 +5,12 @@
 //! closed dimensions and counts. Nothing samples transcript text for export.
 //! Telemetry never carries world text (owner ruling 2026-10-14), and redacting
 //! a sample does not make it safe to send, so there is no text tier to opt into.
+//!
+//! The same switch gates the two code-fix exports (FIX6, owner ruling
+//! 2026-10-16): the Coach's invented examples and candidate fixes' fixed or
+//! not-fixed results ([`Vault::export_code_fix_records`](crate::Vault::export_code_fix_records)).
+//! Neither carries real chat text, and a failure that touched a private world
+//! sends counts only.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,8 +27,9 @@ pub enum DeploymentTier {
 #[serde(default)]
 pub struct FailureSignalConfig {
     pub deployment: DeploymentTier,
-    /// An OSS/self-host participation choice. Managed terms mandate export of
-    /// the tier-1 counts, so this cannot disable export in the managed tier.
+    /// An OSS/self-host participation choice, for the tier-1 counts and both
+    /// code-fix exports. Managed terms mandate them, so this cannot disable
+    /// export in the managed tier.
     pub export_opt_in: bool,
     /// Explicit, independent permission. Export never grants training rights.
     pub training_opt_in: bool,

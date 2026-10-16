@@ -291,6 +291,9 @@ side_tables! {
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.
     EXPRESSION_ARCHIVE_BINDING: VaultMeta b"expression/archive-binding/v1\0" Raw;
+    /// One sealed FIX6 code-fix export (an invented example or a candidate fix's result) waiting
+    /// for the host to drain it, with the worlds it touched; never real chat text. Key: id16.
+    FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
