@@ -24345,7 +24345,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 186,
+      "mod": 187,
       "re-export": 73
      }
     },
@@ -33657,6 +33657,61 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ResultBodyCollectReport"
+     ],
+     "path": "src/result_body/collect.rs",
+     "purpose": "The result body collector: released bodies first, then orphan files",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/result_body/files.rs",
+     "purpose": "Body directory work for the collector, done through the directory's descriptor: nothing here follows a link",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/result_body/mod.rs",
+     "purpose": "Result body lifetime (OF-597): reader pins, the collector of released and orphan body files, and the copy of…",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/result_body/pins.rs",
+     "purpose": "Reader pins: a result body a reader holds is never deleted",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/result_body/promote.rs",
+     "purpose": "Bringing an off-record result body into the vault's `bodies/`",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ResultMemoryPool"
      ],
      "path": "src/result_memory.rs",
@@ -37524,7 +37579,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -40922,7 +40977,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 21,
       "mod": 1,
       "re-export": 22
      }
@@ -41064,7 +41119,7 @@
      "path": "src/task_verb/room_thread.rs",
      "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -43351,7 +43406,7 @@
      "path": "src/workspace_roster/project/conversion.rs",
      "purpose": "Atomic conversion of a room thread into a project and its origin card",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
@@ -43703,6 +43758,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/result_header.rs",
+     "purpose": "Admitted origin and TASK result pointers on a project's room trunk",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/review_tests.rs",
@@ -43933,7 +43998,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 10
      }
     },
@@ -43968,7 +44033,7 @@
      "path": "src/workspace_roster/rooms/liveness.rs",
      "purpose": "Read-time room thread liveness; the room history and TASK rows remain truth",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 3,
       "struct": 5
@@ -43990,7 +44055,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 6,
       "re-export": 3,
@@ -46281,6 +46346,13 @@
      "layout": "file+dir",
      "purpose": "RET-010 host-injected top-N rerank seam (1186-D1/D2)"
     },
+    "result_body": {
+     "files": 5,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Result body lifetime (OF-597): reader pins, the collector of released and orphan body files, and the copy of…"
+    },
     "result_memory": {
      "files": 1,
      "impl_vault": false,
@@ -46660,7 +46732,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46683,7 +46755,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2805,
+   "source_files": 2811,
    "test_files": 903
   },
   "oneiron-android": {
