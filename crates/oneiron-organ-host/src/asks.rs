@@ -19,7 +19,7 @@ use oneiron_organ_protocol::{
 
 use crate::error::HostError;
 use crate::fetch;
-use crate::handlers::{AskHandlers, AskRequest, Answered, HandlerScope};
+use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
 use crate::receipt::{AskReceipt, SignedReceipt, Unanswered, bound_text, digest};
 use crate::spec::OrganSpec;
 

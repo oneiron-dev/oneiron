@@ -105,11 +105,13 @@ fn tick(server: &SyncServer, host: &OrganHost) -> Result<Vec<EsignSealRun>, Stri
             let identity = keys
                 .identity(Instant::now())
                 .map_err(|err| format!("the seal key: {err}"))?;
-            vec![identity
-                .chain
-                .last()
-                .cloned()
-                .unwrap_or(identity.signer_certificate)]
+            vec![
+                identity
+                    .chain
+                    .last()
+                    .cloned()
+                    .unwrap_or(identity.signer_certificate),
+            ]
         }
     };
     let mut settings = SealSettings::new(anchors, "esign.seal");
@@ -151,7 +153,8 @@ fn install(server: &SyncServer, fetch: FetchGrant) -> Result<OrganSpec, String> 
         .vault
         .pack_organ_build(&entry.pack_name, SEAL_ORGAN, &platform)
         .map_err(|err| format!("the seal organ build: {err}"))?;
-    let dir = env_path(ORGAN_DIR_ENV).unwrap_or_else(|| std::env::temp_dir().join("oneiron-organs"));
+    let dir =
+        env_path(ORGAN_DIR_ENV).unwrap_or_else(|| std::env::temp_dir().join("oneiron-organs"));
     seal_spec_from_pack(&binary, Path::new(&dir), fetch)
         .map_err(|err| format!("the seal organ build: {err}"))
 }

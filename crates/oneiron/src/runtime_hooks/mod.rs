@@ -1,4 +1,5 @@
-//! Runtime hooks (ARCH-0080), slice 1: fact hooks that run after a write commits, on their own runner.
+//! Runtime hooks (ARCH-0080). Slice 1: fact hooks that run after a write
+//! commits, on their own runner. Slice 2 (`verb`): verb hooks inside a call.
 //!
 //! The runner follows the claim changelog and the settlement feed through
 //! typed per-binding cursors. Rust filters each fact, under the hook's own
@@ -22,6 +23,7 @@ mod runner;
 pub mod sandbox;
 mod source;
 mod store;
+pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime};
 pub use body::{HookBodyRun, HookBodyRuntime};
@@ -43,3 +45,6 @@ pub use source::{
     SettledOutcome, SettlementKind, SettlementPosition,
 };
 pub(crate) use store::hook_receipts;
+pub use verb::{
+    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
+};

@@ -99,6 +99,14 @@ side_tables! {
     DREAMER_HARNESS_EVAL_BASELINE: VaultMeta b"dreamer:harness:eval-baseline:v1:" LegacyJson;
     /// Elected MACRO-scope home-node designation (node_id, class, elected_at). Key: ().
     DREAMER_HOME_NODE: VaultMeta b"dreamer:home_node_macro:v1" Raw;
+    /// One open identity ask: a saved mention the Dreamer could not settle, or one an agent must
+    /// act on now (OF-123). Key: hash32(turn, message, span).
+    DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named;
+    /// The identity re-check's page cursor: the last TURN a nightly pass read. Key: ().
+    DREAMER_IDENTITY_CURSOR: VaultMeta b"dreamer:identity:v1:cursor" Named;
+    /// A settled identity's context hint: a name, the words around it and the entity it named.
+    /// Key: u8(kind) + hash32(name) + id16(entity).
+    DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
     /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
     /// lists the same ones. Ids only, never their text. Key: id16.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
@@ -335,6 +343,8 @@ side_tables! {
     ESIGN_CAPABILITY_TOKEN: VaultMeta b"esign.capability.v1/" LegacyJson;
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw;
+    /// Held automated sign act, one per recipient. Key: hex32/string.
+    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
     /// Signing principal set owner stamp. Key: ().
@@ -549,6 +559,9 @@ side_tables! {
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
+    /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
+    /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
+    HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;

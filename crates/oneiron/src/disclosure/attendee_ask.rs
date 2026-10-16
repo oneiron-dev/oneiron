@@ -122,8 +122,14 @@ pub(super) struct AttendeeAskRecord {
 impl AttendeeAskRecord {
     fn to_value(&self) -> Value {
         Value::Map(vec![
-            (Value::from("session"), Value::from(self.session_key.as_str())),
-            (Value::from("speaker"), Value::from(self.speaker_key.as_str())),
+            (
+                Value::from("session"),
+                Value::from(self.session_key.as_str()),
+            ),
+            (
+                Value::from("speaker"),
+                Value::from(self.speaker_key.as_str()),
+            ),
             (Value::from("revision"), Value::from(self.roster_revision)),
             (
                 Value::from("turn"),
@@ -169,10 +175,16 @@ pub(super) fn decode_attendee_ask_value(value: &Value) -> Result<AttendeeAskReco
     else {
         return Err(invalid_ask());
     };
-    if [session_key, speaker_key, revision_key, turn_key, candidates_key]
-        .iter()
-        .map(|key| key.as_str())
-        .ne(["session", "speaker", "revision", "turn", "candidates"].map(Some))
+    if [
+        session_key,
+        speaker_key,
+        revision_key,
+        turn_key,
+        candidates_key,
+    ]
+    .iter()
+    .map(|key| key.as_str())
+    .ne(["session", "speaker", "revision", "turn", "candidates"].map(Some))
     {
         return Err(invalid_ask());
     }
@@ -320,10 +332,8 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("attendee ask has no vault owner"));
         }
         let ask_claim = ConsultPayloadRef::Claim(ask_ref);
-        let mut question = TaskAskQuestion::new(
-            ask.trigger_turn
-                .map_or(ask_claim, ConsultPayloadRef::Turn),
-        );
+        let mut question =
+            TaskAskQuestion::new(ask.trigger_turn.map_or(ask_claim, ConsultPayloadRef::Turn));
         if ask.trigger_turn.is_some() {
             question.context_refs.push(ask_claim);
         }
