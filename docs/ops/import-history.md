@@ -1,4 +1,4 @@
-# Import your ChatGPT, Claude, Claude Code and Codex history
+# Import your ChatGPT, Claude, Claude Code, Codex, Copilot and Cursor history
 
 `oneiron import <source> <path>` brings your own history into your vault. Stop
 `oneiron serve` first: the import holds the vault's writer lease, the same as
@@ -12,6 +12,7 @@ read the same config as `serve` (`--config`, `--vault-path`, `ONEIRON_*`).
 | `claude` | The Claude.ai export zip, its `conversations.json`, or the unzipped folder. |
 | `claude-code` | `~/.claude/projects`, one project's folder in it, or one session `.jsonl`. Given `~/.claude`, only `projects/` is read. |
 | `codex` | `~/.codex/sessions`, any year, month or day folder in it, or one rollout `.jsonl`. Given `~/.codex`, only `sessions/` is read. |
+| `hook-transcript` | One GitHub Copilot or Cursor session `.jsonl` a hook handed over, under a folder in `hook_transcript_roots` (below). Never a folder. |
 
 ```bash
 oneiron import claude-code ~/.claude/projects --dry-run   # counts only; writes nothing
@@ -42,6 +43,62 @@ session this way at every stop.
 Each pass lands what is queued, earliest session first, up to the size
 limit of one import below. What is past it waits for the next pass, which
 comes 5 seconds later; a waiting log is not read again until it lands.
+
+## A coding agent's hook transcript: GitHub Copilot and Cursor
+
+GitHub Copilot (in VS Code, and the Copilot CLI) and Cursor give their hooks
+the path of the session's log (`transcript_path`). Hand that one file over:
+
+```bash
+oneiron import hook-transcript <transcript_path> --queue   # serve imports it
+oneiron import hook-transcript <transcript_path>           # serve stopped
+```
+
+The log must sit under a folder you list in the serve config; none is listed
+by default, so no hook transcript is read until you list one. Each folder
+must be absolute (`~` is expanded), and everything below it counts. Listing a
+folder is your standing approval for every transcript under it, queued or
+imported directly:
+
+```toml
+[import]
+queue = true
+hook_transcript_roots = [
+  "~/.copilot/session-state",          # Copilot CLI: <session>/events.jsonl
+  "~/.cursor/projects",                # Cursor: <folder>/agent-transcripts/<id>/<id>.jsonl
+  "<VS Code workspace storage>",       # VS Code Copilot: <workspace>/<extension>/transcripts/<session>.jsonl
+]
+```
+
+What the file holds picks the reader, never its name or folder:
+
+- **GitHub Copilot.** VS Code's transcript and the CLI's `events.jsonl` are
+  one event per line (`type`, `data`, `id`, `timestamp`). The words of
+  `user.message` and `assistant.message` land, each known by its event id
+  (`copilot:<id>`), in the conversation `copilot:<session>`: the id in the
+  log's `session.start`, or else the file's name (for an `events.jsonl`, its
+  session folder's). A subagent's events (`agentId`) land as its own
+  conversation, `copilot:<session>/agent/<agent>`, whose prompts are the
+  delegating agent's. A prompt a skill or autopilot wrote is counted as
+  injected; one another agent sent is that agent's, never yours. Reasoning,
+  tool calls and their results, system messages and session events are
+  counted.
+- **Cursor.** Cursor publishes no format for this file, so the reader takes
+  only what a dated public sample (July 2026) shows: one line per message,
+  `role` and `message.content` blocks of `text` and `tool_use`, and the older
+  `turn_ended` line. Other fields are ignored. Your words are those inside
+  the `<user_query>` wrapper Cursor adds. The log keeps no ids or times, so
+  each message's id chains from the one before it, and the conversation
+  (`cursor:<id>`, from the file's name) occurs when it was imported. A
+  message added at the end of a grown log is new; one inserted or removed in
+  the middle gives every message after it a new id, so those land again.
+
+Every line the reader cannot read (not JSON, or not a record it knows) is
+counted in `not_kept.unreadable`, per conversation and in the totals; a
+queued import logs the pass's count as `unreadable` on `queued import
+landed`. A file with no Copilot or Cursor record at all is refused, with its
+line count, and nothing lands. Re-reading a grown log lands only what is new,
+as for every source; hand it over again at each stop.
 
 ## What lands
 

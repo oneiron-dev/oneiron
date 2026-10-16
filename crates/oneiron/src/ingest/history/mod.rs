@@ -1,5 +1,6 @@
 //! The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai
-//! exports and the on-device Claude Code and Codex session logs.
+//! exports, the on-device Claude Code and Codex session logs, and the GitHub
+//! Copilot or Cursor session log a coding agent's hook hands over.
 //!
 //! Each reader decodes the text of ONE source file into source conversations:
 //! the messages a person or an assistant said, in order, with the source's own
@@ -15,6 +16,8 @@ mod chatgpt;
 mod claude;
 mod claude_code;
 mod codex;
+mod copilot;
+mod cursor;
 mod land;
 mod ledger;
 mod plan;
@@ -32,7 +35,7 @@ pub(crate) use review::imported_evidence_in_txn;
 
 use serde::Serialize;
 
-use super::IngestResult;
+use super::{IngestError, IngestResult};
 
 /// [`HistoryMessage::said_by`] for the user side of a subagent's or a spawned
 /// agent's thread: the agent that delegated the task, never the owner.
@@ -44,7 +47,7 @@ pub const DELEGATING_AGENT: &str = "delegating_agent";
 /// speaker lands the words again.
 pub const UNKNOWN_SPEAKER: &str = "unknown";
 
-/// The four history sources `oneiron import` reads. Their ids are the ingest
+/// The history sources `oneiron import` reads. Their ids are the ingest
 /// registry's, which carries their Imported trust ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HistorySource {
@@ -52,10 +55,19 @@ pub enum HistorySource {
     Claude,
     ClaudeCode,
     Codex,
+    /// A coding agent's session log a hook handed over: GitHub Copilot's (VS
+    /// Code or the CLI) or Cursor's, each read by its own reader.
+    HookTranscript,
 }
 
 impl HistorySource {
-    pub const ALL: [Self; 4] = [Self::Chatgpt, Self::Claude, Self::ClaudeCode, Self::Codex];
+    pub const ALL: [Self; 5] = [
+        Self::Chatgpt,
+        Self::Claude,
+        Self::ClaudeCode,
+        Self::Codex,
+        Self::HookTranscript,
+    ];
 
     /// The ingest registry id.
     #[must_use]
@@ -65,6 +77,7 @@ impl HistorySource {
             Self::Claude => "claude",
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
+            Self::HookTranscript => "hook-transcript",
         }
     }
 
@@ -80,24 +93,50 @@ impl HistorySource {
     ///
     /// # Errors
     ///
-    /// [`super::IngestError`] when an export is not the source's layout. A
-    /// session log's unreadable line is counted, not fatal: the last line of a
-    /// live session is often half-written.
+    /// [`super::IngestError`] when an export is not the source's layout, or a
+    /// hook transcript is neither reader's. A session log's unreadable line is
+    /// counted, not fatal: the last line of a live session is often
+    /// half-written.
     pub fn decode(self, text: &str, file: &HistoryFile) -> IngestResult<Vec<HistoryConversation>> {
         match self {
             Self::Chatgpt => chatgpt::decode(text),
             Self::Claude => claude::decode(text),
             Self::ClaudeCode => Ok(claude_code::decode(text, file)),
             Self::Codex => Ok(codex::decode(text, file)),
+            Self::HookTranscript => hook_transcript(text, file),
         }
     }
+}
+
+/// A hook's transcript: the first record a GitHub Copilot or a Cursor log
+/// writes picks that reader, which then reads the whole file. A file with no
+/// such record is refused with its line count, never landed as an empty
+/// conversation; an empty file holds nothing to land.
+fn hook_transcript(text: &str, file: &HistoryFile) -> IngestResult<Vec<HistoryConversation>> {
+    let mut unreadable = 0_u64;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        match text::json_record(line) {
+            Some(record) if copilot::is_event(&record) => return Ok(copilot::decode(text, file)),
+            Some(record) if cursor::is_record(&record) => return Ok(cursor::decode(text, file)),
+            _ => unreadable += 1,
+        }
+    }
+    if unreadable == 0 {
+        return Ok(Vec::new());
+    }
+    Err(IngestError::UnsupportedSchema {
+        source_id: HistorySource::HookTranscript.source_id(),
+        expected: "a GitHub Copilot or Cursor transcript",
+        found: format!("{unreadable} unreadable line(s), none a record of either"),
+    })
 }
 
 /// Which file a session-log reader is reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryFile {
     /// The file name without its extension: a Claude Code session id or
-    /// `agent-<id>`, a Codex `rollout-<time>-<id>`.
+    /// `agent-<id>`, a Codex `rollout-<time>-<id>`, a Copilot or Cursor
+    /// session id (for a Copilot CLI `events.jsonl`, its session folder's).
     pub stem: String,
     /// A Claude Code subagent log (under `<session>/subagents/`); `parent` is
     /// then the session it ran in.
@@ -223,7 +262,8 @@ pub struct HistorySkips {
     pub duplicates: u32,
     /// Bookkeeping lines: titles, modes, costs, snapshots, token counts.
     pub other: u32,
-    /// Lines that are not JSON objects.
+    /// Lines that are not JSON objects; for a hook transcript, also lines
+    /// that are not a record its reader knows.
     pub unreadable: u32,
 }
 

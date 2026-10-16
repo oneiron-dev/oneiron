@@ -1,10 +1,12 @@
 //! The `[import]` section: whether a running `serve` imports the session logs
 //! queued for it (`oneiron import claude-code <log> --queue`), where that
-//! queue lives, and the folder each source's queued logs must sit under.
+//! queue lives, the folder each source's queued logs must sit under, and the
+//! folders a hook may hand transcripts over from.
 //!
 //! Off by default. Turning it on is the owner's standing act for every log
 //! queued under those folders: `serve` lands each one as `oneiron import`
-//! would, and nothing outside them.
+//! would, and nothing outside them. Listing a hook folder is the same act for
+//! the transcripts under it, queued or imported directly.
 
 use std::path::{Path, PathBuf};
 
@@ -24,6 +26,10 @@ pub struct ImportConfig {
     /// The folder queued Codex rollouts must sit under. `None` means
     /// `~/.codex/sessions`.
     pub codex_root: Option<PathBuf>,
+    /// The folders a GitHub Copilot or Cursor hook's transcripts must sit
+    /// under (`oneiron import hook-transcript`), each with everything below
+    /// it. Empty unless set: no hook transcript is read.
+    pub hook_transcript_roots: Vec<PathBuf>,
 }
 
 impl ImportConfig {
@@ -39,12 +45,15 @@ impl ImportConfig {
     }
 
     /// The folder queued logs of `source` must sit under; `None` for a source
-    /// that is an export, not a folder of session logs.
+    /// that is an export, not a folder of session logs, and for hook
+    /// transcripts, whose folder depends on the log ([`Self::root_for_path`]).
     pub fn root_for(&self, source: HistorySource) -> Option<PathBuf> {
         let (set, default) = match source {
             HistorySource::ClaudeCode => (&self.claude_code_root, "~/.claude/projects"),
             HistorySource::Codex => (&self.codex_root, "~/.codex/sessions"),
-            HistorySource::Chatgpt | HistorySource::Claude => return None,
+            HistorySource::Chatgpt | HistorySource::Claude | HistorySource::HookTranscript => {
+                return None;
+            }
         };
         Some(
             set.clone()
@@ -52,10 +61,30 @@ impl ImportConfig {
         )
     }
 
-    /// With the queue on, its folder and both roots must be absolute: the
-    /// hooks queue from the session's folder and `serve` reads from its own,
-    /// so a relative path would name two places.
+    /// The folder the log at `path` (absolute) must sit under to be read for
+    /// `source`: the source's root, or the deepest hook folder that holds it.
+    pub fn root_for_path(&self, source: HistorySource, path: &Path) -> Option<PathBuf> {
+        if source != HistorySource::HookTranscript {
+            return self.root_for(source);
+        }
+        self.hook_transcript_roots
+            .iter()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+            .cloned()
+    }
+
+    /// Every hook folder must be absolute, and with the queue on, its folder
+    /// and both roots: the hooks queue from the session's folder and `serve`
+    /// reads from its own, so a relative path would name two places.
     pub(super) fn validate(&self, vault_path: &Path) -> anyhow::Result<()> {
+        for root in &self.hook_transcript_roots {
+            anyhow::ensure!(
+                root.is_absolute(),
+                "every [import] hook_transcript_roots folder must be an absolute path (one is {})",
+                root.display()
+            );
+        }
         if !self.queue {
             return Ok(());
         }
@@ -92,6 +121,10 @@ impl ImportConfig {
         if let Some(value) = over.codex_root {
             self.codex_root = Some(super::lookup::expand_home(value));
         }
+        if let Some(roots) = over.hook_transcript_roots {
+            self.hook_transcript_roots =
+                roots.into_iter().map(super::lookup::expand_home).collect();
+        }
     }
 }
 
@@ -103,4 +136,5 @@ pub struct ImportConfigOverride {
     pub queue_dir: Option<PathBuf>,
     pub claude_code_root: Option<PathBuf>,
     pub codex_root: Option<PathBuf>,
+    pub hook_transcript_roots: Option<Vec<PathBuf>>,
 }
