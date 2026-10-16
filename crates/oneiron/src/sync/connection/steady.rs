@@ -47,7 +47,8 @@ impl SyncConnection {
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // One residence upkeep at a time (authority catch-up, then the sealed
         // relay), on its own sockets, off this loop.
-        let mut sealed_relay = tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
+        let mut sealed_relay =
+            tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
         // A residence-mode switch closes this socket; the next connect sends

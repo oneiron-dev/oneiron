@@ -61,9 +61,7 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
         if self.scope.is_some() {
-            return Err(invalid_consolidation(
-                "the NOTE review has no branch scope",
-            ));
+            return Err(invalid_consolidation("the NOTE review has no branch scope"));
         }
         let attempt_id = attempt.status.attempt.id;
         let run = DreamerRunContext {
@@ -269,8 +267,7 @@ fn readable_notes(
         let Ok(decoded) = crate::note::decode_note_body_in_txn(&vault.store, &txn, &body) else {
             continue;
         };
-        if !allowed.contains(decoded.kind.as_str().as_ref()) || decoded.markdown.trim().is_empty()
-        {
+        if !allowed.contains(decoded.kind.as_str().as_ref()) || decoded.markdown.trim().is_empty() {
             continue;
         }
         let fingerprint = *blake3::hash(decoded.markdown.as_bytes()).as_bytes();
@@ -372,8 +369,9 @@ fn note_candidate(
             Value::Binary(note.project.as_bytes().to_vec()),
         ));
     }
-    let candidate = ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence)
-        .with_scope(Value::Map(fields));
+    let candidate =
+        ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence)
+            .with_scope(Value::Map(fields));
     let facts = super::conflict::candidate_facts(&candidate)?;
     let claim_id = super::conflict::deterministic_claim_id(
         run.attempt_id,

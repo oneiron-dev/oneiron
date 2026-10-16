@@ -143,7 +143,12 @@ impl Vault {
             && let Some(prompt) = context.prompt(request)
         {
             return decisions.classify(
-                request, &prompt, AnswerPlane::Owner, binding, config, pass_audit(&evaluation),
+                request,
+                &prompt,
+                AnswerPlane::Owner,
+                binding,
+                config,
+                pass_audit(&evaluation),
             );
         }
         Ok(owner_pattern_only_verdict(
@@ -391,7 +396,14 @@ impl Vault {
         };
         if let Some(decisions) = config.owner_decisions.as_deref() {
             return Ok(OwnerPlanePass {
-                verdict: decisions.classify(request, &prompt, AnswerPlane::Owner, binding, config, audit)?,
+                verdict: decisions.classify(
+                    request,
+                    &prompt,
+                    AnswerPlane::Owner,
+                    binding,
+                    config,
+                    audit,
+                )?,
             });
         }
         let Some(safeguard) = safeguard else {
@@ -600,7 +612,10 @@ fn policy_model_context_for_policy(
     };
     let document = owner_policy_document(policy)?;
     let rubric_rows = owner_rubric_rows(request, policy);
-    if rubric_rows.iter().any(|row| row.action == PolicyClassifyDecision::Reword) {
+    if rubric_rows
+        .iter()
+        .any(|row| row.action == PolicyClassifyDecision::Reword)
+    {
         super::reword::validate_reword_notice(config)?;
     }
     Ok(PolicyModelContext {

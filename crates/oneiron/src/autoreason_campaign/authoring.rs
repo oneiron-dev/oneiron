@@ -165,7 +165,8 @@ fn check_strategy_skill(vault: &Vault, pin: &ClaimAuthoringSkillPin) -> Result<(
         return Err(invalid("the strategy skill is not admitted and active"));
     }
     if record.version != pin.version
-        || record.content_hash.map(|hash| hash.to_hex()).as_deref() != Some(pin.content_hash.as_str())
+        || record.content_hash.map(|hash| hash.to_hex()).as_deref()
+            != Some(pin.content_hash.as_str())
     {
         return Err(invalid(
             "the strategy skill moved since it was pinned; bind a new campaign",
@@ -284,18 +285,22 @@ pub fn finalize_claim_tournament(
         .iter()
         .any(|node| node.attempt == attempt)
     {
-        return Err(invalid("the run attempt is not an experiment of this campaign"));
+        return Err(invalid(
+            "the run attempt is not an experiment of this campaign",
+        ));
     }
     let evidence = DreamerTournamentEvidenceStore::new(vault).list_run(run_id)?;
     let winner = &result.winner;
     if !evidence.iter().any(|row| {
         row.branch_attempt == winner.branch_attempt && row.candidate_ref == winner.candidate_ref
     }) {
-        return Err(invalid("the tournament winner has no persisted branch evidence"));
+        return Err(invalid(
+            "the tournament winner has no persisted branch evidence",
+        ));
     }
-    let claim = vault
-        .get_claim(&winner.claim_id)?
-        .ok_or(invalid("the tournament winner never landed through the gate"))?;
+    let claim = vault.get_claim(&winner.claim_id)?.ok_or(invalid(
+        "the tournament winner never landed through the gate",
+    ))?;
     if team.rule_signed_at > at {
         return Err(invalid("the ranking rule must be signed before the work"));
     }
@@ -429,7 +434,9 @@ pub fn promote_authoring_strategy(
         return Err(invalid("the comparison belongs to another campaign root"));
     }
     if campaign.promotion.is_some() {
-        return Err(invalid("the campaign's strategy promotion is already spent"));
+        return Err(invalid(
+            "the campaign's strategy promotion is already spent",
+        ));
     }
     check_strategy_skill(vault, &campaign.skill)?;
     let receipt = measure_once(vault, report, campaign.strategy.clone(), measure)?;

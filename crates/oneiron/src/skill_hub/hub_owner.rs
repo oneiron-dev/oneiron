@@ -73,8 +73,7 @@ impl Vault {
 
     /// The hub refs an imported skill's provenance names.
     pub fn skill_hub_sources(&self, entity: &EntityId) -> Result<Vec<HubRef>> {
-        self
-            .active_claims_for_predicate(entity, PREDICATE_SKILL_HUB_PROVENANCE)?
+        self.active_claims_for_predicate(entity, PREDICATE_SKILL_HUB_PROVENANCE)?
             .into_iter()
             .map(|(_, body)| {
                 HubRef::from_value(

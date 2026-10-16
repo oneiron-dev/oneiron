@@ -41,7 +41,7 @@ use oneiron_crypto::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::commitment::{self, CheckpointSigner, ChainHead, Link, Trust};
+use super::commitment::{self, ChainHead, CheckpointSigner, Link, Trust};
 use crate::world_keys::{CarriedVaultKey, VaultKeyUnlock, refused};
 use crate::{Error, Result, Vault};
 
@@ -139,8 +139,10 @@ impl CheckpointKey {
     pub fn unlock_on_this_device(path: &Path, vault_dir: &Path) -> Result<Self> {
         let keystore = oneiron_keystore::default_platform_keystore(&[vault_dir])
             .map_err(crate::world_keys::keystore_error)?;
-        Ok(Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
-            .trusting_device(keystore))
+        Ok(
+            Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
+                .trusting_device(keystore),
+        )
     }
 
     /// Trusts exactly these signers, pinned through a channel of the
@@ -151,7 +153,10 @@ impl CheckpointKey {
     }
 
     /// Trusts the signers whose seeds `keystore` holds for the vault.
-    pub fn trusting_device(mut self, keystore: std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>) -> Self {
+    pub fn trusting_device(
+        mut self,
+        keystore: std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>,
+    ) -> Self {
         self.trust = Trust::Device(keystore);
         self
     }
@@ -525,7 +530,11 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
         .checked_sub(8)
         .filter(|at| *at >= prelude.end)
         .ok_or_else(codec)?;
-    let manifest_at = u64::from_be_bytes(read_at(&mut file, footer_at, 8)?.try_into().map_err(|_| codec())?);
+    let manifest_at = u64::from_be_bytes(
+        read_at(&mut file, footer_at, 8)?
+            .try_into()
+            .map_err(|_| codec())?,
+    );
     if manifest_at < prelude.end || manifest_at > footer_at {
         return Err(codec());
     }

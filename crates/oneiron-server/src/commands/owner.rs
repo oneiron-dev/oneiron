@@ -14,9 +14,9 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmsCommand, ImportCommand, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
-    SecretScanSwitch, SecretsCommand, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmsCommand, ImportCommand, RecoverClockArgs,
+    RecoverWindowArgs, RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
+    SecretScanArgs, SecretScanSwitch, SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -680,9 +680,9 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
     let vault = open_vault(&config, "GET /v1/owner/authority/handoff-alarms")?;
     match command {
         HandoffAlarmsCommand::List(_) => emit(&vault.authority_handoff_alarms()?),
-        HandoffAlarmsCommand::Acknowledge(args) => emit(
-            &vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?,
-        ),
+        HandoffAlarmsCommand::Acknowledge(args) => {
+            emit(&vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?)
+        }
     }
 }
 

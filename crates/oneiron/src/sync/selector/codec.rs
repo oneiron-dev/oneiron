@@ -305,7 +305,14 @@ pub fn filtered_window_doc_for_peer(
     selector: &SyncSelector,
     peer: crate::authority::PeerMachine,
 ) -> Result<LoroDoc> {
-    filtered_window_doc_for(vault, source, key, grant_scope, selector, Withhold::Peer(peer))
+    filtered_window_doc_for(
+        vault,
+        source,
+        key,
+        grant_scope,
+        selector,
+        Withhold::Peer(peer),
+    )
 }
 
 /// [`filtered_window_doc`] for the machine a residence read serves: the

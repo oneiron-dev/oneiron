@@ -250,9 +250,7 @@ impl Vault {
     /// with, under the transport domain `oneiron-mesh-transport` derives
     /// with (`oneiron/mesh-transport-ed25519/v1`); the machine key never
     /// leaves the engine.
-    pub fn mesh_transport_seed(
-        &self,
-    ) -> Result<Option<(EntityId, zeroize::Zeroizing<[u8; 32]>)>> {
+    pub fn mesh_transport_seed(&self) -> Result<Option<(EntityId, zeroize::Zeroizing<[u8; 32]>)>> {
         self.load_install_signing_if_minted()?;
         let txn = self.store.env.read_txn()?;
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {

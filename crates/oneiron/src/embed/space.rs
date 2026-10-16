@@ -120,10 +120,12 @@ mod evidence_floors {
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<VectorEvidenceFloors>, D::Error> {
-        Ok(Option::<Row>::deserialize(deserializer)?.map(|row| VectorEvidenceFloors {
-            floor: row.floor,
-            strong: row.strong,
-        }))
+        Ok(
+            Option::<Row>::deserialize(deserializer)?.map(|row| VectorEvidenceFloors {
+                floor: row.floor,
+                strong: row.strong,
+            }),
+        )
     }
 }
 

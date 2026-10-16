@@ -86,7 +86,9 @@ impl OwnerHandover {
             !role.is_empty()
                 && role.len() <= OWNER_HANDOVER_REF_MAX
                 && role != "owner"
-                && role.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+                && role
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
         });
         if (needs_successor && !names_successor)
             || self.to == Some(self.from)

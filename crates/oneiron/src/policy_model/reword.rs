@@ -7,8 +7,10 @@ use crate::gate::{self, OwnerRowAction};
 use crate::store::GATE_SYSTEM_NOTICE_BODY_MAX_LEN;
 use crate::{Result, Vault};
 
-use super::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyClassifyVerdict, PolicyContentBinding,
-    PolicyModelConfig, PolicyVerdictCategory};
+use super::{
+    PolicyClassifyDecision, PolicyClassifyRequest, PolicyClassifyVerdict, PolicyContentBinding,
+    PolicyModelConfig, PolicyVerdictCategory,
+};
 
 /// The owner-authored constraint disclosed to the author and the reader. The
 /// author generates a new candidate in their own voice and submits it through
@@ -25,7 +27,9 @@ pub(super) fn validate_reword_notice(config: &PolicyModelConfig) -> Result<()> {
     if !config.owner_reword_notice.as_deref().is_some_and(|notice| {
         !notice.trim().is_empty() && notice.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN
     }) {
-        return Err(Error::InvalidConfig("a reword row requires a bounded owner_reword_notice".into()));
+        return Err(Error::InvalidConfig(
+            "a reword row requires a bounded owner_reword_notice".into(),
+        ));
     }
     Ok(())
 }
@@ -49,11 +53,18 @@ impl Vault {
         if policy.read_frontier_hash()? != verdict.binding.read_frontier_hash {
             return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
         }
-        let row = policy.active_owner_policy_rows_for_scope(
-            request.world_ref.as_deref(), request.project_ref.as_deref(),
-        ).into_iter().find(|row| {
-            row.row_ref == *row_ref && row.action == OwnerRowAction::Reword && row.human.is_none()
-        }).ok_or(Error::Relay(RelayError::PolicyVerdictNotInForce))?;
+        let row = policy
+            .active_owner_policy_rows_for_scope(
+                request.world_ref.as_deref(),
+                request.project_ref.as_deref(),
+            )
+            .into_iter()
+            .find(|row| {
+                row.row_ref == *row_ref
+                    && row.action == OwnerRowAction::Reword
+                    && row.human.is_none()
+            })
+            .ok_or(Error::Relay(RelayError::PolicyVerdictNotInForce))?;
         Ok(Some(PolicyRewordRequest {
             row_ref: row.row_ref,
             constraint: row.text,

@@ -38,7 +38,11 @@ impl Vault {
         let current = SeenDial(
             DOMAINS
                 .iter()
-                .map(|domain| resolve_refusal(&definition, kind, *domain).as_str().to_owned())
+                .map(|domain| {
+                    resolve_refusal(&definition, kind, *domain)
+                        .as_str()
+                        .to_owned()
+                })
                 .collect(),
         );
         {

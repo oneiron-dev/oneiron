@@ -24,9 +24,9 @@ use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
 use oneiron_docedit::live::{
-    ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
-    Landing, LandingReceipt, LiveDeck, LiveError, NodeId, PreflightReport, StampedOp, land,
-    preflight, project,
+    ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate, Landing,
+    LandingReceipt, LiveDeck, LiveError, NodeId, PreflightReport, StampedOp, land, preflight,
+    project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -220,7 +220,11 @@ impl Vault {
     /// The deck fork's merge preflight against the live head: the three-way
     /// diff with its named conflicts, the replay onto the head, and the stale
     /// units.
-    pub fn pptx_body_fork_review(&self, artifact: &EntityId, fork: &EntityId) -> Result<PptxReview> {
+    pub fn pptx_body_fork_review(
+        &self,
+        artifact: &EntityId,
+        fork: &EntityId,
+    ) -> Result<PptxReview> {
         let txn = self.store.env.read_txn()?;
         let state = load_deck(&self.store, &txn, artifact)?;
         open_record(&self.store, &txn, artifact, fork)?;
@@ -304,8 +308,7 @@ impl Vault {
             self.docedit_package_limits()?,
         )
         .map_err(|_| invalid("the PPTX package could not be read"))?;
-        let outcome =
-            project(&state.deck, &package, &artifact.to_hex(), &profile).map_err(live)?;
+        let outcome = project(&state.deck, &package, &artifact.to_hex(), &profile).map_err(live)?;
         Ok(PptxExport {
             frontier: state.frontier(),
             authoritative: Gate::closed(&profile.name).is_open(),

@@ -30,7 +30,10 @@ impl Vault {
         )];
         if bundled {
             for (_, package) in bundled_skill_packages(source)? {
-                trees.push((package.content_hash()?, osv::dependency_inventory(&package)?));
+                trees.push((
+                    package.content_hash()?,
+                    osv::dependency_inventory(&package)?,
+                ));
             }
         }
         let mut receipts = Vec::new();

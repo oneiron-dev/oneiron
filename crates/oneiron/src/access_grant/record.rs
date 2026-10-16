@@ -430,9 +430,7 @@ impl AccessGrant {
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.capability == AccessGrantCapability::CompanionProfileRead
             && self.principal_ref.as_bytes() == principal_ref.as_bytes()
-            && self
-                .scope
-                .matches_companion_profile(person_ref, facet_ref)
+            && self.scope.matches_companion_profile(person_ref, facet_ref)
     }
 
     /// Returns the rung this grant discloses of `calendar_ref` to

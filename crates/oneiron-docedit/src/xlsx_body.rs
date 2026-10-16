@@ -262,8 +262,10 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             .ok_or(refused("no such worksheet"))?
             .clone();
         let (cells, areas) = book.sheet(&part)?;
-        let stored: BTreeMap<(u32, u32), &XlsxCell> =
-            cells.iter().map(|cell| ((cell.col, cell.row), cell)).collect();
+        let stored: BTreeMap<(u32, u32), &XlsxCell> = cells
+            .iter()
+            .map(|cell| ((cell.col, cell.row), cell))
+            .collect();
         for (row, line) in rows {
             for (col, change) in line {
                 let held = stored.get(&(*col, *row));
@@ -272,8 +274,15 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
                 {
                     return Err(refused("a change writes a read-only cell"));
                 }
-                let writes_formula = matches!(change, XlsxChange::Cell { formula: Some(_), .. });
-                dropped_formula |= held.is_some_and(|cell| cell.formula.is_some()) && !writes_formula;
+                let writes_formula = matches!(
+                    change,
+                    XlsxChange::Cell {
+                        formula: Some(_),
+                        ..
+                    }
+                );
+                dropped_formula |=
+                    held.is_some_and(|cell| cell.formula.is_some()) && !writes_formula;
             }
         }
         let bytes = rewrite_rows(&book.package, &part, rows)?;
@@ -314,16 +323,29 @@ pub fn mark_full_calc(bytes: &[u8], limits: Limits) -> Result<Vec<u8>> {
             None => {
                 let open = &source[node.span.start..node.open_end];
                 let end = node.open_end - if open.ends_with(b"/>") { 2 } else { 1 };
-                [&source[..end], &b" fullCalcOnLoad=\"1\""[..], &source[end..]].concat()
+                [
+                    &source[..end],
+                    &b" fullCalcOnLoad=\"1\""[..],
+                    &source[end..],
+                ]
+                .concat()
             }
         },
         None => {
             let at = insertion(
                 &tree,
-                &["sheets", "functionGroups", "externalReferences", "definedNames"],
+                &[
+                    "sheets",
+                    "functionGroups",
+                    "externalReferences",
+                    "definedNames",
+                ],
             )
             .ok_or(refused("the workbook has no sheet list"))?;
-            let element = format!("<{} fullCalcOnLoad=\"1\"/>", tree.nodes[0].child_name("calcPr"));
+            let element = format!(
+                "<{} fullCalcOnLoad=\"1\"/>",
+                tree.nodes[0].child_name("calcPr")
+            );
             [&source[..at], element.as_bytes(), &source[at..]].concat()
         }
     };
@@ -339,7 +361,9 @@ pub fn check_cell(value: &XlsxValue, formula: Option<&str>) -> Result<()> {
             || formula.starts_with('=')
             || formula.chars().count() > MAX_FORMULA_CHARS
     }) {
-        return Err(refused("a formula is 1 to 8,192 characters, without its `=`"));
+        return Err(refused(
+            "a formula is 1 to 8,192 characters, without its `=`",
+        ));
     }
     match value {
         XlsxValue::Number(number) if !number.is_finite() => Err(refused("a number must be finite")),
@@ -521,7 +545,9 @@ impl Book {
                 } else if node.attr("cm").is_some() {
                     locked.get_or_insert(XlsxLock::ArrayFormula);
                 }
-                let stored = tree.child(index, SML, "v")?.map(|(_, node)| node.text.clone());
+                let stored = tree
+                    .child(index, SML, "v")?
+                    .map(|(_, node)| node.text.clone());
                 let value = match (node.attr("t").unwrap_or("n"), stored) {
                     ("inlineStr", _) => match tree.child(index, SML, "is")? {
                         Some((item, _)) => XlsxValue::Text(string_item(&tree, item)),
@@ -599,7 +625,10 @@ impl Book {
             }
             if totals > 0 {
                 areas.push(XlsxArea {
-                    first: (range.first.0, (range.last.1 + 1).saturating_sub(totals).max(range.first.1)),
+                    first: (
+                        range.first.0,
+                        (range.last.1 + 1).saturating_sub(totals).max(range.first.1),
+                    ),
                     ..range
                 });
             }
@@ -649,7 +678,10 @@ impl Book {
                 XlsxChange::DeleteName { name, sheet } => (name, sheet, None),
                 XlsxChange::Cell { .. } => continue,
             };
-            let key = (name.to_lowercase(), local_sheet(&self.order, sheet.as_deref())?);
+            let key = (
+                name.to_lowercase(),
+                local_sheet(&self.order, sheet.as_deref())?,
+            );
             if pending.iter().any(|(held, _)| *held == key) {
                 return Err(refused("two changes write one name"));
             }
@@ -666,7 +698,10 @@ impl Book {
                 let local = node
                     .attr("localSheetId")
                     .and_then(|at| at.trim().parse::<usize>().ok());
-                match pending.iter().position(|(key, _)| key.0 == name && key.1 == local) {
+                match pending
+                    .iter()
+                    .position(|(key, _)| key.0 == name && key.1 == local)
+                {
                     Some(at) => {
                         if name.starts_with("_xlnm.") {
                             return Err(refused("a built-in name is read-only"));

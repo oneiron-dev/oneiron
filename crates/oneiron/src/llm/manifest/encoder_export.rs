@@ -32,7 +32,9 @@ impl CheckpointPin {
     pub fn verify_file(&self, path: &Path) -> Result<()> {
         valid_digest(&self.checkpoint_blake3)?;
         if self.checkpoint_blake3 != checkpoint_hash(path)? {
-            return Err(invalid("checkpoint artifact does not match its content pin"));
+            return Err(invalid(
+                "checkpoint artifact does not match its content pin",
+            ));
         }
         Ok(())
     }
@@ -257,7 +259,9 @@ fn checkpoint_hash(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() == 0 {
-        return Err(invalid("checkpoint must be a nonempty packed artifact file"));
+        return Err(invalid(
+            "checkpoint must be a nonempty packed artifact file",
+        ));
     }
     let mut hasher = blake3::Hasher::new();
     std::io::copy(&mut file, &mut hasher)?;

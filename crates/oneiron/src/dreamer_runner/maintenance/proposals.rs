@@ -55,7 +55,9 @@ pub(super) fn emit(
 ) -> Result<EntityId> {
     let envelope = run_tray_envelope(vault, facet, attempt)?;
     vault.with_write_txn_grouped(|txn| {
-        emit_in_txn(vault, txn, subject, predicate, value, evidence, &envelope, now)
+        emit_in_txn(
+            vault, txn, subject, predicate, value, evidence, &envelope, now,
+        )
     })
 }
 

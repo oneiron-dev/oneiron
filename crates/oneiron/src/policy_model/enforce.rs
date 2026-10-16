@@ -14,8 +14,9 @@ use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
 use super::notice::{
-    POLICY_MODEL_HELP_MESSAGE, SYSTEM_NOTICE_AUDIENCE_AUDIT, default_system_notice, host_notice_body,
-    policy_model_rationale_notice, policy_notice, safe_setting_change_offer, trusted_contact_notices,
+    POLICY_MODEL_HELP_MESSAGE, SYSTEM_NOTICE_AUDIENCE_AUDIT, default_system_notice,
+    host_notice_body, policy_model_rationale_notice, policy_notice, safe_setting_change_offer,
+    trusted_contact_notices,
 };
 use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
@@ -107,7 +108,10 @@ impl PolicyEnforcementAction {
     /// deliver.
     #[must_use]
     pub const fn halts(self) -> bool {
-        matches!(self, Self::Reword | Self::Block | Self::RouteToHelp | Self::Hold)
+        matches!(
+            self,
+            Self::Reword | Self::Block | Self::RouteToHelp | Self::Hold
+        )
     }
 }
 
@@ -515,7 +519,8 @@ impl Vault {
                     system_notices.clone(),
                 )?;
                 let held = self.hold_for_action_in_txn(&wtxn, action, &request, &verdict)?;
-                let reword = self.policy_reword_request_in_txn(&wtxn, &request, &verdict, config)?;
+                let reword =
+                    self.policy_reword_request_in_txn(&wtxn, &request, &verdict, config)?;
                 wtxn.commit()?;
                 (Some(receipt_ref), held, reword)
             }
@@ -551,11 +556,15 @@ impl Vault {
                 PolicyHelpRouting {
                     category: verdict.category.clone(),
                     message: host_notice_body(
-                        config.help_message.as_deref(), POLICY_MODEL_HELP_MESSAGE,
-                    ).to_owned(),
+                        config.help_message.as_deref(),
+                        POLICY_MODEL_HELP_MESSAGE,
+                    )
+                    .to_owned(),
                     diagnosis: None,
                     persona_present: true,
-                    resources: config.help_resources.iter()
+                    resources: config
+                        .help_resources
+                        .iter()
                         .filter_map(|resource| safe_setting_change_offer(Some(resource)))
                         .collect(),
                 }

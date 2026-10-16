@@ -5,9 +5,7 @@ use std::collections::{BTreeSet, HashMap};
 use loro::LoroDoc;
 
 use crate::Vault;
-use crate::authority::{
-    AuthorityFold, FederationGrantActivation, federation_grant_activation,
-};
+use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;

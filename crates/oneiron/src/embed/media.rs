@@ -177,7 +177,10 @@ impl Vault {
             }
             if kinds.contains(&InputKind::Text) {
                 for entity_type in TEXT_DOCUMENT_TYPES {
-                    for id in self.store.port_entity_ids_by_type(&rtxn, entity_type, None)? {
+                    for id in self
+                        .store
+                        .port_entity_ids_by_type(&rtxn, entity_type, None)?
+                    {
                         if pending.len() >= max_items {
                             break;
                         }
