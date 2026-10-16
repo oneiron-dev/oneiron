@@ -244,6 +244,31 @@ call_deadline_ms = 100   # 1..60000; ONEIRON_RECALL_CALL_DEADLINE_MS
 The default, 100 ms, is the ARCH-0042 #call-mode-budget bar: call-mode recall
 p95 at or under 100 ms server-side at 10k records.
 
+## This install's key slots: the `[keystore]` section
+
+A private world's key is wrapped to the machines that may read it. Each install
+keeps the seed of its own encryption key in a this-device-only keystore, never in
+the vault, a checkpoint, a backup or sync. `serve` installs one after it opens the
+vault:
+
+```toml
+[keystore]
+backend = "platform"            # or "off"; ONEIRON_KEYSTORE_BACKEND
+dir = "/var/lib/oneiron/keys"   # other Unix only; ONEIRON_KEYSTORE_DIR
+service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVICE
+```
+
+- On Apple systems the slots live in the data-protection keychain, marked
+  this-device-only and not synchronizable. That keychain needs a signed build with
+  a keychain access group; an unsigned build has no keystore.
+- On other Unix systems they are 0600 files in a 0700 directory, by default
+  `$XDG_STATE_HOME/oneiron/keys` (else `~/.local/state/oneiron/keys`). The
+  directory must lie outside the vault, and it carries a `CACHEDIR.TAG` so that
+  backup tools which honour the tag skip it.
+- Windows has no adapter yet.
+
+Without a keystore, serve still runs, and only the world-key doors refuse.
+
 ## Linear mirror host bridge (opt-in)
 
 The server starts a mirror pass only when both

@@ -336,7 +336,7 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         reviewer: &AuthenticatedOwner,
     ) -> Result<(), Error> {
-        if self.actor != reviewer.revalidate_in_txn(self.vault, txn)?
+        if self.actor != reviewer.revalidate_person_in_txn(self.vault, txn)?
             || self.actor_class != EdgeActorClass::Human
         {
             return Err(authority_denied(
