@@ -22,12 +22,17 @@ mod atom;
 mod default_vault;
 pub use default_vault::{DefaultVaultInput, DefaultVaultItem, compose_default_vault};
 mod guest;
+mod inspection;
 mod instrument;
 mod intent;
 pub use crate::claim::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
 pub use guest::LensExecutionRuntime;
+pub use inspection::{
+    INSPECTION_HANDLE_LEN, INSPECTION_HANDLE_VERSION, InspectionHandle, InspectionResolveRequest,
+    InspectionResolved, InspectionState, decode_inspection_handle, encode_inspection_handle,
+};
 pub use instrument::{InstrumentAtoms, InstrumentView, render_instrument};
 pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};
 mod generated_ui;
