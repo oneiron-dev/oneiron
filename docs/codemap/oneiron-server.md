@@ -125,7 +125,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade.rs` | src | m | 9 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | s | 1 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | XL | 1 crate-vis | — | — |
-| `src/api/facade/host_doors.rs` | src | m | 18 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 22 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/shared_act_doors.rs` | src | m | 13 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
@@ -316,7 +316,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/hook/recall.rs` | src | m | 2 crate-vis | — | Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints… |
 | `src/commands/host_init.rs` | src | s | 1 fn | — | Reference deployment scaffolding and explicit encryption provisioning |
 | `src/commands/host_re_root.rs` | src | s | 1 fn | — | `oneiron host re-root`: moves a stopped self-host vault's root to a new host secret, in-chain (OF-455) |
-| `src/commands/init.rs` | src | L | 1 fn | — | First-run embedder and tagger choices, using the same config and providers as serve |
+| `src/commands/init.rs` | src | L | 1 fn · 5 crate-vis | — | First-run embedder and tagger choices, using the same config and providers as serve |
 | `src/commands/local_servers.rs` | src | s | 11 crate-vis | — | The local servers running for this user, one runtime file each, so a client such as `oneiron hook` finds any… |
 | `src/commands/maintain.rs` | src | s | 1 fn | — | `maintain`: the owner's "run housekeeping now" on a stopped vault |
 | `src/commands/mcp_bridge.rs` | src | m | 1 fn | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
