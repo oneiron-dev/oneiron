@@ -43,12 +43,16 @@ declare namespace self {
   };
   const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
+  const grants: {
+    ask(input: { pr: string; scope: { kind: 'messages' | 'summaries' | 'relationship_claims'; space_ref: string } | { kind: 'companion_profile'; facet_ref?: string | null } }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       reads(input: { limit?: number | null }): Promise<unknown>;
       review(input: { request: string; approve: boolean }): Promise<unknown>;
     };
   };
+  const message: (input: { pr: string; text: string }) => Promise<unknown>;
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;
     callables(input: object): Promise<unknown>;
@@ -135,6 +139,10 @@ declare const vault: {
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
+  };
+  people: {
+    get(input: { pr: string }): Promise<unknown>;
+    list(input: { vault?: string | null; page?: number | null }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {

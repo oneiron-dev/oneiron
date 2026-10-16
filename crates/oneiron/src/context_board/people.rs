@@ -18,7 +18,7 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::{EdgeActorClass, TimeRange, Vault, WriteActor};
 
 /// Token budget of one vault's `people` rows in the cached prefix. Rows past
-/// it page out behind `more: +N`; `people.list` reads the further pages.
+/// it page out behind `more: +N`; `vault.people.list` reads the further pages.
 pub const PEOPLE_PREFIX_BUDGET_TOK: usize = 512;
 
 /// Derivation domain of the model PERSON an agent definition is born with.
@@ -292,7 +292,7 @@ impl People {
         }
     }
 
-    /// One page of the roster for `people.list`: `page` counts from zero, and
+    /// One page of the roster for `vault.people.list`: `page` counts from zero, and
     /// a page holds `size` persons in handle order.
     #[must_use]
     pub fn page(&self, page: usize, size: usize) -> (&[PersonRow], usize) {

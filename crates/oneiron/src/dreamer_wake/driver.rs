@@ -278,6 +278,8 @@ impl<'a> DreamerWakeDriver<'a> {
         crate::llm::resume_signalled_steps(self.vault, now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
+        // PEOPLE `about`: a person whose facts moved queues its lines anew.
+        crate::dreamer_consolidation::enqueue_person_about_on_wake(self.vault, now)?;
 
         Ok(())
     }
