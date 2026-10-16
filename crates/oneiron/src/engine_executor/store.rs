@@ -109,7 +109,7 @@ impl std::io::Write for ByteCount {
 /// A verb answer whose JSON is longer than this is stored as a body of the
 /// run, and the guest and the replay row get its handle: no reply passes one
 /// message, and no answer is refused for its size.
-pub(super) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
+pub(crate) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
 
 /// The guest's read path for a stored result body; `<path>/chunk/<offset>`
 /// reads up to [`RECOVERABLE_OUTPUT_CHUNK_BYTES`] from `offset`.
@@ -126,7 +126,7 @@ pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
 /// size, kind, completion and preview, and where to read it.
-pub(super) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
+pub(crate) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
     json!({
         "handle": output.handle,
         "bytes": output.raw_len,
@@ -447,7 +447,7 @@ pub(super) fn store_result_output_path(digest: &[u8; 32]) -> String {
 
 /// Whether `path` names a result of the run the guest may read back: a
 /// stored bridge result or a stored value.
-pub(super) fn is_result_output_path(path: &str) -> bool {
+pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
     };

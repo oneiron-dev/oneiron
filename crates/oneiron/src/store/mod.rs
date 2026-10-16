@@ -146,7 +146,9 @@ pub(crate) mod test_hooks;
 mod tests;
 
 #[cfg(unix)]
-pub(crate) use body_store::{BodyDir, BodyFacts, BodyMeter, BodySink, SunkBody, read_body_range};
+pub(crate) use body_store::{
+    BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, SunkBody, read_body_range,
+};
 pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
