@@ -22819,7 +22819,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 179,
+      "mod": 180,
       "re-export": 72
      }
     },
@@ -23145,6 +23145,33 @@
      "notable": [],
      "path": "src/linkedin_lead_preload/tests/source_binding.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LiveRow",
+      "LiveRows",
+      "LiveWaitedOut"
+     ],
+     "path": "src/live_rows.rs",
+     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…",
+     "surface": {
+      "const": 4,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/live_rows/tests.rs",
+     "purpose": "Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its…",
      "surface": {}
     },
     {
@@ -25550,9 +25577,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/mod.rs",
-     "purpose": "Ephemeral MESSAGE streams, bounded per vault, with transactional finality",
+     "purpose": "Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "re-export": 2
      }
@@ -25617,7 +25644,7 @@
      "path": "src/memory/witness/stream/types.rs",
      "purpose": "Public streaming vocabulary",
      "surface": {
-      "const": 3,
+      "const": 2,
       "enum": 7,
       "fn": 1,
       "struct": 4,
@@ -36631,8 +36658,8 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 14,
-      "fn": 14,
+      "crate-vis": 15,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -42945,6 +42972,13 @@
      "layout": "file+dir",
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
+    "live_rows": {
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
+    },
     "llm": {
      "files": 75,
      "impl_vault": true,
@@ -43564,8 +43598,8 @@
    },
    "over_bar": 50,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2614,
-   "test_files": 900
+   "source_files": 2615,
+   "test_files": 901
   },
   "oneiron-android": {
    "files": [
@@ -54941,13 +54975,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/byte_line.rs",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -56075,7 +56109,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/handler/app_tier.rs",
@@ -56119,7 +56153,7 @@
      "path": "src/handler/documents.rs",
      "purpose": "Per-entity selector admission and scope-filtered document delivery on the sync socket",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -56151,6 +56185,24 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/lag_resync.rs",
+     "purpose": "A socket that fell behind the shared fan-out is told again what it may have missed; it is never closed for…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/handler/lag_resync_tests.rs",
+     "purpose": "Lag never closes a socket (rule 5): a socket that fell behind the shared fan-out is told again what it may…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -56215,7 +56267,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/handler/window_row_tests.rs",
@@ -56309,7 +56361,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -56317,9 +56369,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/budget.rs",
-     "purpose": "Retained app state has both a session ceiling and a shared hub ceiling",
+     "purpose": "Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -56329,7 +56381,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -56347,7 +56399,7 @@
      "path": "src/livequery/error.rs",
      "purpose": "The HTTP facade error body on app frames",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -56387,7 +56439,7 @@
      "path": "src/livequery/production_tests.rs",
      "purpose": "Real vault, verified slips and production facade/source; no injected read source",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -56425,16 +56477,18 @@
      "path": "src/livequery/residence.rs",
      "purpose": "Grant-scoped home-node reads for opened-item devices",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/livequery/residence/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -56444,6 +56498,16 @@
      "purpose": "Private routing header for the EXISTING server broadcast channel and a socket's own reply queue",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/livequery/rule5_tests.rs",
+     "purpose": "Rule five at the live-query rows (census rows 20 to 24): past a row the next session or subscription waits…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -56481,7 +56545,7 @@
      "path": "src/livequery/subscriptions/mod.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -57636,7 +57700,7 @@
      "path": "src/protocol.rs",
      "purpose": "Custom Oneiron sync protocol — server-side extensions",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -57811,6 +57875,16 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/live_rows_tests.rs",
+     "purpose": "Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/server/message_stream.rs",
@@ -57826,7 +57900,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -57841,6 +57915,16 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/presence.rs",
+     "purpose": "The presence hub's charge on the server's retained-memory line (rule 5, census row 19)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -58490,7 +58574,7 @@
     "byte_line": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
@@ -58551,7 +58635,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 17,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58579,7 +58663,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -58663,7 +58747,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 18,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58707,8 +58791,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 371,
-   "test_files": 179
+   "source_files": 373,
+   "test_files": 182
   },
   "oneiron-spawn": {
    "files": [
