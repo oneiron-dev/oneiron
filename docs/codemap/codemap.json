@@ -13962,7 +13962,6 @@
      "notable": [
       "CriticReviewInput",
       "ReviewArtifactKind",
-      "ReviewHost",
       "ReviewRequest",
       "ReviewResult"
      ],
@@ -13972,9 +13971,8 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 1,
-      "re-export": 1,
-      "struct": 3,
-      "trait": 1
+      "re-export": 2,
+      "struct": 3
      }
     },
     {
@@ -13995,6 +13993,25 @@
      "purpose": "Transactional review bundles",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReviewDecisions",
+      "ReviewFinding",
+      "ReviewNote",
+      "ReviewNotes",
+      "ReviewWording"
+     ],
+     "path": "src/critic/review/questions.rs",
+     "purpose": "A review's typed questions: each lens asks its verdict, severity, scope and (when the lens has one) hard…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "struct": 4,
+      "trait": 1
      }
     },
     {
@@ -42617,7 +42634,7 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -43599,7 +43616,7 @@
    },
    "over_bar": 51,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2615,
+   "source_files": 2616,
    "test_files": 901
   },
   "oneiron-android": {
