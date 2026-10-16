@@ -176,6 +176,12 @@ impl OneironClient {
                 "vault.rooms.consent" => remote_agent_verb_output::<
                     oneiron::workspace_roster::JoinOutcome,
                 >(client, verb, &input),
+                "vault.conversations.turn.continue" => remote_agent_verb_output::<
+                    oneiron::conversation::TurnActionReceipt,
+                >(client, verb, &input),
+                "vault.conversations.turn.retry" => remote_agent_verb_output::<
+                    oneiron::conversation::TurnActionReceipt,
+                >(client, verb, &input),
                 "vault.rooms.host" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomStanding,
                 >(client, verb, &input),
@@ -854,6 +860,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.consent", value)
+    }
+    pub fn vault_conversations_turn_continue(
+        &self,
+        input: &oneiron::conversation::TurnActionRequest,
+    ) -> Result<oneiron::conversation::TurnActionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.conversations.turn.continue", value)
+    }
+    pub fn vault_conversations_turn_retry(
+        &self,
+        input: &oneiron::conversation::TurnActionRequest,
+    ) -> Result<oneiron::conversation::TurnActionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.conversations.turn.retry", value)
     }
     pub fn vault_rooms_host(
         &self,

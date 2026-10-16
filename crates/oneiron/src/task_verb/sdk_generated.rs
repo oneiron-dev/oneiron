@@ -221,6 +221,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.conversations.turn.continue",
+                crate::code_run::vault_read::request_schema::<crate::conversation::TurnActionRequest>(
+                ),
+            ),
+            (
+                "vault.conversations.turn.retry",
+                crate::code_run::vault_read::request_schema::<crate::conversation::TurnActionRequest>(
+                ),
+            ),
+            (
                 "vault.rooms.host",
                 crate::code_run::vault_read::request_schema::<RoomHostRequest>(),
             ),
@@ -750,6 +760,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.conversations.turn.continue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.conversations.turn.retry" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.host" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1038,6 +1062,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.consent" => {
             let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
         }
+        "vault.conversations.turn.continue" => {
+            let _input: crate::conversation::TurnActionRequest = decode(value.clone())?;
+        }
+        "vault.conversations.turn.retry" => {
+            let _input: crate::conversation::TurnActionRequest = decode(value.clone())?;
+        }
         "vault.rooms.host" => {
             let _input: RoomHostRequest = decode(value.clone())?;
         }
@@ -1182,6 +1212,12 @@ pub fn invoke(
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
+        "vault.conversations.turn.continue" => {
+            encode(vault_conversations_turn_continue(memory, decode(value)?)?)
+        }
+        "vault.conversations.turn.retry" => {
+            encode(vault_conversations_turn_retry(memory, decode(value)?)?)
+        }
         "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
@@ -1351,7 +1387,7 @@ pub fn tasks_create(
     input: TaskCreateRequest,
 ) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
     memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(
-        crate::companion_value_from_json(&input.spec)?,
+        crate::msgpack_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
         Some(memory.vault().now_recorded_at()),
@@ -1636,6 +1672,18 @@ pub fn vault_rooms_consent(
     input: crate::workspace_roster::ConsentAnswer,
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_consent(&input)
+}
+pub fn vault_conversations_turn_continue(
+    memory: &Memory<'_>,
+    input: crate::conversation::TurnActionRequest,
+) -> MemoryResult<crate::conversation::TurnActionReceipt> {
+    memory.conversations_turn_continue(&input)
+}
+pub fn vault_conversations_turn_retry(
+    memory: &Memory<'_>,
+    input: crate::conversation::TurnActionRequest,
+) -> MemoryResult<crate::conversation::TurnActionReceipt> {
+    memory.conversations_turn_retry(&input)
 }
 pub fn vault_rooms_host(
     memory: &Memory<'_>,

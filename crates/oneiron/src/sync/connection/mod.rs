@@ -220,6 +220,17 @@ impl SyncConnection {
         self.client()?.relay_sealed_windows().await
     }
 
+    /// Take in the signed authority entries the home holds and this machine
+    /// lacks (OF-469). See [`crate::sync::SyncClient::catch_up_authority`].
+    pub async fn catch_up_authority(&self) -> Result<usize, crate::sync::TransportError> {
+        if self.config.client_config.federation_peer.is_some() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "a federation lane takes no home authority history",
+            ));
+        }
+        self.client()?.catch_up_authority().await
+    }
+
     /// The thin index this device holds.
     pub fn residence_index(
         &self,

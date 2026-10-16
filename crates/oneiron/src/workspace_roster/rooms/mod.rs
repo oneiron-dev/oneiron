@@ -16,11 +16,13 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
+pub(in crate::workspace_roster) use history::thread_turns_in;
 pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
+pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;
@@ -129,6 +131,7 @@ pub struct RoomTurn {
 pub enum RoomTrunkItem {
     Origin(super::project::RoomOriginCard),
     Turn(RoomTurn),
+    Result(RoomTrunkHeader),
 }
 
 /// A delivered TASK's durable result, attached to its trunk on a room read.

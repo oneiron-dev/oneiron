@@ -690,6 +690,8 @@ fn mcp_agent_verb_input(
             Ok(input)
         }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.conversations.turn.continue" => a.spec.clone().ok_or_else(invalid),
+        "vault.conversations.turn.retry" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.sharing" => {
             let mut map = serde_json::Map::new();
@@ -933,6 +935,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "vault.rooms.consent" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.conversations.turn.continue" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.conversations.turn.retry" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.host" => {
@@ -1570,6 +1578,22 @@ async fn execute_agent_verb_listing(
             let input: oneiron::workspace_roster::ConsentAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_consent(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.conversations.turn.continue" => {
+            let input: oneiron::conversation::TurnActionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_conversations_turn_continue(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.conversations.turn.retry" => {
+            let input: oneiron::conversation::TurnActionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_conversations_turn_retry(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
