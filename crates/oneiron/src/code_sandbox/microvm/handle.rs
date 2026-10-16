@@ -20,9 +20,20 @@ pub struct GuestImage {
     pub component: PathBuf,
     /// Untrusted source passed to the canonical typed run-step export.
     pub source: String,
+    pub oci: Option<OciGuestImage>,
 }
 
+/// OCI variant of a guest. A microVM host maps this digest to its pinned
+/// bootable rootfs; the container backend runs the exact OCI image directly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OciGuestImage { pub image: String }
 impl GuestImage {
+    pub fn with_oci(mut self, image: &str) -> Result<Self> {
+        oneiron_container::ImageRef::pinned(image).map_err(|e| backend_error("oci", e.to_string()))?;
+        self.oci = Some(OciGuestImage { image: image.to_owned() });
+        Ok(self)
+    }
+
     #[must_use]
     pub fn new(
         kernel: impl Into<PathBuf>,
@@ -34,6 +45,7 @@ impl GuestImage {
             rootfs: rootfs.into(),
             component: component.into(),
             source: String::new(),
+            oci: None,
         }
     }
 
@@ -171,10 +183,11 @@ impl fmt::Debug for MicroVmHandle {
 }
 
 /// Result of one guest run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MicroVmExit {
     pub status: i32,
     pub overlay_dirty: bool,
+    pub result_json: Option<String>,
 }
 
 /// Resource ceiling applied to one guest run.
