@@ -26111,8 +26111,10 @@
      "notable": [
       "GraphAnswerer",
       "GraphAskFailure",
+      "GraphAskReceipts",
       "GraphAskResult",
       "GraphContextSource",
+      "GraphDecision",
       "GraphPrediction",
       "GraphTypeSelection",
       "GraphUnitContext"
@@ -26120,9 +26122,10 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 4,
-      "fn": 3,
-      "struct": 6,
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 5,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -26220,7 +26223,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -26241,7 +26244,7 @@
      "path": "src/llm/decision/questions/standing.rs",
      "purpose": "Explicit graph-unit backfill with same-snapshot authority and source pins",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -27323,7 +27326,7 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 12,
       "struct": 8
@@ -27806,7 +27809,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
       "re-export": 33
      }
@@ -59495,7 +59498,7 @@
      "path": "src/ai_host/local_vision.rs",
      "purpose": "The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -63085,6 +63088,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/decision_graph.rs",
+     "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -63105,7 +63118,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -66373,6 +66386,13 @@
      "layout": "file+dir",
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
+    "decision_graph": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question"
+    },
     "decision_host": {
      "files": 1,
      "impl_vault": false,
@@ -66600,7 +66620,7 @@
    },
    "over_bar": 26,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 467,
+   "source_files": 468,
    "test_files": 182
   },
   "oneiron-spawn": {
