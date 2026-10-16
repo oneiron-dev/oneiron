@@ -105,7 +105,8 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
-`local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
+`local-openai-compat`, `oneironer`, and the speech-only `cartesia` and
+`elevenlabs`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
@@ -784,6 +785,36 @@ withdrawn or its clone re-recorded while the call renders, it answers `409
 voice_withdrawn` and the audio is not returned. A call that names a voice
 names no `voice` param, and only a speech call names one.
 
+The speech seat also takes the hosted voice tiers, which are not
+OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`
+with its key in `x-api-key` and a `Cartesia-Version` header (`2026-08-14`
+unless `headers` names one). An `elevenlabs` provider speaks ElevenLabs'
+`POST /v1/text-to-speech/{voice}` with its key in `xi-api-key`. Either one
+serves the speech seat only, never a role or another media seat. Each call
+names a voice, typed or as the `voice` param (these wires have no default
+voice), is asked for raw 24 kHz PCM16, comes back as a WAV, and is charged
+its characters. Name the providers `cartesia` and `elevenlabs_flash` to
+share the clones the cascade's hosted adapters record.
+
+```toml
+[models.providers.cartesia]
+kind = "cartesia"
+base_url = "https://api.cartesia.ai"
+key_env = "CARTESIA_API_KEY"
+
+[models.providers.elevenlabs_flash]
+kind = "elevenlabs"
+base_url = "https://api.elevenlabs.io"
+key_env = "ELEVENLABS_API_KEY"
+
+[models.media.speech]
+rungs = ["cartesia:sonic-3.6", "elevenlabs_flash:eleven_flash_v2_5"]
+tiers = { "tts-live" = "cartesia:sonic-3.6" }
+```
+
+The shipped `tts_live` voice row is `own_server`, so a vault that speaks live
+on Cartesia sets that row's locality to `third_party`.
+
 The two-way voice cascade speaks and hears on these seats too. Bind voice
 tiers to rungs on the speech and transcribe seats:
 
@@ -850,6 +881,31 @@ on a 60-second clock, and queues no person. Only a Box contract is answered
 here. Each rung served and each pull (view,
 crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
 which rung each image got and whether the pixels were pulled afterwards.
+
+The same seat answers `ai.verdict` over an image: name its view handle as
+`"image"` (the question calls it `image`). The pixels are pulled through the
+caller's own scoped read, the image rides the receipt as an evidence ref
+with its body version, and the call starts at the Local rung on a run of its
+own. There the seat answers a Choice (`{"choice", "confidence"}`), a yes/no
+(`{"p_yes"}`) or, with `"locate": true`, a Box. A Score abstains. A rung
+above Local that reads no image is skipped.
+
+A code-mode program drives a routine browser or computer step through the
+same verb (the CUA-S1 pattern): `"routine": true` makes `options` the step's
+candidates (1 to 61), and the ladder also offers `NONE`, `reobserve` and
+`too complicated, ask up`. The answer gains an `outcome`: one of
+`{"outcome": "act", "candidate"}`, `{"outcome": "point", "x", "y", "found"}`
+(a routine Box's centre, as fractions of the image), `{"outcome": "none"}`,
+`{"outcome": "reobserve"}` or `{"outcome": "ask_up", "reason"}`. A routine
+step's Box that finds no target reads as `none`. A ladder abstain reads as
+`ask_up`, with the ladder's reason (uncertain, deadline, no rung). The
+program passes the count of NONE and reobserve outcomes in a row as
+`"misses"`, and `"screenshot": true` says the next observation takes a
+screenshot (the second miss in a row). One subgoal shares one clock: the
+answer's `until_ms` (Unix milliseconds) goes into the next step's request,
+so a reobserve or a retry never restarts it. One call still runs at most
+60 seconds. Name `"reversibility": "outbound_effect"` for a step whose
+effect leaves the vault: at a cut it abstains and goes up.
 
 ## 11. When a provider refuses for a limit
 

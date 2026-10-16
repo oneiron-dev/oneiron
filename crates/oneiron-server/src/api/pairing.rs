@@ -350,7 +350,7 @@ pub(super) fn register_live_paired_mcp(
     }
 }
 
-fn with_issuer<T>(
+pub(super) fn with_issuer<T>(
     server: &SyncServer,
     operation: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> Result<T, ApiError> {

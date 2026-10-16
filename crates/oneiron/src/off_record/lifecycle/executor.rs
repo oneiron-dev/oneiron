@@ -255,6 +255,19 @@ impl OffRecordSession<'_> {
         }
     }
 
+    /// A session-bound run's epoch summary on a route that went on record
+    /// (Docs Q17): `land` gets the base vault and the landing check its mint
+    /// runs first in its own transaction, the one every base write here runs.
+    /// An `Overlay` or `Discard` route refuses before `land` runs.
+    pub(crate) fn executor_land_base_epoch<T>(
+        &self,
+        route: &SessionWriteRoute,
+        land: impl FnOnce(&Vault, &dyn Fn(&heed::RoTxn<'_>) -> Result<()>) -> Result<T>,
+    ) -> Result<T> {
+        let (vault, landing) = self.base_write_vault(route)?;
+        land(vault, &|txn| landing.in_txn(txn))
+    }
+
     /// Write-path gate check for a session-bound code run's durable write.
     /// The gate's decision is a write too, so it lands only as the write
     /// would.

@@ -37,7 +37,7 @@ use base64::Engine as _;
 use super::{EMAIL_CHANNEL, GmailDelegatedAdapter, MAX_GMAIL_THREAD_ID_BYTES, validate_gmail_id};
 use crate::Vault;
 use crate::channel_identity_provider::native_mail::{
-    approve_canonical_mail_send_once, canonical_recipient,
+    approve_canonical_mail_send_once, canonical_mail_send_digest, canonical_recipient,
 };
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::entity_id::EntityId;
@@ -740,6 +740,58 @@ impl GmailDelegatedAdapter {
     ) -> Result<ConsentReceipt> {
         let (identity_ref, actor) = self.require_send_envelope(vault, request)?;
         approve_canonical_mail_send_once(vault, owner, request, identity_ref, actor)
+    }
+
+    /// One owner press for a REVIEWED BATCH: exact approvals for exactly the
+    /// enumerated sends, all minted in one transaction (ARCH-0046 "one press
+    /// for a reviewed batch").
+    ///
+    /// `reviewed_send_refs` is what the owner saw: the card's
+    /// `BundleExactSends` refs. The requests must be exactly those sends, one
+    /// each, every one this adapter's member send with a frozen plan. Each
+    /// gets its own canonical digest, so the press covers these sends and no
+    /// other: it mints no standing authority and is never converted into the
+    /// brief-wide grant the card's other scope choice would mint. Either every
+    /// approval lands or none does; an already-pressed send refuses the batch.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the requests are not exactly the reviewed
+    /// refs or any envelope is not this adapter's, plus the approve-once
+    /// door's owner and replay checks.
+    pub fn approve_send_batch(
+        &self,
+        vault: &Vault,
+        owner: &AuthenticatedOwner,
+        reviewed_send_refs: &[String],
+        requests: &[OutboundDispatchRequest],
+    ) -> Result<Vec<ConsentReceipt>> {
+        let mut reviewed = reviewed_send_refs.iter().map(String::as_str).collect::<Vec<_>>();
+        let mut requested = requests
+            .iter()
+            .map(|request| request.intent_ref.as_str())
+            .collect::<Vec<_>>();
+        reviewed.sort_unstable();
+        requested.sort_unstable();
+        if requests.is_empty()
+            || reviewed != requested
+            || requested.windows(2).any(|pair| pair[0] == pair[1])
+        {
+            return Err(Error::InvalidConfig(
+                "gmail batch approval must cover exactly the reviewed sends, once each".to_owned(),
+            ));
+        }
+        let mut digests = Vec::with_capacity(requests.len());
+        for request in requests {
+            let (identity_ref, actor) = self.require_send_envelope(vault, request)?;
+            digests.push(canonical_mail_send_digest(request, identity_ref, actor)?);
+        }
+        vault.with_write_txn_grouped(|wtxn| {
+            digests
+                .into_iter()
+                .map(|digest| vault.approve_once_in_txn(wtxn, owner, digest))
+                .collect()
+        })
     }
 
     /// Dispatches one member send through the recorded dispatch door, then

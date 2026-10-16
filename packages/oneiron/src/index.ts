@@ -134,6 +134,7 @@ export class Oneiron {
       diary: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown), {
         reads: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReads(input) as unknown),
         review: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReview(input) as unknown),
+        query: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as unknown),
       }),
     },
     skills: {
@@ -211,9 +212,27 @@ export class Oneiron {
     },
     authority: {
       audit: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityAudit(input) as unknown),
+      handoff_alarms: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as unknown), {
+        acknowledge: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as unknown),
+      }),
     },
     inspection: {
       resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultInspectionResolve(input) as unknown),
+    },
+    shared: {
+      propose_delete: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeDelete(input) as unknown),
+      propose_transfer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeTransfer(input) as unknown),
+      propose_remove_owner: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeRemoveOwner(input) as unknown),
+      execute: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedExecute(input) as unknown),
+      receipt: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedReceipt(input) as unknown),
+      outcomes: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedOutcomes(input) as unknown),
+      deletion: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedDeletion(input) as unknown),
+    },
+    members: {
+      add: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersAdd(input) as unknown),
+      change: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersChange(input) as unknown),
+      remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
+      leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
     },
     lenses: {
       propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
@@ -238,6 +257,8 @@ export class Oneiron {
       waits: (request: ArtifactRefRequest): OrganWaitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsWaits(keyedJson(request))) as OrganWaitView[]; return result.map(item => item) }),
       /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
       release_wait: (request: ProposalSettleRequest): ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as ReleasedWait; return result }),
+      /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
+      review_slides: (request: SlideReviewSubmit): SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as SlideReviewOutcome; return result }),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
@@ -262,11 +283,18 @@ export class Oneiron {
       reply_strips: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as unknown),
       claim: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
+      join: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsJoin(input) as unknown),
+      consent: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsConsent(input) as unknown),
       host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
     projects: {
+      propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsPropose(input) as unknown),
+      proposals: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsProposals(input) as unknown),
+      dismiss_card: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsDismissCard(input) as unknown),
+      confirm: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsConfirm(input) as unknown),
       goal: {
+        intake: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as unknown),
         revisions: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalRevisions(input) as unknown),
         dismiss: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalDismiss(input) as unknown),
       },
