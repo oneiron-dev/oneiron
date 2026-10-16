@@ -9374,7 +9374,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 5,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -9547,7 +9547,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "StoredWeaveDigest",
@@ -9556,11 +9556,12 @@
       "WeaveDigestSchedule"
      ],
      "path": "src/claim/scoped_read/weave_digest.rs",
-     "purpose": "Host-triggered, per-reader report schedules",
+     "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
-      "crate-vis": 1,
+      "const": 1,
+      "crate-vis": 2,
       "enum": 2,
-      "fn": 4,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -9599,6 +9600,29 @@
      "path": "src/claim/scoped_read/weave_report/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveDigestRequest",
+      "WeaveDigestView",
+      "WeaveItemView",
+      "WeaveReaderKind",
+      "WeaveReaderRef",
+      "WeaveReportRequest",
+      "WeaveReportView",
+      "WeaveScheduleView",
+      "WeaveSectionInput",
+      "WeaveSectionView"
+     ],
+     "path": "src/claim/scoped_read/weave_serve.rs",
+     "purpose": "The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the…",
+     "surface": {
+      "enum": 2,
+      "fn": 5,
+      "struct": 8
+     }
     },
     {
      "bucket": "m",
@@ -10337,9 +10361,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 4,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -10377,6 +10401,71 @@
       "enum": 1,
       "fn": 20,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/chunks.rs",
+     "purpose": "`chunks`: a result cut into range refs, a page at a time",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResultFacet"
+     ],
+     "path": "src/code_run/result_read/mod.rs",
+     "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 13,
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/query.rs",
+     "purpose": "`query`: the values a JSON path picks out of a result, or the rows of a line table (JSON lines, CSV, TSV)…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/search.rs",
+     "purpose": "`search`: the matches of a literal (by default) or a regex in a result, each with its offset, line and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/shape.rs",
+     "purpose": "The shape a result's head shows of its format, for its card and for the way `query` reads it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/slice.rs",
+     "purpose": "`slice`: one range of a result's body, by bytes or by lines, at most one reply of it, with where to go on from",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -10461,7 +10550,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -11231,7 +11320,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
@@ -16275,7 +16364,7 @@
      "purpose": "A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 2
      }
@@ -19621,6 +19710,7 @@
       "JsCodeModeStream",
       "JsResultCall",
       "JsResultRef",
+      "JsResultTarget",
       "SelfDispatchResponse"
      ],
      "path": "src/engine_executor/types.rs",
@@ -19629,8 +19719,8 @@
       "const": 6,
       "crate-vis": 3,
       "enum": 5,
-      "fn": 6,
-      "struct": 8,
+      "fn": 7,
+      "struct": 9,
       "trait": 2,
       "type": 1
      }
@@ -27486,7 +27576,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 11,
       "struct": 5
      }
@@ -39042,7 +39132,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -42947,7 +43037,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 118
+      "fn": 120
      }
     },
     {
@@ -47241,7 +47331,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47283,7 +47373,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 48,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47292,7 +47382,7 @@
     "code_sandbox": {
      "files": 40,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
@@ -48522,9 +48612,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 92,
+   "over_bar": 95,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2924,
+   "source_files": 2931,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56032,7 +56122,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 100
+      "fn": 102
      }
     },
     {
@@ -57031,7 +57121,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 101
+      "fn": 103
      }
     },
     {
@@ -59772,7 +59862,7 @@
      "path": "src/api/mcp_gateway/exec_board_verbs.rs",
      "purpose": "Execute-code and board-verb executors",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -60109,6 +60199,16 @@
      "notable": [],
      "path": "src/api/owner_routes/space_posting_routes.rs",
      "purpose": "`/v1/owner/space-posting`: the per-space ghost-mode dial (ARCH-0063 R10, INB-08)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/weave_routes.rs",
+     "purpose": "`/v1/owner/weave`: the owner's doors to the weave lens (OF-499)",
      "surface": {
       "crate-vis": 1
      }
@@ -63056,6 +63156,8 @@
       "McpCacheHint",
       "McpExecuteCodeToolArgs",
       "McpPageRequest",
+      "McpReadResultToolArgs",
+      "McpResultFacet",
       "McpSetupToolArgs",
       "McpVerbArguments",
       "McpVerbToolArgs",
@@ -63065,8 +63167,9 @@
      "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
      "surface": {
       "crate-vis": 3,
-      "fn": 3,
-      "struct": 7
+      "enum": 1,
+      "fn": 4,
+      "struct": 8
      }
     },
     {
@@ -63077,7 +63180,7 @@
      "purpose": "JSON schemas for endpoint tools: setup, execute-code, paging, and verbs",
      "surface": {
       "const": 5,
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -63253,7 +63356,7 @@
      "path": "src/mcp/surface.rs",
      "purpose": "MCP endpoint surface: modes, verb bindings, and the registered tool listing",
      "surface": {
-      "const": 14,
+      "const": 15,
       "crate-vis": 10,
       "enum": 4,
       "fn": 16,
@@ -65057,7 +65160,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 238,
+     "files": 239,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65346,7 +65449,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 451,
+   "source_files": 452,
    "test_files": 182
   },
   "oneiron-spawn": {
