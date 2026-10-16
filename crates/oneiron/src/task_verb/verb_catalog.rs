@@ -44,6 +44,7 @@ pub enum AgentVerb {
     VaultRoomsFind,
     VaultRoomsGet,
     VaultRoomsTrunk,
+    VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
     VaultConversationsTurnContinue,
@@ -143,6 +144,7 @@ impl AgentVerb {
         Self::VaultRoomsFind,
         Self::VaultRoomsGet,
         Self::VaultRoomsTrunk,
+        Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
         Self::VaultConversationsTurnContinue,
@@ -245,6 +247,7 @@ impl AgentVerb {
             Self::VaultRoomsFind => "vault.rooms.find",
             Self::VaultRoomsGet => "vault.rooms.get",
             Self::VaultRoomsTrunk => "vault.rooms.trunk",
+            Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
@@ -343,6 +346,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
                 | Self::VaultRoomsTrunk
+                | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultConversationsTurnContinue
@@ -449,6 +453,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
                 | Self::VaultRoomsTrunk
+                | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultConversationsTurnContinue
@@ -525,6 +530,7 @@ impl AgentVerb {
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
+                | Self::VaultRoomsReplyStrips
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
                 | Self::VaultCommit
@@ -586,6 +592,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
                 | Self::VaultRoomsTrunk
+                | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultConversationsTurnContinue
@@ -748,6 +755,7 @@ impl AgentVerb {
             Self::VaultRoomsFind => &["room_ref", "turn_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
+            Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::VaultConversationsTurnContinue => &["spec"],
@@ -848,6 +856,7 @@ impl AgentVerb {
             Self::VaultRoomsFind => &["room_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
+            Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::VaultConversationsTurnContinue => &["spec"],

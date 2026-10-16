@@ -205,6 +205,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RoomTurnRequest>(),
             ),
             (
+                "vault.rooms.reply_strips",
+                crate::code_run::vault_read::request_schema::<
+                    crate::conversation_dag::ReplyStripsRequest,
+                >(),
+            ),
+            (
                 "vault.rooms.claim",
                 crate::code_run::vault_read::request_schema::<RoomClaimRequest>(),
             ),
@@ -804,6 +810,13 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["room_ref", "turn_ref"]
         }
+        "vault.rooms.reply_strips" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.claim" => {
             properties.insert(
                 "room_ref".to_owned(),
@@ -1267,6 +1280,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.trunk" => {
             let _input: RoomTurnRequest = decode(value.clone())?;
         }
+        "vault.rooms.reply_strips" => {
+            let _input: crate::conversation_dag::ReplyStripsRequest = decode(value.clone())?;
+        }
         "vault.rooms.claim" => {
             let _input: RoomClaimRequest = decode(value.clone())?;
         }
@@ -1503,6 +1519,7 @@ pub fn invoke(
         "vault.rooms.find" => encode(vault_rooms_find(memory, decode(value)?)?),
         "vault.rooms.get" => encode(vault_rooms_get(memory, decode(value)?)?),
         "vault.rooms.trunk" => encode(vault_rooms_trunk(memory, decode(value)?)?),
+        "vault.rooms.reply_strips" => encode(vault_rooms_reply_strips(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
         "vault.conversations.turn.continue" => {
@@ -1965,6 +1982,12 @@ pub fn vault_rooms_trunk(
         crate::EntityId::from_hex(&input.room_ref)?,
         crate::EntityId::from_hex(&input.turn_ref)?,
     )
+}
+pub fn vault_rooms_reply_strips(
+    memory: &Memory<'_>,
+    input: crate::conversation_dag::ReplyStripsRequest,
+) -> MemoryResult<crate::conversation_dag::ReplyStripsPage> {
+    memory.rooms_reply_strips(&input)
 }
 pub fn vault_rooms_claim(
     memory: &Memory<'_>,
