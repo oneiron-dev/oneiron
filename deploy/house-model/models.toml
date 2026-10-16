@@ -1,0 +1,42 @@
+# The house model's [models] block (OF-129). Merge it into oneiron.toml.
+#
+# Two servers, one per GPU (README.md):
+#   exl3   Qwen3.8-27B EXL3 4 bpw + DFlash2 draft at depth 7, serve-exl3.sh
+#   llama  the same 27B as Q4_K_M on llama.cpp, serve-llama.sh
+# Generation seats try exl3 first and fall back to llama. The local reasoner
+# is llama alone: decide()'s decision read needs llama.cpp's native API.
+
+[models]
+# The Dreamer extracts over HTTP only with this opt-in, even to this machine
+# (docs/ops/run-with-models.md section 3). Uncomment to let it work.
+# extraction_egress = true
+
+[models.providers.exl3]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:18091"
+response_format = "none"        # the ruled recipe runs without a schema (RESEARCH-1232)
+context_tokens = 32768
+revision = "qwen3.8-27b-exl3-4bpw-dflash2-d7"
+
+[models.providers.llama]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:18134"
+context_tokens = 32768
+revision = "qwen3.8-27b-q4km"   # part of the decision read's pinned revision
+
+[models.roles.generative_reasoner]
+rungs = [{ model = "exl3:qwen3.8-27b" }, { model = "llama:qwen3.8-27b" }]
+
+[models.roles.checker]
+rungs = [{ model = "exl3:qwen3.8-27b" }, { model = "llama:qwen3.8-27b" }]
+
+[models.roles.dreamer_current]
+rungs = [{ model = "exl3:qwen3.8-27b" }, { model = "llama:qwen3.8-27b" }]
+
+[models.roles.local_reasoner]
+model = "llama:qwen3.8-27b"
+
+# The decision read's recipe is your prompt package, not the server's
+# (docs/ops/run-with-models.md section 9). Point at it to turn the read on.
+# [models.decision_read]
+# recipe = "prompts/decision-read/recipe.toml"

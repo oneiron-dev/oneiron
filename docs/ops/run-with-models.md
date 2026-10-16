@@ -74,12 +74,17 @@ key_env = "ANTHROPIC_API_KEY"
 
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
-the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
-tokens), served by an exllamav3 OpenAI-compatible server with no schema:
+the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, at
+depth 7, the owner's ruling of 2026-10-16 for every workload), served by an
+exllamav3 OpenAI-compatible server with no schema:
 its provider sets `response_format = "none"`, so a JSON call goes out with
 no `response_format`. The fallback is llama.cpp `llama-server` on
 `Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
-(`--spec-type draft-simple --spec-draft-n-max 8`). The Dreamer's extraction
+(`--spec-type draft-simple --spec-draft-n-max 8`). `deploy/house-model/`
+ships both servers, one per GPU, as systemd units, and the `[models]` block
+that binds them (`models.toml`): the generative seats try EXL3 first and fall
+back to llama.cpp, and `local_reasoner` is the llama.cpp server alone, so the
+decision read (section 9) runs on the house weights. The Dreamer's extraction
 call sends no schema on any provider: a grammar built from one can strip the
 claim fields, so the engine checks the answer against the extraction
 contract itself, and an answer that breaks it is refused. Other JSON calls,
@@ -208,8 +213,9 @@ policy: extraction and narrative under `extraction`, the verdict under
 (`own_server`) OpenAI-compatible server is sent the level as
 `reasoning_effort` and in `chat_template_kwargs`, and the budget as
 `reasoning_budget_tokens` (llama.cpp reads all three per request; an
-exllamav3 server that renders `chat_template_kwargs` gets the level, not the
-budget). A hosted provider gets `reasoning_effort` alone. A model whose
+exllamav3 server that renders `chat_template_kwargs` gets the level; the
+house EXL3 server in `deploy/house-model/` reads the budget too, and closes the
+thought at it). A hosted provider gets `reasoning_effort` alone. A model whose
 provider does not declare `reasoning`, or a ladder with a rung that does not,
 takes no reasoning controls, so its calls are pinned to `none`; declare
 `reasoning` on a hosted provider whose model accepts `reasoning_effort`.
