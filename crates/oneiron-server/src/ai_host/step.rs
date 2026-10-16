@@ -9,13 +9,14 @@ use std::collections::{BTreeMap, HashMap};
 
 use std::sync::{Arc, Mutex};
 
+use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, agent_dispatch_actor};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
 };
 
 use super::CHAT_ROLE;
@@ -37,6 +38,16 @@ pub(super) struct StepRunner {
     /// follows: the next try replays exactly that. Held only while a retry
     /// may follow, and only in this process.
     pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
+}
+
+/// One model-backed step, with instructions supplied by its stored definition.
+pub(super) struct ModelStep<'a> {
+    pub(super) definition: &'a AgentDefinition,
+    pub(super) attempt: &'a AttemptRecord,
+    pub(super) actor: WriteActor,
+    pub(super) purpose: &'a str,
+    pub(super) messages: Vec<LlmMessage>,
+    pub(super) response_format: ResponseFormat,
 }
 
 /// Why a step did not produce its output, and whether a later try of the
@@ -103,12 +114,40 @@ impl StepRunner {
         if !messages.iter().any(|m| m.role == LlmMessageRole::User) {
             messages.push(message(LlmMessageRole::User, definition.desc.clone()));
         }
+        self.generate(
+            runtime,
+            vault,
+            ModelStep {
+                definition,
+                attempt: &step.attempt,
+                actor: agent_dispatch_actor(&step.input)?,
+                purpose: STEP_PURPOSE,
+                messages,
+                response_format: ResponseFormat::Text,
+            },
+        )
+    }
+
+    pub(super) fn generate(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        vault: &Vault,
+        input: ModelStep<'_>,
+    ) -> Result<Vec<u8>, StepFault> {
+        let ModelStep {
+            definition,
+            attempt,
+            actor,
+            purpose,
+            messages,
+            response_format,
+        } = input;
         let seat = self
             .models
             .seat(CHAT_ROLE)
             .ok_or_else(|| Error::InvalidConfig("no [models] rung serves workflow steps".into()))?;
-        let purpose = CallPurpose::Other {
-            name: STEP_PURPOSE.to_owned(),
+        let call_purpose = CallPurpose::Other {
+            name: purpose.to_owned(),
         };
         let request = LlmRequest {
             model: seat.model.clone(),
@@ -121,15 +160,15 @@ impl StepRunner {
                 // on the device while any world stays on it.
                 scope: Default::default(),
                 tier: TierPrecedence::for_purpose(
-                    &purpose,
+                    &call_purpose,
                     definition
                         .model_tier
                         .clone()
-                        .unwrap_or_else(|| ModelTierRef(STEP_PURPOSE.to_owned())),
+                        .unwrap_or_else(|| ModelTierRef(purpose.to_owned())),
                 ),
-                purpose,
+                purpose: call_purpose,
                 class: CallClass::BestEffort,
-                response_format: ResponseFormat::Text,
+                response_format,
                 locality: seat.locality,
             },
             messages,
@@ -155,8 +194,8 @@ impl StepRunner {
         // an estimate, exact only when every earlier rung went out metered on
         // the same ladder and routes.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
-        let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
-        let carried = step.attempt.retry_of.and_then(|parent| {
+        let earlier = AttemptQueue::new(vault).retry_chain_depth(attempt.id)?;
+        let carried = attempt.retry_of.and_then(|parent| {
             self.spent
                 .lock()
                 .expect("step spend mutex poisoned")
@@ -164,14 +203,14 @@ impl StepRunner {
         });
         let run_id = format!(
             "workflow-step:{}",
-            oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
+            oneiron::EntityId::from_bytes(*attempt.id.as_bytes())?.to_hex()
         );
         let guard = vault.policy_budget_guard(
             run_id.clone(),
             self.budget_units,
             reserve,
             BudgetExhaustionPolicy::Suspend,
-            agent_dispatch_actor(&step.input)?,
+            actor,
         )?;
         let budget = |denied: oneiron::llm::BudgetDenied| {
             Error::InvalidConfig(format!("workflow step budget: {denied:?}"))
@@ -199,7 +238,7 @@ impl StepRunner {
                     self.spent
                         .lock()
                         .expect("step spend mutex poisoned")
-                        .insert(step.attempt.id, chain);
+                        .insert(attempt.id, chain);
                 }
                 return Err(StepFault {
                     retryable,

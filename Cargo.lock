@@ -8485,6 +8485,7 @@ dependencies = [
  "oneiron-code-check",
  "oneiron-driver",
  "oneiron-keystore",
+ "oneiron-linear",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
  "oneiron-remote",
