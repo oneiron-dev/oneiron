@@ -154,6 +154,18 @@ side_tables! {
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
     /// id16.
     DREAMER_REPRESENTATION_PROPOSAL: VaultMeta b"dreamer:representation:v1:proposal:" LegacyJson;
+    /// OF-490: the resident one dreaming attempt runs as, its own stamp, and the Gate receipt that
+    /// admitted it. Key: id16 (attempt).
+    DREAMER_RESIDENT_ATTEMPT: VaultMeta b"dreamer:resident:attempt:v1:" Named;
+    /// OF-490: the diary entry one resident dreaming attempt landed, so a replay writes none.
+    /// Key: id16 (attempt).
+    DREAMER_RESIDENT_LANDED: VaultMeta b"dreamer:resident:landed:v1:" Named;
+    /// OF-490: a sealed scratchpad a resident's dreaming already read. Value: one byte. Key:
+    /// id16 (resident) + id16 (pad).
+    DREAMER_RESIDENT_PADS: VaultMeta b"dreamer:resident:pads:v1:" Raw;
+    /// OF-490: what a resident's dreaming has read so far: newest receipt and INBOX times, last
+    /// dreaming, entries written. Key: id16 (resident).
+    DREAMER_RESIDENT_PROGRESS: VaultMeta b"dreamer:resident:progress:v1:" Named;
     /// Parent/child attempt-tree edge row (parent_attempt, created_at) keyed by attempt id. Key:
     /// id16.
     DREAMER_RUN_TREE: VaultMeta b"dreamer:run_tree:" Raw;

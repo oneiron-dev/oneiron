@@ -528,6 +528,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         attempt: &crate::dreamer_runner::DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
+        // A resident dreams under its own stamp on the model its host lends
+        // it (OF-490); this Dreamer-bound executor never runs it.
+        if attempt.status.payload.attempt_type
+            == crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: "resident dreaming needs its host's model".to_owned(),
+            });
+        }
         if self.actor
             != ctx
                 .vault

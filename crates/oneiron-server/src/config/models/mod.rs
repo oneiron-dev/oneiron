@@ -94,6 +94,8 @@ struct DreamerFile {
     pass_budget_units: Option<u64>,
     summary_prompt: Option<String>,
     summary_prompt_file: Option<PathBuf>,
+    resident_prompt: Option<String>,
+    resident_prompt_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -217,6 +219,9 @@ pub struct DreamerSettings {
     /// Without one, summary declarations are refused (ARCH-0006a: only the
     /// Dreamer writes a summary body).
     pub summary_instruction: Option<String>,
+    /// The instruction each resident's own dreaming writes its diary entry
+    /// with (OF-490). Without one, no resident dreams.
+    pub resident_instruction: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -325,6 +330,12 @@ impl ModelsFile {
                 "models.dreamer.summary_prompt",
                 self.dreamer.summary_prompt,
                 self.dreamer.summary_prompt_file,
+                base,
+            )?,
+            resident_instruction: levels::prompt_text(
+                "models.dreamer.resident_prompt",
+                self.dreamer.resident_prompt,
+                self.dreamer.resident_prompt_file,
                 base,
             )?,
         };
