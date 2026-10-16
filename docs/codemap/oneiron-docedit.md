@@ -18,7 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deck/fingerprint.rs` | src | s | 2 crate-vis | — | Content and render fingerprints |
 | `src/deck/fixture.rs` | src | s | 8 crate-vis | — | A synthetic ECMA-376 deck builder shared by the deck, design-plan and emission tests: the package plumbing… |
 | `src/deck/graph.rs` | src | s | 14 crate-vis | — | The deck's part graph: relationship targets resolved to part names, and the presentation, slide, layout… |
-| `src/deck/mod.rs` | src | m | 15 struct · 7 enum · 4 fn · 1 const · 3 re-export · 2 crate-vis | Affine, Ambiguity, Autofit, BodyView, Bullet, DeckError, DeckView, Dependency +14 | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
+| `src/deck/mod.rs` | src | m | 15 struct · 7 enum · 5 fn · 1 const · 3 re-export · 2 crate-vis | Affine, Ambiguity, Autofit, BodyView, Bullet, DeckError, DeckView, Dependency +14 | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
 | `src/deck/resolve.rs` | src | m | 15 crate-vis | — | The four property-specific resolvers (geometry, text body, paragraph, run) |
 | `src/deck/shapes.rs` | src | s | 3 crate-vis | — | The shape walk: every shape in document order with its identity evidence, placeholder, resolved geometry and… |
 | `src/deck/template.rs` | src | s | 4 struct · 1 enum · 1 fn | LayoutView, MasterView, Spacing, TemplateView, TextStyle | The template reader: masters and their layouts, each placeholder with its resolved geometry and the… |
