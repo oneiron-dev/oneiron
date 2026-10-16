@@ -175,7 +175,15 @@ export type TemporalHint = {
 }
 
 /** Retrieval accounting. */
+export type RerankReport =
+  | { status: "applied"; model: string; served_model?: string; candidates: number; calls: number }
+  | { status: "skipped"; reason: "no_reranker" | "no_candidates" | "deadline" | "device_only" }
+
 export type RetrievalMeta = {
+  quality: "full" | "degraded" | "passthrough"
+  degradation: ("ppr_cache_miss" | "embedding_timeout" | "bm25_stale" | "temporal_signal_skipped")[]
+  confidenceAdjustment: number
+  rerank?: RerankReport
   partial: boolean
   sparse?: boolean
   totalCandidates: number
