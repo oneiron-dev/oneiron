@@ -645,6 +645,8 @@ class Oneiron:
             self._client = client
         def get(self, spec):
             return json.loads(_translate(lambda: self._client.vault_companions_sharing_get(json.dumps(spec))))
+        def set(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

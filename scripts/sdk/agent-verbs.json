@@ -1599,6 +1599,21 @@
       "section": false
     },
     {
+      "name": "vault.companions.sharing.set",
+      "input": "CompanionSharingSetRequest",
+      "output": "crate::workspace_roster::CompanionSharingView",
+      "call": "memory.companion_sharing_set(&input.target()?, &input.proposal_ref, &input.delta()?)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.workspace.work_companion.get",
       "input": "WorkspaceRefRequest",
       "output": "crate::workspace_roster::WorkCompanionPolicy",

@@ -111,6 +111,7 @@ declare const vault: {
   companions: {
     sharing: {
       get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
+      set(input: { companion_ref: string; contact_ref: string; expected_delta: string; proposal_ref: string }): Promise<unknown>;
     };
   };
   conversations: {

@@ -968,6 +968,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_companions_sharing_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.companions.sharing.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_workspace_work_companion_get(
         &self,
         input: serde_json::Value,

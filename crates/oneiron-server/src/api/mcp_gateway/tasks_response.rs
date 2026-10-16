@@ -744,6 +744,7 @@ fn mcp_agent_verb_input(
             Ok(Value::Object(map))
         }
         "vault.companions.sharing.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.companions.sharing.set" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.work_companion.get" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.work_companion.set" => a.spec.clone().ok_or_else(invalid),
         "self.skills.save" => a.spec.clone().ok_or_else(invalid),
@@ -1142,6 +1143,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "vault.companions.sharing.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.companions.sharing.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.workspace.work_companion.get" => {
@@ -2342,6 +2346,14 @@ async fn execute_agent_verb_listing(
             let input: oneiron::task_verb::sdk::CompanionSharingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_companions_sharing_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.companions.sharing.set" => {
+            let input: oneiron::task_verb::sdk::CompanionSharingSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_companions_sharing_set(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
