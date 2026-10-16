@@ -14,6 +14,9 @@ use crate::{Vault, VaultConfig};
 
 const SOURCE: HistorySource = HistorySource::ClaudeCode;
 const IMPORTED_AT: u64 = 1_800_000_000;
+/// A plain witness happens in the past: the witness door refuses a time past
+/// the store clock's skew (F30), and `IMPORTED_AT` is ahead of today.
+const WITNESSED_AT: u64 = 1_700_000_000;
 
 fn vault_and_owner() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -442,7 +445,7 @@ fn an_import_never_lands_in_a_plain_conversation_at_its_derived_id() {
                 is_visible: true,
                 order: 0,
             }],
-            occurred_at: IMPORTED_AT,
+            occurred_at: WITNESSED_AT,
         })
         .expect("plain witness");
 

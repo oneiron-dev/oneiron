@@ -216,6 +216,16 @@ pub(crate) async fn context_board_hydrate(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
+    if let Some(retrieval) = &mut req.retrieval {
+        retrieval.check_query_bytes(
+            &server,
+            &auth,
+            crate::server::QueryDoor::ContextBoard,
+            "retrieval.query",
+        )?;
+        // The MEMORIES slot defaults derive from the served limit.
+        retrieval.clamp_limits();
+    }
     let board_turn = board_turn_target(&server, &auth, req.turn.as_ref())?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing

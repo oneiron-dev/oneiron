@@ -11,7 +11,7 @@ use crate::memory::support::{
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -120,6 +120,12 @@ impl Memory<'_> {
             end: input.occurred_at,
         };
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
+        // A TURN's learned time feeds the consolidation watermark: this door
+        // holds it to the witness door's clock ceiling (F30).
+        if type_byte == ENTITY_TYPE_TURN {
+            let now = self.vault.store.clock.now_recorded_at();
+            crate::memory::witness::validate_witness_occurrence(now, learned_at)?;
+        }
         let data = encode_rmpv(&json_to_rmpv(&input.body))?;
 
         let mut resolved_edges = Vec::new();

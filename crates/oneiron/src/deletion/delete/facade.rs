@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::super::erase::sweep_extras;
+use super::super::erase::{stage_sweep_refs_in_txn, sweep_extras};
 use super::super::gate::{
     GatedDeletion, reverify_deletion_authority_before_publication,
     reverify_deletion_authority_when_unpublished,
@@ -233,7 +233,9 @@ impl Vault {
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
         };
-        if crate::registry::is_delete_protected_engine_record(header.entity_type) {
+        if crate::registry::is_delete_protected_engine_record(header.entity_type)
+            || crate::workspace_roster::is_project_revision_type(&self.store, header.entity_type)
+        {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                 header.entity_type,
             )));
@@ -535,6 +537,7 @@ impl Vault {
                     id,
                     &captured.subject,
                 )?);
+                stage_sweep_refs_in_txn(self, &mut wtxn, id, captured)?;
             }
             // fix-leg 9 P1: on the NON-PUBLISHING path this txn's re-fold made
             // it the linearization point, so the deletion's propagation intent

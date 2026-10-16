@@ -196,6 +196,7 @@ pub(super) fn project_context_pack(
         neighbors: pack.neighbors.iter().map(project_context_entity).collect(),
         stats: project_pack_stats(&pack.stats),
         empty: pack.empty.as_ref().map(project_empty_context),
+        limit_clamped: false,
     }
 }
 

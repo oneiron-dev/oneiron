@@ -12,6 +12,7 @@
 mod autocheck;
 mod budget;
 mod defaults;
+pub(crate) use defaults::read_effective_defaults;
 mod inference_admission;
 mod role_defaults;
 pub use inference_admission::{
@@ -71,6 +72,9 @@ pub use oneiron_model::llm::{
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
+pub use oneiron_model::llm::{
+    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
+};
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub(crate) use self::autocheck::truncate_on_char_boundary;

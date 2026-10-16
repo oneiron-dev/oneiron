@@ -280,7 +280,8 @@ pub(crate) struct CoreContextPackRequest {
     #[serde(default, rename = "query_vector", alias = "queryVector")]
     #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
     pub(super) query_vector: Option<Vec<f32>>,
-    /// Maximum primary candidates to retrieve.
+    /// Maximum primary candidates to retrieve. A limit past 1,000 is served
+    /// at 1,000 and the response's `limit_clamped` says so.
     #[serde(default = "default_limit")]
     #[schema(default = default_limit, example = 10)]
     pub(super) limit: usize,
@@ -330,9 +331,57 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional reader whose profile narrows this pack's optional recall.
     #[serde(default)]
     pub(super) reader: Option<ContextPackReaderControls>,
+    /// Set by [`Self::clamp_limits`] when `limit` was past the ceiling.
+    #[serde(skip)]
+    pub(super) limit_clamped: bool,
 }
 
 impl CoreContextPackRequest {
+    /// Serves `limit` and each per-kind retrieval budget at the ceiling
+    /// (1,000 rows), remembering whether `limit` was lowered. Run before
+    /// anything reads them; running it again changes nothing.
+    pub(crate) fn clamp_limits(&mut self) {
+        let clamp = oneiron::memory::caps::clamp_search_limit;
+        let (limit, clamped) = clamp(self.limit);
+        self.limit = limit;
+        self.limit_clamped |= clamped;
+        if let Some(retrieval) = self
+            .budget
+            .as_mut()
+            .and_then(|budget| budget.retrieval.as_mut())
+        {
+            for rows in [
+                &mut retrieval.claims,
+                &mut retrieval.turns,
+                &mut retrieval.summaries,
+                &mut retrieval.facets,
+                &mut retrieval.other,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                *rows = clamp(*rows).0;
+            }
+        }
+    }
+
+    /// Checks the request's query against `[limits].retrieval_query_bytes`,
+    /// naming it as `field` at `door`.
+    pub(crate) fn check_query_bytes(
+        &self,
+        server: &crate::server::SyncServer,
+        auth: &crate::auth::CoreAuth,
+        door: crate::server::QueryDoor,
+        field: &'static str,
+    ) -> Result<(), crate::error::ApiError> {
+        match self.query.as_deref() {
+            Some(query) => server
+                .check_retrieval_query(crate::server::query_caller(auth), door, field, query)
+                .map_err(crate::error::ApiError::from),
+            None => Ok(()),
+        }
+    }
+
     /// The Context Board reserves standing context before this retrieval runs.
     pub(crate) fn cap_serialized_tokens(&mut self, remaining: usize) {
         let budget = self

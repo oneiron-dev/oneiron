@@ -43,7 +43,7 @@ pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
     ActiveWriteTxnGuard
 }
 
-pub(super) fn active_write_txn_depth() -> usize {
+pub(crate) fn active_write_txn_depth() -> usize {
     ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
 }
 
@@ -249,6 +249,11 @@ pub struct StoreCore {
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
+    /// A stale-stamp sweep is owed (H213): set when one fails after its
+    /// authority commit, cleared by the next sweep that runs. A handle opens
+    /// owing one, so a stop between a commit and its sweep heals at the
+    /// open's own first write, before any caller holds the vault.
+    pub(crate) federation_stale_sweep_owed: std::sync::atomic::AtomicBool,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
     /// What the authority store doors read of one committed generation.
@@ -257,6 +262,9 @@ pub struct StoreCore {
     /// Rows the authority doors refused because a key a handoff this vault
     /// holds retired signed them (OF-166 evidence). Never persisted.
     pub(crate) authority_handoff_equivocations: crate::authority::HandoffEquivocations,
+    /// Forks the project folds over committed snapshots found (decision 10
+    /// evidence). Never persisted.
+    pub(crate) project_forks: crate::workspace_roster::ProjectForks,
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
@@ -266,6 +274,9 @@ pub struct StoreCore {
     /// Host-provided software signers are scoped to this vault handle and never
     /// persisted, inferred from transport credentials, or shared across vaults.
     pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
+    /// Scan checks raised since the vault's last write, which keeps them
+    /// ([`crate::scan_check`]).
+    pub(crate) pending_scan_checks: crate::scan_check::PendingScanChecks,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.
@@ -568,6 +579,9 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.base.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.base.core.pending_scan_checks
+            }
             fn clock(&self) -> &crate::ports::StoreClock { &self.base.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.base.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
@@ -606,6 +620,9 @@ macro_rules! manifest_dbs {
             /// over `&impl ManifestDbs` must record into the vault it is
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
+            /// The scan checks this vault holds until its next write
+            /// ([`crate::scan_check::ScanCount::defer`]).
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn gate_key_root(&self) -> &std::path::Path;
             fn gate_custody_archived(&self) -> bool;
@@ -621,6 +638,9 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
@@ -634,6 +654,9 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
