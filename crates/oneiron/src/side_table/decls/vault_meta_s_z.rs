@@ -384,6 +384,15 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// One run's market: signed referee, lease shares, central ledger, submissions and result.
+    /// Key: string (team reference).
+    TEAM_MARKET: VaultMeta b"team:market:v1:" Named;
+    /// A workflow skill's binding to the coordination pattern it teaches, with its works-well-for
+    /// line. Key: id16 (skill entity).
+    TEAM_PATTERN_SKILL: VaultMeta b"team:pattern_skill:v1:" Named;
+    /// One team run's receipt (type, pattern, models, shape, who decided, coverage, confessions,
+    /// anchored outcome). Key: string (team reference).
+    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named;
     /// The pinned text analyzer manifest (JSON) and, under '_hash', its SHA-256. Key: string.
     TEXT_ANALYZER_MANIFEST: VaultMeta b"text_analyzer_manifest" Raw;
     /// BM25F field schema hash. Key: ().

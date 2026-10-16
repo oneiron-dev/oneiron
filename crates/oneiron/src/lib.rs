@@ -125,6 +125,7 @@ pub mod human_task;
 pub mod linear_sync;
 pub mod task_authority;
 pub mod task_verb;
+pub mod team;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
 pub mod comm;
