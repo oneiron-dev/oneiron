@@ -115,6 +115,8 @@ pub mod ports {
     };
 }
 
+#[cfg(unix)]
+mod body_store;
 mod channel_identity_receipts;
 mod commitment_due;
 mod diagnostics;
@@ -143,6 +145,8 @@ pub(crate) mod test_hooks;
 #[cfg(test)]
 mod tests;
 
+#[cfg(unix)]
+pub(crate) use body_store::{BodyDir, BodyFacts, BodyMeter, BodySink, SunkBody, read_body_range};
 pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
