@@ -160,6 +160,35 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// Facet rule C's birth door: puts ASSET_TEXT `id`, written from each
+    /// ASSET of `sources`, with a `DerivedFrom` edge to every one. A text
+    /// this put births is stamped, in the same transaction, with the one
+    /// facet its sources were born under, never the batch mask or the vault
+    /// default; sources that are not placed ASSETs, or sit under two facets,
+    /// refuse the batch. A put over a stored text places nothing.
+    pub(crate) fn asset_text_birth(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        sources: &[(EntityId, f32)],
+    ) -> Self {
+        self.text_births
+            .insert(*id, sources.iter().map(|(source, _)| *source).collect());
+        let mut batch = self.put(
+            id,
+            crate::registry::ENTITY_TYPE_ASSET_TEXT,
+            occurred,
+            learned_at,
+            data,
+        );
+        for (source, weight) in sources {
+            batch = batch.edge(id, crate::edge::EdgeKind::DerivedFrom, source, *weight);
+        }
+        batch
+    }
+
     fn put_through(
         mut self,
         id: &EntityId,

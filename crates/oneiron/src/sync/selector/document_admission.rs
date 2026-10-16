@@ -6,6 +6,7 @@
 use super::authorize::{ceiling_for_grant, resolve_selector_position};
 use super::codec::{SyncSelector, selector_err};
 use super::scope::{CoreferenceExportContext, entity_selector_decision, facet_filter};
+use super::text_egress::{source_selected, text_backed};
 use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
@@ -152,6 +153,22 @@ pub(super) fn admit_selected_in_txn(
     selector: &SyncSelector,
     admission: &DocumentGrant,
 ) -> Result<()> {
+    // Facet rule C: a text is written only by a reader of every source it
+    // was written from, judged as an export reads them; no write authority
+    // over a source is asked.
+    if !text_backed(vault, txn, &id, None, |source, raw| {
+        source_selected(
+            vault,
+            txn,
+            (source, raw),
+            &admission.grant.authority_scope,
+            selector,
+            admission.position.as_scope(),
+            &Default::default(),
+        )
+    })? {
+        return Err(denied());
+    }
     let selection = StoredSelection {
         vault,
         txn,

@@ -213,8 +213,10 @@ pub(crate) fn keep_worlds_of_unmade_epoch_in_txn(
 }
 /// Removing epoch summary `summary`'s `DerivedFrom` edge to `source` withdraws
 /// it as deleting `source` would: its body keeps the words, and the edge that
-/// said where they sat is gone. The removal is never refused, so a peer's
-/// echo of its own purge converges.
+/// said where they sat is gone. An ASSET_TEXT losing a source is withdrawn
+/// the same way, since the edge was a conjunct of who reads it (facet rule
+/// C). The removal is never refused, so a peer's echo of its own purge
+/// converges.
 pub(crate) fn withdraw_from_lost_source_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -222,6 +224,12 @@ pub(crate) fn withdraw_from_lost_source_in_txn(
     source: &EntityId,
 ) -> Result<()> {
     if !epoch_summary_in(store, txn, summary)? {
+        if super::EntityStoreRead::port_entity_record(store, txn, summary)?
+            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT)
+            && !marked_stale_in(store, txn, summary)?
+        {
+            mark_stale_in_txn(store, txn, summary)?;
+        }
         return Ok(());
     }
     let worlds = carried_or_unknown(store, txn, source);

@@ -16,6 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub(crate) mod asset_text;
 mod export;
 #[cfg(test)]
 mod tests;
@@ -178,6 +179,12 @@ pub(crate) fn stamp_put(
             // A birth without its same-transaction FacetOf is not stamped.
             return Ok(());
         };
+        (default_stamp(kind, facet), facet)
+    } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+        // A text born from its sources sits under their facet; one born
+        // unplaced keeps its own (`asset_text`). A stamp added later is
+        // refused below as a restamp.
+        let facet = asset_text::text_facet(store, txn, id)?;
         (default_stamp(kind, facet), facet)
     } else {
         let facet = crate::claim::substrate_facet_id(id)?;
@@ -487,6 +494,8 @@ fn stored_scope(
         EntityId::from_bytes(stamp.birth_facet)
             .ok()
             .filter(|facet| stamp.scope.facets == singleton(ScopeId(*facet)))
+    } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+        Some(asset_text::text_facet(store, txn, id)?)
     } else {
         Some(crate::claim::substrate_facet_id(id)?)
     };
@@ -835,7 +844,10 @@ impl Vault {
                 .as_ref()
                 .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
                 && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
-                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "read")?;
+                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "read")?
+                && self.text_fence_in(&txn, id, &raw, [selector, slip, channel], "read", |_| {
+                    Ok(false)
+                })?;
             if allowed || view == ScopeView::Debug {
                 out.push(ScopedRecord {
                     id,
@@ -877,6 +889,36 @@ impl Vault {
                     && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
             },
         )
+    }
+    /// The text fence at a scoped door (facet rule C): an ASSET_TEXT passes
+    /// only while this door, under `door` (selector, slip, channel) and
+    /// `verb`, passes every source ASSET it was written from, live and
+    /// causally admitted, and none of them is `withheld` here.
+    fn text_fence_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        [selector, slip, channel]: [&Scope; 3],
+        verb: &str,
+        mut withheld: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<bool> {
+        if raw.first() != Some(&crate::registry::ENTITY_TYPE_ASSET_TEXT) {
+            return Ok(true);
+        }
+        let admitted = asset_text::sources_admitted_in(&self.store, txn, &id, |source, row| {
+            Ok(!withheld(source)?
+                && disclosure_scope_for_stored_row(
+                    &self.store,
+                    txn,
+                    *source,
+                    row.entity_type,
+                    &row.body,
+                )?
+                .is_some_and(|scope| admits(&scope, selector, slip, channel, verb))
+                && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
+        })?;
+        Ok(admitted.unwrap_or(true))
     }
     /// Selection and delete share one write transaction; no row can change between them.
     pub fn delete_records_in_scope(

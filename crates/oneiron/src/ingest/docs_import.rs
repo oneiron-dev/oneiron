@@ -1,6 +1,9 @@
 //! Atomic bulk consent and thin-star docs membership. Derivations never rewrite source evidence.
 use super::{DocsExport, DocsSegment, docs_extraction_id, docs_semantic_segments};
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{
+    ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
+    apply_ops_with_gate_mode,
+};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
     GrantBound,
@@ -11,7 +14,7 @@ use crate::workspace_roster::ProjectRole;
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// Stable durable-entity binding for one docs derivation slot. Key: the
 /// extraction id string.
@@ -259,6 +262,8 @@ impl Vault {
             fingerprints: Vec::new(),
         };
         let mut ops = Vec::new();
+        // Each new chunk is born under its page's facet (facet rule C).
+        let mut text_births = HashMap::new();
         let mut fingerprint_updates = Vec::new();
         let mut membership_updates = Vec::new();
         for (page, segments, summaries, annotation, predicted) in prepared {
@@ -343,6 +348,7 @@ impl Vault {
                     fields: vec![("text".into(), segment.text.clone())],
                 });
                 ops.push(edge(chunk, asset));
+                text_births.insert(chunk, vec![asset]);
                 if let Some(text) = summary_text {
                     let model = summary.expect("summary output requires model");
                     let id = stable_ref(
@@ -415,7 +421,7 @@ impl Vault {
                 return Err(invalid("docs extraction id occupied by another kind"));
             }
         }
-        apply_ops(
+        apply_ops_with_gate_mode(
             &self.store,
             &self.config,
             &self.analyzer,
@@ -423,8 +429,7 @@ impl Vault {
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
+            ApplyOpsGateMode::new(false, true).with_text_births(text_births),
         )?;
         for (asset, fingerprint) in fingerprint_updates {
             fingerprint.persist(&self.store, &mut txn, &asset)?;

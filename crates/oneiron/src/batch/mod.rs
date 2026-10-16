@@ -62,7 +62,7 @@ pub(crate) use self::deindex::{
     deindex_entity, deindex_entity_with_machine_history, deindex_lexical_query_hints_for_target,
     drop_seeded_actor_row,
 };
-pub(crate) use self::facet_validation::validate_facet_of_edge;
+pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replayed_facet_of_edge};
 #[cfg(test)]
 pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;

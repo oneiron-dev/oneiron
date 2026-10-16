@@ -115,10 +115,11 @@ impl Memory<'_> {
     }
 
     /// Lands one generated image as the bound actor: the bytes as an ASSET,
-    /// and `description` as its ASSET_TEXT, derived from it, in one write. A
-    /// text-only consumer is served that text, so an image with no
-    /// description is refused rather than landed without one. An edit's
-    /// instruction does not describe its result; its caller describes it.
+    /// and `description` as its ASSET_TEXT, derived from it and born under
+    /// the image's facet, in one write. A text-only consumer is served that
+    /// text, so an image with no description is refused rather than landed
+    /// without one. An edit's instruction does not describe its result; its
+    /// caller describes it.
     pub fn land_generated_image(
         &self,
         response: &ImageResponse,
@@ -148,14 +149,13 @@ impl Memory<'_> {
                 self.vault
                     .batch_in()
                     .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, &body)
-                    .put(
+                    .asset_text_birth(
                         &text,
-                        ENTITY_TYPE_ASSET_TEXT,
                         occurred,
                         occurred_at,
                         description.as_bytes(),
+                        &[(asset, weight)],
                     )
-                    .edge(&text, EdgeKind::DerivedFrom, &asset, weight)
                     .text(&text, &[("text", description)]),
             )?;
             Ok(LandedImage {

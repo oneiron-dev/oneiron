@@ -9,7 +9,8 @@ use crate::{
 impl Vault {
     /// Export never has a debug mode and requires the export verb class, and
     /// never carries a SECRET_CUSTODY row or an unpublished LFS chunk.
-    /// A row a device-only world keeps on this device is never exported.
+    /// A row a device-only world keeps on this device is never exported, nor
+    /// a text written from one.
     pub fn export_records_in_scope(
         &self,
         selector: &Scope,
@@ -22,10 +23,13 @@ impl Vault {
             &txn,
             crate::claim::CallerLocality::OffDevice,
         )?;
+        let withheld = |source: &crate::EntityId| {
+            crate::settings::device_only_withholds(&self.store, &txn, &device_only, source)
+        };
         let mut out = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (id, raw) = row?;
-            if crate::settings::device_only_withholds(&self.store, &txn, &device_only, &id)? {
+            if withheld(&id)? {
                 continue;
             }
             let h =
@@ -49,6 +53,14 @@ impl Vault {
             )? && admits(&scope, selector, slip, channel, "export")
                 && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
                 && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "export")?
+                && self.text_fence_in(
+                    &txn,
+                    id,
+                    &raw,
+                    [selector, slip, channel],
+                    "export",
+                    &withheld,
+                )?
             {
                 out.push(ScopedRecord {
                     id,

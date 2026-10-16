@@ -131,7 +131,7 @@ pub(crate) fn preflight_canonical_recovery(
             )
             .into());
         }
-        crate::batch::validate_facet_of_edge(&vault.store, &txn, source, kind, target)?;
+        crate::batch::validate_replayed_facet_of_edge(&vault.store, &txn, source, kind, target)?;
         vault
             .batch_in()
             .edge_with_value_fields(

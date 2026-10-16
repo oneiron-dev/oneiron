@@ -1,5 +1,6 @@
 use super::access_gate::HeldAuthority;
 use super::*;
+use crate::federation::record_scope::asset_text;
 
 impl<'v> ScopedRead<'v> {
     /// Whether this lane reads `id` now, an owner lane's standing rechecked
@@ -160,6 +161,9 @@ impl<'v> ScopedRead<'v> {
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+            return self.text_sources_readable_in(rtxn, policy, id, authority);
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
             && let Some(admitted) = self.epoch_sources_readable_in(
                 rtxn,
@@ -233,6 +237,34 @@ impl<'v> ScopedRead<'v> {
                 admit,
             ),
         }
+    }
+
+    /// Facet rule C: an ASSET_TEXT written from source ASSETs is read only
+    /// beside every one of them, each judged by its own row admission under
+    /// the same policy and this reader's floor. A text bound to no source
+    /// reads by its own row alone. The sources are its current `DerivedFrom`
+    /// targets, so the same check holds for any revision of it. The owner
+    /// reads every text, as it reads every summary.
+    pub(super) fn text_sources_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<bool> {
+        if self.actor_key.vault_owner_ref().is_some() {
+            return Ok(true);
+        }
+        let floor = self.actor_retrieval_floor(policy)?;
+        let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
+            let raw = row.encode();
+            self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)
+        };
+        let admitted = match self.session_view {
+            Some(view) => asset_text::sources_admitted_in(view, rtxn, id, admit),
+            None => asset_text::sources_admitted_in(&self.vault.store, rtxn, id, admit),
+        }?;
+        Ok(admitted.unwrap_or(true))
     }
 
     /// The row's own admission, before what it was written from.
