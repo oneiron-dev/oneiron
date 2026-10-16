@@ -207,7 +207,9 @@ impl OutputWorkingContext {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<Vec<OutputContextView>> {
-        self.assemble_with(turn, policy, |source| restore_output(vault, source).map(Some))
+        self.assemble_with(turn, policy, |source| {
+            restore_output(vault, source).map(Some)
+        })
     }
 
     /// Assemble through the owner's own routed raw-output store. The callback
@@ -285,7 +287,9 @@ impl OutputContextEntry {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<OutputContextView> {
-        self.view_with(turn, policy, &mut |source| restore_output(vault, source).map(Some))
+        self.view_with(turn, policy, &mut |source| {
+            restore_output(vault, source).map(Some)
+        })
     }
 
     fn view_with(

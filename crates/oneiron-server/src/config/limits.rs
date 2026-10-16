@@ -268,7 +268,10 @@ impl LimitsConfig {
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
-            (EngineLimit::CodeResultDiskFloorBytes, code_result_disk_floor_bytes),
+            (
+                EngineLimit::CodeResultDiskFloorBytes,
+                code_result_disk_floor_bytes,
+            ),
             (EngineLimit::CodeResultScanBytes, code_result_scan_bytes),
             (EngineLimit::CodeResultMemoryBytes, code_result_memory_bytes),
             (
