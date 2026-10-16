@@ -26570,6 +26570,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AtDiskFloor",
+      "HeldBytes",
+      "SpillFloor"
+     ],
+     "path": "src/origin/smart_http/held.rs",
+     "purpose": "Bytes of one exchange held whole before they move on: a push's command section, read ahead of the backend to…",
+     "surface": {
+      "fn": 7,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -26601,7 +26617,7 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -26679,7 +26695,7 @@
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -26690,8 +26706,8 @@
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
       "const": 11,
-      "crate-vis": 18,
-      "fn": 3
+      "crate-vis": 17,
+      "fn": 4
      }
     },
     {
@@ -42582,7 +42598,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43144,7 +43160,7 @@
    },
    "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2595,
+   "source_files": 2596,
    "test_files": 881
   },
   "oneiron-android": {
@@ -53090,17 +53106,17 @@
      "path": "src/api/git_http/serve.rs",
      "purpose": "Streaming bridge between axum and the blocking smart-HTTP serve plane",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/git_http/status_codec.rs",
      "purpose": "Receive-pack status pkt-line codec",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
