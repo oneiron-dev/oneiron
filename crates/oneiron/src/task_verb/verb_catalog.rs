@@ -41,6 +41,10 @@ pub enum AgentVerb {
     SelfBrowserWaitFor,
     SelfBrowserExpect,
     SelfBrowserScreenshot,
+    SelfBrowserView,
+    SelfBrowserCrop,
+    SelfBrowserZoom,
+    SelfBrowserBatch,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -84,6 +88,10 @@ impl AgentVerb {
         Self::SelfBrowserWaitFor,
         Self::SelfBrowserExpect,
         Self::SelfBrowserScreenshot,
+        Self::SelfBrowserView,
+        Self::SelfBrowserCrop,
+        Self::SelfBrowserZoom,
+        Self::SelfBrowserBatch,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -130,6 +138,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
             Self::SelfBrowserExpect => "self.browser.expect",
             Self::SelfBrowserScreenshot => "self.browser.screenshot",
+            Self::SelfBrowserView => "self.browser.view",
+            Self::SelfBrowserCrop => "self.browser.crop",
+            Self::SelfBrowserZoom => "self.browser.zoom",
+            Self::SelfBrowserBatch => "self.browser.batch",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -177,6 +189,10 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -291,6 +307,10 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -315,6 +335,7 @@ impl AgentVerb {
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
+                | Self::SelfBrowserBatch
         )
     }
     pub const fn proposes(self) -> bool {
@@ -365,6 +386,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -409,6 +434,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
         }
     }
 }
