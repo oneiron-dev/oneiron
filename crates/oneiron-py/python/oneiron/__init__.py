@@ -359,6 +359,9 @@ class Oneiron:
         def get(self, input: dict[str, Any]) -> Any:
             return json.loads(_translate(lambda: self._client.vault_get(json.dumps(input, allow_nan=False))))
         @property
+        def refs(self) -> "Oneiron._VaultRefsVerbs":
+            return Oneiron._VaultRefsVerbs(self._client)
+        @property
         def search(self) -> "Oneiron._VaultSearchVerbs":
             return Oneiron._VaultSearchVerbs(self._client)
         def neighbors(self, input: dict[str, Any]) -> Any:
@@ -469,6 +472,9 @@ class Oneiron:
         def release_wait(self, request: dict[str, Any]) -> dict[str, Any]:
             """Lets one held organ call go, by its run ref, under the consent a Discard needs."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_release_wait(json.dumps(request, allow_nan=False))))
+        def review_slides(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_review_slides(json.dumps(request, allow_nan=False))))
         def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
             """Runs one native deck transaction over the head and holds the proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))
@@ -511,6 +517,10 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+        def join(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
+        def consent(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
         def host(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
         def sharing(self, spec):
@@ -572,6 +582,11 @@ class Oneiron:
             self._client = client
         def pending(self, input: dict[str, Any]) -> Any:
             return json.loads(_translate(lambda: self._client.vault_writes_pending(json.dumps(input, allow_nan=False))))
+    class _VaultRefsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def resolve(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_refs_resolve(json.dumps(spec))))
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

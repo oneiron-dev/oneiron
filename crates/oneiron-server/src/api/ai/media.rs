@@ -4,6 +4,12 @@
 //! inference policy admits its model, then its seat's ladder admits, sends
 //! and settles each rung it reaches on the media meter (ARCH-0053
 //! `#run-admission`). Bytes travel as base64 on this wire.
+//!
+//! A speech call may name its `voice`: a provider's stock voice by name, or
+//! a banked identity (`{"kind": "bank", "voice_id": ...}`). A banked voice
+//! renders on the first rung of the call's ladder whose target holds its
+//! current clone, and on that rung alone; with none, or once withdrawn, the
+//! call is refused rather than spoken in another voice (ARCH-0061 §5).
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -14,8 +20,10 @@ use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use oneiron::llm::media::{
-    AiOperation, MediaJobState, MediaPart, MediaRequest, MediaResponse, MediaUsage, Modality,
+    AiOperation, MediaJobState, MediaPart, MediaRequest, MediaResponse, MediaUsage, MediaVoice,
+    Modality,
 };
+use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, FatalLlmError, LlmError, ModelId, ModelTierRef,
     ResponseFormat, RetryableLlmError, TierPrecedence,
@@ -168,6 +176,23 @@ pub(super) struct AiCallBody {
     references: Vec<WirePart>,
     #[serde(default)]
     params: BTreeMap<String, JsonValue>,
+    /// A speech call's voice; the provider's default when absent.
+    #[serde(default)]
+    voice: Option<VoiceChoice>,
+}
+
+/// The voice a speech call names.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum VoiceChoice {
+    /// A provider's own voice, by its name.
+    Stock { name: String },
+    /// A banked identity, rendered as its clone on the call's target.
+    Bank {
+        voice_id: String,
+        #[serde(default)]
+        include_generated: bool,
+    },
 }
 
 /// One call's answer on this wire.
@@ -193,13 +218,14 @@ impl AiAnswer {
 }
 
 /// The owner's call of `operation`, admitted against the vault's inference
-/// policy for the model it names, ready for its seat's ladder.
+/// policy for the model it names, ready for its seat's ladder, with the
+/// banked voice it renders in, if any.
 fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     body: AiCallBody,
-) -> Result<MediaRequest, Response> {
+) -> Result<(MediaRequest, Option<BankVoiceBinding>), Response> {
     if !auth.is_owner_grade() {
         return Err(refusal(
             StatusCode::FORBIDDEN,
@@ -215,7 +241,57 @@ fn admit(
             format!("no [models.media.{}] seat serves", operation.as_str()),
         ));
     };
-    let model = body.model.unwrap_or(seat);
+    let mut model = body.model.unwrap_or(seat);
+    if media.locality(operation, &model).is_none() {
+        return Err(refusal(
+            StatusCode::BAD_REQUEST,
+            "unknown_model",
+            format!("{model} serves no {} call here", operation.as_str()),
+        ));
+    }
+    let (voice, binding) =
+        match body.voice {
+            None => (None, None),
+            Some(_) if operation != AiOperation::Speech => {
+                return Err(refusal(
+                    StatusCode::BAD_REQUEST,
+                    "voice_not_speech",
+                    "only a speech call names a voice",
+                ));
+            }
+            Some(VoiceChoice::Stock { name }) if name.trim().is_empty() => {
+                return Err(refusal(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_voice",
+                    "a stock voice has a name",
+                ));
+            }
+            Some(VoiceChoice::Stock { name }) => (Some(MediaVoice::Stock { name }), None),
+            Some(VoiceChoice::Bank {
+                voice_id,
+                include_generated,
+            }) => {
+                // The clone is the target's: the call takes the first rung
+                // holding a current one, alone, so no fallback carries its id
+                // to another provider.
+                let bound = media.rung_targets(operation, &model).into_iter().find_map(
+                    |(rung, target, _)| {
+                        BankVoiceBinding::bind(&server.vault, &voice_id, &target, include_generated)
+                            .ok()
+                            .map(|binding| (rung, binding))
+                    },
+                );
+                let Some((rung, binding)) = bound else {
+                    return Err(refusal(
+                        StatusCode::CONFLICT,
+                        "voice_not_provisioned",
+                        "no rung this call may reach holds a current clone of the voice",
+                    ));
+                };
+                model = rung;
+                (Some(binding.voice()), Some(binding))
+            }
+        };
     let Some(locality) = media.locality(operation, &model) else {
         return Err(refusal(
             StatusCode::BAD_REQUEST,
@@ -262,6 +338,7 @@ fn admit(
         parts,
         references,
         params: body.params,
+        voice,
     };
     if let Some(key) = request.admission_request().route_selector_override() {
         return Err((
@@ -288,7 +365,7 @@ fn admit(
     // The world a caller names does not vouch for what it sends: a
     // fallback judges the call as naming none, as a raw text call is.
     request.envelope.scope.world = None;
-    Ok(request)
+    Ok((request, binding))
 }
 
 pub(super) fn failure(error: &LlmError) -> Response {
@@ -322,8 +399,25 @@ pub(super) fn failure(error: &LlmError) -> Response {
         .into_response()
 }
 
-async fn answered(server: &SyncServer, request: MediaRequest) -> Response {
+/// The call's answer. A banked voice withdrawn or re-recorded while it
+/// rendered is not handed back.
+async fn answered(
+    server: &SyncServer,
+    request: MediaRequest,
+    binding: Option<BankVoiceBinding>,
+) -> Response {
     match server.ai.model_runtime().media().run(request).await {
+        Ok(_)
+            if binding
+                .as_ref()
+                .is_some_and(|binding| !binding.is_current(&server.vault)) =>
+        {
+            refusal(
+                StatusCode::CONFLICT,
+                "voice_withdrawn",
+                "the voice was withdrawn or its clone replaced while it rendered",
+            )
+        }
         Ok(response) => Json(AiAnswer::new(response)).into_response(),
         Err(error) => failure(&error),
     }
@@ -337,7 +431,7 @@ macro_rules! media_verb {
             Json(body): Json<AiCallBody>,
         ) -> Response {
             match admit(&server, &auth, $operation, body) {
-                Ok(request) => answered(&server, request).await,
+                Ok((request, binding)) => answered(&server, request, binding).await,
                 Err(refused) => refused,
             }
         }
@@ -356,7 +450,7 @@ pub(super) async fn video(
     Json(body): Json<AiCallBody>,
 ) -> Response {
     let request = match admit(&server, &auth, AiOperation::Video, body) {
-        Ok(request) => request,
+        Ok((request, _)) => request,
         Err(refused) => return refused,
     };
     match server.ai.model_runtime().media().submit(request).await {

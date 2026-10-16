@@ -155,6 +155,9 @@ impl OneironClient {
                 "vault.artifacts.release_wait" => remote_agent_verb_output::<
                     oneiron::blob_artifact::ReleasedWait,
                 >(client, verb, &input),
+                "vault.artifacts.review_slides" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::SlideReviewOutcome,
+                >(client, verb, &input),
                 "vault.artifacts.propose_deck" => remote_agent_verb_output::<
                     oneiron::blob_artifact::DeckProposeOutcome,
                 >(client, verb, &input),
@@ -217,6 +220,12 @@ impl OneironClient {
                 "vault.rooms.speak" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                     client, verb, &input,
                 ),
+                "vault.rooms.join" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::JoinOutcome,
+                >(client, verb, &input),
+                "vault.rooms.consent" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::JoinOutcome,
+                >(client, verb, &input),
                 "vault.projects.goal.revisions" => remote_agent_verb_output::<
                     Vec<oneiron::skill_optimize::ProjectGoalRevisionProposal>,
                 >(client, verb, &input),
@@ -318,6 +327,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.get" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::memory::EntityView>>,
+                >(client, verb, &input),
+                "vault.refs.resolve" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::lens::RecordRefPreview>,
                 >(client, verb, &input),
                 "vault.search.bm25" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
@@ -898,6 +910,19 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.release_wait", value)
     }
+    /// Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep.
+    pub fn vault_artifacts_review_slides(
+        &self,
+        input: &oneiron::blob_artifact::SlideReviewSubmit,
+    ) -> Result<oneiron::blob_artifact::SlideReviewOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.review_slides", value)
+    }
     /// Runs one native deck transaction over the head and holds the proposal for Keep.
     pub fn vault_artifacts_propose_deck(
         &self,
@@ -1144,6 +1169,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.speak", value)
+    }
+    pub fn vault_rooms_join(
+        &self,
+        input: &oneiron::workspace_roster::JoinRequest,
+    ) -> Result<oneiron::workspace_roster::JoinOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.join", value)
+    }
+    pub fn vault_rooms_consent(
+        &self,
+        input: &oneiron::workspace_roster::ConsentAnswer,
+    ) -> Result<oneiron::workspace_roster::JoinOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.consent", value)
     }
     pub fn vault_projects_goal_revisions(
         &self,
@@ -1570,6 +1619,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.get", value)
+    }
+    pub fn vault_refs_resolve(
+        &self,
+        input: &oneiron::lens::ResolveRecordRefRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::lens::RecordRefPreview>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.refs.resolve", value)
     }
     pub fn vault_search_bm25(
         &self,

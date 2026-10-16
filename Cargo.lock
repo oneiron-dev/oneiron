@@ -8244,11 +8244,17 @@ dependencies = [
 name = "oneiron-llm-own-server"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "futures-core",
  "oneiron",
+ "oneiron-mesh-transport",
  "oneiron-remote",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -8331,6 +8337,7 @@ dependencies = [
 name = "oneiron-organ-host"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "cms",
  "const-oid 0.9.6",
@@ -8342,9 +8349,11 @@ dependencies = [
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
+ "p256",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
+ "rsa",
  "serde",
  "sha2 0.10.9",
  "tempfile",
@@ -8496,6 +8505,7 @@ dependencies = [
  "oneiron-linear",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
+ "oneiron-llm-own-server",
  "oneiron-llm-systemone",
  "oneiron-mesh-transport",
  "oneiron-organ-host",

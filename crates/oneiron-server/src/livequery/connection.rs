@@ -565,6 +565,7 @@ impl Connection {
     /// rows its producer listed, stays unsent. Its subscription is retired
     /// for a gap and sends nothing more before it, and a read result is
     /// refused. A body whose producer could not list its rows fails closed.
+    #[cfg(test)]
     pub(crate) fn release(
         &mut self,
         locality: oneiron::claim::CallerLocality,
