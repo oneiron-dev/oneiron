@@ -164,11 +164,11 @@ impl<'a> ScopedRead<'a> {
         let Some(world) = self.record_world_in(txn, id, header.entity_type, data)? else {
             return Ok(false);
         };
+        let record = super::actor_key::record_world_scope(world);
         if self
             .actor_key
-            .worlds
-            .as_ref()
-            .is_some_and(|worlds| !worlds.admits(world))
+            .asked_world_ceiling()
+            .is_some_and(|ceiling| !record.is_narrowing_of(&ceiling))
         {
             return Ok(false);
         }
@@ -178,7 +178,7 @@ impl<'a> ScopedRead<'a> {
             };
             // A member's contact clearance holds the row to P7 too: it is
             // positively public or sits under the room's Scope (ILDF2).
-            if !room.admits_world(world)
+            if !room.admits_world(&record)
                 || !room.discloses(self.vault, txn, *id, raw)?
                 || !self
                     .audience_cache
@@ -588,20 +588,8 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         world: Option<EntityId>,
     ) -> Result<bool> {
-        if self
-            .actor_key
-            .worlds
-            .as_ref()
-            .is_some_and(|worlds| !worlds.admits(world))
-        {
-            return Ok(false);
-        }
-        let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
-        if !self
-            .actor_key
-            .authority_scope()
-            .is_none_or(|scope| scope.worlds.contains(&id))
-        {
+        let record = super::actor_key::record_world_scope(world);
+        if !record.is_narrowing_of(&self.actor_key.world_ceiling()) {
             return Ok(false);
         }
         self.proof_live_in(txn)
@@ -613,12 +601,14 @@ impl ScopedRead<'_> {
         id: &EntityId,
         row: &EntityRecord,
     ) -> Result<bool> {
-        let Some(worlds) = &self.actor_key.worlds else {
+        let Some(ceiling) = self.actor_key.asked_world_ceiling() else {
             return Ok(false);
         };
         Ok(self
             .record_world_in(txn, id, row.entity_type, &row.body)?
-            .is_none_or(|world| !worlds.admits(world)))
+            .is_none_or(|world| {
+                !super::actor_key::record_world_scope(world).is_narrowing_of(&ceiling)
+            }))
     }
 
     /// Whether `row` of `id` is a TASK, or one of its authority facts, whose
