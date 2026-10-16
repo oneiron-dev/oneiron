@@ -36,6 +36,9 @@ pub enum AnswerContract {
     Noul,
     Choice { options: Vec<String> },
     Score { min: f64, max: f64 },
+    /// Where the target the question names sits in an image the call carries: one box,
+    /// or none when the target is absent.
+    Box,
 }
 
 impl AnswerContract {
@@ -67,6 +70,7 @@ impl AnswerContract {
             (Self::Score { min, max }, DecisionAnswer::Score(value)) => {
                 value.is_finite() && value >= min && value <= max
             }
+            (Self::Box, DecisionAnswer::Box(found)) => found.is_none_or(ImageBox::is_valid),
             _ => false,
         }
     }
@@ -83,7 +87,42 @@ pub enum DecisionAnswer {
     Noul(bool),
     Choice(String),
     Score(f64),
+    /// The target's box, or none when the target is absent: a found absence, not an
+    /// abstain.
+    Box(Option<ImageBox>),
     Abstain,
+}
+
+/// A box in an image, as fractions from its top-left corner: `left` and `right` of its
+/// width, `top` and `bottom` of its height. Fractions hold at any size the image is
+/// drawn, so a box read on a downscaled copy places the target on the original.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageBox {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+impl ImageBox {
+    /// Every edge inside the image, and the edges in order.
+    pub fn is_valid(self) -> bool {
+        [self.top, self.bottom, self.left, self.right]
+            .iter()
+            .all(|edge| edge.is_finite() && (0.0..=1.0).contains(edge))
+            && self.top <= self.bottom
+            && self.left <= self.right
+    }
+
+    /// The box's centre as `(x, y)` fractions: the point answer, for a caller that
+    /// wants one.
+    pub fn centre(self) -> (f64, f64) {
+        (
+            (self.left + self.right) / 2.0,
+            (self.top + self.bottom) / 2.0,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
