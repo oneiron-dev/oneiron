@@ -73,7 +73,7 @@ use self::process::GitWireProcessOutput;
 #[cfg(test)]
 pub(crate) use self::repo::repository_hold_for_test;
 pub(crate) use self::repo::{
-    lock_repository, lock_repository_before_maintenance, try_lock_repository,
+    lock_repository, lock_repository_within, try_lock_repository,
     try_lock_repository_for_maintenance,
 };
 

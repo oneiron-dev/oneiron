@@ -14,6 +14,7 @@ mod lifecycle;
 mod oid;
 mod pointer;
 mod policy;
+mod read_room;
 mod scanner;
 mod store;
 mod upload;
@@ -26,12 +27,13 @@ pub use self::pointer::{LfsPointerIntent, LfsPushedPointer};
 pub use self::policy::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsAssetClass, LfsPathPolicy,
 };
+pub use self::read_room::LfsReadRoom;
 pub use self::store::{
     LFS_BASIC_TRANSFER, LFS_JSON_MEDIA_TYPE, LfsPutOutcome, VAULT_LFS_ASSET_ID_DOMAIN,
     VAULT_LFS_REPO_ID_DOMAIN, VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation,
     lfs_repo_id,
 };
-pub use self::upload::LFS_DEFAULT_OBJECT_CAP;
+pub use self::upload::{LFS_DEFAULT_OBJECT_CAP, LFS_WHOLE_SCAN_MAX};
 pub(crate) use chunks::random_lfs_chunk_seed;
 pub(crate) use lifecycle::{
     delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, lfs_chunk_owners_in_txn,

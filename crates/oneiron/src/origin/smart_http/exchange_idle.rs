@@ -3,7 +3,7 @@
 //! watchdog that kills the backend when it runs down.
 
 use std::io::{self, Read};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,8 @@ pub(super) struct Progress {
     started: Instant,
     /// Milliseconds after `started`.
     last: AtomicU64,
+    /// Whether the exchange's own work holds the clock still.
+    still: AtomicBool,
 }
 
 impl Progress {
@@ -24,17 +26,41 @@ impl Progress {
         Self {
             started: Instant::now(),
             last: AtomicU64::new(0),
+            still: AtomicBool::new(false),
         }
     }
 
     fn touch(&self) {
         let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.last.store(now, Ordering::Relaxed);
+        self.last.store(now, Ordering::SeqCst);
     }
 
     fn quiet_for(&self) -> Duration {
-        let last = Duration::from_millis(self.last.load(Ordering::Relaxed));
+        if self.still.load(Ordering::SeqCst) {
+            return Duration::ZERO;
+        }
+        let last = Duration::from_millis(self.last.load(Ordering::SeqCst));
         self.started.elapsed().saturating_sub(last)
+    }
+
+    /// Holds the clock still while the server's own work runs between two
+    /// bytes, work no byte moves through and that bounds its own waits (an
+    /// advertisement's projection, waiting for room to check published LFS
+    /// objects): the client is not idle then. The clock winds again from
+    /// when the guard drops.
+    pub(super) fn hold_still(&self) -> HeldStill<'_> {
+        self.still.store(true, Ordering::SeqCst);
+        HeldStill(self)
+    }
+}
+
+/// The clock held still; dropping it winds the clock and lets it run.
+pub(super) struct HeldStill<'a>(&'a Progress);
+
+impl Drop for HeldStill<'_> {
+    fn drop(&mut self) {
+        self.0.touch();
+        self.0.still.store(false, Ordering::SeqCst);
     }
 }
 
@@ -83,8 +109,9 @@ pub(super) enum Watched {
     Joined,
 }
 
-/// Kills the backend once the exchange has moved no byte for `idle`, and
-/// says whether it did. [`Watched::End`] kills it at once and is no idling:
+/// Kills the backend once the exchange has moved no byte for `idle`, time
+/// its clock was held still not counted, and says whether it did.
+/// [`Watched::End`] kills it at once and is no idling:
 /// the exchange already failed. The watch lasts until [`Watched::Joined`],
 /// which the exchange sends only once every thread that waits on the
 /// backend has been joined, so none of them waits on a backend nobody
