@@ -431,18 +431,18 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
         .ok_or_else(malformed)?;
     let mut found: Vec<Option<f64>> = vec![None; ids.len()];
     for entry in entries {
-        // As measured: a label's id, else a label's spelling.
-        let index = entry
-            .get("id")
-            .and_then(JsonValue::as_u64)
-            .and_then(|id| ids.iter().position(|label| *label == id))
-            .or_else(|| {
-                entry
-                    .get("token")
-                    .or_else(|| entry.get("tok_str"))
-                    .and_then(JsonValue::as_str)
-                    .and_then(|text| tokens.iter().position(|token| token == text))
-            });
+        // As test 6 reads it, a label is its id: another id spelled as a
+        // label is not that label. An older answer without ids, by spelling.
+        let index = match entry.get("id") {
+            Some(id) => id
+                .as_u64()
+                .and_then(|id| ids.iter().position(|label| *label == id)),
+            None => entry
+                .get("token")
+                .or_else(|| entry.get("tok_str"))
+                .and_then(JsonValue::as_str)
+                .and_then(|text| tokens.iter().position(|token| token == text)),
+        };
         let Some(index) = index else {
             continue;
         };

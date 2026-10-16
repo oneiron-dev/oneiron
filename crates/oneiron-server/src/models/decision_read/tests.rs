@@ -1,7 +1,7 @@
 //! The decision read against an in-process llama.cpp: the joint marginals
-//! checked against idle-fold test 5's own `read_probs` (run5b.py) on a fixed
-//! answer, the measured request with test 6's exact retry, and each per-call
-//! check refusing typed.
+//! checked against idle-fold test 6's own `probabilities` (run6.py) and test
+//! 5's `read_probs` (run5b.py) on a fixed answer, the measured request with
+//! test 6's exact retry, and each per-call check refusing typed.
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -25,10 +25,11 @@ fn label_id(index: usize) -> u64 {
         .unwrap()
 }
 
-/// The oracle: a fixed answer's label log-probabilities, and what test 5's
-/// `read_probs` reads from it (oracle.json, made by make_oracle.py in the
-/// lane's notes from run5b.py verbatim): the eleven options' marginals,
-/// P(more thinking) and P(ask a person).
+/// The oracle: a fixed answer's label log-probabilities, and what test 6's
+/// `probabilities` and test 5's `read_probs` both read from it (oracle6.json,
+/// made by make_oracle6.py in the lane's notes from run6.py and run5b.py
+/// verbatim): the eleven options' marginals, P(more thinking) and P(ask a
+/// person).
 const LOGPROBS: [f64; 44] = [
     -12.172438, -6.31854, -4.904042, -8.380125, -9.938511, -11.61359, -4.307121, -0.936296,
     -6.788816, -6.736755, -13.272936, -4.042798, -2.880816, -5.401722, -3.511436, -5.18851,
@@ -38,20 +39,20 @@ const LOGPROBS: [f64; 44] = [
     -1.833307, -3.57962, -8.483073, -7.501708,
 ];
 const PRIMARY: [f64; 11] = [
-    0.056433601550806824,
-    0.25507978683914173,
-    0.012491409017492374,
-    0.060393067353579535,
-    0.10730324413598537,
-    0.24897588366033815,
-    0.003390512962566954,
-    0.009084430197355343,
-    0.03669383308096691,
-    0.09159113678506065,
-    0.11856309441670619,
+    0.006261389931255666,
+    0.26864313231880016,
+    0.01315561412026209,
+    0.06360434507669226,
+    0.11300887447753137,
+    0.2622146665840434,
+    0.003570796548477098,
+    0.009567476175946636,
+    0.038644952537421236,
+    0.09646130798319574,
+    0.1248674442463744,
 ];
-const THINK: f64 = 0.4490676214600979;
-const PERSON: f64 = 0.7173702497252611;
+const THINK: f64 = 0.41977292007014055;
+const PERSON: f64 = 0.7555149441929119;
 
 /// A llama.cpp server's `/tokenize` and `/completion`: labels tokenize to
 /// test 5's ids, and each completion takes the next queued answer.
@@ -194,9 +195,8 @@ fn answer(entries: &[(u64, f64)]) -> JsonValue {
     })
 }
 
-/// The oracle's answer, with two of the reference's own readings: an earlier
-/// entry for A (the later one wins), and another id spelled "B" after B's
-/// own (read by its text, it overwrites B).
+/// The oracle's answer, with the references' own reading of an earlier entry
+/// for A: the later one wins.
 fn oracle_answer() -> JsonValue {
     let mut entries = vec![(label_id(0), -50.0)];
     entries.extend(
@@ -205,31 +205,34 @@ fn oracle_answer() -> JsonValue {
             .enumerate()
             .map(|(index, logprob)| (label_id(index), *logprob)),
     );
-    let mut answer = answer(&entries);
-    let top = answer["completion_probabilities"][0]["top_logprobs"]
-        .as_array_mut()
-        .unwrap();
-    top.insert(
-        top.len() - 1,
-        json!({"id": 91_000, "token": "B", "logprob": -2.5}),
-    );
-    answer
+    answer(&entries)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
-    // The top 16,384 hold every label; then they miss the last one, and the
-    // one exact retry over the vocabulary reads the same numbers (test 6).
-    let mut cut = oracle_answer();
-    cut["completion_probabilities"][0]["top_logprobs"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|entry| entry["id"] != label_id(43));
+    // The top 16,384 hold every label. Then they miss r, and then B while
+    // another id spelled "B" is listed (a label is its id, as test 6 reads
+    // it); each time the one exact retry over the vocabulary reads the same
+    // numbers.
+    let cut = |label: usize, alias: bool| {
+        let mut answer = oracle_answer();
+        let top = answer["completion_probabilities"][0]["top_logprobs"]
+            .as_array_mut()
+            .unwrap();
+        top.retain(|entry| entry["id"] != label_id(label));
+        if alias {
+            top.push(json!({"id": 91_000, "token": &LETTERS[label..=label], "logprob": -2.5}));
+        }
+        answer
+    };
     let fake = Arc::new(Fake::default());
-    fake.answers
-        .lock()
-        .unwrap()
-        .extend([oracle_answer(), cut, oracle_answer()]);
+    fake.answers.lock().unwrap().extend([
+        oracle_answer(),
+        cut(43, false),
+        oracle_answer(),
+        cut(1, true),
+        oracle_answer(),
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path(), &serve(Arc::clone(&fake)).await, 44);
     let door = bind(&config, tokio::runtime::Handle::current())
@@ -238,8 +241,9 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
     let options: Vec<String> = (0..11).map(|bin| format!("bin {bin}")).collect();
     let first = read(&door, Some(options.clone()), true).await.unwrap();
     let retried = read(&door, Some(options.clone()), true).await.unwrap();
+    let aliased = read(&door, Some(options.clone()), true).await.unwrap();
 
-    for read in [&first, &retried] {
+    for read in [&first, &retried, &aliased] {
         for (got, want) in read.primary.iter().zip(PRIMARY) {
             assert!((got - want).abs() < 1e-12, "{got} vs {want}");
         }
@@ -251,10 +255,9 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
         (1234, 1)
     );
     // The retry costs the read its second call.
-    assert_eq!(
-        (retried.usage.input.total, retried.usage.output.total),
-        (2468, 2)
-    );
+    for read in [&retried, &aliased] {
+        assert_eq!((read.usage.input.total, read.usage.output.total), (2468, 2));
+    }
     let reader = door.reader();
     assert_eq!(reader.model(), "house/qwen3.8-27b@q4km");
     assert!(reader.revision().starts_with("q4km+recipe."));
@@ -264,13 +267,15 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
     // probabilities, nothing sampled or stopped early. The retry sends the
     // same request over the whole vocabulary.
     let requests = fake.requests.lock().unwrap();
-    let [request, top_k, full] = requests.as_slice() else {
-        panic!("one completion per read, and one retry");
+    let [request, retries @ ..] = requests.as_slice() else {
+        panic!("one completion per read");
     };
-    assert_eq!(top_k, request);
     let mut widened = request.clone();
     widened["n_probs"] = json!(262_144);
-    assert_eq!(full, &widened);
+    assert_eq!(
+        retries,
+        [request.clone(), widened.clone(), request.clone(), widened]
+    );
     assert_eq!(request["n_predict"], 1);
     assert_eq!(request["temperature"], 0.0);
     assert_eq!(request["cache_prompt"], true);
