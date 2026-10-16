@@ -352,6 +352,7 @@ fn device_only_history_snapshot(
     doc: &LoroDoc,
     check: Option<&HistoryCheck>,
     baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
 ) -> Result<Vec<u8>> {
     let (bytes, start, frontiers) = newest_rooted_snapshot(doc)?;
     let root_kept = if frontiers.is_empty() {
@@ -359,13 +360,13 @@ fn device_only_history_snapshot(
     } else {
         let at_root = doc.fork();
         at_root.checkout(&frontiers).is_err()
-            || super::device_only::window_withheld(vault, key, &at_root)?
+            || super::device_only::window_withheld_for(vault, key, &at_root, withhold)?
     };
     let clean = baseline.is_none_or(|floor| root_state(&start, &frontiers).includes_vv(floor))
         && check
             .is_none_or(|check| check.root_ships(doc, &frontiers) && check.ships_past(doc, &start))
         && !root_kept
-        && !super::device_only::delta_carries_device_only(vault, doc, &start)?;
+        && !super::device_only::delta_carries_device_only_for(vault, doc, &start, withhold)?;
     if clean {
         Ok(bytes)
     } else {
@@ -413,21 +414,35 @@ pub fn export_window_since(
     remote_vv: &[u8],
     baseline: Option<&VersionVector>,
 ) -> Result<WindowExport> {
+    export_window_since_for(vault, key, doc, remote_vv, baseline, super::Withhold::Unknown)
+}
+
+/// [`export_window_since`] for the machine the export serves: the worlds
+/// `withhold` names are kept off it, and a private world it may read keeps
+/// flowing to it (OF-534 G6).
+pub fn export_window_since_for(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    remote_vv: &[u8],
+    baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
+) -> Result<WindowExport> {
     let remote = VersionVector::decode(remote_vv).map_err(|source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "decode version vector",
             source,
         })
     })?;
-    if super::device_only::export_withheld(vault, key, doc, &remote)? {
+    if super::device_only::export_withheld_for(vault, key, doc, &remote, withhold)? {
         return super::device_only::withheld_window_update().map(WindowExport::Update);
     }
     let Scrubbed {
         check,
         device_only_history,
-    } = scrub_for_export(vault, key, doc, &remote)?;
+    } = scrub_for_export(vault, key, doc, &remote, withhold)?;
     if device_only_history {
-        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline)
+        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline, withhold)
             .map(WindowExport::Replacement);
     }
     let holds_floor = remote.includes_vv(&doc.shallow_since_vv().to_vv())
@@ -461,16 +476,28 @@ pub fn export_window_replacement(
     doc: &LoroDoc,
     baseline: Option<&VersionVector>,
 ) -> Result<Option<Vec<u8>>> {
+    export_window_replacement_for(vault, key, doc, baseline, super::Withhold::Unknown)
+}
+
+/// [`export_window_replacement`] for the machine the export serves.
+pub fn export_window_replacement_for(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
+) -> Result<Option<Vec<u8>>> {
     let nothing = VersionVector::default();
-    if super::device_only::export_withheld(vault, key, doc, &nothing)? {
+    if super::device_only::export_withheld_for(vault, key, doc, &nothing, withhold)? {
         return Ok(None);
     }
     let Scrubbed {
         check,
         device_only_history,
-    } = scrub_for_export(vault, key, doc, &nothing)?;
+    } = scrub_for_export(vault, key, doc, &nothing, withhold)?;
     if device_only_history {
-        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline).map(Some);
+        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline, withhold)
+            .map(Some);
     }
     history_free_snapshot(doc, check.as_ref(), baseline).map(Some)
 }
@@ -502,6 +529,7 @@ fn scrub_for_export(
     key: &WindowKey,
     doc: &LoroDoc,
     remote: &VersionVector,
+    withhold: super::Withhold<'_>,
 ) -> Result<Scrubbed> {
     crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
@@ -526,6 +554,6 @@ fn scrub_for_export(
     Ok(Scrubbed {
         check,
         device_only_history: remote.is_empty()
-            && super::device_only::delta_carries_device_only(vault, doc, remote)?,
+            && super::device_only::delta_carries_device_only_for(vault, doc, remote, withhold)?,
     })
 }
