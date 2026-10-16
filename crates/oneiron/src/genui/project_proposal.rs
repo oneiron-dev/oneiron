@@ -264,17 +264,19 @@ impl ProjectProposalCard {
     }
 
     /// A confirmed card tap calls the same thread conversion verb as other
-    /// clients; the host-held card supplies the message identity, not the tap.
+    /// clients; the host-held card supplies the message identity, not the tap,
+    /// and the owner-project signer signs the new project for the owner.
     pub fn convert_thread(
         &self,
         vault: &Vault,
         request: &ConsentActionRequest,
         owner: &AuthenticatedOwner,
+        signer: &crate::workspace_roster::OwnerProjectSigner<'_>,
         project: EntityId,
         now: u64,
     ) -> Result<crate::workspace_roster::ProjectRecord> {
         let intent = self.evaluate_action(vault, request, owner)?;
-        vault.convert_thread_with_card(&intent, owner, project, now)
+        vault.convert_thread_with_card(&intent, owner, signer, project, now)
     }
 
     #[must_use]

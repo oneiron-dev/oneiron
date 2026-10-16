@@ -58,29 +58,32 @@ Two constructors return the same `Oneiron` handle type:
 | `as_actor(actor_key: String)` | `client.asActor(actorKey:)` | narrower actor scope on the same handle type; not a verb |
 
 The generated error contract is `OneironError.Failure(code, message, suggestions)`: one variant, three fields, and `suggestions` is never
-dropped or flattened into `message`. `recall` returns the versioned
+dropped or flattened into `message`. `vault.recall` returns the versioned
 `MemoryPack`; `HEAD_MEMORY_PACK_SCHEMA_VERSION` is sourced from
 `oneiron::MEMORY_PACK_VERSION` so the declared schema can never go stale.
 
-The declared verbs, in canonical SDK spelling:
+The declared verbs, in canonical SDK spelling (the generated Swift method
+folds the dots into camelCase: `vault.claims.upsert` is `vaultClaimsUpsert`):
 
-`witness`, `recall`, `receipts`, `commit`, `claimUpsert`, `remember`,
-`claimRetract`, `forget`, `claimList`, `claimHistory`, `safeDelete`,
-`pendingWrites`, `hydrate`, `getEntity`, `queryBm25`, `neighbors`,
-`putStructural`, `putHabitCheckin`,
-`admitImportedClaim`, `putBlobArtifact`, `appendBlobVersion`,
-`readBlobVersion`, `enqueueConsolidation`, `dreamerJobStatus`,
-`seedClaims`, `scheduleOutbound`.
+`vault.witness`, `vault.recall`, `vault.receipts`, `vault.commit`,
+`vault.claims.upsert`, `vault.remember`, `vault.claims.retract`,
+`vault.forget`, `vault.claims.list`, `vault.claims.history`, `vault.delete`,
+`vault.writes.pending`, `vault.hydrate`, `vault.get`, `vault.search.bm25`,
+`vault.neighbors`, `vault.structural.put`, `vault.habits.checkin`,
+`vault.claims.admit`, `vault.artifacts.put`, `vault.artifacts.append`,
+`vault.artifacts.read`, `vault.consolidation.enqueue`,
+`vault.consolidation.status`, `vault.claims.seed`,
+`connector.outbound.schedule`.
 
-`dreamerJobStatus` uses the SDK spelling; the runtime arm maps it to
-the core attempt-status accessor, as the direct-link binding already does.
-`scheduleOutbound` schedules only — it never becomes a send transport.
-The read verbs (`getEntity`, `hydrate`, `claimList`, `claimHistory`,
-`queryBm25`, `neighbors`) return `{value, narrowing}`: their rows plus the
-read's mandatory `ReadReceipt`, the same `narrowing` every other surface
-carries.
-Blob content crosses as bytes (`Data` in Swift); `appendBlobVersion` takes
-optional `i64` Unix-second timestamps, and `readBlobVersion` is
+`vault.consolidation.status` maps to the core attempt-status accessor, as
+the direct-link binding already does.
+`connector.outbound.schedule` schedules only — it never becomes a send transport.
+The read verbs (`vault.get`, `vault.hydrate`, `vault.claims.list`,
+`vault.claims.history`, `vault.search.bm25`, `vault.neighbors`) return
+`{value, narrowing}`: their rows plus the read's mandatory `ReadReceipt`, the
+same `narrowing` every other surface carries.
+Blob content crosses as bytes (`Data` in Swift); `vault.artifacts.append`
+takes optional `i64` Unix-second timestamps, and `vault.artifacts.read` is
 version-addressed with `version: u64`.
 
 ## Generating bindings and running the compile proof

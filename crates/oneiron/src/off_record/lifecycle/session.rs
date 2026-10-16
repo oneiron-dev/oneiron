@@ -329,7 +329,7 @@ impl OffRecordSession<'_> {
     /// therefore share this one.
     ///
     /// Scores ride out with the ids (ONE-1729): the canonical sibling returns
-    /// [`ScoredEntity`] and the executor's `self.memory.search` outcome
+    /// [`ScoredEntity`] and the executor's `vault.search` outcome
     /// carries per-hit scores, so projecting them away here would have forced
     /// a second scoring body on the session path.
     ///
