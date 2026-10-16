@@ -24,6 +24,16 @@ impl Vault {
     /// owner passes. `None` is a credential that grants no read, or whose
     /// holder is no entity.
     pub fn credential_read_key(&self, proof: &VerifiedSlip) -> Result<Option<ScopedReadActorKey>> {
+        let txn = self.store.env.read_txn()?;
+        self.credential_read_key_in(&txn, proof)
+    }
+
+    /// [`Self::credential_read_key`], judged in the caller's snapshot.
+    pub(crate) fn credential_read_key_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: &VerifiedSlip,
+    ) -> Result<Option<ScopedReadActorKey>> {
         let claims = proof.claims();
         if claims.holder_ref == HOST_HOLDER {
             // The host root, unattenuated, is the trust root every credential
@@ -48,18 +58,17 @@ impl Vault {
             Some("system") => Some(EdgeActorClass::System),
             Some(_) => None,
         };
-        let txn = self.store.env.read_txn()?;
         let owner = match class {
             // A broken owner check (a conflicted authority root, a corrupt
             // row) carries its refusal, as the owner key's own reads do.
             Some(class) => {
-                actor_is_vault_owner_in_txn(self, &txn, holder, class).map_err(|refusal| {
+                actor_is_vault_owner_in_txn(self, txn, holder, class).map_err(|refusal| {
                     Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(refusal)))
                 })?
             }
             None => false,
         };
-        self.credential_read_key_in_txn(&txn, proof, holder, owner)
+        self.credential_read_key_in_txn(txn, proof, holder, owner)
     }
 
     /// The one rule for a proof-backed read key, once the owner check
