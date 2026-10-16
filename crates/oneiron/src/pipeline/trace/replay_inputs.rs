@@ -81,6 +81,16 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             },
             "bm25": {"k1": bm25.k1, "formula": formula, "fields": fields},
             "ppr_vad_alpha": crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+            "affect_retrieval": {
+                "arousal_stretch": builder.affect_policy.arousal_stretch,
+                "availability_floor": builder.affect_policy.availability_floor,
+                "floor_arousal": builder.affect_policy.floor_arousal,
+                "emotion_weight": builder.affect_policy.emotion_weight,
+                "query_affect": builder
+                    .affect_policy
+                    .congruence_query(builder.query_affect)
+                    .map(|vad| [vad.valence, vad.arousal, vad.dominance]),
+            },
             "ppr_community": {
                 "beta": builder.vault.config.ppr_community.beta,
                 "gamma": builder.vault.config.ppr_community.gamma,
