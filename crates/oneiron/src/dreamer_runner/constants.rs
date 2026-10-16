@@ -76,6 +76,12 @@ pub const DREAMER_NOTE_REVIEW_ATTEMPT_KIND: &str = "dreamer.note_review";
 ///
 /// Doubles as the payload `job_type`.
 pub const DREAMER_RESIDENT_DREAM_ATTEMPT_KIND: &str = "dreamer.resident_dream";
+/// A Dreamer-lane TASK's realization: the one row `tasks.create` queues for
+/// a TASK routed to the Dreamer, carrying the TASK's bare spec rather than
+/// the runner envelope. Admitted on any wake after the wake recipes; its one
+/// model step writes the research NOTE the TASK's result names.
+pub const DREAMER_TASK_REALIZE_ATTEMPT_KIND: &str =
+    crate::task_verb::highway_runner::REALIZE_ATTEMPT_KIND;
 /// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
 /// failure-ladder case the escalation hands to the Coach. Host-run, like agent
 /// dispatch: the wake driver never admits it; a host Coach leases it with

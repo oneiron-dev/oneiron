@@ -53,7 +53,9 @@ pub use self_brief::{
 mod memories;
 mod memories_frame;
 mod memories_projection;
+mod hook_pins;
 mod memory_pins;
+pub use hook_pins::HookPin;
 mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;

@@ -38,6 +38,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
             ),
             (
+                "vault.people.list",
+                crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
+            ),
+            (
+                "vault.people.get",
+                crate::code_run::vault_read::request_schema::<crate::memory::PersonRequest>(),
+            ),
+            (
+                "self.message",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessagePersonRequest>(
+                ),
+            ),
+            (
+                "self.grants.ask",
+                crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
+            ),
+            (
                 "self.memory.diary.query",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::DiaryQueryRequest,
@@ -140,6 +157,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.packs.setup.verify",
                 crate::code_run::vault_read::request_schema::<PackSetupVerifyRequest>(),
+            ),
+            (
+                "vault.authority.audit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::AuthorityAuditQuery>(
+                ),
+            ),
+            (
+                "vault.inspection.resolve",
+                crate::code_run::vault_read::request_schema::<crate::lens::InspectionResolveRequest>(
+                ),
             ),
             (
                 "vault.shared.propose_delete",
@@ -766,6 +793,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.people.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.people.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.message" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.grants.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.memory.diary.query" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -952,6 +1007,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.setup.verify" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.authority.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inspection.resolve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1692,6 +1761,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary.review" => {
             let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
         }
+        "vault.people.list" => {
+            let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
+        }
+        "vault.people.get" => {
+            let _input: crate::memory::PersonRequest = decode(value.clone())?;
+        }
+        "self.message" => {
+            let _input: crate::memory::MessagePersonRequest = decode(value.clone())?;
+        }
+        "self.grants.ask" => {
+            let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
+        }
         "self.memory.diary.query" => {
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
@@ -1782,6 +1863,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.packs.setup.verify" => {
             let _input: PackSetupVerifyRequest = decode(value.clone())?;
+        }
+        "vault.authority.audit" => {
+            let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
+        }
+        "vault.inspection.resolve" => {
+            let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
         }
         "vault.shared.propose_delete" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
@@ -2162,6 +2249,10 @@ pub fn invoke(
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
+        "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
+        "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
+        "self.message" => encode(self_message(memory, decode(value)?)?),
+        "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -2187,6 +2278,8 @@ pub fn invoke(
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
         "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
+        "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
         }
@@ -2457,6 +2550,30 @@ pub fn self_memory_diary_review(
 ) -> MemoryResult<crate::memory::DiaryReadRequest> {
     memory.answer_diary_read(&input)
 }
+pub fn vault_people_list(
+    memory: &Memory<'_>,
+    input: crate::memory::PeopleListRequest,
+) -> MemoryResult<crate::memory::PeoplePage> {
+    memory.people_list(&input)
+}
+pub fn vault_people_get(
+    memory: &Memory<'_>,
+    input: crate::memory::PersonRequest,
+) -> MemoryResult<crate::context_board::PersonRow> {
+    memory.people_get(&input)
+}
+pub fn self_message(
+    memory: &Memory<'_>,
+    input: crate::memory::MessagePersonRequest,
+) -> MemoryResult<crate::memory::MessagePersonReceipt> {
+    memory.message_person(&input)
+}
+pub fn self_grants_ask(
+    memory: &Memory<'_>,
+    input: crate::memory::GrantAskRequest,
+) -> MemoryResult<crate::memory::GrantAskReceipt> {
+    memory.grants_ask(&input)
+}
 pub fn self_memory_diary_query(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::DiaryQueryRequest,
@@ -2660,6 +2777,18 @@ pub fn vault_packs_setup_verify(
     input: PackSetupVerifyRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
     crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)
+}
+pub fn vault_authority_audit(
+    memory: &Memory<'_>,
+    input: crate::receipt::AuthorityAuditQuery,
+) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
+    crate::receipt::authority_audit_embedded(memory, input)
+}
+pub fn vault_inspection_resolve(
+    memory: &Memory<'_>,
+    input: crate::lens::InspectionResolveRequest,
+) -> MemoryResult<crate::lens::InspectionResolved> {
+    memory.inspection_resolve(&input)
 }
 pub fn vault_shared_propose_delete(
     memory: &Memory<'_>,

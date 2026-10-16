@@ -31,6 +31,10 @@ report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+vaultPeopleList(input: unknown): unknown
+vaultPeopleGet(input: unknown): unknown
+selfMessage(input: unknown): unknown
+selfGrantsAsk(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
@@ -56,6 +60,8 @@ vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
 vaultPacksSetupAnswer(input: unknown): unknown
 vaultPacksSetupVerify(input: unknown): unknown
+vaultAuthorityAudit(input: unknown): unknown
+vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
 vaultSharedProposeRemoveOwner(input: unknown): unknown
