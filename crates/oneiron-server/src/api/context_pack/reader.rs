@@ -7,14 +7,13 @@ use super::controls::{ContextPackBudgetControls, ContextPackReaderControls};
 use super::response::field_profile_for_view;
 use crate::error::ApiError;
 use crate::projection::View;
-use crate::server::SyncServer;
 
 /// The optional recall the named reader's profile picks for this task, or
 /// `None` when the request names no reader or its definition has no
 /// optional-memory profile. A definition the caller cannot read is one that
-/// does not exist.
+/// does not exist: the caller's scoped point read admits the row and returns
+/// its body from one snapshot, and sealed custody answers as a missing row.
 pub(crate) fn reader_optional_memory(
-    server: &SyncServer,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     reader: Option<&ContextPackReaderControls>,
 ) -> Result<Option<oneiron::agent_def::OptionalMemory>, ApiError> {
@@ -28,15 +27,16 @@ pub(crate) fn reader_optional_memory(
         )
     };
     let id = oneiron::EntityId::from_hex(&reader.definition).map_err(|_| unknown())?;
-    if !scoped_read
-        .is_entity_readable(&id)
-        .map_err(|error| core_engine_error("reader definition read failed", error))?
-    {
+    let parts = match scoped_read.get_entity_parts_with_receipt(&id, None) {
+        Ok(read) => read.value,
+        Err(error) if error.kind() == oneiron::ErrorKind::InvalidSecretCustodyBody => None,
+        Err(error) => return Err(core_engine_error("reader definition read failed", error)),
+    };
+    let Some((oneiron::registry::ENTITY_TYPE_AGENT_DEF, _, body)) = parts else {
         return Err(unknown());
-    }
-    let definition = match server.vault.get_agent_definition(&id) {
-        Ok(Some(definition)) => definition,
-        Ok(None) => return Err(unknown()),
+    };
+    let definition = match oneiron::agent_def::decode_agent_definition(&body) {
+        Ok(definition) => definition,
         Err(error) if error.kind() == oneiron::ErrorKind::InvalidAgentDefBody => {
             return Err(unknown());
         }

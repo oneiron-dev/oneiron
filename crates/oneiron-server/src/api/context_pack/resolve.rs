@@ -78,7 +78,7 @@ pub(crate) async fn run_context_pack(
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let optional_memory = reader_optional_memory(server, &scoped_read, req.reader.as_ref())?;
+    let optional_memory = reader_optional_memory(&scoped_read, req.reader.as_ref())?;
     let principal = auth
         .principal_ref()
         .and_then(|id| oneiron::EntityId::from_hex(id).ok());

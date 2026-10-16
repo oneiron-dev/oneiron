@@ -52,6 +52,13 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
                 "duplicate memory_profile key",
             )));
         }
+        // The added key is encoded last, so a body that carries it re-encodes
+        // to its own bytes only when nothing follows it.
+        if optional_memory.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "memory_profile optional_memory must be the last key",
+            )));
+        }
         seen[index] = true;
         match MEMORY_PROFILE_KEYS[index] {
             KEY_PROFILE_WINDOW_TOKEN_BUDGET => {

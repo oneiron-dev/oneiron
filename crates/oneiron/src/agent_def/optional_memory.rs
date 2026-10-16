@@ -363,22 +363,37 @@ mod tests {
             (Value::from("tokens"), Value::from(0_u64)),
             (Value::from("view"), Value::from("standard")),
         ]);
-        let mut body =
-            rmpv::decode::read_value(&mut encode_agent_definition(&definition).unwrap().as_slice())
-                .unwrap();
-        let Value::Map(fields) = &mut body else {
-            unreachable!()
+        let with_profile = |profile: Vec<(Value, Value)>| {
+            let mut body = rmpv::decode::read_value(
+                &mut encode_agent_definition(&definition).unwrap().as_slice(),
+            )
+            .unwrap();
+            let Value::Map(fields) = &mut body else {
+                unreachable!()
+            };
+            fields
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("memory_profile"))
+                .unwrap()
+                .1 = Value::Map(profile);
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, &body).unwrap();
+            bytes
         };
-        fields
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some("memory_profile"))
-            .unwrap()
-            .1 = Value::Map(zero);
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &body).unwrap();
         assert_eq!(
-            decode_agent_definition(&bytes)
+            decode_agent_definition(&with_profile(zero))
                 .expect_err("a 0 budget is no limit")
+                .kind(),
+            ErrorKind::InvalidAgentDefBody
+        );
+
+        // Sol #1523 F2: the key out of its pinned place would decode and
+        // re-encode to other bytes.
+        let mut first = encoded_profile(&definition);
+        first.rotate_right(1);
+        assert_eq!(
+            decode_agent_definition(&with_profile(first))
+                .expect_err("optional_memory comes last")
                 .kind(),
             ErrorKind::InvalidAgentDefBody
         );

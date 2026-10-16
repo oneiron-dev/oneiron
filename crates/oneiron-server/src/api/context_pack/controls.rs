@@ -349,14 +349,16 @@ impl CoreContextPackRequest {
         (self.limit, max_neighbors)
     }
 
-    /// The contacts this request names by ref. A revoked one resolves to its
-    /// stored label, so a keyed replay re-admits each of them as it does
-    /// every contact its pack stamped.
-    pub(crate) fn named_contacts(&self) -> Vec<oneiron::EntityId> {
+    /// The rows this request names by ref: its contacts and its reader's
+    /// definition. A revoked contact resolves to its stored label and the
+    /// reader's profile shapes the pack, so a keyed replay re-admits each of
+    /// them as it does every contact its pack stamped.
+    pub(crate) fn named_refs(&self) -> Vec<oneiron::EntityId> {
         self.interlocutors
             .iter()
             .flat_map(|controls| &controls.third_parties)
             .filter_map(|party| party.contact_ref.as_deref())
+            .chain(self.reader.as_ref().map(|reader| reader.definition.as_str()))
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
             .collect()
     }
