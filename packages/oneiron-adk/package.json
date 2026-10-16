@@ -1,0 +1,42 @@
+{
+  "name": "@oneiron/adk-tools",
+  "version": "0.1.0",
+  "description": "Google ADK FunctionTools over an actor-bound Oneiron public client",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oneiron-dev/oneiron.git",
+    "directory": "packages/oneiron-adk"
+  },
+  "engines": {
+    "node": ">=24.13.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "bunx --bun tsc --project tsconfig.json",
+    "typecheck": "bunx --bun tsc --project tsconfig.json --noEmit",
+    "prepack": "bun run build"
+  },
+  "peerDependencies": {
+    "@google/adk": "^2.3.0",
+    "oneiron": "^1.0.0",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@google/adk": "^2.3.0",
+    "oneiron": "file:../oneiron",
+    "typescript": "^5.5.0",
+    "zod": "^4.2.1"
+  }
+}
