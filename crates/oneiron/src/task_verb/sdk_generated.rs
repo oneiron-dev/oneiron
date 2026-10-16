@@ -1294,7 +1294,7 @@ pub fn tasks_create(
     input: TaskCreateRequest,
 ) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
     memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(
-        crate::companion_value_from_json(&input.spec)?,
+        crate::msgpack_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
         Some(memory.vault().now_recorded_at()),
