@@ -97,13 +97,51 @@ fn js_f32(value: f64) -> Result<f32> {
     Ok(value as f32)
 }
 
-/// Fit a recoverable chunk inside the *encoded* host reply ceiling. The
-/// byte-array JSON representation can take four times the raw byte length;
-/// the caller advances by the returned array length, never by a guessed cap.
+/// `bytes` as text when they are UTF-8 and their JSON string is no longer than
+/// the number array other bytes cross the channel as, up to four times their
+/// raw length. Escaped control characters can make the string the longer one.
+fn reply_text(bytes: &[u8]) -> Option<&str> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let escaped = text
+        .bytes()
+        .map(|byte| match byte {
+            b'"' | b'\\' | b'\x08' | b'\x0c' | b'\n' | b'\r' | b'\t' => 2,
+            0..=0x1f => 6,
+            _ => 1,
+        })
+        .sum::<usize>();
+    let array = bytes
+        .iter()
+        .map(|byte| match byte {
+            0..=9 => 2,
+            10..=99 => 3,
+            _ => 4,
+        })
+        .sum::<usize>();
+    (escaped <= array).then_some(text)
+}
+
+/// A file reply: text crosses the channel as a JSON string, other bytes as a
+/// number array.
+fn file_reply(path: &str, bytes: &[u8]) -> Value {
+    match reply_text(bytes) {
+        Some(text) => json!({"path": path, "text": text}),
+        None => json!({"path": path, "bytes": bytes}),
+    }
+}
+
+/// Fit a recoverable chunk inside the *encoded* host reply ceiling, cutting
+/// text only at a character boundary. The caller advances by the returned
+/// byte length, never by a guessed cap.
 fn bounded_recoverable_reply(path: &str, bytes: &[u8], limit: usize) -> Result<String> {
-    let encode = |count| {
-        serde_json::to_string(&json!({"path": path, "bytes": &bytes[..count]}))
-            .map_err(|_| failure("recoverable output encoding failed"))
+    let text = reply_text(bytes);
+    let cut = |count: usize| text.map_or(count, |text| text.floor_char_boundary(count));
+    let encode = |count: usize| {
+        let reply = match text {
+            Some(text) => json!({"path": path, "text": &text[..count]}),
+            None => json!({"path": path, "bytes": &bytes[..count]}),
+        };
+        serde_json::to_string(&reply).map_err(|_| failure("recoverable output encoding failed"))
     };
     let full = encode(bytes.len())?;
     if full.len() <= limit {
@@ -113,12 +151,13 @@ fn bounded_recoverable_reply(path: &str, bytes: &[u8], limit: usize) -> Result<S
     let mut exceeds = bytes.len();
     while exceeds - fits > 1 {
         let probe = fits + (exceeds - fits) / 2;
-        if encode(probe)?.len() <= limit {
+        if encode(cut(probe))?.len() <= limit {
             fits = probe;
         } else {
             exceeds = probe;
         }
     }
+    let fits = cut(fits);
     if fits == 0 {
         return Err(failure(
             "recoverable output cannot fit guest message budget",
@@ -149,7 +188,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             let result = service.read_file(SandboxReadFile::new(SandboxVirtualPath::try_new(
                 &args.path,
             )?))?;
-            Ok(json!({"path": result.path.as_str(), "bytes": result.bytes}).to_string())
+            Ok(file_reply(result.path.as_str(), &result.bytes).to_string())
         }
         "sandbox.credential.call" => {
             let args: Credential = parse(input)?;
@@ -414,7 +453,11 @@ struct OutputFile {
 
 pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStepOutcome> {
     if output.len() > limit {
-        return Err(failure("component output exceeds message limit"));
+        return Err(crate::Error::InvalidConfig(format!(
+            "component output is {} bytes, past the {limit}-byte step message limit \
+             (ComponentBudget.message_bytes)",
+            output.len()
+        )));
     }
     let output: Output = parse(output)?;
     let mut outputs = Vec::new();

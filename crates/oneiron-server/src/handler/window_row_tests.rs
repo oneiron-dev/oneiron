@@ -449,6 +449,21 @@ async fn a_selector_document_subscription_past_the_row_is_served() {
 /// A selector socket subscribed to two documents under one facet on a home whose row is `row`,
 /// each served.
 fn subscribe_selector_documents(row: usize) -> (tempfile::TempDir, SyncServer) {
+    let (dir, server, ..) = selector_documents(row);
+    (dir, server)
+}
+
+/// [`subscribe_selector_documents`], with the socket's state, its two documents and the REQUEST
+/// that subscribed them.
+fn selector_documents(
+    row: usize,
+) -> (
+    tempfile::TempDir,
+    SyncServer,
+    super::conn_state::ConnState,
+    [EntityId; 2],
+    Vec<u8>,
+) {
     use super::{conn_state::ConnState, documents::handle_document};
     use oneiron::{TimeRange, registry};
     let dir = tempfile::tempdir().unwrap();
@@ -530,7 +545,43 @@ fn subscribe_selector_documents(row: usize) -> (tempfile::TempDir, SyncServer) {
         assert!(replies.try_recv().is_ok(), "the document was not served");
     }
     assert_eq!(state.documents.len(), 2);
-    (dir, server)
+    (dir, server, state, ids, request)
+}
+
+/// Bug repro (Bugbot, #1483): a document REQUEST or UPDATE whose open waited past the
+/// live-document row to its deadline was answered as a persistence failure, so its socket closed
+/// as if sync state could not be stored. Done-means: each is answered the typed waited-out
+/// error, and the subscription stays.
+#[tokio::test]
+async fn a_document_wait_past_its_deadline_is_waited_out_not_a_persistence_failure() {
+    use super::documents::handle_document;
+    let (_dir, server, mut state, [subscribed, held], request) = selector_documents(4);
+    let vault = server.vault();
+    vault.set_live_rows(oneiron::live_rows::LiveRows {
+        live_documents: 1,
+        wait: Duration::from_millis(200),
+        ..vault.live_rows()
+    });
+    // Another opener holds the vault's one live document past the wait.
+    let _held = server
+        .reassert_manager
+        .documents()
+        .open_for(held, b"another opener")
+        .unwrap();
+    let remote = loro::LoroDoc::new();
+    remote.get_text("body").insert(0, "placeholder").unwrap();
+    remote.commit();
+    let update = remote.export(ExportMode::all_updates()).unwrap();
+    let (direct, _replies) = tokio::sync::mpsc::unbounded_channel();
+    for (kind, frame) in [
+        (document_sub_tags::REQUEST, request),
+        (document_sub_tags::UPDATE, update),
+    ] {
+        let error = handle_document(&server, 1, subscribed, kind, &frame, &direct, &mut state)
+            .expect_err("the open did not wait past its deadline");
+        assert_eq!(error.kind(), "waited_out", "sub-tag {kind}: {error}");
+    }
+    assert!(state.documents.contains_key(&subscribed));
 }
 
 /// Bug repro: a frame naming no exchange, or a residence update for a window its socket never

@@ -93,6 +93,18 @@ pub(crate) fn mcp_admit_run_verb(
     mcp_admit_bound_tool(actor, verb.as_str())
 }
 
+/// One verb-table row only code mode serves, through a resource the host
+/// binds to the run (`self.memory.browser.*`). No tool carries it, so the
+/// bound-verb ceiling names it by its row name, and it acts outside the
+/// vault's world/facet axes, so a narrowed credential is refused.
+pub(crate) fn mcp_admit_host_verb(
+    actor: &McpCallContext,
+    verb: oneiron::task_verb::sdk::AgentVerb,
+) -> Result<(), McpGatewayError> {
+    mcp_admit_bound_tool(actor, verb.as_str())?;
+    mcp_admit_unscoped_execution(actor, verb.as_str(), "name")
+}
+
 fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
     if actor.admits_tool(tool_name) {
         return Ok(());

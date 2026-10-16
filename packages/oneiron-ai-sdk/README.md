@@ -2,8 +2,14 @@
 
 A tool pack over the shipped `oneiron` handle. The host chooses the vault and
 actor. Tools cannot open vaults, change identity, or make raw HTTP writes.
-Typed errors and receipts pass through unchanged. `deep` recall still requires
-an engine lease; this package never creates one.
+Typed errors and receipts pass through unchanged. This package never creates an
+engine lease.
+
+The `recall` tool's `effort` field does not work yet. Its schema offers
+`minimal`, `standard` and `deep`, but the engine accepts only `light`,
+`medium`, `high`, `xhigh`, `max` and `call`. Every value the schema allows is
+refused with a typed bad-request error. A call that leaves `effort` unset runs
+at the default, `medium`.
 
 ```sh
 npm install oneiron @oneiron/ai-sdk ai @ai-sdk/openai
@@ -34,5 +40,5 @@ No model or provider dependency is bundled into the adapter.
 After building `packages/oneiron`, run `bun install --frozen-lockfile` and
 `bun run test:native` here. This executes the real `generateText` tool loop in Node, the shipped SDK runtime,
 against an actual native vault. A deterministic AI SDK model supplies tool
-calls, so CI needs no external provider key. Memory, schemas, tool dispatch,
+calls, so the test needs no external provider key. Memory, schemas, tool dispatch,
 recall and receipts are not mocked.

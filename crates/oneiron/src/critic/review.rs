@@ -1,12 +1,17 @@
 //! Artifact-independent review fan-out and the persisted calibration feedback loop.
 use super::*;
 use crate::claim::ClaimSource;
+use crate::llm::decision::DecisionReceipt;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 mod outcomes;
 mod persistence;
+mod questions;
 pub use outcomes::{record_review_outcome, recurring_findings};
 use persistence::*;
+pub use questions::{
+    REVIEW_DIAL, ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,7 +21,7 @@ pub enum ReviewArtifactKind {
     ClaimWrite,
 }
 
-/// A host receives all independent inputs together. None contains sibling output.
+/// One lens's review of the target. None contains sibling output.
 #[derive(Debug, Clone)]
 pub struct CriticReviewInput {
     pub target: EntityId,
@@ -24,11 +29,6 @@ pub struct CriticReviewInput {
     pub lens: CriticLens,
     pub run_id: String,
     pub branch_attempt: AttemptId,
-}
-
-/// Hosts fan these inputs out using their own model transport.
-pub trait ReviewHost {
-    fn fan_out(&self, inputs: &[CriticReviewInput]) -> Result<Vec<CritiqueArtifact>>;
 }
 
 #[derive(Debug, Clone)]
@@ -48,17 +48,21 @@ pub struct ReviewResult {
     pub verdict_claim: EntityId,
     pub triage: CritiqueTriage,
     pub artifacts: Vec<CritiqueArtifact>,
+    /// One receipt per typed question asked; empty when the review replays from its cache.
+    pub receipts: Vec<DecisionReceipt>,
 }
 
 /// Review a document, design or proposed claim through the same consolidator as tournaments.
 /// A session-scoped parent verdict cites every private artifact; outcomes are separate claims.
+/// Each lens's verdict, severity, scope and hard check are typed decisions on the shared path.
 pub fn review_artifact(
     vault: &Vault,
     request: &ReviewRequest,
     catalog: &LensCatalog,
-    host: &dyn ReviewHost,
+    decisions: &ReviewDecisions<'_>,
 ) -> Result<ReviewResult> {
     validate_catalog(catalog)?;
+    decisions.validate()?;
     if !request.auto_resolve_threshold.is_finite()
         || !(0.0..=1.0).contains(&request.auto_resolve_threshold)
     {
@@ -91,26 +95,7 @@ pub fn review_artifact(
             branch_attempt: request.branch_attempt,
         })
         .collect::<Vec<_>>();
-    let artifacts = host.fan_out(&inputs)?;
-    if artifacts.len() != inputs.len() {
-        return Err(invalid_critic_config("review must report once per critic"));
-    }
-    let mut seen = BTreeSet::new();
-    let mut ids = BTreeSet::new();
-    for artifact in &artifacts {
-        validate_critique_artifact(artifact)?;
-        if artifact.run_id != request.run_id
-            || artifact.branch_attempt != request.branch_attempt
-            || artifact.candidate_ref != request.target.to_hex()
-            || catalog.lens(&artifact.lens_id, &artifact.domain).is_none()
-            || !seen.insert((&artifact.lens_id, &artifact.domain))
-            || !ids.insert(&artifact.artifact_id)
-        {
-            return Err(invalid_critic_config(
-                "review output does not match its fan-out input",
-            ));
-        }
-    }
+    let (artifacts, receipts) = decisions.review(&inputs, request.at)?;
     let reliabilities = read_reliabilities(vault, &request.session, catalog)?;
     let mut triage = triage_critiques(catalog, &artifacts, &reliabilities)?;
     triage.findings =
@@ -118,7 +103,9 @@ pub fn review_artifact(
     triage.auto_resolved =
         super::findings::verdict_confidence(&artifacts, &reliabilities, triage.verdict)
             >= request.auto_resolve_threshold;
-    persist_review(vault, request, &triage, &artifacts)
+    let mut result = persist_review(vault, request, &triage, &artifacts)?;
+    result.receipts = receipts;
+    Ok(result)
 }
 
 fn value_of<T: Serialize>(value: &T) -> Result<Value> {

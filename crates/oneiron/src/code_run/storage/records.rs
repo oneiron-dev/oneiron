@@ -267,6 +267,37 @@ impl Vault {
         }
         Ok(Some(raw))
     }
+
+    /// Lends one raw output's stored bytes to `read` in place, never copied
+    /// whole out of the store. Only their length is checked here; a reader
+    /// that needs the digest calls [`CodeRunRawOutput::verify_bytes`] once,
+    /// rather than hashing the whole body for every slice it takes.
+    pub(crate) fn with_code_run_raw_output_bytes<R>(
+        &self,
+        output: &CodeRunRawOutput,
+        read: impl FnOnce(&[u8]) -> Result<R>,
+    ) -> Result<Option<R>> {
+        validate_raw_output(output)?;
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = RAW_OUTPUTS.get_borrowed(&self.store, &rtxn, &output.handle)? else {
+            return Ok(None);
+        };
+        lend_raw_output(output, &raw, read).map(Some)
+    }
+}
+
+/// Lends stored raw output bytes whose length matches their metadata.
+pub(super) fn lend_raw_output<R>(
+    output: &CodeRunRawOutput,
+    raw: &[u8],
+    read: impl FnOnce(&[u8]) -> Result<R>,
+) -> Result<R> {
+    if u64::try_from(raw.len()).ok() != Some(output.raw_len) {
+        return Err(invalid_code_run_replay(
+            "stored raw output bytes drifted from metadata",
+        ));
+    }
+    read(raw)
 }
 
 pub(super) fn replay_generation_matches(

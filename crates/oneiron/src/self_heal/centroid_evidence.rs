@@ -177,6 +177,7 @@ impl Vault {
             policy,
             std::slice::from_ref(run),
             Some((hash, refs)),
+            Vec::new(),
         )
     }
 

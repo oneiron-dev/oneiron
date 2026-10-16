@@ -11,7 +11,7 @@ use super::super::codec::validate_raw_output;
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    MODEL_HEAL_COUNTS, RAW_OUTPUTS, REPLAY_RECORDS, next_additive_heal_count,
+    MODEL_HEAL_COUNTS, RAW_OUTPUTS, REPLAY_RECORDS, lend_raw_output, next_additive_heal_count,
     replay_generation_matches,
 };
 use super::speech_identity::{
@@ -210,6 +210,20 @@ impl SessionBinding<'_> {
             ));
         }
         Ok(Some(raw))
+    }
+
+    fn with_raw_output_bytes<R>(
+        &self,
+        output: &CodeRunRawOutput,
+        read: impl FnOnce(&[u8]) -> Result<R>,
+    ) -> Result<Option<R>> {
+        validate_raw_output(output)?;
+        self.answered(|| {
+            self.session
+                .side_table_read_bytes(&RAW_OUTPUTS, &output.handle, |raw| {
+                    lend_raw_output(output, raw, read)
+                })
+        })
     }
 }
 
@@ -507,6 +521,18 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.get_code_run_raw_output(output),
             Self::Session(binding) => binding.get_raw_output(output),
+        }
+    }
+
+    /// See [`Vault::with_code_run_raw_output_bytes`].
+    pub(crate) fn with_code_run_raw_output_bytes<R>(
+        &self,
+        output: &CodeRunRawOutput,
+        read: impl FnOnce(&[u8]) -> Result<R>,
+    ) -> Result<Option<R>> {
+        match self {
+            Self::Canonical(vault) => vault.with_code_run_raw_output_bytes(output, read),
+            Self::Session(binding) => binding.with_raw_output_bytes(output, read),
         }
     }
 }

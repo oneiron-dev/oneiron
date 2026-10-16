@@ -117,8 +117,9 @@ published package or release binary.
 
 ## Crates
 
-A split of the `oneiron` crate into smaller crates is in progress. This table
-lists the crates on main today.
+This table lists selected crates, not the whole workspace. The
+[code map](./docs/CODEMAP.md) has a row for each engine crate under `crates/` and links
+to its modules and source files. It does not cover the macOS app.
 
 | Crate | Role |
 |-------|------|
@@ -150,9 +151,6 @@ lists the crates on main today.
 | [oneiron-bench](./crates/oneiron-bench) | Benchmark and evaluation harness. |
 | [oneiron-macos](./apps/macos/src-tauri) | macOS menu-bar voice recorder embedding the vault. |
 
-The [code map](./docs/CODEMAP.md) links to the modules and source files of each
-crate under `crates/`. It does not cover the macOS app.
-
 ## Storage layout
 
 This diagram matches the vault's named-database manifest. It shows storage
@@ -166,6 +164,9 @@ components, not which optional runtime features are enabled.
 
 ## Development and documentation
 
+The merge bar is `cargo check --workspace --all-features` on the head.
+[AGENTS.md](./AGENTS.md) covers the build rules and PRs.
+
 Tests use [cargo-nextest](https://nexte.st). The default profile skips the slow
 set; the full profile includes it.
 
@@ -174,17 +175,12 @@ cargo nextest run --locked -p oneiron --all-features
 cargo nextest run --locked -p oneiron --features sync,test-hooks --profile full
 ```
 
-The second command is the narrow sync lane, not the full workspace gate.
-[AGENTS.md](./AGENTS.md) covers scoped tests, host requirements, and what
-to test: new tests carry truth from outside the code, preferably end to end.
-[WORKFLOW.md](./WORKFLOW.md) covers verification and PRs.
-`scripts/verify.sh --list` shows the scripted gate without building.
+The second command runs the `sync` build with the slow set included.
 
 - [oneiron.skills.md](./oneiron.skills.md): HTTP API reference.
 - [docs/ops/owner-actions.md](./docs/ops/owner-actions.md): backup, restore,
   export, and owner approvals.
 - [UPGRADING.md](./UPGRADING.md): authentication and text-index upgrade notes.
-- [MIGRATIONS.md](./MIGRATIONS.md): storage-format decision history.
 
 ## License
 

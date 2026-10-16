@@ -1,5 +1,5 @@
 //! Transactional public authority check for all four lifecycle mutations.
-use super::claim::read_booking_facts;
+use super::claim::{read_booking_facts, read_booking_facts_to_cancel};
 use super::storage::{
     HOLD, booking_writer, confirm_receipt_key, engine_failure, read_receipt, refused,
 };
@@ -59,7 +59,7 @@ fn check_publication_in_writer(
         }
         BookingVerbRequest::Cancel(spec) => {
             let event = resolve_token_event(vault, txn, &spec.token, LifecycleTokenScope::Cancel)?;
-            let facts = read_booking_facts(vault, txn, &event)?;
+            let facts = read_booking_facts_to_cancel(vault, txn, &event)?;
             (facts.page_ref, facts.event_type)
         }
     };

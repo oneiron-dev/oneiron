@@ -307,6 +307,9 @@ mod production_tests;
 #[cfg(test)]
 mod device_local_tests;
 
+#[cfg(test)]
+pub(crate) mod rule5_tests;
+
 /// A device-only flag committed while a reply sits in a socket's queue,
 /// before its send door releases it.
 #[cfg(test)]

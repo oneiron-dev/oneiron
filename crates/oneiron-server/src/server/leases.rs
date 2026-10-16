@@ -118,7 +118,7 @@ impl SyncServer {
         _pop_sig: &[u8; 64],
     ) -> Result<LeaseDecision, oneiron::Error> {
         // Device-key enrollment is retired. Even a valid proof over leftover
-        // m:device_sk cannot create authority. Use one-use slip pairing.
+        // the device key cannot create authority. Use one-use slip pairing.
         Ok(LeaseDecision::rejected())
     }
 
