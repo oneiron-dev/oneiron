@@ -125,6 +125,10 @@ pub(super) fn spawn_git_inner(
     if let Some(root) = &process_env.hub_root {
         super::hub_read::configure(&mut command, root)?;
     }
+    if let Some(egress) = &process_env.mirror_egress {
+        super::mirror_push::configure(&mut command, egress);
+    }
+    let isolated = process_env.hub_root.is_some() || process_env.mirror_egress.is_some();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.stdin(if stdin_payload.is_some() {
         Stdio::piped()
@@ -140,9 +144,10 @@ pub(super) fn spawn_git_inner(
         &mut child,
         process_env.timeout,
         process_env.hub_root.as_deref(),
+        isolated,
     );
     if status.is_err() {
-        stop_child(&mut child, process_env.hub_root.is_some());
+        stop_child(&mut child, isolated);
     }
     if let Some(writer) = writer {
         let _ = writer.join();
@@ -221,6 +226,7 @@ fn wait_bounded(
     child: &mut Child,
     timeout: Duration,
     hub_root: Option<&Path>,
+    isolated: bool,
 ) -> Result<Option<ExitStatus>> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -231,7 +237,7 @@ fn wait_bounded(
             return Ok(Some(status));
         }
         if Instant::now() >= deadline {
-            stop_child(child, hub_root.is_some());
+            stop_child(child, isolated);
             return Ok(None);
         }
         std::thread::sleep(GIT_WIRE_POLL_INTERVAL);
@@ -297,7 +303,8 @@ fn config_policy_env() -> Vec<(String, OsString)> {
 fn stop_child(child: &mut Child, isolated: bool) {
     #[cfg(unix)]
     if isolated {
-        // SAFETY: the hub profile starts this child as leader of its own process group.
+        // SAFETY: the hub and mirror profiles start this child as leader of
+        // its own process group.
         unsafe {
             libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
         }
