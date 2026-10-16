@@ -686,33 +686,42 @@ async fn an_agent_holding_the_write_grant_saves_and_the_room_hears_it() {
     );
 }
 
-/// An agent without this vault's write grant is told to ask a holder, both
-/// when its slip cannot write and when it is not this vault's own agent, and
-/// nothing it does saves. Its suggestion waits until a holder, person or
-/// agent, answers it: a decline keeps nothing, a confirm keeps the talk, and
-/// a person without the grant can do neither.
+/// An agent without this vault's write grant is told to ask a holder, when
+/// its slip cannot write, when its slip writes only some records, and when it
+/// is not this vault's own agent, and nothing it does saves. Its suggestion,
+/// on the slip it already has, waits until a holder, person or agent,
+/// answers it: a decline keeps nothing, a confirm keeps the talk, and a
+/// person without the grant can do neither.
 #[tokio::test]
 async fn an_agent_without_the_grant_asks_and_a_holder_answers() {
     let (dir, server) = auth_test_server();
     let room = room(&server);
     // One authority key binds one actor, so only the holder is bound.
     let (asker_id, keeper_id) = (person(&server, "asker"), agent(&server, "keeper"));
+    let bounded_id = person(&server, "bounded");
     join(&server, &room, asker_id, 5);
     join(&server, &room, keeper_id, 6);
+    join(&server, &room, bounded_id, 7);
     let mina = slip("mina", room.mina, "human");
     let owner = slip("owner", room.owner, "human");
     let keeper = slip("keeper", keeper_id, "agent");
-    // An agent on a slip that only proposes, and an agent on a slip that
-    // writes but that is not this vault's.
+    // An agent on a slip that only proposes, an agent on a slip that writes
+    // one record, and an agent on a slip that writes but that is not this
+    // vault's.
     let asker = test_bearer(&format!(
         "jti=asker;principal_ref={};actor_class=agent;scope=core:read,core:propose",
         asker_id.to_hex()
+    ));
+    let bounded = test_bearer(&format!(
+        "{};records={}",
+        recipe("bounded", bounded_id, "agent"),
+        room.id.to_hex()
     ));
     let stranger = slip("companion", room.companion, "agent");
 
     start(&server, owner.clone(), room.id, "loft").await;
     let said = say(&server, mina.clone(), room.id, "loft", 100, SECRET_WORDS).await;
-    for who in [&asker, &stranger] {
+    for who in [&asker, &bounded, &stranger] {
         for path in ["save", "save-from-here", "confirm-save", "decline-save"] {
             let (status, refused) = act(&server, path, who.clone(), room.id, "loft").await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {refused}");
@@ -751,8 +760,12 @@ async fn an_agent_without_the_grant_asks_and_a_holder_answers() {
     assert!(server.vault().get(&said).unwrap().is_none());
     assert!(!stored(&dir, SECRET_WORDS), "a declined suggestion saved");
 
-    let (status, asked) = act(&server, "suggest-save", asker, room.id, "loft").await;
+    let (status, asked) = act(&server, "suggest-save", bounded, room.id, "loft").await;
     assert_eq!(status, StatusCode::OK, "{asked}");
+    assert_eq!(
+        waiting(&server, mina.clone(), room.id, "loft").await,
+        [bounded_id.to_hex()]
+    );
     let (status, confirmed) = act(&server, "confirm-save", keeper, room.id, "loft").await;
     assert_eq!(status, StatusCode::OK, "{confirmed}");
     assert_eq!(confirmed["saved"][0]["turn"], said.to_hex());
@@ -763,14 +776,13 @@ async fn an_agent_without_the_grant_asks_and_a_holder_answers() {
             .is_empty()
     );
 
-    let (asker_hex, keeper_hex) = (asker_id.to_hex(), keeper_id.to_hex());
     assert_eq!(
         notices(&server, mina, room.id, "loft").await,
         [
-            ("save_suggested".to_owned(), asker_hex.clone()),
+            ("save_suggested".to_owned(), asker_id.to_hex()),
             ("save_declined".to_owned(), room.owner.to_hex()),
-            ("save_suggested".to_owned(), asker_hex),
-            ("saved_talk".to_owned(), keeper_hex),
+            ("save_suggested".to_owned(), bounded_id.to_hex()),
+            ("saved_talk".to_owned(), keeper_id.to_hex()),
         ]
     );
 }

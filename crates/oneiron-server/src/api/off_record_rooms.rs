@@ -388,8 +388,10 @@ async fn suggest_save(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Room> {
-    // An agent without the write grant may still ask.
-    auth.require(if auth.has_scope(CoreScope::Write) {
+    // An agent without the write grant may still ask, on any slip that writes
+    // or proposes, record-bounded too: a suggestion lands nothing until a
+    // holder answers it.
+    auth.require_granted(if auth.has_scope(CoreScope::Write) {
         CoreScope::Write
     } else {
         CoreScope::Propose
