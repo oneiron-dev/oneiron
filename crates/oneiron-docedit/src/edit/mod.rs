@@ -18,10 +18,15 @@ mod structure;
 #[cfg(test)]
 mod tests;
 mod text;
+pub mod transaction;
 mod xfrm;
 pub(crate) mod xml;
 
 pub use structure::{NewShape, Preset, StructureEdit, StructureReport, structure_patch};
+pub use transaction::{
+    AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
+    PartChange, StepRefusal, TransactionError, run_transaction,
+};
 
 use crate::deck::{DeckError, DeckView, ShapeView};
 use crate::design_plan::AssetKind;
@@ -105,7 +110,8 @@ pub struct EditReport {
 }
 
 /// Consequences an edit declares beyond its own write.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Effect {
     /// A connector glued to the moved shape keeps its own geometry.
     GluedConnector { connector: Option<u32> },
@@ -135,7 +141,7 @@ pub enum Effect {
     NotInCustomShow { show: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FitUnverified {
     pub part: String,
     pub shape: u32,

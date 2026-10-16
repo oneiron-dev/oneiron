@@ -79,6 +79,9 @@ side_tables! {
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
     /// bytes without a scan. Key: id16 (artifact) + bytes32.
     BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
+    /// Native slide and shape id high-water marks of one deck artifact, raised at each settled
+    /// deck transaction (ARCH-0077 managed id history). Key: id16.
+    BLOB_ARTIFACT_DECK_ID_MARKS: VaultMeta b"blob_artifact:deck_id_marks:v1:" Named;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
@@ -440,6 +443,13 @@ side_tables! {
     /// One append-only membership-ledger event (join/leave/history-visibility change) for a
     /// conversation, keyed by conversation then sequence. Key: id16 + u64be.
     CONVERSATION_MEMBERSHIP_ROW: VaultMeta b"conversation_membership:v1:" Named;
+    /// One courtesy deletion ask a former peer sent, filed for the owner's review with the owner's
+    /// answer once given (OF-273). Key: bytes32(pact) + bytes16(nonce).
+    COOPERATIVE_DELETION_INCOMING: VaultMeta b"cooperative_deletion:incoming:v1:" Named;
+    /// The sender's delivery record for one courtesy deletion ask to one recipient: request id,
+    /// connection id, pseudonymous recipient id, status and timestamps only (OF-273). Key:
+    /// bytes16(nonce) + bytes32(recipient pseudonym).
+    COOPERATIVE_DELETION_NOTICE: VaultMeta b"cooperative_deletion:notice:v1:" Named;
     /// Deduplicated set of contact refs reachable for a (party, channel class) pair. Key:
     /// hash32(sha256).
     COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX: VaultMeta b"counterparty.contact.party_channel.v1:" Raw;

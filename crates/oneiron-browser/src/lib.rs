@@ -233,14 +233,20 @@ impl BrowserError {
 impl WaitForInput {
     #[must_use]
     pub fn query(&self) -> FindInput {
-        FindInput { role: self.role.clone(), name: self.name.clone() }
+        FindInput {
+            role: self.role.clone(),
+            name: self.name.clone(),
+        }
     }
 }
 
 impl ExpectInput {
     #[must_use]
     pub fn query(&self) -> FindInput {
-        FindInput { role: self.role.clone(), name: self.name.clone() }
+        FindInput {
+            role: self.role.clone(),
+            name: self.name.clone(),
+        }
     }
 }
 
@@ -248,7 +254,9 @@ impl FindInput {
     /// Whether `row` matches: role exactly, name as a case-blind substring.
     #[must_use]
     pub fn matches(&self, row: &Row) -> bool {
-        self.role.as_ref().is_none_or(|role| row.role.eq_ignore_ascii_case(role))
+        self.role
+            .as_ref()
+            .is_none_or(|role| row.role.eq_ignore_ascii_case(role))
             && self
                 .name
                 .as_ref()

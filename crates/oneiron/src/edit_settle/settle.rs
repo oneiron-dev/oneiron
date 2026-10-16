@@ -47,6 +47,19 @@ impl Vault {
     ) -> Result<SettleSelectOutcome> {
         self.ensure_selectable(artifact_id, proposal, actor)?;
         self.authorize_settle(consent, actor)?;
+        // A deck proposal answering a thread settles under that thread's brief
+        // when it rides a standing grant; the owner's own consent needs none.
+        let deck = crate::edit_roundtrip::deck_op(proposal);
+        if let (Some((_, _, context)), SettleConsent::StandingGrant { brief_ref }) = (deck, consent)
+            && context.thread.is_some_and(|thread| {
+                crate::anchored_annotation::thread_brief_ref(&thread) != *brief_ref
+            })
+        {
+            return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
+                "a deck proposal answering a thread settles only under that thread's brief",
+            )));
+        }
+        let deck_limits = deck.map(|_| self.docedit_package_limits()).transpose()?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
@@ -192,6 +205,7 @@ impl Vault {
                         anchors: Vec::new(),
                         reason: Some("stale_base".to_owned()),
                         sheet_answers: proposal.sheet_answers.clone(),
+                        deck: None,
                     };
                     RECORD.put(&self.store, wtxn, &key, &record)?;
                     return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
@@ -209,6 +223,7 @@ impl Vault {
                 } else {
                     None
                 };
+                let mut checked_deck = None;
                 if let Some(limits) = pptx_limits {
                     if proposal.base_version != Some(base.version) {
                         return Err(Error::Artifact(ArtifactError::EditProposalStale));
@@ -216,14 +231,31 @@ impl Vault {
                     let bytes = self
                         .read_blob_artifact_version_in_txn(wtxn, artifact_id, base.version)?
                         .ok_or(Error::EntityNotFound)?;
-                    crate::edit_roundtrip::pptx::verify_comment_proposal_with_limits(
-                        &bytes, proposal, limits,
-                    )
-                    .map_err(|_| {
-                        Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "PowerPoint comment proposal does not replay over its pinned base",
-                        ))
-                    })?;
+                    if let Some(deck_limits) = deck_limits {
+                        // Replay the native deck transaction over the pinned base,
+                        // above managed id history; the handoff hash settles once.
+                        let history = self.deck_id_marks_in_txn(wtxn, artifact_id)?;
+                        let assets = crate::edit_roundtrip::VaultAssets {
+                            vault: self,
+                            txn: wtxn,
+                        };
+                        checked_deck = Some(crate::edit_roundtrip::verify_deck_proposal(
+                            &bytes,
+                            proposal,
+                            deck_limits,
+                            &history,
+                            &assets,
+                        )?);
+                    } else {
+                        crate::edit_roundtrip::pptx::verify_comment_proposal_with_limits(
+                            &bytes, proposal, limits,
+                        )
+                        .map_err(|_| {
+                            Error::Artifact(ArtifactError::InvalidEditManifest(
+                                "PowerPoint comment proposal does not replay over its pinned base",
+                            ))
+                        })?;
+                    }
                 }
                 let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                     wtxn,
@@ -240,6 +272,9 @@ impl Vault {
                     learned_at,
                     (format == OfficeFormat::Pptx).then_some(base.version),
                 )?;
+                if let Some(checked) = &checked_deck {
+                    self.raise_deck_id_marks_in_txn(wtxn, artifact_id, &checked.marks)?;
+                }
                 if let Some(limits) = pptx_limits {
                     self.apply_pptx_comment_annotations_in_txn(
                         wtxn,
@@ -301,6 +336,7 @@ impl Vault {
                     anchors: settled_anchors_from_summary(&reanchor),
                     reason: None,
                     sheet_answers: proposal.sheet_answers.clone(),
+                    deck: checked_deck.map(|checked| Box::new(checked.evidence)),
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
                 Ok((version, reanchor, record, None))
@@ -354,6 +390,7 @@ impl Vault {
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
             sheet_answers: None,
+            deck: None,
         };
         RECORD.encode_value(&record)?;
 
@@ -595,6 +632,7 @@ impl Vault {
                     op,
                     crate::edit_roundtrip::EditOp::PptxComment { .. }
                         | crate::edit_roundtrip::EditOp::MintPptxSlideCreationId { .. }
+                        | crate::edit_roundtrip::EditOp::DeckTransaction { .. }
                 )
             })
         {
@@ -615,21 +653,30 @@ impl Vault {
         }
         if proposal.format != proposal.manifest.format
             || match proposal.format {
-                OfficeFormat::Xlsx => proposal
-                    .manifest
-                    .ops
-                    .iter()
-                    .any(|op| matches!(op, EditOp::DocxRevision { .. })),
+                OfficeFormat::Xlsx => proposal.manifest.ops.iter().any(|op| {
+                    matches!(
+                        op,
+                        EditOp::DocxRevision { .. } | EditOp::DeckTransaction { .. }
+                    )
+                }),
                 OfficeFormat::Docx => !matches!(
                     proposal.manifest.ops.as_slice(),
                     [EditOp::DocxRevision { transaction }]
                         if oneiron_docedit::validate_revision_transaction(transaction).is_ok()
                 ),
-                OfficeFormat::Pptx => proposal
-                    .manifest
-                    .ops
-                    .iter()
-                    .any(|op| matches!(op, EditOp::DocxRevision { .. })),
+                OfficeFormat::Pptx => {
+                    proposal
+                        .manifest
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, EditOp::DocxRevision { .. }))
+                        || (proposal
+                            .manifest
+                            .ops
+                            .iter()
+                            .any(|op| matches!(op, EditOp::DeckTransaction { .. }))
+                            && proposal.manifest.ops.len() != 1)
+                }
             }
         {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(

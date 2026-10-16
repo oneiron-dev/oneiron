@@ -1,7 +1,7 @@
 //! `POST /v1/llm/decision_read`: the owner's probe of the house model's
-//! decision read. It returns the raw one-pass read (the question's label
+//! decision read. It returns the raw pack read (the question's label
 //! probabilities, P(more thinking) and, when the recipe asks it, P(ask a
-//! person)) and writes nothing, decides nothing and acts on nothing: every
+//! person), each its own question in one request) and writes nothing, decides nothing and acts on nothing: every
 //! typed decision still goes through decide() in process. The model, its
 //! endpoint, the recipe and the paired and person questions are the host's
 //! configuration; the caller brings only its question, options and state.
@@ -14,7 +14,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use oneiron::llm::run_admission::{CallOutcome, RunReceiptSink};
-use oneiron::llm::{LabelReadRequest, LabelReadout, LabelSet, LlmError, LlmUsage};
+use oneiron::llm::{
+    FatalLlmError, LabelReadFailure, LabelReadRequest, LabelReadout, LabelSet, LlmError, LlmUsage,
+};
 use oneiron::{BudgetGuard, BudgetLease};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -72,19 +74,36 @@ impl ReadRequest {
             && state_bytes <= MAX_STATE_BYTES
     }
 
-    /// The read this request asks, with the host's probe questions.
-    fn label_read<'a>(&'a self, probe: &'a ProbeQuestions) -> LabelReadRequest<'a> {
-        LabelReadRequest {
-            state: &self.state,
-            primary: LabelReadout {
+    /// The pack this request asks: its question, then the host's paired
+    /// question and, when set, its person question.
+    fn questions<'a>(&'a self, probe: &'a ProbeQuestions) -> Vec<LabelReadout<'a>> {
+        let mut questions = vec![
+            LabelReadout {
                 text: &self.question,
                 labels: match &self.options {
                     Some(options) => LabelSet::Choice(options),
                     None => LabelSet::Noul,
                 },
             },
-            paired: &probe.paired,
-            person: probe.person.as_deref(),
+            LabelReadout {
+                text: &probe.paired,
+                labels: LabelSet::Noul,
+            },
+        ];
+        if let Some(person) = &probe.person {
+            questions.push(LabelReadout {
+                text: person,
+                labels: LabelSet::Noul,
+            });
+        }
+        questions
+    }
+
+    fn label_read<'a>(&'a self, questions: &'a [LabelReadout<'a>]) -> LabelReadRequest<'a> {
+        LabelReadRequest {
+            state: &self.state,
+            questions,
+            work_until: None,
         }
     }
 }
@@ -107,7 +126,7 @@ pub(super) async fn decision_read(
         return refusal(StatusCode::BAD_REQUEST, "invalid_request");
     }
     // Priced on the prompt it renders; one it cannot render is refused here.
-    let reserve = match door.reserve(&request.label_read(&probe)) {
+    let reserve = match door.reserve(&request.label_read(&request.questions(&probe))) {
         Ok(reserve) => reserve,
         Err(error) => return failure(error),
     };
@@ -122,7 +141,14 @@ pub(super) async fn decision_read(
     // ends nothing the read still holds.
     let read = tokio::task::spawn_blocking(move || {
         let _turn = turn;
-        read(&door, &request.label_read(&probe), reserve, meter, receipts)
+        let questions = request.questions(&probe);
+        read(
+            &door,
+            &request.label_read(&questions),
+            reserve,
+            meter,
+            receipts,
+        )
     })
     .await;
     match read {
@@ -157,13 +183,26 @@ fn read(
     if let Err(denied) = permit.settle(outcome) {
         tracing::error!(%denied, "a decision read's settlement was refused");
     }
-    let answer = answer?;
+    let mut answer = answer?;
+    // A readout reports yes first; the pack is the question, paired, person.
+    let yes = |index: usize| {
+        answer
+            .readouts
+            .get(index)
+            .and_then(|readout| readout.first())
+    };
+    let malformed = || LlmError::from(FatalLlmError::LabelRead(LabelReadFailure::Malformed));
+    if answer.readouts.len() != read.questions.len() {
+        return Err(malformed());
+    }
+    let paired_yes = *yes(1).ok_or_else(malformed)?;
+    let person_yes = yes(2).copied();
     Ok(ReadAnswer {
         model: reader.model().to_owned(),
         revision: reader.revision().to_owned(),
-        primary: answer.primary,
-        paired_yes: answer.paired_yes,
-        person_yes: answer.person_yes,
+        primary: answer.readouts.swap_remove(0),
+        paired_yes,
+        person_yes,
         usage: answer.usage,
     })
 }

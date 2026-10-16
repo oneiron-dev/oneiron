@@ -1,6 +1,5 @@
 //! Executor driver: struct, constructors, and the witness-turn doors.
 
-use super::store::ObservationRef;
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
 use crate::code_run::{ExecutorStorage, GatedActorWrite};
 use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
@@ -8,8 +7,8 @@ use crate::entity_id::EntityId;
 use crate::llm::seat::ModelSeat;
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
+use crate::result_memory::{ResultHold, ResultShare};
 use crate::{BudgetLease, Error, LlmBackend, Vault};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Engine-native executor driver.
@@ -24,9 +23,11 @@ pub struct EngineNativeExecutor<'a> {
     pub(super) output_context: OutputWorkingContext,
     pub(super) output_run: Option<EntityId>,
     pub(super) output_decay: OutputDecayPolicy,
-    /// Each committed observation's reference, keyed by its raw output's
-    /// content handle, so a turn reads no past body to build its context.
-    pub(super) observations: HashMap<String, ObservationRef>,
+    /// This run's share of the result-memory pool (OF-190 B++).
+    pub(super) result_share: ResultShare,
+    /// What the context this run built last holds of its share: the bodies
+    /// its Full views carry, given back when the next context is built.
+    pub(super) context_holds: Vec<ResultHold>,
     /// The host's compaction seat for this run, when it keeps one.
     pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
     /// Shadow mode: each program is type-checked before it runs, and the
@@ -53,6 +54,8 @@ impl<'a> EngineNativeExecutor<'a> {
         gated_write: &'a GatedActorWrite<'a>,
     ) -> Self {
         Self {
+            result_share: vault.result_share(),
+            context_holds: Vec::new(),
             storage: ExecutorStorage::Canonical(vault),
             backend,
             seat: None,
@@ -66,7 +69,6 @@ impl<'a> EngineNativeExecutor<'a> {
                 overview_after_turns: 2,
                 stub_after_turns: 5,
             },
-            observations: HashMap::new(),
             compaction: None,
             code_check: None,
             next_witness_order: AtomicU32::new(0),
@@ -95,8 +97,11 @@ impl<'a> EngineNativeExecutor<'a> {
         runtime: &'a mut dyn JsCodeModeRuntime,
         gated_write: &'a GatedActorWrite<'a>,
     ) -> EngineExecutorResult<Self> {
+        let storage = ExecutorStorage::for_session(session, gated_write.actor().entity_ref())?;
         Ok(Self {
-            storage: ExecutorStorage::for_session(session, gated_write.actor().entity_ref())?,
+            result_share: storage.result_share(),
+            context_holds: Vec::new(),
+            storage,
             backend,
             seat: None,
             lease,
@@ -109,7 +114,6 @@ impl<'a> EngineNativeExecutor<'a> {
                 overview_after_turns: 2,
                 stub_after_turns: 5,
             },
-            observations: HashMap::new(),
             compaction: None,
             code_check: None,
             next_witness_order: AtomicU32::new(0),
