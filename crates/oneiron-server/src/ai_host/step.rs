@@ -114,6 +114,11 @@ impl StepRunner {
             model: seat.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
+                // No world: the world a step was dispatched in does not vouch
+                // for its text (Astra R3). Its definition, its briefing and
+                // earlier steps' outputs may come from any world the
+                // dispatcher read, so the vault-wide floor holds its fallback
+                // on the device while any world stays on it.
                 scope: Default::default(),
                 tier: TierPrecedence::for_purpose(
                     &purpose,
