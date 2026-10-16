@@ -503,6 +503,7 @@ pub(crate) fn drop_vector_state(
     }
     crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
     crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
+    crate::embed::delete_text_media_vectors_in_txn(&vault.store, txn, id)?;
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
     {

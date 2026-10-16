@@ -5,7 +5,9 @@ use std::collections::{BTreeSet, HashMap};
 use loro::LoroDoc;
 
 use crate::Vault;
-use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
+use crate::authority::{
+    AuthorityFold, FederationGrantActivation, federation_grant_activation,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -28,6 +30,7 @@ use crate::sync::window::{
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
 use super::epoch_egress::unbacked_epochs;
+use super::machine_history::machine_history_controls;
 use super::scope::{
     band_filter, coreference_export_context, entity_selector_decision, facet_filter,
     facet_scope_by_source,
@@ -336,75 +339,6 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
-/// The rows a machine CLAIM's authenticated history needs beside it in an
-/// export, read from stored truth: its birth event, each transition event and
-/// every handoff of its chain. `None` when that history does not resolve
-/// whole (a missing or malformed row, a cycle in the chain).
-fn machine_history_controls(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    id: EntityId,
-) -> Result<Option<Vec<EntityId>>> {
-    let (Ok(rows), Ok(packet)) = (
-        crate::claim::history_projection::machine_history_rows(&vault.store, rtxn, id),
-        crate::claim::history_projection::trusted_machine_handoff(&vault.store, rtxn, id),
-    ) else {
-        return Ok(None);
-    };
-    let mut required = vec![rows.birth.event_id()?];
-    for event in &rows.events {
-        required.push(crate::claim::transition::machine_claim_transition_event_id(
-            event,
-        )?);
-    }
-    let mut next = Some(packet);
-    let mut seen = BTreeSet::new();
-    while let Some(handoff) = next {
-        let hash = handoff
-            .content_hash()
-            .map_err(|_| crate::Error::InvalidClaimBody("machine handoff hash"))?;
-        if !seen.insert(hash) {
-            return Ok(None);
-        }
-        required.push(EntityId::from_bytes(
-            hash[..16]
-                .try_into()
-                .map_err(|_| crate::Error::InvalidClaimBody("machine handoff id"))?,
-        )?);
-        let Some(parent) = handoff.previous_handoff_hash else {
-            break;
-        };
-        let parent_id = EntityId::from_bytes(
-            parent[..16]
-                .try_into()
-                .map_err(|_| crate::Error::InvalidClaimBody("machine handoff parent id"))?,
-        )?;
-        let Some(raw) = vault.store.entities.get(rtxn, parent_id.as_bytes())? else {
-            return Ok(None);
-        };
-        if EntityMetadataHeader::parse(&raw)
-            .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
-        {
-            return Ok(None);
-        }
-        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
-            return Ok(None);
-        };
-        let rmpv::Value::Binary(bytes) = body.value else {
-            return Ok(None);
-        };
-        let Ok(parent_packet) = crate::claim::ClaimHistoryHandoff::decode(&bytes) else {
-            return Ok(None);
-        };
-        if parent_packet.content_hash().ok() != Some(parent) {
-            return Ok(None);
-        }
-        next = Some(parent_packet);
-    }
-    Ok(Some(required))
-}
-
 /// `withhold` names the worlds kept off the machine the export serves. Every
 /// export door withholds; promotion authority asks only what the grant
 /// covers.
@@ -425,7 +359,7 @@ pub(super) fn filter_window_doc(
     // The canonical window packs nothing an unknown destination may not
     // read. A proved machine's export packs, into this detached copy, the
     // private rows that machine may read.
-    if let Withhold::Worlds(_) = withhold {
+    if matches!(withhold, Withhold::Worlds(_) | Withhold::Peer(_)) {
         reverse_rematerialize_with(vault, &refreshed, key, withhold)?;
     }
     let source = &refreshed;
@@ -442,6 +376,12 @@ pub(super) fn filter_window_doc(
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
+    let flagged = withhold.worlds_in(vault, &rtxn)?;
+    if key.world().is_some_and(|world| flagged.contains(&world)) {
+        let out = create_window_doc("selector", key);
+        out.commit();
+        return Ok(out);
+    }
     let (_, mut claims_withheld) = withheld_claim_carriers(
         vault,
         &rtxn,
@@ -452,7 +392,7 @@ pub(super) fn filter_window_doc(
     claims_withheld.extend(crate::sync::window::device_only_ids(
         vault,
         &rtxn,
-        withhold,
+        Withhold::Worlds(&flagged),
         &source.get_map("entities"),
         &source.get_map("edges"),
     )?);
@@ -469,6 +409,11 @@ pub(super) fn filter_window_doc(
         };
         tombstoned.insert(id);
     });
+    for id in &tombstoned {
+        if crate::settings::device_only_withholds(&vault.store, &rtxn, &flagged, id)? {
+            claims_withheld.insert(*id);
+        }
+    }
 
     let facets = facet_filter(scope_position);
     let facet_scope = facet_scope_by_source(
@@ -578,6 +523,15 @@ pub(super) fn filter_window_doc(
         // no text, so it still propagates its delete.
         if !is_tombstoned {
             match text_backed(vault, &rtxn, &id, Some(blob), |source, raw| {
+                if crate::settings::device_only_withholds_raw(
+                    &vault.store,
+                    &rtxn,
+                    &flagged,
+                    source,
+                    Some(raw),
+                )? {
+                    return Ok(false);
+                }
                 source_selected(
                     vault,
                     &rtxn,
@@ -702,7 +656,6 @@ pub(super) fn filter_window_doc(
     // flag is policy, not authority: promotion authority keeps a NOTE the
     // flag holds here, as it keeps every other row (this corrects #1402's
     // authority-mode NOTE drop).
-    let flagged = withhold.worlds_in(vault, &rtxn)?;
     let notes_dropped = crate::sync::note::dropped_in(vault, &rtxn, &flagged, source, &kept)?;
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
@@ -780,6 +733,9 @@ pub(super) fn filter_window_doc(
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
+        if claims_withheld.contains(&id) {
+            return;
+        }
         if kept.contains(&id)
             || (facets.is_none()
                 && band_filter(scope_position).is_none()

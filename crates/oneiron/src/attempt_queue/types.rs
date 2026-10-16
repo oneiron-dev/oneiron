@@ -144,7 +144,9 @@ pub enum AttemptState {
 }
 
 impl AttemptState {
-    pub(crate) const fn as_str(self) -> &'static str {
+    /// Returns the stable wire string for this attempt state.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",
             Self::Leased => "leased",

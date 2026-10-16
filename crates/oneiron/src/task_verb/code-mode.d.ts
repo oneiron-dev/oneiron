@@ -89,6 +89,12 @@ declare const vault: {
       get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
     };
   };
+  conversations: {
+    turn: {
+      continue(input: { turn_id: string }): Promise<unknown>;
+      retry(input: { turn_id: string }): Promise<unknown>;
+    };
+  };
   delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;

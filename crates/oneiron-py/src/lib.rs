@@ -530,6 +530,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_conversations_turn_continue(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.conversations.turn.continue")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.conversations.turn.continue", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_conversations_turn_retry(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.conversations.turn.retry")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.conversations.turn.retry", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_rooms_host(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.rooms.host")?;
         let output = py
