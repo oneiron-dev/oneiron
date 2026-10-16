@@ -24,7 +24,7 @@ pub(super) fn validate_connector_manifest_put(
         )));
     }
     let incoming = crate::connector_key::decode_connector_key_body(data)?;
-    if let Some(previous) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(previous) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? {
         let header = crate::batch::EntityMetadataHeader::parse(&previous)
             .ok_or(Error::CorruptedIndex("connector key entity header"))?;
         if header.entity_type == entity_type {
