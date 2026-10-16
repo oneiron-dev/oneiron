@@ -6,12 +6,13 @@
 //! does not cover refuses, and the independent checks refuse an undeclared
 //! change. Every refusal leaves the package byte-identical.
 use super::super::tests::refuse;
-use super::super::{StructureEdit, structure_patch};
+use super::super::{NewShape, Preset, StructureEdit, structure_patch};
 use super::*;
 use crate::deck::SlideView;
 use crate::deck::fixture::{NS, limits};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset, Rect};
-use crate::edit::tests::{SLIDE, deck, part};
+use crate::edit::tests::{SLIDE, deck, part, target, timing, with_notes_master};
+use crate::edit::{ValueEdit, edit};
 use crate::native_patch::{ChartFamily, Frame, NativeEdit, Target as Series, native_patch};
 use crate::retained_opc::rels_name;
 
@@ -623,4 +624,76 @@ fn the_slide_checks_refuse_undeclared_changes() {
         check::reordered(&package, &next, &before, &[257, 256]),
         Err(EditRefusal::WriteOutsideTarget { .. })
     ));
+}
+
+/// The emitted oracle deck with a notes master, a click and a with effect on
+/// slide 4 and notes on the chart slide, then each structural verb once: the
+/// copy of the chart slide clones its notes and both charts, and the reorder
+/// moves the last slide second.
+#[test]
+#[ignore = "writes the Office-oracle candidate to $ONEIRON_EDIT_CANDIDATE"]
+fn office_oracle_candidate() {
+    let slide = |n: u32| format!("ppt/slides/slide{n}.xml");
+    let (four, five, nine) = (slide(4), slide(5), slide(9));
+    let emitted = crate::emit::tests::oracle_deck().bytes;
+    let mut package = Package::open(&emitted, limits()).unwrap();
+    with_notes_master(&mut package);
+    let effects = timing()
+        .replace(r#"spid="8""#, r#"spid="3""#)
+        .replace(r#"spid="9""#, r#"spid="4""#);
+    let animated = part(&package, &four).replace("</p:sld>", &format!("{effects}</p:sld>"));
+    package
+        .replace_xml_part(&four, animated.into_bytes())
+        .unwrap();
+    let op = ValueEdit::SetNotes {
+        slide: "ppt/slides/slide3.xml",
+        expected: None,
+        text: "Read the two charts side by side.",
+    };
+    edit(&mut package, &op).unwrap();
+    let base = package.export().unwrap();
+    let mut package = Package::open(&base, limits()).unwrap();
+
+    let shape = NewShape {
+        preset: Preset::RoundRect,
+        name: "Callout",
+        offset: (5_486_400, 4_572_000),
+        extent: (2_743_200, 1_143_000),
+        high_water: 3,
+        seed: b"oracle shape",
+    };
+    let add = StructureEdit::AddShape {
+        slide: &five,
+        shape,
+    };
+    let delete = StructureEdit::DeleteShape {
+        target: target(&package, &four, 4),
+        cascade: true,
+    };
+    let reparent = StructureEdit::Reparent {
+        target: target(&package, &nine, 5),
+        parent: None,
+    };
+    for (verb, op) in [
+        ("add_shape", add),
+        ("delete_shape", delete),
+        ("reparent", reparent),
+    ] {
+        let report = structure_patch(&mut package, &op).unwrap();
+        println!("{verb} {:?}", report.effects);
+    }
+    let op = duplicate(&package, "ppt/slides/slide3.xml", 264, b"oracle copy");
+    let report = structure_patch(&mut package, &op).unwrap();
+    println!("duplicate_slide {:?}", report.effects);
+    let mut order = sld_ids(&package);
+    let last = order.pop().unwrap();
+    order.insert(1, last);
+    let op = StructureEdit::ReorderSlides { order: &order };
+    let report = structure_patch(&mut package, &op).unwrap();
+    println!("reorder_slides {order:?} {:?}", report.effects);
+    assert_eq!(sld_ids(&package), order);
+
+    let path = std::env::var("ONEIRON_EDIT_CANDIDATE").unwrap();
+    std::fs::write(format!("{path}.base"), &base).unwrap();
+    std::fs::write(&path, package.export().unwrap()).unwrap();
 }

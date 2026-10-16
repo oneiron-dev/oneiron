@@ -40,7 +40,7 @@ fn plain(id: u32, name: &str, frame: &str) -> String {
 
 /// One click effect on paragraph 0 of shape 8 (built by paragraph) and one
 /// on characters 0-3 of shape 9.
-fn timing() -> String {
+pub(super) fn timing() -> String {
     let effect = |ctn: u32, spid: u32, range: &str, node: &str| {
         format!(
             r#"<p:par><p:cTn id="{ctn}" presetID="10" presetClass="entr" presetSubtype="0" fill="hold" grpId="0" nodeType="{node}"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:set><p:cBhvr><p:cTn id="{}" dur="1" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{spid}"><p:txEl>{range}</p:txEl></p:spTgt></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set></p:childTnLst></p:cTn></p:par>"#,
@@ -1127,7 +1127,7 @@ const NOTES_MASTER: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="y
 
 /// Give a deck without notes a notes master on its own copy of the theme,
 /// as PowerPoint writes one.
-fn with_notes_master(deck: &mut Package) {
+pub(super) fn with_notes_master(deck: &mut Package) {
     let (master, theme) = ("ppt/notesMasters/notesMaster1.xml", "ppt/theme/theme2.xml");
     let presentation = "ppt/presentation.xml";
     let kind = |name: &str| format!("{}/{name}", xml::R);
