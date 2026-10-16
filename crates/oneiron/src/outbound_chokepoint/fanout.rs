@@ -561,9 +561,9 @@ pub(crate) fn approve_and_resume_fanout(
     match choice {
         // A pause row never offers a width-check answer, so the offer check
         // above already refused it.
-        FanoutApprovalChoice::Ack | FanoutApprovalChoice::AckAndRemember => Err(
-            Error::InvariantViolation("a pause row offers no width-check answer").into(),
-        ),
+        FanoutApprovalChoice::Ack | FanoutApprovalChoice::AckAndRemember => {
+            Err(Error::InvariantViolation("a pause row offers no width-check answer").into())
+        }
         // The row stays live. The choice is still receipted: "not yet" is a
         // ruling, and an unrecorded ruling is how a pause becomes a drop.
         FanoutApprovalChoice::KeepPaused => Ok(None),

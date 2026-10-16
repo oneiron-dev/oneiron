@@ -439,11 +439,7 @@ impl<P: WaveTaskPort> WaveOrchestrator<P> {
     /// # Errors
     ///
     /// Returns the port's error.
-    pub fn state(
-        &self,
-        plan: &ValidatedWavePlan,
-        now: u64,
-    ) -> WaveResult<Option<FanoutStatement>> {
+    pub fn state(&self, plan: &ValidatedWavePlan, now: u64) -> WaveResult<Option<FanoutStatement>> {
         self.tasks.plan_statement(plan, now)
     }
 
