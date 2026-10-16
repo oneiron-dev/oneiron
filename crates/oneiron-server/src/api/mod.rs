@@ -412,6 +412,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
         )
+        // OF-181: the app's one action layer, for its buttons and its agents.
+        .merge(self::facade::action_routes::routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
         .merge(self::report::routes())

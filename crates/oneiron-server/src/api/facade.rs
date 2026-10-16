@@ -21,6 +21,7 @@
 //! instead of collapsing into `INTERNAL_SERVER_ERROR`. `crate::error` is not
 //! edited to admit these codes; that is the whole point of the local type.
 
+pub(super) mod action_routes;
 mod agent_verbs;
 pub(super) mod host_doors;
 #[cfg(test)]
