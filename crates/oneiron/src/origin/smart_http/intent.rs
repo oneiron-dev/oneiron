@@ -155,7 +155,7 @@ pub(super) struct ReceivePackIntentRef {
 }
 
 impl ReceivePackIntentRef {
-    fn update(&self) -> Result<RefUpdate> {
+    pub(super) fn update(&self) -> Result<RefUpdate> {
         Ok(RefUpdate {
             name: self.name.clone(),
             old_oid: self.old_oid.clone().map(GitOid::parse_hex).transpose()?,

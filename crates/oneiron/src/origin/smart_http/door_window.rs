@@ -598,7 +598,7 @@ fn parse_ref_update(line: &str) -> Result<RefUpdate> {
 
 /// The all-zero oid is git's "absent", and the canonical [`GitOid`] refuses it
 /// by construction, so absence is `None` and never a second oid type.
-fn parse_optional_oid(value: &str) -> Result<Option<GitOid>> {
+pub(super) fn parse_optional_oid(value: &str) -> Result<Option<GitOid>> {
     if value.bytes().all(|byte| byte == b'0') {
         return Ok(None);
     }

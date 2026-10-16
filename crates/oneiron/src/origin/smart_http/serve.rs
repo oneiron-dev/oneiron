@@ -323,6 +323,11 @@ fn serve_request(
     } else {
         HeldBytes::new(0, None)
     };
+    // A publication this push may land on again gets its roots back while no
+    // backend can move a ref yet, on the thread holding the coordinator.
+    if coordinator.is_some() {
+        vault.repin_pushed_move_owners(&repo_dir, &mut commands.reader().map_err(Error::Io)?)?;
+    }
     let body = &mut commands.reader().map_err(Error::Io)?.chain(body);
     // Between the coordinator and the child, so on every way out the child
     // is reaped first, then what a killed backend left in quarantine is
