@@ -61,6 +61,9 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     /// that ancestor: a world of `joint.rs`.
     rehomed: BTreeMap<ProjectRevisionHash, Vec<ProjectRevisionHash>>,
     verdicts: RefCell<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
+    /// Each resolution envelope's authorization at its anchor, apart from
+    /// whether its successor stands in this fold (ruling (b)).
+    envelopes: RefCell<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
     signers: RefCell<BTreeMap<ProjectRevisionHash, String>>,
     /// Per tree root: its exclusions, and each node's fork.
     pub(super) exclusions: RefCell<BTreeMap<ProjectRevisionHash, Rc<Exclusion>>>,
@@ -87,6 +90,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             served: None,
             rehomed: BTreeMap::new(),
             verdicts: RefCell::new(BTreeMap::new()),
+            envelopes: RefCell::new(BTreeMap::new()),
             signers: RefCell::new(BTreeMap::new()),
             exclusions: RefCell::new(BTreeMap::new()),
             forks: RefCell::new(BTreeMap::new()),
@@ -409,19 +413,112 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         )
     }
 
+    /// A resolution stands in this fold when its envelope is authorized at
+    /// its anchor and its successor is a valid board child here.
     fn resolution(
         &self,
         hash: ProjectRevisionHash,
         resolution: &ProjectResolution,
     ) -> Result<ProjectVerdict> {
+        let envelope = self.envelope(hash)?;
+        if envelope != ProjectVerdict::Visible {
+            return Ok(envelope);
+        }
+        let Some(anchor_authority) = self.authority_of(&resolution.anchor) else {
+            return Ok(ProjectVerdict::Quarantined(reason::NOT_A_STATE));
+        };
+        match self.verdict(resolution.next)? {
+            ProjectVerdict::Visible => {}
+            pending @ ProjectVerdict::Pending(_) => return Ok(pending),
+            ProjectVerdict::Quarantined(_) => {
+                return Ok(ProjectVerdict::Quarantined(reason::RESOLUTION_SUCCESSOR));
+            }
+        }
+        let next_rank = self
+            .signer(&resolution.next)
+            .and_then(|signer| rank_at(anchor_authority, &signer));
+        if next_rank != Some(ProjectRank::Board) {
+            return Ok(ProjectVerdict::Quarantined(reason::RESOLUTION_SUCCESSOR));
+        }
+        Ok(ProjectVerdict::Visible)
+    }
+
+    /// Whether the resolution `hash` is an authorized envelope at its anchor
+    /// (ruling (b)), judged with its held prior closure, each envelope after
+    /// its own priors: a chain of any length never meets the depth guard,
+    /// every door judges it alike, and only that closure is judged, so a
+    /// frozen re-check never judges envelopes held after the freeze (Sol
+    /// #1434 r11 F2, Astra r12 F1, Sol r12 F1).
+    fn envelope(&self, hash: ProjectRevisionHash) -> Result<ProjectVerdict> {
+        if let Some(known) = self.envelopes.borrow().get(&hash) {
+            return Ok(*known);
+        }
+        let refusals = self.refusals.get();
+        let mut judged: BTreeMap<ProjectRevisionHash, ProjectVerdict> = BTreeMap::new();
+        let mut entered = BTreeSet::new();
+        let mut todo = vec![(hash, false)];
+        while let Some((at, priors_judged)) = todo.pop() {
+            if priors_judged {
+                let verdict = self.authorized(at, &judged)?;
+                judged.insert(at, verdict);
+                continue;
+            }
+            if self.envelopes.borrow().contains_key(&at) || !entered.insert(at) {
+                continue;
+            }
+            todo.push((at, true));
+            if let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(&at) {
+                for prior in &resolution.prior {
+                    if let Some(ProjectRevision::Resolution {
+                        resolution: earlier,
+                        ..
+                    }) = self.row(prior)
+                        && earlier.anchor == resolution.anchor
+                    {
+                        todo.push((*prior, false));
+                    }
+                }
+            }
+        }
+        let verdict = (judged.get(&hash).copied())
+            .unwrap_or(ProjectVerdict::Pending(reason::NOT_HELD));
+        // One that met the depth guard depends on where the walk entered.
+        if self.refusals.get() == refusals {
+            self.envelopes.borrow_mut().extend(judged);
+        }
+        Ok(verdict)
+    }
+
+    /// One envelope's own authorization, its priors already judged: held and
+    /// authenticated, naming children of a valid anchor, signed by a board
+    /// holder of that anchor (or the host) within audience, over priors each
+    /// so authorized at the same anchor. Whether its successor stands is the
+    /// fold's question (`resolution`), not the envelope's.
+    fn authorized(
+        &self,
+        hash: ProjectRevisionHash,
+        judged: &BTreeMap<ProjectRevisionHash, ProjectVerdict>,
+    ) -> Result<ProjectVerdict> {
+        let resolution = match self.row(&hash) {
+            None => return Ok(ProjectVerdict::Pending(reason::NOT_HELD)),
+            Some(ProjectRevision::Resolution { resolution, .. }) => resolution,
+            Some(_) => return Ok(ProjectVerdict::Quarantined(reason::PRIOR_INVALID)),
+        };
+        match self.origin(hash)? {
+            RevisionOrigin::Authenticated => {}
+            RevisionOrigin::AwaitingParent => {
+                return Ok(ProjectVerdict::Pending(reason::AWAITING_PARENT));
+            }
+            RevisionOrigin::AwaitingMint => {
+                return Ok(ProjectVerdict::Pending(reason::AWAITING_MINT));
+            }
+            RevisionOrigin::Forged => return Ok(ProjectVerdict::Quarantined(reason::FORGED)),
+        }
         let anchor = self.verdict(resolution.anchor)?;
         if anchor != ProjectVerdict::Visible {
             return Ok(anchor);
         }
-        let Some(anchor_authority) = self
-            .row(&resolution.anchor)
-            .and_then(ProjectRevision::authority)
-        else {
+        let Some(anchor_authority) = self.authority_of(&resolution.anchor) else {
             return Ok(ProjectVerdict::Quarantined(reason::NOT_A_STATE));
         };
         for named in resolution.contenders.iter().chain([&resolution.next]) {
@@ -461,20 +558,6 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         if !holder.audience.contains(&ScopeId(self.id)) {
             return Ok(ProjectVerdict::Quarantined(reason::AUDIENCE));
         }
-        match self.verdict(resolution.next)? {
-            ProjectVerdict::Visible => {}
-            pending @ ProjectVerdict::Pending(_) => return Ok(pending),
-            ProjectVerdict::Quarantined(_) => {
-                return Ok(ProjectVerdict::Quarantined(reason::RESOLUTION_SUCCESSOR));
-            }
-        }
-        let next_rank = self
-            .signer(&resolution.next)
-            .and_then(|signer| rank_at(anchor_authority, &signer));
-        if next_rank != Some(ProjectRank::Board) {
-            return Ok(ProjectVerdict::Quarantined(reason::RESOLUTION_SUCCESSOR));
-        }
-        self.judge_priors_first(resolution)?;
         for prior in &resolution.prior {
             match self.row(prior) {
                 None => return Ok(ProjectVerdict::Pending(reason::NOT_HELD)),
@@ -484,10 +567,12 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 }) if earlier.anchor == resolution.anchor => {}
                 Some(_) => return Ok(ProjectVerdict::Quarantined(reason::PRIOR_INVALID)),
             }
-            match self.verdict(*prior)? {
-                ProjectVerdict::Visible => {}
-                pending @ ProjectVerdict::Pending(_) => return Ok(pending),
-                ProjectVerdict::Quarantined(_) => {
+            let known = (judged.get(prior).copied())
+                .or_else(|| self.envelopes.borrow().get(prior).copied());
+            match known {
+                Some(ProjectVerdict::Visible) => {}
+                Some(pending @ ProjectVerdict::Pending(_)) => return Ok(pending),
+                Some(ProjectVerdict::Quarantined(_)) | None => {
                     return Ok(ProjectVerdict::Quarantined(reason::PRIOR_INVALID));
                 }
             }
@@ -605,21 +690,41 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             .collect())
     }
 
-    /// The valid resolutions at `anchor` that no valid resolution there
-    /// builds on, sorted: what a new resolution names as its `prior`.
+    /// The causal tips at `anchor` (ruling (b)), sorted: the authorized
+    /// envelopes there that no authorized envelope there names as a prior,
+    /// read before any cycle or deposition removes a competitor. Two or more
+    /// are a race, which settles nothing; a new resolution names them all as
+    /// its `prior`.
     pub(super) fn resolution_tips(
         &self,
         anchor: ProjectRevisionHash,
     ) -> Result<Vec<ProjectRevisionHash>> {
-        let valid = self.valid_resolutions_at(anchor)?;
-        let named: BTreeSet<ProjectRevisionHash> = (valid.values())
+        let envelopes = self.resolution_envelopes_at(anchor)?;
+        let named: BTreeSet<ProjectRevisionHash> = (envelopes.values())
             .flat_map(|resolution| resolution.prior.iter().copied())
             .collect();
-        Ok(valid
+        Ok(envelopes
             .keys()
             .filter(|hash| !named.contains(hash))
             .copied()
             .collect())
+    }
+
+    /// The authorized resolution envelopes at `anchor`, whatever their
+    /// successors do in this fold: the causal graph a race is read from.
+    pub(super) fn resolution_envelopes_at(
+        &self,
+        anchor: ProjectRevisionHash,
+    ) -> Result<BTreeMap<ProjectRevisionHash, &'r ProjectResolution>> {
+        let mut envelopes = BTreeMap::new();
+        for hash in self.held.resolutions_at(&anchor) {
+            if let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(hash)
+                && self.envelope(*hash)? == ProjectVerdict::Visible
+            {
+                envelopes.insert(*hash, resolution);
+            }
+        }
+        Ok(envelopes)
     }
 
     /// The valid resolutions at `node`.
@@ -636,40 +741,6 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             }
         }
         Ok(valid)
-    }
-
-    /// Judges the held prior closure of `resolution` at its anchor, each
-    /// envelope after its own priors, so its judgement finds every prior
-    /// memoized. A chain of any length never meets the depth guard, every
-    /// door judges it alike, and only that closure is judged: a frozen
-    /// re-check never judges envelopes held after the freeze (Sol #1434 r11
-    /// F2, Astra r12 F1, Sol r12 F1).
-    fn judge_priors_first(&self, resolution: &ProjectResolution) -> Result<()> {
-        let mut entered = BTreeSet::new();
-        let mut todo: Vec<(ProjectRevisionHash, bool)> = resolution
-            .prior
-            .iter()
-            .map(|prior| (*prior, false))
-            .collect();
-        while let Some((hash, priors_judged)) = todo.pop() {
-            if priors_judged {
-                self.verdict(hash)?;
-                continue;
-            }
-            if self.verdicts.borrow().contains_key(&hash) || !entered.insert(hash) {
-                continue;
-            }
-            if let Some(ProjectRevision::Resolution {
-                resolution: earlier,
-                ..
-            }) = self.row(&hash)
-                && earlier.anchor == resolution.anchor
-            {
-                todo.push((hash, true));
-                todo.extend(earlier.prior.iter().map(|prior| (*prior, false)));
-            }
-        }
-        Ok(())
     }
 
     /// The valid seals no valid seal supersedes.

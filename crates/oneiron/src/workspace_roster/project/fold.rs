@@ -286,11 +286,15 @@ pub enum ProjectDisposition {
     /// No signed history with a known mint, and main's stored-row reader accepts the row.
     Unsigned,
     Settled,
-    /// Tied top-rank children of `anchor`: none installed.
+    /// Tied top-rank children of `anchor`, or the usable contenders of a
+    /// resolution race there: none installed.
     Fork {
         anchor: ProjectRevisionHash,
         rank: ProjectRank,
         contenders: BTreeSet<ProjectRevisionHash>,
+        /// The causal resolution tips at `anchor` (ruling (b)): two or more
+        /// settle nothing, and a new resolution builds on them all.
+        resolution_tips: BTreeSet<ProjectRevisionHash>,
     },
     /// Signed history exists but its root waits on a mint, parent or parent project.
     Pending {
@@ -410,6 +414,7 @@ pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> R
             anchor: witness_head,
             rank: *rank,
             contenders: contenders.clone(),
+            resolution_tips: cx.resolution_tips(witness_head)?.into_iter().collect(),
         },
     };
     let (Some(_), Some(view)) = (cx.authority_of(&witness_head), &walk.served.view) else {
