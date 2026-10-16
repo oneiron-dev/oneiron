@@ -257,15 +257,27 @@ impl Vault {
     /// Read the project's current goal, never the leader's instructions.
     pub fn project_intake_goal(&self, project_id: EntityId) -> Result<Option<GoalRecord>> {
         let txn = self.store.env.read_txn()?;
-        let Some(project) = self.visible_project_in_txn(&txn, project_id)? else {
+        Ok(self
+            .project_intake_goal_in_txn(&txn, project_id)?
+            .map(|(_, record)| record))
+    }
+
+    /// [`Self::project_intake_goal`] in the caller's snapshot, with the id of
+    /// the goal claim it read.
+    pub(crate) fn project_intake_goal_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project_id: EntityId,
+    ) -> Result<Option<(EntityId, GoalRecord)>> {
+        let Some(project) = self.visible_project_in_txn(txn, project_id)? else {
             return Ok(None);
         };
         let Some(id) = project.goal else {
             return Ok(None);
         };
         let id = EntityId::from_hex(&id).map_err(|_| invalid())?;
-        let claim = admission::trusted_active_claim(&self.store, &txn, id, project_id)?;
+        let claim = admission::trusted_active_claim(&self.store, txn, id, project_id)?;
         let record = decode_goal_claim(&claim, project_id)?;
-        Ok(Some(record))
+        Ok(Some((id, record)))
     }
 }
