@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde_json::{Value, json};
@@ -38,6 +38,13 @@ pub(crate) enum Reply {
     NoUsage { deltas: Vec<String>, model: String },
     /// An HTTP error status with a protocol-shaped body.
     Status(u16),
+    /// An HTTP error with this status, these headers and this exact body:
+    /// a provider's own refusal, in its own words.
+    Error {
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Value,
+    },
     /// Never answer until [`FakeLlm::release`] is called; then answer `text`.
     Hold { text: String },
     /// Answer with text computed from the request (to echo ids it carries).
@@ -231,6 +238,21 @@ async fn answer(
                 json!({"error": {"message": "scripted", "type": "server_error"}})
             };
             return (StatusCode::from_u16(status).unwrap(), axum::Json(body)).into_response();
+        }
+        Reply::Error {
+            status,
+            headers,
+            body,
+        } => {
+            let mut response =
+                (StatusCode::from_u16(status).unwrap(), axum::Json(body)).into_response();
+            for (name, value) in headers {
+                response.headers_mut().insert(
+                    HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                    HeaderValue::from_str(&value).unwrap(),
+                );
+            }
+            return response;
         }
         Reply::Text { text, model } => (vec![text], model),
         Reply::Deltas { deltas, model } | Reply::NoUsage { deltas, model } => (deltas, model),

@@ -14,7 +14,7 @@
 //! Building never fails the server: a provider that cannot start (its key
 //! variable unset, say) drops out of its ladders and the reason shows in
 //! [`ModelsStatus`]. Everything that needs no model keeps working.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use oneiron::llm::SingleRouteBackend;
@@ -31,10 +31,16 @@ use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind
 mod anthropic;
 mod broker;
 mod catalog;
+mod cooldown;
 mod decision_read;
 mod declared;
 mod driven;
+#[cfg(test)]
+mod fallback_tests;
+mod forward;
 mod http;
+#[cfg(test)]
+mod kept_on_device_tests;
 mod ladder;
 mod offer;
 mod openai;
@@ -50,8 +56,10 @@ mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
+mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
+pub use cooldown::OfferCooldowns;
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use ladder::OfferLadder;
@@ -99,6 +107,8 @@ pub struct ModelRuntime {
     receipts: Arc<dyn RunReceiptSink>,
     /// The house model's decision read (`[models.decision_read]`).
     decision_read: Option<DecisionReadDoor>,
+    /// The roles whose work never leaves the device.
+    stays_on_device: BTreeSet<ModelRole>,
 }
 
 impl ModelRuntime {
@@ -111,6 +121,7 @@ impl ModelRuntime {
             status: ModelsStatus::unconfigured(),
             receipts: Arc::new(LoggedReceipts),
             decision_read: None,
+            stays_on_device: BTreeSet::new(),
         }
     }
 
@@ -157,6 +168,17 @@ impl ModelRuntime {
     /// unavailable.
     #[must_use]
     pub fn build_with_keys(config: Option<&ModelsConfig>, keys: Option<Arc<dyn KeyDoor>>) -> Self {
+        Self::build_hosted(config, keys, OfferCooldowns::unkept())
+    }
+
+    /// [`build_with_keys`](Self::build_with_keys), with where an offer a
+    /// provider refused for a quota or a limit rests until its reset.
+    #[must_use]
+    pub fn build_hosted(
+        config: Option<&ModelsConfig>,
+        keys: Option<Arc<dyn KeyDoor>>,
+        rests: Arc<OfferCooldowns>,
+    ) -> Self {
         let Some(config) = config else {
             return Self::unconfigured();
         };
@@ -224,7 +246,7 @@ impl ModelRuntime {
                         router.insert(
                             rung.model.clone(),
                             provider.locality,
-                            Arc::new(OfferLadder::bare(rung)),
+                            Arc::new(OfferLadder::bare(rung, Arc::clone(&rests))),
                         );
                     }
                 }
@@ -234,6 +256,9 @@ impl ModelRuntime {
         for (role, ladder) in &config.roles {
             let mut rungs = Vec::new();
             let mut rung_status = Vec::new();
+            // A seat whose work never leaves the device has no rung off it,
+            // first or as a fallback.
+            let stays = config.stays_on_device.contains(role);
             for (position, rung) in ladder.iter().enumerate() {
                 let provider = &config.providers[&rung.model.provider];
                 let mut entry = RungStatus::new(&rung.model, provider);
@@ -242,6 +267,7 @@ impl ModelRuntime {
                 let served = backends
                     .get(&rung.model.provider)
                     .filter(|_| provider.kind.generates())
+                    .filter(|_| !(stays && provider.locality == ModelLocality::ThirdParty))
                     .and_then(|backend| {
                         self::rung(
                             &rung.model.provider,
@@ -264,7 +290,12 @@ impl ModelRuntime {
             } else {
                 SeatState::Ready
             };
-            if let Some(seat) = seat_for(*role, ladder_locality(&rungs, config), rungs) {
+            if let Some(seat) = seat_for(
+                *role,
+                ladder_locality(&rungs, config),
+                rungs,
+                Arc::clone(&rests),
+            ) {
                 router.insert(seat.model.clone(), seat.locality, Arc::clone(&seat.ladder));
                 status.seats.push(SeatStatus::new(
                     *role,
@@ -297,6 +328,7 @@ impl ModelRuntime {
             status,
             receipts: Arc::new(LoggedReceipts),
             decision_read,
+            stays_on_device: config.stays_on_device.clone(),
         }
     }
 
@@ -510,7 +542,12 @@ fn ladder_locality(rungs: &[LadderRung], config: &ModelsConfig) -> ModelLocality
 
 /// The seat id names the role and a digest of its rungs, so a changed
 /// ladder is a new identity and memoized steps never cross configs.
-fn seat_for(role: ModelRole, locality: ModelLocality, rungs: Vec<LadderRung>) -> Option<Seat> {
+fn seat_for(
+    role: ModelRole,
+    locality: ModelLocality,
+    rungs: Vec<LadderRung>,
+    rests: Arc<OfferCooldowns>,
+) -> Option<Seat> {
     if rungs.is_empty() {
         return None;
     }
@@ -529,13 +566,13 @@ fn seat_for(role: ModelRole, locality: ModelLocality, rungs: Vec<LadderRung>) ->
     for rung in &rungs {
         alone
             .entry(rung.model.clone())
-            .or_insert_with(|| Arc::new(OfferLadder::seat(rung.model.clone(), vec![rung.clone()])));
+            .or_insert_with(|| Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(&rests))));
     }
     Some(Seat {
         role,
         model: model.clone(),
         locality,
-        ladder: Arc::new(OfferLadder::seat(model, rungs)),
+        ladder: Arc::new(OfferLadder::seat(model, rungs, rests)),
         rungs: alone,
     })
 }
