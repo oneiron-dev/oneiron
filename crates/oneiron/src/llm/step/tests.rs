@@ -3261,8 +3261,7 @@ fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()
     let mut config = VaultConfig::device();
     config.failure_signals.export_opt_in = true;
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
-    let owner_id = EntityId::now();
-    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, occurred(1), 1, b"owner")?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
     let effect =

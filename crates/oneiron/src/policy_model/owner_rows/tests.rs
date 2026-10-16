@@ -390,6 +390,105 @@ fn expiring_delegate_needs_an_owner_minted_named_policy_grant() -> TestResult {
     Ok(())
 }
 
+/// F18 tier flip, named-holder doors (Engine ruling): a door whose own check
+/// authorizes a named non-owner takes the person tier, so the grant is the
+/// authority. A Delegate with policy power lands a row only under a live,
+/// Owner-minted grant naming that row; nobody lands on another's grant, and
+/// the owner still lands.
+#[test]
+fn a_delegate_lands_a_policy_row_only_under_a_live_grant_naming_it() -> TestResult {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::federation::decode_federation_grant_body;
+    let (_dir, vault, owner) = open()?;
+    let delegate = person(&vault, 0x3A)?;
+    let stranger = person(&vault, 0x3B)?;
+    let creation = vault.initialize_shared_vault(
+        &owner,
+        57,
+        None,
+        &[InitialSharedMember {
+            member_ref: owner.actor(),
+            role: Some(FederationGrantRole::Owner),
+        }],
+        10,
+    )?;
+    let owner_grant = creation
+        .grant_refs
+        .iter()
+        .find_map(|reference| {
+            let id = EntityId::from_hex(reference).ok()?;
+            let raw = vault.get_raw(&id).ok()??;
+            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).ok()?;
+            (grant.member_ref == owner.actor()).then_some(id)
+        })
+        .expect("stored owner grant");
+    let now = vault.store.clock.now_recorded_at();
+    admit_policy_verb(&vault, &owner, &[FederationGrantRole::Delegate])?;
+    vault.create_federation_delegate(&owner, owner_grant, delegate.actor(), now, now + 3600)?;
+    let scope = PolicyRowScope::Project("project-1".into());
+    let named = |row_ref: &str| -> Result<GrantBound> {
+        GrantBound::action(
+            ActorBound::new(delegate.actor().to_hex())?.with_actor_class("human")?,
+            ActionClass::new("policy.change")?,
+            ActionEnvelope::new(["owner_policy_rows".to_owned()])?
+                .with_target(policy_row_grant_target(&scope, row_ref))?,
+        )
+    };
+    let add = change(
+        "Keep this safe",
+        PolicyRowAction::Block,
+        scope.clone(),
+        true,
+    );
+    let mut failures = Vec::new();
+    if vault.change_policy_row(&delegate, add.clone(), now).is_ok() {
+        failures.push("landed with no grant");
+    }
+    vault.create_standing_grant(&owner, named("other")?)?;
+    if vault.change_policy_row(&delegate, add.clone(), now).is_ok() {
+        failures.push("landed on a grant naming another row");
+    }
+    let exact = named("quiet")?;
+    vault.create_standing_grant(&owner, exact.clone())?;
+    if vault.change_policy_row(&stranger, add.clone(), now).is_ok() {
+        failures.push("a stranger landed on the delegate's grant");
+    }
+    let plane_on = |vault: &Vault| -> bool {
+        let txn = vault.store.env.read_txn().unwrap();
+        crate::gate::resolve_policy_manifest(&vault.store, &txn)
+            .unwrap()
+            .owner_policy_enabled()
+    };
+    let plane_before = plane_on(&vault);
+    match vault.change_policy_row(&delegate, add, now) {
+        Ok(receipt) if receipt.author == delegate.actor().to_hex() => {}
+        _ => failures.push("refused under a live grant naming the row"),
+    }
+    // Sol r1 P1-5: the grant names one row in one scope, never the vault-wide
+    // switch of the owner-policy plane.
+    if plane_on(&vault) != plane_before {
+        failures.push("a delegate's row switched the owner-policy plane");
+    }
+    vault.revoke_consent_grant(&owner, &exact.digest().to_hex())?;
+    let edit = |text: &str| change(text, PolicyRowAction::Block, scope.clone(), false);
+    if vault
+        .change_policy_row(&delegate, edit("Keep this safer"), now)
+        .is_ok()
+    {
+        failures.push("landed on a revoked grant");
+    }
+    if vault
+        .change_policy_row(&owner, edit("Keep this safest"), now)
+        .is_err()
+    {
+        failures.push("refused the owner");
+    } else if !plane_on(&vault) {
+        failures.push("the owner's row left the owner-policy plane off");
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+    Ok(())
+}
+
 /// A shared vault's second owner whose PERSON was deleted still holds its
 /// Owner grant: the owner check refuses it rather than reading it as a
 /// stranger, and a member who never owned stays an ordinary caller.

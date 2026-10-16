@@ -503,7 +503,7 @@ async fn digest_cadence_deadline_runs_without_caller_invoking_digest() {
     use rmpv::Value;
 
     let (_dir, vault) = open_vault();
-    let owner_id = EntityId::from_bytes([0x31; 16]).unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .put_entity(
             &owner_id,

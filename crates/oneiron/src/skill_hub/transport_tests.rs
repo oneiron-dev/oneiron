@@ -415,15 +415,8 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
     let second_server = StaticHttp::new(routes(&tree));
     let temp = tempfile::tempdir().expect("vault");
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let at = crate::temporal::TimeRange { start: 10, end: 10 };
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        10,
-        b"owner",
-    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:fixture",
@@ -521,15 +514,8 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
     let server = StaticHttp::new(routes(&tree));
     let temp = tempfile::tempdir()?;
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let at = crate::TimeRange { start: 10, end: 10 };
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        10,
-        b"owner",
-    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:fixture",
@@ -753,15 +739,8 @@ fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs()
         ];
         let temp = tempfile::tempdir()?;
         let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
-        let owner_id = EntityId::now();
+        let owner_id = vault.ensure_embedded_owner_actor().unwrap();
         let at = crate::TimeRange { start: 10, end: 10 };
-        vault.put_entity(
-            &owner_id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            at,
-            10,
-            b"owner",
-        )?;
         let owner = vault.authenticate_owner(
             owner_id,
             "principal:inactive",
@@ -933,15 +912,8 @@ fn rejected_marketplace_candidate_cannot_be_activated_by_reimport_from_another_h
     let second = StaticHttp::new(routes(&tree));
     let temp = tempfile::tempdir()?;
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let at = crate::TimeRange { start: 10, end: 10 };
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        10,
-        b"owner",
-    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:fixture",
@@ -1006,12 +978,16 @@ fn rejected_marketplace_candidate_cannot_be_activated_by_reimport_from_another_h
 fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let survivor = EntityId::now();
     let at = crate::TimeRange { start: 1, end: 1 };
-    for id in [owner_id, survivor] {
-        vault.put_entity(&id, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"person")?;
-    }
+    vault.put_entity(
+        &survivor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        1,
+        b"person",
+    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",
@@ -1021,13 +997,25 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     for enabled in [true, false, true] {
         vault.set_marketplace_code_auto_install(&owner, enabled)?;
     }
+    drop(vault);
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.set_marketplace_code_auto_install(&owner, false)?;
+    vault.set_marketplace_code_auto_install(&owner, true)?;
     let write = crate::identity_topology::IdentityOpWrite {
         source: crate::claim::ClaimSource::Inferred,
         approval: crate::claim::ClaimApprovalStatus::Auto,
         confidence: 1.0,
         actor: None,
     };
-    vault.apply_identity_topology_op(
+    // A merge never retires the owner: merging them away is refused, and
+    // the owner still owns the vault.
+    let merged_away = vault.apply_identity_topology_op(
         &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
             sources: vec![owner_id],
             survivor,
@@ -1039,11 +1027,39 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
         }),
         &write,
         100,
+    );
+    assert!(
+        matches!(
+            merged_away,
+            Err(crate::error::Error::Sync(
+                crate::error::SyncError::IdentityTopologyRejected(
+                    crate::identity_topology::IdentityTopologyRejection::OwnerMergedAway { .. }
+                )
+            ))
+        ),
+        "{merged_away:?}"
+    );
+    assert!(vault.is_live_vault_owner(&owner)?);
+    // A survivor-to-be who owns nothing here toggles nothing.
+    let survivor_proof = vault.authenticate_owner(
+        survivor,
+        "principal:survivor",
+        true,
+        crate::store::GateDecisionId::now(),
     )?;
     assert_eq!(
         vault
+            .set_marketplace_code_auto_install(&survivor_proof, false)
+            .expect_err("a person who owns nothing")
+            .kind(),
+        ErrorKind::ConsentOwnerNotAuthenticated
+    );
+    // A deleted owner's cached proof switches nothing.
+    assert!(vault.delete_entity(&owner_id)?);
+    assert_eq!(
+        vault
             .set_marketplace_code_auto_install(&owner, false)
-            .expect_err("inactive owner")
+            .expect_err("a deleted owner")
             .kind(),
         ErrorKind::ConsentOwnerNotAuthenticated
     );
@@ -1055,24 +1071,6 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
             .as_deref(),
         Some(&[1][..])
     );
-    drop(current);
-    let new_owner = vault.authenticate_owner(
-        survivor,
-        "principal:survivor",
-        true,
-        crate::store::GateDecisionId::now(),
-    )?;
-    vault.set_marketplace_code_auto_install(&new_owner, false)?;
-    drop(vault);
-    let reopened = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
-    let new_owner = reopened.authenticate_owner(
-        survivor,
-        "principal:survivor",
-        true,
-        crate::store::GateDecisionId::now(),
-    )?;
-    reopened.set_marketplace_code_auto_install(&new_owner, true)?;
-    reopened.set_marketplace_code_auto_install(&new_owner, false)?;
     Ok(())
 }
 
@@ -1084,15 +1082,8 @@ fn permission_ask_requires_current_rule_and_one_exact_owner_decision() -> Result
     let server = StaticHttp::new(routes(&tree));
     let temp = tempfile::tempdir()?;
     let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let at = crate::TimeRange { start: 10, end: 10 };
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        10,
-        b"owner",
-    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:ask",
@@ -1228,15 +1219,8 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
     config.dimensions = 4;
     config.map_size = 16 * 1024 * 1024;
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let at = crate::temporal::TimeRange { start: 4, end: 4 };
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        4,
-        b"owner",
-    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:pack-transport",
@@ -1331,15 +1315,8 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     config.dimensions = 4;
     config.map_size = 16 * 1024 * 1024;
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let at = crate::temporal::TimeRange { start: 4, end: 4 };
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        4,
-        b"owner",
-    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:git-pack",
