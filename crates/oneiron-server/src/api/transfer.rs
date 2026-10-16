@@ -111,6 +111,7 @@ pub(crate) struct Transfers {
     /// Bytes uploads in flight have reserved against `lfs_quota`.
     lfs_reserved: Arc<Mutex<u64>>,
     /// The vault disk's floor, and the room uploads in flight claim on it.
+    /// What a git exchange holds past memory keeps it too.
     pub(crate) disk: DiskFloor,
     /// The page size the vault's object plane is stored in, which each
     /// stored chunk rounds up to; the largest LMDB writes in when it cannot
@@ -122,7 +123,7 @@ pub(crate) struct Transfers {
     pub(crate) questions: Arc<LimitQuestions>,
     pub(crate) idle: Duration,
     /// Bytes of one push's status report held in memory while its landing is
-    /// journaled; the rest is held on disk.
+    /// journaled; the rest is held on disk, above `disk`'s reserve.
     pub(crate) git_status_memory: usize,
     /// The floors a push's door scan keeps.
     pub(crate) scan: ScanBounds,
@@ -135,31 +136,9 @@ pub(crate) struct Transfers {
 /// holds them, under the exchange's permit until the report is sent; so every
 /// git exchange holding both at once keeps to a small share of memory.
 fn git_status_memory() -> usize {
-    physical_memory_bytes().map_or(8 * 1024 * 1024, |bytes| {
+    crate::machine::memory_bytes().map_or(8 * 1024 * 1024, |bytes| {
         usize::try_from(bytes / 512).unwrap_or(usize::MAX)
     })
-}
-
-/// Physical memory, when the platform says.
-fn physical_memory_bytes() -> Option<u64> {
-    #[cfg(unix)]
-    {
-        // SAFETY: `sysconf` reads a configuration value and touches no memory
-        // of ours.
-        let (pages, page) = unsafe {
-            (
-                libc::sysconf(libc::_SC_PHYS_PAGES),
-                libc::sysconf(libc::_SC_PAGESIZE),
-            )
-        };
-        let pages = u64::try_from(pages).ok().filter(|pages| *pages > 0)?;
-        let page = u64::try_from(page).ok().filter(|page| *page > 0)?;
-        Some(pages.saturating_mul(page))
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
 }
 
 impl Transfers {

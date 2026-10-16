@@ -43,9 +43,10 @@
 //!   the one part of a request body read ahead. It grows with the refs a push
 //!   names, so it is held whatever its size: in memory up to
 //!   `ORIGIN_COMMAND_SECTION_MEMORY_BYTES`, then in an unnamed file in the
-//!   door root ([`HeldBytes`]). A body the backend would inflate (gzip, as
-//!   JGit sends one) is inflated here instead, once, so the section read is
-//!   the one receive-pack reads; the backend gets it plain.
+//!   door root ([`HeldBytes`]), above the disk floor its host keeps
+//!   ([`ExchangeBounds::spill_floor`]). A body the backend would inflate
+//!   (gzip, as JGit sends one) is inflated here instead, once, so the section
+//!   read is the one receive-pack reads; the backend gets it plain.
 //! - **Only journalable refs move.** The door window refuses a push whose
 //!   proposed names the landing could not journal — names outside the GitWire
 //!   ref grammar or a name proposed twice — WHILE the objects are still
@@ -101,7 +102,7 @@ pub use self::door::{DoorAdmissionStamp, DoorSeam};
 pub use self::door_window::{DoorWindowReport, DoorWindowVerdict};
 pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};
 pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
-pub use self::held::HeldBytes;
+pub use self::held::{AtDiskFloor, HeldBytes, SpillFloor};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
 pub use self::landing::{

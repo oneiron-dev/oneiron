@@ -82,7 +82,9 @@ pub struct LimitsConfig {
     /// Free bytes the disk holding the vault keeps. An upload that would take
     /// the disk below it, counting the room every other upload in flight has
     /// claimed, is refused: before a byte is read when it declares its size,
-    /// and as soon as it gets there when it does not.
+    /// and as soon as it gets there when it does not. A git push holding its
+    /// command section or status report on the disk past memory is refused
+    /// at the write that would take the disk below it.
     pub disk_reserve_bytes: u64,
 }
 

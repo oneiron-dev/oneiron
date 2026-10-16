@@ -8,12 +8,43 @@
 //! in memory up to a bound and go on in an unnamed file in the vault's door
 //! root past it. The file is checked to have no name before a byte is
 //! written, so nothing else can open it, and it is gone once its holder drops
-//! it. Only the disk itself refuses: a write that fails, or a file that keeps
-//! a name, fails the write.
+//! it. Only the disk refuses: a write to the file that would take the disk
+//! below the floor its host keeps ([`SpillFloor`]), a write that fails, or a
+//! file that keeps a name, fails the write.
 
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
+
+/// The free disk a host keeps under what its exchanges hold past memory:
+/// asked before each write to a holder's file.
+pub trait SpillFloor: Send + Sync {
+    /// Whether `bytes` more may be written and still leave the floor free.
+    fn has_room_for(&self, bytes: u64) -> bool;
+}
+
+/// Why a write to a holder's file was refused: the disk is at its host's
+/// [`SpillFloor`]. It comes as an [`io::ErrorKind::StorageFull`] error, so a
+/// caller that looks for it can tell the floor from a full disk.
+#[derive(Debug)]
+pub struct AtDiskFloor;
+
+impl AtDiskFloor {
+    /// Whether `error` is this refusal.
+    #[must_use]
+    pub fn is_in(error: &io::Error) -> bool {
+        error.get_ref().is_some_and(|inner| inner.is::<Self>())
+    }
+}
+
+impl std::fmt::Display for AtDiskFloor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the disk is at its free-space floor")
+    }
+}
+
+impl std::error::Error for AtDiskFloor {}
 
 /// Bytes held in memory up to a bound and in an unnamed file past it.
 pub struct HeldBytes {
@@ -26,6 +57,8 @@ pub struct HeldBytes {
     /// Where the rest goes; `None` when the door root could not be resolved,
     /// so bytes past memory fail to write.
     dir: Option<PathBuf>,
+    /// The floor every write to the file keeps; `None` keeps none.
+    floor: Option<Arc<dyn SpillFloor>>,
 }
 
 impl HeldBytes {
@@ -39,13 +72,21 @@ impl HeldBytes {
             len: 0,
             limit,
             dir,
+            floor: None,
         }
     }
 
-    /// An empty holder with the same memory bound and spill directory.
+    /// This holder, keeping `floor` under every write to its file.
+    #[must_use]
+    pub fn with_floor(mut self, floor: Option<Arc<dyn SpillFloor>>) -> Self {
+        self.floor = floor;
+        self
+    }
+
+    /// An empty holder with the same memory bound, spill directory and floor.
     #[must_use]
     pub fn sibling(&self) -> Self {
-        Self::new(self.limit, self.dir.clone())
+        Self::new(self.limit, self.dir.clone()).with_floor(self.floor.clone())
     }
 
     /// How many bytes are held.
@@ -81,6 +122,7 @@ impl HeldBytes {
 impl Write for HeldBytes {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if let Some(file) = &mut self.file {
+            keep_floor(self.floor.as_deref(), bytes.len())?;
             let written = file.write(bytes)?;
             self.len += written as u64;
             return Ok(written);
@@ -94,6 +136,8 @@ impl Write for HeldBytes {
             .dir
             .as_ref()
             .ok_or_else(|| io::Error::other("no directory to hold bytes in"))?;
+        // What memory held goes to the file with these bytes.
+        keep_floor(self.floor.as_deref(), self.memory.len() + bytes.len())?;
         let file = tempfile::tempfile_in(dir)?;
         // Anonymity is checked on the open file, never assumed from a name's
         // removal: a file another name still links would keep the bytes
@@ -113,4 +157,13 @@ impl Write for HeldBytes {
     fn flush(&mut self) -> io::Result<()> {
         self.file.as_mut().map_or(Ok(()), Write::flush)
     }
+}
+
+/// Refuses a write of `bytes` to a holder's file that would take the disk
+/// below `floor`.
+fn keep_floor(floor: Option<&dyn SpillFloor>, bytes: usize) -> io::Result<()> {
+    if floor.is_some_and(|floor| !floor.has_room_for(bytes as u64)) {
+        return Err(io::Error::new(io::ErrorKind::StorageFull, AtDiskFloor));
+    }
+    Ok(())
 }

@@ -134,7 +134,7 @@ transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this lo
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
-disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
+disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
@@ -175,7 +175,8 @@ arrive from its one address. A push to a repository another push holds waits
 its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
 set) lands and the row asks; an upload that would take the vault's disk below
 `disk_reserve_bytes` is refused with 507, by its declared size before any byte
-is read.
+is read. A push holds its command section and status report on that disk past
+memory, and is answered 507 at the write that would take it below the reserve.
 
 ## CJK Dictionaries
 

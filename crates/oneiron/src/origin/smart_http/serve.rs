@@ -17,7 +17,7 @@ use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
 use super::evidence::{ReceivePackOutcome, receive_pack_provenance_refused};
 use super::exchange_idle::{Progress, ProgressRead, ProgressSink, Watched, stall_as_idle, watch};
-use super::held::HeldBytes;
+use super::held::{HeldBytes, SpillFloor};
 use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
@@ -149,6 +149,7 @@ pub fn serve_bounded(
         authority: None,
         idle: bounds.idle,
         scan: bounds.scan,
+        spill_floor: bounds.spill_floor,
         wait_for_repository: false,
         push_wait: Some(bounds.repository_wait),
     };
@@ -184,6 +185,7 @@ pub fn serve_with_provenance(
         authority: None,
         idle: SERVE_IDLE_TIMEOUT,
         scan: ScanBounds::default(),
+        spill_floor: None,
         wait_for_repository: true,
         push_wait: None,
     };
@@ -207,6 +209,7 @@ pub fn serve_with_authority(
         authority: Some(authority),
         idle: SERVE_IDLE_TIMEOUT,
         scan: ScanBounds::default(),
+        spill_floor: None,
         wait_for_repository: true,
         push_wait: None,
     };
@@ -214,14 +217,15 @@ pub fn serve_with_authority(
 }
 
 /// What one invocation runs under besides its request: the door seam, a lease
-/// from trusted host configuration, the exchange's idle limit and scan
-/// floors, whether a read may wait for a repository a writer holds, and how
-/// long a push waits for it (`None`: until it is free).
+/// from trusted host configuration, the exchange's idle limit, scan floors
+/// and spill floor, whether a read may wait for a repository a writer holds,
+/// and how long a push waits for it (`None`: until it is free).
 struct ServeTerms<'a> {
     seam: DoorSeam,
     authority: Option<&'a OriginAuthorityLease>,
     idle: Duration,
     scan: ScanBounds,
+    spill_floor: Option<Arc<dyn SpillFloor>>,
     wait_for_repository: bool,
     push_wait: Option<Duration>,
 }
@@ -239,6 +243,7 @@ fn serve_request(
         authority,
         idle,
         scan,
+        spill_floor,
         wait_for_repository,
         push_wait,
     } = terms;
@@ -314,7 +319,7 @@ fn serve_request(
         };
     // A body that stalls here ends at the idle limit, as it would mid-exchange.
     let mut commands = if request.is_receive_pack() {
-        read_command_section(body, door_root).map_err(stall_as_idle)?
+        read_command_section(body, door_root, spill_floor).map_err(stall_as_idle)?
     } else {
         HeldBytes::new(0, None)
     };
@@ -631,11 +636,16 @@ fn join_thread<T>(joined: std::thread::Result<Result<T>>) -> Result<T> {
 /// malformed pkt-line, is refused too. A push may name any number of refs
 /// (rule 5), so the section is held whatever its size: in memory up to
 /// [`ORIGIN_COMMAND_SECTION_MEMORY_BYTES`], then in an unnamed file in
-/// `door_root`. `body` is what receive-pack would read, already inflated where
-/// the backend would inflate it. Returns the bytes read, which go to the
-/// backend ahead of the rest.
-fn read_command_section(body: &mut (dyn Read + Send), door_root: PathBuf) -> Result<HeldBytes> {
-    let mut section = HeldBytes::new(ORIGIN_COMMAND_SECTION_MEMORY_BYTES, Some(door_root));
+/// `door_root`, as long as each write to it keeps `floor`. `body` is what
+/// receive-pack would read, already inflated where the backend would inflate
+/// it. Returns the bytes read, which go to the backend ahead of the rest.
+fn read_command_section(
+    body: &mut (dyn Read + Send),
+    door_root: PathBuf,
+    floor: Option<Arc<dyn SpillFloor>>,
+) -> Result<HeldBytes> {
+    let mut section =
+        HeldBytes::new(ORIGIN_COMMAND_SECTION_MEMORY_BYTES, Some(door_root)).with_floor(floor);
     // One pkt-line at a time: its four-digit length bounds it at 64 KiB.
     let mut line = Vec::new();
     loop {

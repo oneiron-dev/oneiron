@@ -17,7 +17,7 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
 use oneiron::origin::smart_http;
-use oneiron::origin::smart_http::HeldBytes;
+use oneiron::origin::smart_http::{AtDiskFloor, HeldBytes, SpillFloor};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,10 +67,13 @@ pub(super) async fn run_serve(
     let Ok(permit) = server.transfers.admit_git(principal).await else {
         return waited_out();
     };
+    // What the exchange holds past memory keeps the vault disk's reserve.
+    let floor: Arc<dyn SpillFloor> = Arc::new(server.transfers.disk.clone());
     let bounds = smart_http::ExchangeBounds {
         idle: server.transfers.idle,
         repository_wait: server.transfers.wait,
         scan: server.transfers.scan,
+        spill_floor: Some(Arc::clone(&floor)),
     };
     // A push is held until its landing is journaled; everything else streams.
     let held = request
@@ -117,7 +120,8 @@ pub(super) async fn run_serve(
         };
         let mut holding = HoldingSink {
             head: None,
-            held: HeldBytes::new(status_memory, smart_http::origin_door_root(vault).ok()),
+            held: HeldBytes::new(status_memory, smart_http::origin_door_root(vault).ok())
+                .with_floor(Some(floor)),
             failed: None,
         };
         let served = smart_http::serve_bounded(
@@ -179,7 +183,8 @@ pub(super) enum Landed {
 /// publication protocol says it did. A push may name any number of refs, so
 /// the worker holds the report itself, in memory up to the transfer's
 /// `git_status_memory` and on disk past it ([`HeldBytes`]), and never refuses
-/// it for its size. It keeps reading the backend after a failed write.
+/// it for its size; only the vault disk's reserve, or the disk itself, does.
+/// It keeps reading the backend after a failed write.
 ///
 /// Streaming the report first and journaling afterwards is what made a refused
 /// publication indistinguishable from a landed one. The client saw `ok`, the
@@ -214,6 +219,12 @@ impl smart_http::ServeSink for HoldingSink {
 /// A held report that could not be written or read back.
 fn held_failure(error: &io::Error) -> Response {
     tracing::warn!(kind = ?error.kind(), "git status report could not be held");
+    if AtDiskFloor::is_in(error) {
+        return text_response(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "the vault's disk is at its free-space reserve (limits.disk_reserve_bytes); git status report could not be held; ref effects may be partial; retry to recover",
+        );
+    }
     let status = if error.kind() == io::ErrorKind::StorageFull {
         StatusCode::INSUFFICIENT_STORAGE
     } else {
@@ -360,7 +371,13 @@ pub(super) fn serve_failure(
             "git publication is pending; ref effects may be partial; retry to recover".to_owned(),
         ),
         // The disk floor: what the exchange holds past memory (its command
-        // section) found no room.
+        // section) would take the vault's disk below its reserve.
+        Ok(Err(oneiron::Error::Io(error))) if AtDiskFloor::is_in(&error) => (
+            StatusCode::INSUFFICIENT_STORAGE,
+            "the vault's disk is at its free-space reserve (limits.disk_reserve_bytes); ref effects may be partial; retry later"
+                .to_owned(),
+        ),
+        // The same hold, on a disk that is full.
         Ok(Err(oneiron::Error::Io(error))) if error.kind() == io::ErrorKind::StorageFull => (
             StatusCode::INSUFFICIENT_STORAGE,
             "the origin's disk is full; ref effects may be partial; retry later".to_owned(),
