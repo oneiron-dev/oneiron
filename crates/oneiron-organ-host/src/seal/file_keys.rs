@@ -145,32 +145,32 @@ impl FileSealKeys {
             .subject_public_key
             .raw_bytes()
             .to_vec();
-        let (key, algorithm, public) = if let Ok(private) = rsa::RsaPrivateKey::from_pkcs8_der(&key_der)
-        {
-            let public = private
-                .to_public_key()
-                .to_pkcs1_der()
-                .map_err(|_| refused("the RSA public key does not encode"))?
-                .as_bytes()
-                .to_vec();
-            let signing = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private);
-            (
-                Key::Rsa(Box::new(signing)),
-                SealAlgorithm::RsaPkcs1v15Sha256,
-                public,
-            )
-        } else if let Ok(signing) = p256::ecdsa::SigningKey::from_pkcs8_der(&key_der) {
-            let public = signing
-                .verifying_key()
-                .to_encoded_point(false)
-                .as_bytes()
-                .to_vec();
-            (Key::P256(signing), SealAlgorithm::EcdsaP256Sha256, public)
-        } else {
-            return Err(refused(
-                "the seal key is neither a PKCS#8 RSA key nor a P-256 one",
-            ));
-        };
+        let (key, algorithm, public) =
+            if let Ok(private) = rsa::RsaPrivateKey::from_pkcs8_der(&key_der) {
+                let public = private
+                    .to_public_key()
+                    .to_pkcs1_der()
+                    .map_err(|_| refused("the RSA public key does not encode"))?
+                    .as_bytes()
+                    .to_vec();
+                let signing = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private);
+                (
+                    Key::Rsa(Box::new(signing)),
+                    SealAlgorithm::RsaPkcs1v15Sha256,
+                    public,
+                )
+            } else if let Ok(signing) = p256::ecdsa::SigningKey::from_pkcs8_der(&key_der) {
+                let public = signing
+                    .verifying_key()
+                    .to_encoded_point(false)
+                    .as_bytes()
+                    .to_vec();
+                (Key::P256(signing), SealAlgorithm::EcdsaP256Sha256, public)
+            } else {
+                return Err(refused(
+                    "the seal key is neither a PKCS#8 RSA key nor a P-256 one",
+                ));
+            };
         if public != certified {
             return Err(refused("the signer certificate certifies another key"));
         }
@@ -202,7 +202,8 @@ impl SealKeys for FileSealKeys {
         };
         match &self.key {
             Key::Rsa(key) => {
-                let signature: rsa::pkcs1v15::Signature = key.sign_prehash(digest).map_err(failed)?;
+                let signature: rsa::pkcs1v15::Signature =
+                    key.sign_prehash(digest).map_err(failed)?;
                 Ok(signature.to_vec())
             }
             Key::P256(key) => {
