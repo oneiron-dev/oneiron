@@ -50,14 +50,12 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
         | AuthorityOp::FederationLifecycle(_)
         // A root only admits an anchor; it restricts nothing.
         | AuthorityOp::OwnerRoot(_) => true,
-        // Grants that change neither the roster nor a machine's standing, and
-        // the retired ceiling, which changes nothing: a removal is judged
-        // without them as with them, and a withdrawal that needs one fails
+        // Grants that change neither the roster nor a machine's standing: a
+        // removal is judged without them as with them, and a withdrawal that needs one fails
         // closed without it (Wonder #1423 r2 W2, Sol #1423 r9).
         AuthorityOp::SlipMint(_)
         | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::RetiredCeiling { .. } => true,
+        | AuthorityOp::CriticalWriteConfirm(_) => true,
         // A profile grants standing; a removal withdraws it and never is.
         AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
         _ => false,

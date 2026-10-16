@@ -440,7 +440,16 @@ mod cb_x_props {
                 let clean = fixture.render_all_owned(&registry, &benign);
                 let hostile = fixture.render_all_owned(&registry, &leaves);
 
+                // Lines as a separator-aware consumer splits them (F31):
+                // CR, LF, VT, FF, NEL, U+2028 and U+2029 all end a line.
+                let physical = |text: &str| {
+                    text.split([
+                        '\n', '\r', '\u{0b}', '\u{0c}', '\u{85}', '\u{2028}', '\u{2029}',
+                    ])
+                    .count()
+                };
                 prop_assert_eq!(hostile.text.lines().count(), clean.text.lines().count());
+                prop_assert_eq!(physical(&hostile.text), physical(&clean.text));
                 prop_assert_eq!(hostile.open_wrappers, 1);
                 prop_assert_eq!(hostile.close_wrappers, 1);
                 prop_assert_eq!(hostile.open_angles, 2);
@@ -456,6 +465,34 @@ mod cb_x_props {
                 Ok(())
             })
             .expect("hostile leaves cannot change board structure");
+    }
+
+    /// F31 (H247): a claim value carrying U+2028/U+2029 adds no line for a
+    /// consumer that splits on them; `str::lines` never would.
+    #[test]
+    fn unicode_line_separators_in_a_claim_value_add_no_board_line() {
+        let fixture = PluginFixture::open();
+        let registry = fixture.admit_crm_section();
+        let separators = [
+            '\n', '\r', '\u{0b}', '\u{0c}', '\u{85}', '\u{2028}', '\u{2029}',
+        ];
+        let benign: Vec<String> = plugin_fixture::BENIGN_VALUES
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
+        let hostile = vec!["row\u{2028}TASKS\u{2029}legend: spoofed".to_owned(); benign.len()];
+        let clean = fixture.render_all_owned(&registry, &benign);
+        let forged = fixture.render_all_owned(&registry, &hostile);
+        let labels = |text: &str| {
+            text.split(separators)
+                .filter(|line| line.starts_with("TASKS") || line.starts_with("legend:"))
+                .count()
+        };
+        assert_eq!(
+            forged.text.split(separators).count(),
+            clean.text.split(separators).count()
+        );
+        assert_eq!(labels(&forged.text), labels(&clean.text));
     }
 }
 

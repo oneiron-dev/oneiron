@@ -4,7 +4,6 @@ use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
 use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::pipeline::WorldAuthoritySet;
 use crate::{EntityId, Result};
-use std::collections::BTreeSet;
 
 #[cfg(test)]
 mod tests;
@@ -110,47 +109,19 @@ pub(crate) fn room_worlds<P: RosterParty>(roster: &[P]) -> Result<Scope> {
     if present.peek().is_none() {
         return Ok(Scope::default());
     }
-    let mut sets = present.filter_map(|party| party.worlds());
-    let Some(first) = sets.next() else {
-        return Ok(Scope::top());
-    };
-    let mut base = first.include_base();
-    let mut worlds = first.worlds().clone();
-    for set in sets {
-        base &= set.include_base();
-        worlds.retain(|id| set.worlds().contains(id));
-    }
-    // Keep the world-set bound at this door too.
-    let meet = WorldAuthoritySet::new(base, worlds)?;
-    // Base has its own boolean. A world id equal to the reserved base id
-    // cannot stand in for it.
-    let mut ids: BTreeSet<_> = meet
-        .worlds()
-        .iter()
-        .filter(|id| **id != crate::claim::base_world_id())
-        .map(|id| ScopeId(*id))
-        .collect();
-    if meet.include_base() {
-        ids.insert(ScopeId(crate::claim::base_world_id()));
-    }
+    // Each party's world set is a worlds axis with base an ordinary member
+    // (R13); the room's axis is their meet, open while no party brings one.
     let mut scope = Scope::top();
-    scope.worlds = ids.into_iter().collect();
+    for set in present.filter_map(RosterParty::worlds) {
+        scope.worlds = scope.worlds.meet(&set.scope_axis());
+    }
     Ok(scope)
 }
 
 /// The world axis of a room Scope as a retrieval world set, or `None` when
 /// the axis is open.
 pub(crate) fn scope_worlds(scope: &Scope) -> Result<Option<WorldAuthoritySet>> {
-    let base = ScopeId(crate::claim::base_world_id());
-    match &scope.worlds {
-        ScopeAxis::All => Ok(None),
-        ScopeAxis::Bottom => WorldAuthoritySet::new(false, []).map(Some),
-        ScopeAxis::Some(ids) => WorldAuthoritySet::new(
-            ids.contains(&base),
-            ids.iter().filter(|id| **id != base).map(|id| id.0),
-        )
-        .map(Some),
-    }
+    WorldAuthoritySet::from_scope_axis(&scope.worlds)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
