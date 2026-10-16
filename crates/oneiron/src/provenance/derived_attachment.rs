@@ -72,16 +72,12 @@ pub(super) fn verify(
     {
         return Err(Error::InvalidClaimBody("derived support evidence mismatch"));
     }
-    let source_row = vault
-        .store
-        .entities
-        .get(txn, subject.source.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    let head_row = vault
-        .store
-        .entities
-        .get(txn, subject.target.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
+    let source_row =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &subject.source)?
+            .ok_or(Error::EntityNotFound)?;
+    let head_row =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &subject.target)?
+            .ok_or(Error::EntityNotFound)?;
     let source_header = EntityMetadataHeader::parse(&source_row)
         .ok_or(Error::InvalidClaimBody("derived support source header"))?;
     if EntityMetadataHeader::parse(&head_row)

@@ -34,9 +34,7 @@ pub(super) fn artifact_hashes(
             hashes.push(record.content_hash);
         }
     }
-    let claims_count = store
-        .entities
-        .get(txn, artifact.as_bytes())?
+    let claims_count = crate::ports::EntityStoreRead::port_entity_raw(store, txn, artifact)?
         .is_none_or(|raw| raw.first() == Some(&ENTITY_TYPE_BLOB_ARTIFACT));
     if claims_count {
         for content_hash in claimed_hashes(store, txn, artifact)? {
@@ -141,11 +139,11 @@ pub(crate) fn artifact_author_in_txn(
 /// A stored claim row with its body, under no delete this vault holds. A soft delete leaves a
 /// header-only shell, which names no author.
 fn claim_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
     if raw.len() <= ENTITY_METADATA_HEADER_LEN {
         return Ok(false);
     }
-    crate::deletion::row_deletion_marked(store, txn, id, Some(raw.as_ref())).map(|marked| !marked)
+    crate::deletion::row_deletion_marked(store, txn, id, Some(raw.as_slice())).map(|marked| !marked)
 }

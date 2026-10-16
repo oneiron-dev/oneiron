@@ -146,7 +146,7 @@ pub(crate) fn validate_put_in_txn(
             return Err(invalid("leader chat binding"));
         }
         if !replicated
-            && store.entities.get(txn, id.as_bytes())?.is_none()
+            && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_none()
             && store
                 .vault_meta
                 .get(
@@ -159,7 +159,7 @@ pub(crate) fn validate_put_in_txn(
             return Err(denied());
         }
     }
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
         && raw.len() >= ENTITY_METADATA_HEADER_LEN
     {
         let previous = ConversationBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
@@ -183,7 +183,7 @@ pub(crate) fn validate_put_in_txn(
         if members != body.member_ids.iter().copied().collect() {
             return Err(state("membership changes require the membership door"));
         }
-        if let Some(old) = store.entities.get(txn, id.as_bytes())?
+        if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
             && old.first() == Some(&ENTITY_TYPE_CONVERSATION)
             && !old[ENTITY_METADATA_HEADER_LEN..].is_empty()
         {

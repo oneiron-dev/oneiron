@@ -49,23 +49,19 @@ pub(crate) fn restore_recovery_shell_in_txn(
         start: header.occurred_start,
         end: header.occurred_end,
     };
-    let short_id = if vault
-        .store
-        .short_ids_reverse
-        .get(txn, id.as_bytes())?
-        .is_none()
-    {
-        vault
-            .store
-            .short_id_prefix(header.entity_type)
-            .ok()
-            .map(|prefix| {
-                plan_short_id_update(&vault.store, txn, id, header.entity_type, &prefix, &[])
-            })
-            .transpose()?
-    } else {
-        None
-    };
+    let short_id =
+        if !crate::ports::ShortIdStoreMaintenance::port_short_id_mapping_exists(vault, txn, id)? {
+            vault
+                .store
+                .short_id_prefix(header.entity_type)
+                .ok()
+                .map(|prefix| {
+                    plan_short_id_update(&vault.store, txn, id, header.entity_type, &prefix, &[])
+                })
+                .transpose()?
+        } else {
+            None
+        };
     crate::ports::EntityStoreMaintenance::port_retained_shell_restore(&vault.store, txn, id, blob)?;
     // A definition's shell keeps no body to bound its id by: it pins the id
     // at `Proposed` (on its seed's lineage, or with the lineage unread for

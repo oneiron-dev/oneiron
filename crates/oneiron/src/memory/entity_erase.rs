@@ -124,12 +124,11 @@ impl Memory<'_> {
                 self.require_own_proof_in_txn(&txn, starter)?;
             }
             preview.check_before_unshare(self.vault, &txn)?;
-            if let Some(raw) = self
-                .vault
-                .store
-                .entities
-                .get(&txn, preview.entity().as_bytes())?
-                && crate::blob_artifact::carrier_content_hash(&preview.entity(), &raw)?.is_some()
+            if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(
+                &self.vault.store,
+                &txn,
+                &preview.entity(),
+            )? && crate::blob_artifact::carrier_content_hash(&preview.entity(), &raw)?.is_some()
             {
                 return Err(carrier_erase_refused());
             }

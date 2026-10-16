@@ -47,14 +47,15 @@ pub(super) fn pair_access_in(
     let mut left_granted = false;
     let mut right_granted = false;
     let now = vault.store.clock.now_recorded_at();
-    for row in vault
-        .store
-        .type_index
-        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_ACCESS_GRANT])?
-    {
-        let (key, _) = row?;
-        let id = crate::vault::entity_id_from_type_index_key(&key)?;
-        let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+    for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        crate::registry::ENTITY_TYPE_ACCESS_GRANT,
+        None,
+    )? {
+        let id = row?;
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {

@@ -107,7 +107,7 @@ pub(crate) fn validate_goal_birth_in_txn(
         if crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &parent)?.deleted {
             None
         } else {
-            store.entities.get(txn, parent.as_bytes())?
+            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &parent)?
         };
     let Some(raw) = parent_raw else {
         if !replicated {

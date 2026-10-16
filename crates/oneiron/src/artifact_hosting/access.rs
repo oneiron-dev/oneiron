@@ -173,10 +173,7 @@ impl Vault {
                 (id, None)
             }
         };
-        let raw_owner = self
-            .store
-            .entities
-            .get(txn, owner.as_bytes())?
+        let raw_owner = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &owner)?
             .ok_or(Error::CorruptedIndex("artifact owner record"))?;
         let Some(scope) =
             crate::federation::record_scope::scope_for_blob(&self.store, txn, owner, &raw_owner)?
@@ -206,17 +203,14 @@ impl Vault {
     ) -> Result<bool> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let now = self.store.clock.now_recorded_at();
-        for row in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_FEDERATION_GRANT])?
-        {
-            let (key, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+        for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = row?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or(Error::CorruptedIndex("artifact membership grant row"))?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("artifact membership grant header"))?;

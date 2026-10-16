@@ -220,7 +220,7 @@ pub(crate) fn validate_machine_history_put(
             Err(other) => return Err(other),
         }
     }
-    let prior = store.entities.get(txn, id.as_bytes())?;
+    let prior = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
     let is_control = body.is_some_and(|body| machine_history_kind(&body.predicate).is_some());
     if let Some(raw) = &prior {
         let header = EntityMetadataHeader::parse(raw)
@@ -343,7 +343,7 @@ pub(crate) fn birth_by_digest(
 ) -> Result<Option<super::SignedClaimBirth>> {
     let id = EntityId::from_bytes(digest[..16].try_into().map_err(|_| invalid_history())?)
         .map_err(|_| invalid_history())?;
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(None);
     };
     let header =
@@ -379,7 +379,7 @@ pub(crate) fn reject_machine_history_delete(
         // (`retire_machine_history_for_delete`), not a generic LWW tombstone.
         return Err(invalid_history());
     }
-    if let Some(raw) = store.entities.get(txn, id.as_bytes())?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
         && let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
@@ -393,7 +393,7 @@ pub(crate) fn reject_machine_history_delete(
             .vault_meta
             .get(txn, &super::history_projection::pin_key(target))?
             .is_some()
-            || store.entities.get(txn, target.as_bytes())?.is_some()
+            || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &target)?.is_some()
         {
             return Err(invalid_history());
         }
@@ -649,7 +649,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
     // a birth stamp does (batch::base_apply), create the owner first.
     let owner = crate::vault::embedded_owner_actor_id()?;
     if body.scope_facet == super::substrate_facet_id(owner)?
-        && store.entities.get(txn, owner.as_bytes())?.is_none()
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &owner)?.is_none()
     {
         ops.push(crate::batch::BatchOp::Put {
             id: owner,

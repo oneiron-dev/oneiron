@@ -83,9 +83,7 @@ pub(crate) fn machine_history_rows(
         if !expected.remove(&id) {
             continue;
         }
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
             .ok_or(Error::CorruptedIndex("machine history index row missing"))?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine history header"))?;
@@ -149,12 +147,9 @@ pub(crate) fn machine_history_rows(
     let original = super::decode_claim_body(&birth.initial_body, true)?;
     for event in &events {
         let id = machine_claim_transition_event_id(event).map_err(|_| bad())?;
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
-            .ok_or(Error::CorruptedIndex(
-                "machine transition index row missing",
-            ))?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or(
+            Error::CorruptedIndex("machine transition index row missing"),
+        )?;
         let row = super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if event.birth_digest != birth.digest
             || event.vault_id != birth.vault_id
@@ -221,10 +216,8 @@ pub(crate) fn verified_handoff_chain(
         let Some(parent) = parent else { break };
         let id =
             EntityId::from_bytes(parent[..16].try_into().map_err(|_| bad())?).map_err(|_| bad())?;
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
-            .ok_or_else(missing)?;
+        let raw =
+            crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or_else(missing)?;
         let h = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine handoff header"))?;
         if h.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -332,7 +325,7 @@ pub(crate) fn restricts_held_machine_history(
         )) => return Ok(false),
         Err(error) => return Err(error),
     };
-    let Some(raw) = store.entities.get(txn, target.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &target)? else {
         return Ok(false);
     };
     let live =
@@ -619,12 +612,8 @@ impl Vault {
         // snapshot under the SAME authenticated pin before publishing it.
         let projection = resolved_machine_history(&self.store, &txn, &fold, target)?;
         let projected = project_machine_claim(&projection);
-        let raw = self
-            .store
-            .entities
-            .get(&txn, target.as_bytes())?
-            .ok_or_else(missing)?
-            .to_vec();
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &target)?
+            .ok_or_else(missing)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("machine projection header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {

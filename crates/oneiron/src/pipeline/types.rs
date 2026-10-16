@@ -382,7 +382,7 @@ impl EntityMetadataCache {
             {
                 continue;
             }
-            let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
                 continue;
             };
             let Some(header) = EntityMetadataHeader::parse(&raw) else {

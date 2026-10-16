@@ -23,13 +23,11 @@ impl Vault {
         let raw = read_entity_revision_in_txn(self, &txn, id, ReadMode::Pinned(revision))?
             .ok_or(Error::EntityNotFound)?;
         let hash = (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8;
-        let reference = match self.store.short_ids_reverse.get(&txn, id.as_bytes())? {
-            Some(raw) => {
-                let (short, _) = parse_short_id_value(&raw)?;
-                format!("{short}:{hash:02x}@{}", revision.to_hex())
-            }
-            None => format!("{}@{}", id.to_hex(), revision.to_hex()),
-        };
+        let reference =
+            match crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &txn, id)? {
+                Some((short, _)) => format!("{short}:{hash:02x}@{}", revision.to_hex()),
+                None => format!("{}@{}", id.to_hex(), revision.to_hex()),
+            };
         txn.commit()?;
         Ok(reference)
     }
@@ -76,9 +74,10 @@ impl Vault {
         let finish = text
             .get_cursor(end, Side::Left)
             .ok_or(Error::InvariantViolation("citation end cursor"))?;
-        let short_ref = match self.store.short_ids_reverse.get(&txn, id.as_bytes())? {
-            Some(raw) => {
-                let (short, _) = parse_short_id_value(&raw)?;
+        let current =
+            crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &txn, id)?;
+        let short_ref = match current {
+            Some((short, _)) => {
                 let pinned_raw = super::storage::doc_raw(&doc)?;
                 let hash = (xxhash_rust::xxh32::xxh32(&pinned_raw[ENTITY_METADATA_HEADER_LEN..], 0)
                     % 256) as u8;
@@ -194,10 +193,11 @@ fn resolve_reference(
     if hash != (xxhash_rust::xxh32::xxh32(&raw[ENTITY_METADATA_HEADER_LEN..], 0) % 256) as u8 {
         return Ok(None);
     }
-    let Some(current) = vault.store.short_ids_reverse.get(txn, id.as_bytes())? else {
+    let Some((name, _)) =
+        crate::ports::ShortIdStoreRead::port_short_id_reference(&vault.store, txn, &id)?
+    else {
         return Ok(None);
     };
-    let (name, _) = parse_short_id_value(&current)?;
     if name == short {
         return Ok(Some(id));
     }

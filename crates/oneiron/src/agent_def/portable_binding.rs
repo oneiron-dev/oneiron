@@ -163,16 +163,18 @@ fn read_portable_skills(
 ) -> Result<Vec<(EntityId, crate::skill::SkillRecord)>> {
     let mut skills = Vec::new();
     if !def.skills.is_empty() {
-        for (scanned, entry) in store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_SKILL])?
-            .enumerate()
+        for (scanned, entry) in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            store,
+            txn,
+            ENTITY_TYPE_SKILL,
+            None,
+        )?
+        .enumerate()
         {
             if scanned >= SOURCE_SCAN_LIMIT {
                 return Err(Error::IndexOverflow("agent source skills"));
             }
-            let (key, _) = entry?;
-            let row_id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let row_id = entry?;
             if excluded(store, txn, &row_id)? {
                 continue;
             }

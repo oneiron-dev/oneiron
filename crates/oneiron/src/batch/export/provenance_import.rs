@@ -30,13 +30,13 @@ pub(super) fn restore_models(
     doc: &WholeVaultDocument,
 ) -> Result<ModelImports> {
     let mut known = BTreeSet::new();
-    for row in vault
-        .store
-        .type_index
-        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_MODEL])?
-    {
-        let (key, _) = row?;
-        known.insert(crate::vault::entity_id_from_type_index_key(&key)?);
+    for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        crate::registry::ENTITY_TYPE_MODEL,
+        None,
+    )? {
+        known.insert(row?);
     }
     let mut inserted = 0;
     let mut unchanged = 0;
