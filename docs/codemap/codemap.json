@@ -23194,7 +23194,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 8,
       "re-export": 10
      }
@@ -23884,6 +23884,24 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AssetConsumer",
+      "LandedImage",
+      "ResolvedAsset",
+      "ServedAssetForm"
+     ],
+     "path": "src/memory/asset_resolve.rs",
+     "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "MemoryAuthoringAction"
      ],
      "path": "src/memory/authorship.rs",
@@ -24289,7 +24307,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 2,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -24638,6 +24656,22 @@
       "fn": 11,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/asset_hydrate.rs",
+     "purpose": "OF-329, hydrate's half (ONE-2331): a reader that declares no image input hydrates an image ASSET and is…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/asset_resolve.rs",
+     "purpose": "OF-328 / OF-329 acceptance: a generated image lands as ASSET plus a precomputed ASSET_TEXT, and the resolver…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -42045,7 +42079,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 114,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42628,8 +42662,8 @@
    },
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2570,
-   "test_files": 860
+   "source_files": 2571,
+   "test_files": 862
   },
   "oneiron-android": {
    "files": [
@@ -48432,8 +48466,9 @@
      "path": "src/llm/defaults.rs",
      "purpose": "Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies",
      "surface": {
+      "const": 1,
       "enum": 2,
-      "fn": 13,
+      "fn": 14,
       "struct": 4,
       "trait": 1
      }
