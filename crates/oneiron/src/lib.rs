@@ -93,6 +93,7 @@ pub(crate) mod gate;
 pub mod policy_model;
 pub mod receipt;
 pub mod share;
+pub mod share_travel;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
