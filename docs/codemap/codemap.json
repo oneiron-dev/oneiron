@@ -18744,7 +18744,7 @@
      "path": "src/edit_roundtrip/pptx/identities.rs",
      "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -51987,7 +51987,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 7,
-      "fn": 4,
+      "fn": 5,
       "re-export": 3,
       "struct": 15
      }
