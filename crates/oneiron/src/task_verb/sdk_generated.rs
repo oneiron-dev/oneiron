@@ -98,6 +98,26 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.lenses.propose",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
+            ),
+            (
+                "vault.lenses.activate",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensActivateRequest>(),
+            ),
+            (
+                "vault.lenses.deactivate",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensDeactivateRequest>(),
+            ),
+            (
+                "vault.lenses.list",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensListRequest>(),
+            ),
+            (
+                "vault.lenses.default",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensDefaultRequest>(),
+            ),
+            (
                 "vault.artifacts.view",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactRefRequest,
@@ -647,6 +667,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.activate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.deactivate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.default" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1217,6 +1272,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.lenses.propose" => {
+            let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
+        }
+        "vault.lenses.activate" => {
+            let _input: crate::lens::LensActivateRequest = decode(value.clone())?;
+        }
+        "vault.lenses.deactivate" => {
+            let _input: crate::lens::LensDeactivateRequest = decode(value.clone())?;
+        }
+        "vault.lenses.list" => {
+            let _input: crate::lens::LensListRequest = decode(value.clone())?;
+        }
+        "vault.lenses.default" => {
+            let _input: crate::lens::LensDefaultRequest = decode(value.clone())?;
+        }
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
@@ -1494,6 +1564,11 @@ pub fn invoke(
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
+        "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
+        "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
+        "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
+        "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
@@ -1827,6 +1902,36 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_lenses_propose(
+    memory: &Memory<'_>,
+    input: crate::lens::LensProposeRequest,
+) -> MemoryResult<crate::receipt::LensProposalReceipt> {
+    memory.lenses_propose(input)
+}
+pub fn vault_lenses_activate(
+    memory: &Memory<'_>,
+    input: crate::lens::LensActivateRequest,
+) -> MemoryResult<crate::receipt::LensActivationReceipt> {
+    crate::lens::activate_lens_embedded(memory, input)
+}
+pub fn vault_lenses_deactivate(
+    memory: &Memory<'_>,
+    input: crate::lens::LensDeactivateRequest,
+) -> MemoryResult<crate::receipt::LensActivationReceipt> {
+    crate::lens::deactivate_lens_embedded(memory, input)
+}
+pub fn vault_lenses_list(
+    memory: &Memory<'_>,
+    input: crate::lens::LensListRequest,
+) -> MemoryResult<crate::lens::LensListPage> {
+    memory.lenses_list(input)
+}
+pub fn vault_lenses_default(
+    memory: &Memory<'_>,
+    input: crate::lens::LensDefaultRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
+    memory.lenses_default(input)
 }
 pub fn vault_artifacts_view(
     memory: &Memory<'_>,

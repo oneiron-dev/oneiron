@@ -15,6 +15,7 @@ mod grant;
 mod identity_kind;
 mod kernel;
 mod ledgers;
+mod lens;
 mod pack_attribution;
 mod projection;
 mod record;
@@ -45,6 +46,7 @@ pub use self::kernel::{
     ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView,
 };
 pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
+pub use self::lens::{LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision};
 pub use self::pack_attribution::{
     ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
     SkillContribution, UsedProvenanceEdge,

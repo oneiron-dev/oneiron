@@ -587,6 +587,13 @@ side_tables! {
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
+    /// One proposed pack lens: its frozen compiled tree, the pack/skill slot and pack content
+    /// hash it is bound to, and who proposed it. It mounts only once the owner selects it. Key:
+    /// id16 (lens).
+    LENS_PROPOSAL: VaultMeta b"lens/proposal/v1\0" Named;
+    /// The owner's consented selection of one proposed lens revision for a pack/skill slot.
+    /// Key: string (pack name "\0" skill id hex).
+    LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().

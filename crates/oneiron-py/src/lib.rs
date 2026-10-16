@@ -376,6 +376,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_lenses_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.lenses.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.lenses.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_lenses_activate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.lenses.activate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.lenses.activate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_lenses_deactivate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.lenses.deactivate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.lenses.deactivate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_lenses_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.lenses.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.lenses.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_lenses_default(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.lenses.default")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.lenses.default", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_view(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.view")?;
         let output = py

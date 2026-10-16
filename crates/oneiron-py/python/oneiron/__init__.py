@@ -304,6 +304,9 @@ class Oneiron:
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
         @property
+        def lenses(self) -> "Oneiron._VaultLensesVerbs":
+            return Oneiron._VaultLensesVerbs(self._client)
+        @property
         def artifacts(self) -> "Oneiron._VaultArtifactsVerbs":
             return Oneiron._VaultArtifactsVerbs(self._client)
         @property
@@ -392,6 +395,19 @@ class Oneiron:
             self._client = client
         def put(self, spec):
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+    class _VaultLensesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def propose(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
+        def activate(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_activate(json.dumps(spec))))
+        def deactivate(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_deactivate(json.dumps(spec))))
+        def list(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
+        def default(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
