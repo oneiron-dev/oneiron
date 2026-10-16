@@ -68,9 +68,10 @@ pub(crate) fn prove_branch_span(
     let mut parent_session =
         crate::compaction::turn_session_membership_in_txn(store, txn, &parent)?;
     for &reply in replies {
+        // The chain is the thread's Parent line; each reply's RepliesTo
+        // target is its own answer and may lie on the trunk.
         if !graph::is_thread_record(store, txn, &reply)?
             || graph::parent(store, txn, &reply)? != Some(parent)
-            || edge_ids(store, txn, &reply, EdgeKind::RepliesTo, false, 2)? != [parent]
         {
             return Err(invalid("branch span is not a reply chain"));
         }

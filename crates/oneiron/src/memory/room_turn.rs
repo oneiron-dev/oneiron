@@ -23,6 +23,7 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.find",
     "vault.rooms.get",
     "vault.rooms.trunk",
+    "vault.rooms.reply_strips",
     "vault.rooms.claim",
     "vault.rooms.speak",
 ];

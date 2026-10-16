@@ -62,6 +62,7 @@ vaultRoomsRender(input: unknown): unknown
 vaultRoomsFind(input: unknown): unknown
 vaultRoomsGet(input: unknown): unknown
 vaultRoomsTrunk(input: unknown): unknown
+vaultRoomsReplyStrips(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
 // END GENERATED AGENT VERBS

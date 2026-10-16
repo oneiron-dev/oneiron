@@ -18,7 +18,7 @@ use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest};
+use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest, QuoteSpan};
 use oneiron::reaction::{ReactionExternalId, ReactionIngress, ReactionInput};
 use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
@@ -61,6 +61,17 @@ fn append_input(
     Ok(AppendRecord {
         conversation,
         reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,
+        quote: req
+            .quote
+            .as_ref()
+            .map(|quote| {
+                Ok::<_, ApiError>(QuoteSpan {
+                    message: parse_entity_id_param(&quote.message, "quote.message")?,
+                    start: quote.start,
+                    end: quote.end,
+                })
+            })
+            .transpose()?,
         address: match req.addr.unwrap_or(DagAddressMode::Broadcast) {
             DagAddressMode::Broadcast => AddressMode::Broadcast,
             DagAddressMode::Direct => AddressMode::Direct,

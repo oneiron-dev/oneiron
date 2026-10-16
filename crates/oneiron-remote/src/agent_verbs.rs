@@ -145,6 +145,9 @@ impl OneironClient {
                     "vault.rooms.trunk" => remote_agent_verb_output::<
                         oneiron::workspace_roster::RoomTrunk,
                     >(client, verb, &input),
+                    "vault.rooms.reply_strips" => remote_agent_verb_output::<
+                        oneiron::conversation_dag::ReplyStripsPage,
+                    >(client, verb, &input),
                     "vault.rooms.claim" => remote_agent_verb_output::<
                         oneiron::workspace_roster::RoomClaimOutcome,
                     >(client, verb, &input),
@@ -677,6 +680,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.trunk", value)
+    }
+    pub fn vault_rooms_reply_strips(
+        &self,
+        input: &oneiron::conversation_dag::ReplyStripsRequest,
+    ) -> Result<oneiron::conversation_dag::ReplyStripsPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.reply_strips", value)
     }
     pub fn vault_rooms_claim(
         &self,

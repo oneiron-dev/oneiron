@@ -39,6 +39,7 @@ pub enum AgentVerb {
     VaultRoomsFind,
     VaultRoomsGet,
     VaultRoomsTrunk,
+    VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
     SelfBrowserOpen,
@@ -91,6 +92,7 @@ impl AgentVerb {
         Self::VaultRoomsFind,
         Self::VaultRoomsGet,
         Self::VaultRoomsTrunk,
+        Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
         Self::SelfBrowserOpen,
@@ -146,6 +148,7 @@ impl AgentVerb {
             Self::VaultRoomsFind => "vault.rooms.find",
             Self::VaultRoomsGet => "vault.rooms.get",
             Self::VaultRoomsTrunk => "vault.rooms.trunk",
+            Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -197,6 +200,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
                 | Self::VaultRoomsTrunk
+                | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
         )
@@ -256,6 +260,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
                 | Self::VaultRoomsTrunk
+                | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
         )
@@ -290,6 +295,7 @@ impl AgentVerb {
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
+                | Self::VaultRoomsReplyStrips
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -335,6 +341,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
                 | Self::VaultRoomsTrunk
+                | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::SelfBrowserOpen
@@ -423,6 +430,7 @@ impl AgentVerb {
             Self::VaultRoomsFind => &["room_ref", "turn_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
+            Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::SelfBrowserOpen => &["spec"],
@@ -476,6 +484,7 @@ impl AgentVerb {
             Self::VaultRoomsFind => &["room_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
+            Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::SelfBrowserOpen => &["spec"],
