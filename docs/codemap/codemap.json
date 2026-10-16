@@ -839,7 +839,7 @@
      "purpose": "Persistent resident bindings",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
