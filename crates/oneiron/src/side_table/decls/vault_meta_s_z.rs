@@ -141,9 +141,16 @@ side_tables! {
     /// created. Key: ().
     /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
     SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw;
+    /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
+    /// id) ":" hex32 (receipt id).
+    SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
+    /// The execution receipt of one shared act or membership change. Key: hex32 (receipt id).
+    SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
+    /// The executed delete-the-vault act and its backup retention deadline. Key: ().
+    SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().

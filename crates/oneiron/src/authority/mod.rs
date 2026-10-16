@@ -133,7 +133,9 @@ pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::*;
 pub use fold_engine::*;
 pub use fold_state::*;
-pub use handoff_equivocation::AuthorityHandoffEquivocation;
+pub use handoff_equivocation::{
+    AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
+};
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
