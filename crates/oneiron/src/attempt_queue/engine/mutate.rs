@@ -1,5 +1,8 @@
 //! Retry/intervene/manifest append plus lease-cleanup mutation doors.
 
+use crate::attempt_queue::annotation_hold::{
+    ANNOTATION_HOLD_ACTOR, ERR_ANNOTATION_HOLD_ACTOR_RESERVED,
+};
 use crate::attempt_queue::cancel::{
     ATTEMPT_RUNTIME_ACTOR, AttemptCancelState, AttemptLandingReserve, ForceCancelAuthority,
     force_cancel_record, validate_force_authority,
@@ -236,6 +239,23 @@ impl AttemptQueue<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         input: InterveneAttempt,
     ) -> Result<InterveneOutcome> {
+        // The annotation hold's actor is the engine's own: a pause under it
+        // would read as a hold, and a reattach would resume it.
+        if input.actor == ANNOTATION_HOLD_ACTOR {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_ANNOTATION_HOLD_ACTOR_RESERVED,
+            )));
+        }
+        self.apply_intervention_in_txn(wtxn, input)
+    }
+
+    /// [`Self::intervene_in_txn`] for any actor, the annotation hold's
+    /// included (OF-368).
+    pub(in crate::attempt_queue) fn apply_intervention_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: InterveneAttempt,
+    ) -> Result<InterveneOutcome> {
         validate_intervention_actor(&input.actor)?;
         validate_optional_intervention_note(input.note.as_deref())?;
 
@@ -274,6 +294,22 @@ impl AttemptQueue<'_> {
                 state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
             },
             AttemptInterventionKind::Pause => match record.state {
+                // A person's pause takes over an annotation hold, so a
+                // reattach no longer resumes the row.
+                AttemptState::Paused
+                    if input.actor != ANNOTATION_HOLD_ACTOR
+                        && record.annotation_hold().is_some() =>
+                {
+                    append_attempt_event(
+                        &mut record,
+                        input.kind,
+                        input.actor,
+                        input.note,
+                        input.now,
+                    )?;
+                    record.updated_at = input.now;
+                    AttemptInterventionEffect::Paused
+                }
                 AttemptState::Paused => AttemptInterventionEffect::AlreadyPaused,
                 // A paused row keeps its readiness instant so resume can restore
                 // the exact schedule instead of pulling the try forward.
