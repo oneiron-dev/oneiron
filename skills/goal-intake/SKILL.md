@@ -10,6 +10,16 @@ A project card is the first interview turn, not authorization to silently fill g
 Only a human answers the goal interview. The loop may suggest a revision but must
 never apply one; return its proposal to the responsible human for a new interview.
 
+## Seed
+Before the first question, read `vault.projects.goal.intake` for the project
+(`Vault::project_goal_interview_context`): the goal claim in force, its goal
+generation, the card draft the project was minted with (`card_seed`: goal, why
+and axis names) and the loop's open revision proposals. The card draft is the
+interview's first turn: a starting point the human confirms or changes, never
+an answer. Its axes are names only; ask for each measure and bound. Revision
+proposals are optional preferences to offer the human; never merge one into
+the record without the human's own pick.
+
 ## Interview
 1. Identify the project and responsible human. Reuse known facts; ask only for
    missing answers that change admission. Confirm the goal in their words and

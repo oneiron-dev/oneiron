@@ -123,6 +123,11 @@ mod project;
 pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
+pub(crate) use project::{
+    ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
+    ProjectDetectionVerdict, claim_project_detection, fail_project_detection, project_house_agent,
+    settle_project_detection, stage_project_detection_in_txn,
+};
 pub use project::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, OwnerProjectSigner,
     ProjectAsk, ProjectCycleQuestion, ProjectDisposition, ProjectEffective, ProjectForkEvidence,
@@ -154,6 +159,10 @@ pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, capture_before_tear, capture_project_put,
     check_revision_put, is_project_revision_type, project_revision_type, projects_touched_by_put,
     rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
+};
+pub use project::{
+    ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectGoalInterviewContext,
+    ProjectProposalRequest,
 };
 #[cfg(feature = "sync")]
 pub(crate) use project::{

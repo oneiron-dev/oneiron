@@ -285,7 +285,12 @@ export class Oneiron {
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
     projects: {
+      propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsPropose(input) as unknown),
+      proposals: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsProposals(input) as unknown),
+      dismiss_card: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsDismissCard(input) as unknown),
+      confirm: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsConfirm(input) as unknown),
       goal: {
+        intake: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as unknown),
         revisions: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalRevisions(input) as unknown),
         dismiss: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalDismiss(input) as unknown),
       },

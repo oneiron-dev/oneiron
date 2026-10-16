@@ -9,6 +9,15 @@ mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
 mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
+mod proposal;
+pub(crate) use proposal::{
+    ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
+    ProjectDetectionVerdict, claim_project_detection, fail_project_detection, project_house_agent,
+    settle_project_detection, stage_project_detection_in_txn,
+};
+pub use proposal::{
+    ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectProposalRequest,
+};
 mod asks;
 mod branch;
 mod capture;
@@ -49,7 +58,10 @@ pub use fold::{
 pub(crate) use fork_evidence::ProjectForks;
 pub use fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
 pub(crate) use goal::GoalLimits;
-pub use goal::{GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord};
+pub use goal::{
+    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
+    ProjectGoalInterviewContext,
+};
 pub(crate) use goal::{
     admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
     guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,

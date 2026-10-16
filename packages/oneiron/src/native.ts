@@ -98,6 +98,11 @@ vaultRoomsTrunk(input: unknown): unknown
 vaultRoomsReplyStrips(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
+vaultProjectsPropose(input: unknown): unknown
+vaultProjectsProposals(input: unknown): unknown
+vaultProjectsDismissCard(input: unknown): unknown
+vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
 vaultProjectsGoalRevisions(input: unknown): unknown

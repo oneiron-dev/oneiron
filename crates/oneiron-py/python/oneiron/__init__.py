@@ -580,6 +580,14 @@ class Oneiron:
     class _VaultProjectsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def propose(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_propose(json.dumps(spec))))
+        def proposals(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_proposals(json.dumps(spec))))
+        def dismiss_card(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_dismiss_card(json.dumps(spec))))
+        def confirm(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_confirm(json.dumps(spec))))
         @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs":
             return Oneiron._VaultProjectsGoalVerbs(self._client)
@@ -588,6 +596,8 @@ class Oneiron:
     class _VaultProjectsGoalVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def intake(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_intake(json.dumps(spec))))
         def revisions(self, spec):
             return json.loads(_translate(lambda: self._client.vault_projects_goal_revisions(json.dumps(spec))))
         def dismiss(self, spec):

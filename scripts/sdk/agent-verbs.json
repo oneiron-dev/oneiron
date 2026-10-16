@@ -1367,6 +1367,56 @@
       "section": false
     },
     {
+      "name": "vault.projects.propose",
+      "input": "crate::workspace_roster::ProjectProposalRequest",
+      "output": "crate::genui::ProjectProposalCard",
+      "call": "memory.projects_propose(&input)?",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.proposals",
+      "input": "ProjectConversationRequest",
+      "output": "Vec<crate::workspace_roster::ProjectCardRecord>",
+      "call": "memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)?",
+      "scope": "Read",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.dismiss_card",
+      "input": "ProjectCardRequest",
+      "output": "crate::task_verb::sdk::ProjectCardDismissal",
+      "call": "ProjectCardDismissal { dismissed: memory.projects_dismiss_card(&input.card_id)?, card_id: input.card_id }",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.confirm",
+      "input": "crate::workspace_roster::ProjectCardConfirmRequest",
+      "output": "crate::workspace_roster::ProjectMintReceipt",
+      "call": "memory.projects_confirm(&input)?",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.intake",
+      "input": "ProjectRefRequest",
+      "output": "crate::workspace_roster::ProjectGoalInterviewContext",
+      "call": "memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)?",
+      "scope": "Read",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.join",
       "input": "crate::workspace_roster::JoinRequest",
       "output": "crate::workspace_roster::JoinOutcome",
