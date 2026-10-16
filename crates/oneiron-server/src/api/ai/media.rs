@@ -301,6 +301,11 @@ fn failure(error: &LlmError) -> Response {
         LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
         }
+        // A spent window or spent credit: the owner's quota question in
+        // `GET /v1/ai/status` says what to do.
+        LlmError::Retryable(RetryableLlmError::QuotaSpent { .. }) => {
+            (StatusCode::TOO_MANY_REQUESTS, "quota_spent")
+        }
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
             (StatusCode::CONFLICT, "kept_on_device")
         }

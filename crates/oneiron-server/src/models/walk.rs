@@ -175,6 +175,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
     use oneiron::llm::BudgetDenied;
     match error {
         LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => "rate_limited",
+        LlmError::Retryable(RetryableLlmError::QuotaSpent { .. }) => "quota_spent",
         LlmError::Retryable(RetryableLlmError::ServerError) => "server_error",
         LlmError::Retryable(RetryableLlmError::Timeout) => "timeout",
         LlmError::Retryable(RetryableLlmError::StreamCut) => "stream_cut",

@@ -30,6 +30,18 @@ pub enum RetryableLlmError {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         resets_at: Vec<u64>,
     },
+    /// A spent usage window or spent prepaid credit (OF-305): the offer is
+    /// parked until its window resets, or, for credit, until the owner tops
+    /// up or clears it. A rate limit is [`Self::RateLimited`].
+    #[error("usage spent")]
+    QuotaSpent {
+        kind: SpentKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after: Option<u64>,
+        /// When the window resets, as Unix seconds; none for credit.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resets_at: Vec<u64>,
+    },
     /// No offer the call may use on this device answered, and the next one
     /// would have taken its work off the device while its world stays here
     /// (world privacy, "Models": no silent fallback to a cloud model).
@@ -48,6 +60,25 @@ pub enum RetryableLlmError {
     Timeout,
     #[error("stream cut")]
     StreamCut,
+}
+
+/// What a spent limit is: a usage window that resets, or prepaid credit
+/// that does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpentKind {
+    Window,
+    Credit,
+}
+
+impl SpentKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Window => "window",
+            Self::Credit => "credit",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]

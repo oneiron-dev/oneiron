@@ -1,6 +1,6 @@
 //! Gemini generateContent request and response mapping plus status taxonomy.
 use super::{GeminiAccumulator, GeminiHttpRequest};
-use oneiron::llm::{BudgetDenied, ReasoningEffort};
+use oneiron::llm::ReasoningEffort;
 use oneiron::{
     ContentPart, FatalLlmError, ImageContent, LlmCatalogEntry, LlmError, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, ResponseFormat, RetryableLlmError,
@@ -191,19 +191,21 @@ pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
         .ok_or_else(|| FatalLlmError::EmptyResponse.into())
 }
 pub(super) fn classify_status(status: u16, body: &Value) -> LlmError {
+    // Spent prepaid credit parks the offer until the owner tops up (OF-305).
     if status == 402
         || body.pointer("/error/status").and_then(Value::as_str) == Some("BUDGET_EXCEEDED")
     {
-        return BudgetDenied::AdmissionDenied.into();
+        return RetryableLlmError::QuotaSpent {
+            kind: oneiron::llm::SpentKind::Credit,
+            retry_after: None,
+            resets_at: Vec::new(),
+        }
+        .into();
     }
     match status {
         401 | 403 => FatalLlmError::Auth.into(),
         408 | 504 => RetryableLlmError::Timeout.into(),
-        429 => RetryableLlmError::RateLimited {
-            retry_after: None,
-            resets_at: Vec::new(),
-        }
-        .into(),
+        429 => oneiron::llm::limit::limit_refusal(status, &Default::default(), body).into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         _ => FatalLlmError::InvalidRequest.into(),
     }

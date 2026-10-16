@@ -171,7 +171,7 @@ impl LlmBackend for RerankBackend {
             match reply.status {
                 200..=299 => {}
                 status if limit::is_limit_status(status, &reply.body) => {
-                    return Err(limit::limit_refusal(&reply.headers, &reply.body).into());
+                    return Err(limit::limit_refusal(status, &reply.headers, &reply.body).into());
                 }
                 401 | 403 => return Err(FatalLlmError::Auth.into()),
                 400..=499 => return Err(FatalLlmError::InvalidRequest.into()),
