@@ -2120,7 +2120,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 24,
       "struct": 1
      }
@@ -11655,7 +11655,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -11669,8 +11669,8 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19,
-      "fn": 22,
+      "crate-vis": 21,
+      "fn": 24,
       "struct": 2
      }
     },
@@ -11810,11 +11810,19 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/consent/tests/owner_reason.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/tests/owner_tier.rs",
+     "purpose": "A native host's proof shows a live person, not whose vault this is, so an owner door asks for both (F18 tier…",
      "surface": {}
     },
     {
@@ -15377,7 +15385,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "mod": 2,
       "re-export": 2
@@ -19059,7 +19067,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 5,
       "struct": 1
      }
@@ -19807,7 +19815,7 @@
       "const": 5,
       "crate-vis": 10,
       "enum": 6,
-      "fn": 10,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -20963,6 +20971,7 @@
      "path": "src/identity_topology/transition_table.rs",
      "purpose": "The (state, op) transition table and the deterministic rejection taxonomy it speaks, plus the proposal…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -23779,7 +23788,7 @@
      "path": "src/m8_forward_oracle/shared.rs",
      "purpose": "Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -37265,7 +37274,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_guest.rs",
@@ -38244,7 +38253,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -40781,7 +40790,7 @@
      "path": "tests/it/merge_split_oracle.rs",
      "purpose": "Identity-topology forward test oracle (ARCH-0055, ONE-1742 epic) — authored by the ONE-1743 path opener",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 43
      }
     },
     {
@@ -41555,7 +41564,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42594,7 +42603,7 @@
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2568,
-   "test_files": 859
+   "test_files": 860
   },
   "oneiron-android": {
    "files": [
