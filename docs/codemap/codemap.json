@@ -24459,7 +24459,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 11,
+      "const": 12,
       "fn": 1,
       "struct": 1
      }
@@ -24510,7 +24510,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 8,
+      "fn": 10,
       "struct": 9,
       "trait": 3
      }
@@ -24537,13 +24537,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionImage"
+     ],
+     "path": "src/llm/decision/media.rs",
+     "purpose": "Images a typed decision reads",
+     "surface": {
+      "const": 4,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -24794,6 +24808,7 @@
       "DecisionTime",
       "EvidenceVersion",
       "HumanAskReason",
+      "ImageBox",
       "PairedReading",
       "PersonChangedAnswer",
       "ProviderPin",
@@ -24807,8 +24822,8 @@
      "surface": {
       "crate-vis": 4,
       "enum": 8,
-      "fn": 6,
-      "struct": 10
+      "fn": 8,
+      "struct": 11
      }
     },
     {
@@ -31800,6 +31815,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "IMessageTapback",
+      "IMessageTapbackInput",
+      "IMessageTapbackOperation",
+      "ReactionChannelCapability"
+     ],
+     "path": "src/reaction/channel_adapters.rs",
+     "purpose": "Channel-specific reaction forms",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/reaction/erase.rs",
      "purpose": "Reactions follow the room deletion doors: deleting a conversation record deletes the reaction claims about…",
@@ -31828,8 +31862,8 @@
      "path": "src/reaction/mod.rs",
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 8
      }
     },
     {
@@ -31848,6 +31882,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReactionMeaning",
+      "ReactionOutcome",
+      "ReactionOutcomeEvidence"
+     ],
+     "path": "src/reaction/outcomes.rs",
+     "purpose": "Interpreted reaction evidence for landing and commitment outcome bindings",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -31859,7 +31911,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -45198,7 +45250,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45408,7 +45460,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
-     "files": 15,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45844,7 +45896,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2753,
+   "source_files": 2756,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52267,7 +52319,7 @@
   "oneiron-llm-systemone": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SystemOneSeat"
