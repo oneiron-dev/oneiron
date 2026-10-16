@@ -71,5 +71,6 @@ pub(super) fn emit_in_txn(
             now,
         )
         .apply(txn)?;
+    vault.record_finding_notification_in_txn(txn, id, subject, now)?;
     Ok(id)
 }
