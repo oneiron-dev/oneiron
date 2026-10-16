@@ -33,14 +33,14 @@ const MAX_TARGET_BYTES: usize = 512;
 
 const MAX_ROW_REF_BYTES: usize = 256;
 
-/// Whether she asks the person before she reaches their contact.
+/// Whether the engine asks the person before it reaches their contact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustedContactDial {
-    /// She asks first on either tier.
+    /// Ask first on either tier.
     AskFirst,
-    /// She reaches the contact at once on the imminent tier, and still asks
-    /// first on the concern tier.
+    /// Reach the contact at once on the imminent tier, and still ask first
+    /// on the concern tier.
     JustCall,
 }
 
@@ -257,7 +257,7 @@ impl Vault {
         })
     }
 
-    /// The person changes whether she asks first. It does not change what the
+    /// The person changes whether they are asked first. It does not change what the
     /// contact agreed to receive, so their consent stands.
     pub fn set_trusted_contact_dial(
         &self,

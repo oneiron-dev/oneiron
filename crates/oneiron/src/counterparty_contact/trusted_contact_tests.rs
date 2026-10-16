@@ -438,9 +438,9 @@ fn only_the_gates_route_to_help_fires_the_notify() -> Result<()> {
 }
 
 #[test]
-fn the_tier_and_dial_decide_whether_she_asks_first() -> Result<()> {
+fn the_tier_and_dial_decide_whether_the_person_is_asked_first() -> Result<()> {
     // The concern tier, which every row is until the owner names it imminent:
-    // she asks, and the contact hears only on a yes.
+    // the person is asked, and the contact hears only on a yes.
     let fx = fixture()?;
     fx.live(TrustedContactDial::JustCall)?;
     let asked = fx.crisis()?;
@@ -485,7 +485,8 @@ fn the_tier_and_dial_decide_whether_she_asks_first() -> Result<()> {
             .is_err()
     );
 
-    // The imminent tier with just-call: she calls now, and says she did.
+    // The imminent tier with just-call: the contact is reached now, and both
+    // the agent and the person are told.
     let fx = fixture()?;
     fx.imminent()?;
     fx.live(TrustedContactDial::JustCall)?;
@@ -500,7 +501,7 @@ fn the_tier_and_dial_decide_whether_she_asks_first() -> Result<()> {
             .any(|notice| notice.notice_type == "trusted_contact_notified")
     }));
 
-    // Ask-first: she asks first on either tier. Only the person sets it.
+    // Ask-first: the person is asked first on either tier. Only the person sets it.
     assert!(
         fx.vault
             .set_trusted_contact_dial(&fx.contact, fx.contact_id, TrustedContactDial::AskFirst)
