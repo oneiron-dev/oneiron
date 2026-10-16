@@ -178,12 +178,16 @@ pub(crate) fn settle_record(
 pub(super) fn denied() -> Error {
     RecordError::ConversationDenied.into()
 }
+/// A project's effective authority: who leads it and where it sits.
 pub(super) fn project_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-) -> Result<ProjectRecord> {
-    vault.visible_project_in_txn(txn, id)?.ok_or_else(denied)
+) -> Result<ProjectEffective> {
+    vault
+        .effective_project_in_txn(txn, id)?
+        .map(|(_, effective)| effective)
+        .ok_or_else(denied)
 }
 pub(super) fn lineage(
     vault: &Vault,

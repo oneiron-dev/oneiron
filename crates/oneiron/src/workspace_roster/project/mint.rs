@@ -234,8 +234,8 @@ impl Vault {
             return Err(invalid());
         }
         let root_id = ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?;
-        let root = self
-            .visible_project_in_txn(txn, root_id)?
+        let (_, root) = self
+            .effective_project_in_txn(txn, root_id)?
             .ok_or_else(invalid)?;
         let leader = checked_ref(
             self,

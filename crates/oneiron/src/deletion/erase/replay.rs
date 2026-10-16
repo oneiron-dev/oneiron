@@ -310,7 +310,12 @@ impl Vault {
             if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
                 return Err(crate::secret_custody::reject_secret_custody_byte());
             }
-            if crate::registry::is_delete_protected_engine_record(header.entity_type) {
+            if crate::registry::is_delete_protected_engine_record(header.entity_type)
+                || crate::workspace_roster::is_project_revision_type(
+                    &self.store,
+                    header.entity_type,
+                )
+            {
                 return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                     header.entity_type,
                 )));

@@ -137,9 +137,13 @@ pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
 /// folder, the file's path under it.
 pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
 
+/// A project revision companion (`workspace_roster::project::revision`).
+/// Parts: the revision's 32-byte logical hash.
+pub const PROJECT_REVISION: &[u8] = b"oneiron/project-revision-id/v1/";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 35] = [
+pub(crate) const ALL: [&[u8]; 36] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -175,4 +179,5 @@ pub(crate) const ALL: [&[u8]; 35] = [
     HISTORY_TURN,
     HISTORY_MESSAGE,
     IMPORTED_NOTE,
+    PROJECT_REVISION,
 ];

@@ -60,6 +60,10 @@ pub(super) enum EffectiveEntity {
 
 pub(super) struct AppliedPut {
     pub(super) portable_agent_source: Option<(EntityId, Vec<u8>)>,
+    /// Revision companions a PROJECT put captured, for the batch to write next.
+    pub(super) project_revisions: Vec<(EntityId, Vec<u8>)>,
+    /// Projects whose frontier the batch end refreshes.
+    pub(super) touched_projects: BTreeSet<EntityId>,
     pub(super) pending_embedding_token: Option<Vec<u8>>,
     pub(super) cleared_pending_embedding: bool,
     pub(super) had_vector_mutation: bool,

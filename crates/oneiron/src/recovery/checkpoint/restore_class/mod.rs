@@ -255,6 +255,12 @@ const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
         crate::workspace_roster::PROJECT_SHORT_ID_PREFIX,
         PROJECTS,
     ),
+    // Signed project history is live authority: a restore never rolls it back.
+    (
+        crate::workspace_roster::PROJECT_PACK,
+        crate::workspace_roster::PROJECT_REVISION_SHORT_ID_PREFIX,
+        LIVE,
+    ),
     (
         crate::campaign::CRM_PACK_ID,
         crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,

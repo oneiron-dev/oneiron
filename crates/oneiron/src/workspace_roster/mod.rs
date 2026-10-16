@@ -115,8 +115,12 @@ mod project;
 pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
-#[cfg(test)]
-pub(crate) use project::spawn_signed_project_for_test;
+pub use project::{
+    DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
+    ProjectDisposition, ProjectEffective, ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier,
+    ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectRank, ProjectResolution,
+    ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, ProjectSeal, ProjectWitness,
+};
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
     LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchor,
@@ -136,6 +140,16 @@ pub(crate) use project::{
     settle_leader_chat_record, validate_local_leader_chat_turns, validate_project_body,
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
     validate_project_transition, validate_room_body, verify_existing_leader_chat_turn,
+};
+pub(crate) use project::{
+    PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, capture_before_tear, capture_project_put,
+    check_revision_put, is_project_revision_type, project_revision_type, projects_touched_by_put,
+    rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
+};
+#[cfg(feature = "sync")]
+pub(crate) use project::{
+    decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
+    inadmissible_revision_carriers,
 };
 
 mod rooms;

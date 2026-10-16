@@ -103,8 +103,10 @@ impl Memory<'_> {
                 .into_iter()
                 .find(|id| other_lineage.contains(id))
                 .ok_or_else(|| MemoryError::from(denied()))?;
-            let mut board = project_in(vault, txn, current_board)?;
-            let current_people = board
+            let (mut board, effective) = vault
+                .effective_project_in_txn(txn, current_board)?
+                .ok_or_else(|| MemoryError::from(denied()))?;
+            let current_people = effective
                 .board
                 .iter()
                 .map(|id| EntityId::from_hex(id))

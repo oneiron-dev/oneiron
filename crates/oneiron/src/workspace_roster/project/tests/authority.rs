@@ -9,7 +9,7 @@ use ed25519_dalek::Signer;
 
 pub(super) const FIXTURE_HOST: &[u8] = b"project fixture authority";
 
-fn holder_key(actor: EntityId) -> ed25519_dalek::SigningKey {
+pub(super) fn holder_key(actor: EntityId) -> ed25519_dalek::SigningKey {
     ed25519_dalek::SigningKey::from_bytes(blake3::hash(actor.as_bytes()).as_bytes())
 }
 
@@ -28,7 +28,7 @@ pub(crate) fn sign_with(
 }
 
 /// Signs as a writer from before v3 did: the challenge leaves the roster out.
-fn sign_legacy(
+pub(super) fn sign_legacy(
     vault: &Vault,
     id: EntityId,
     body: &mut ProjectRecord,
@@ -154,7 +154,7 @@ pub(crate) fn put_signed_project(
 }
 
 /// The child body a spawn by `actor` under `parent_id` writes.
-fn child_body(
+pub(super) fn child_body(
     vault: &Vault,
     parent_id: EntityId,
     child_id: EntityId,
@@ -194,14 +194,14 @@ pub(crate) fn spawn_signed(
     vault.spawn_subproject(parent_id, child_id, leader, slice, proof, now)
 }
 
-fn root_leader(vault: &Vault) -> Result<(EntityId, ProjectRecord, EntityId)> {
+pub(super) fn root_leader(vault: &Vault) -> Result<(EntityId, ProjectRecord, EntityId)> {
     let root_id = vault.root_project()?;
     let root = vault.project(root_id)?.ok_or(Error::EntityNotFound)?;
     let leader = EntityId::from_hex(&root.leader)?;
     Ok((root_id, root, leader))
 }
 
-fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+pub(super) fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
@@ -216,7 +216,12 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()
 }
 
 #[cfg(feature = "sync")]
-fn replay_project(vault: &Vault, id: EntityId, body: &ProjectRecord, at: u64) -> Result<()> {
+pub(super) fn replay_project(
+    vault: &Vault,
+    id: EntityId,
+    body: &ProjectRecord,
+    at: u64,
+) -> Result<()> {
     vault.with_write_txn(|txn| {
         vault
             .batch_in()
@@ -233,7 +238,7 @@ fn replay_project(vault: &Vault, id: EntityId, body: &ProjectRecord, at: u64) ->
 
 /// Replays stored rows of `from` into `to`, as the sync entity pass would.
 #[cfg(feature = "sync")]
-fn replay_rows(from: &Vault, to: &Vault, ids: &[EntityId]) -> Result<()> {
+pub(super) fn replay_rows(from: &Vault, to: &Vault, ids: &[EntityId]) -> Result<()> {
     for id in ids {
         let raw = {
             let txn = from.store.env.read_txn()?;
@@ -263,29 +268,65 @@ fn replay_rows(from: &Vault, to: &Vault, ids: &[EntityId]) -> Result<()> {
 
 /// Replays every authority-log entry `to` lacks.
 #[cfg(feature = "sync")]
-fn replay_authority(from: &Vault, to: &Vault) -> Result<()> {
+pub(super) fn replay_authority(from: &Vault, to: &Vault) -> Result<()> {
     let kind = crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+    replay_rows(from, to, &missing(from, to, kind)?)
+}
+
+/// Every row of `kind` in `from` that `to` lacks.
+#[cfg(feature = "sync")]
+fn missing(from: &Vault, to: &Vault, kind: u8) -> Result<Vec<EntityId>> {
     let ids: Vec<EntityId> = {
         let txn = from.store.env.read_txn()?;
         from.store
             .port_entity_ids_by_type(&txn, kind, None)?
             .collect::<Result<_>>()?
     };
-    let missing: Vec<EntityId> = {
-        let txn = to.store.env.read_txn()?;
-        let mut missing = Vec::new();
-        for id in ids {
-            if to.store.entities.get(&txn, id.as_bytes())?.is_none() {
-                missing.push(id);
-            }
+    let txn = to.store.env.read_txn()?;
+    let mut missing = Vec::new();
+    for id in ids {
+        if to.store.entities.get(&txn, id.as_bytes())?.is_none() {
+            missing.push(id);
         }
-        missing
+    }
+    Ok(missing)
+}
+
+/// Replays every row of `kind` that `to` lacks, in one batch.
+#[cfg(feature = "sync")]
+pub(super) fn replay_missing_together(from: &Vault, to: &Vault, kind: u8) -> Result<()> {
+    let ids = missing(from, to, kind)?;
+    let rows: Vec<(EntityId, Vec<u8>)> = {
+        let txn = from.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for id in ids {
+            let raw = from.store.port_entity_raw(&txn, &id)?;
+            rows.push((id, raw.ok_or(Error::EntityNotFound)?));
+        }
+        rows
     };
-    replay_rows(from, to, &missing)
+    to.with_write_txn(|txn| {
+        let mut batch = to.batch_in();
+        for (id, raw) in &rows {
+            let header = crate::batch::EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("replayed header"))?;
+            batch = batch.put_replicated(
+                id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            );
+        }
+        batch.apply(txn)
+    })
 }
 
 #[cfg(feature = "sync")]
-fn verdict_of(vault: &Vault, id: EntityId) -> Result<Option<ProjectVerdict>> {
+pub(super) fn verdict_of(vault: &Vault, id: EntityId) -> Result<Option<ProjectVerdict>> {
     Ok(vault
         .quarantined_projects()?
         .into_iter()
@@ -611,7 +652,7 @@ fn a_forged_spawn_or_depth_restore_is_refused_live_and_hidden_after_replay() -> 
 }
 
 #[cfg(feature = "sync")]
-fn root_slice(vault: &Vault) -> Result<crate::llm::Scope> {
+pub(super) fn root_slice(vault: &Vault) -> Result<crate::llm::Scope> {
     Ok(root_leader(vault)?.1.slice)
 }
 
@@ -937,7 +978,7 @@ fn a_revoke_concurrent_with_an_edit_reaches_one_verdict_in_either_order() -> Res
     let vault = Vault::open(origin.path(), crate::VaultConfig::default())?;
     let (root_id, root, leader) = root_leader(&vault)?;
     let child_id = EntityId::now();
-    spawn_signed(&vault, root_id, child_id, leader, leader, root.slice, 1)?;
+    let born = spawn_signed(&vault, root_id, child_id, leader, leader, root.slice, 1)?;
     let mut edit = vault.project(child_id)?.unwrap();
     edit.depth_remaining = 2;
     let proof = sign_project(&vault, child_id, &mut edit, leader)?;
@@ -956,18 +997,20 @@ fn a_revoke_concurrent_with_an_edit_reaches_one_verdict_in_either_order() -> Res
     replay_authority(&right, &left)?;
     replay_project(&right, child_id, &edit, 2)?;
 
+    // Quarantine is per revision (PR 3 ruling 7): the edit is stored and
+    // listed, and the project keeps the birth's authority.
+    let edit_head = super::history::head_of(child_id, &edit)?;
     for device in [&left, &right] {
-        assert!(device.project(child_id)?.is_none());
-        let hidden = device
-            .quarantined_projects()?
-            .into_iter()
-            .find(|row| row.id == child_id)
-            .expect("the edit stays in storage");
-        assert_eq!(hidden.record.authority(), edit.authority());
-        assert_eq!(
-            hidden.verdict,
+        let view = device
+            .project_frontier(child_id)?
+            .and_then(|frontier| frontier.effective)
+            .expect("the birth still stands");
+        assert_eq!(view.depth_remaining, born.depth_remaining);
+        assert!(device.quarantined_projects()?.is_empty());
+        assert!(device.project_revisions(child_id)?.contains(&(
+            edit_head,
             ProjectVerdict::Quarantined("authorizing slip revoked")
-        );
+        )));
     }
     Ok(())
 }
@@ -1014,16 +1057,19 @@ fn a_non_leader_change_by_sync_is_quarantined_not_dropped() -> Result<()> {
     assert_eq!(vault.project(child_id)?, Some(before.clone()));
 
     replay_project(&vault, child_id, &takeover, 2)?;
-    assert!(vault.project(child_id)?.is_none());
-    let hidden = vault.quarantined_projects()?;
-    assert_eq!(hidden.len(), 1);
-    assert_eq!(hidden[0].id, child_id);
-    assert_eq!(hidden[0].record.leader, outsider.to_hex());
-    assert_eq!(
-        hidden[0].verdict,
+    // Quarantine is per revision (PR 3 ruling 7): the takeover is stored and
+    // listed, and the project keeps the leader its history signed.
+    let view = vault
+        .project_frontier(child_id)?
+        .and_then(|frontier| frontier.effective)
+        .expect("the spawn still stands");
+    assert_eq!(view.leader, child_leader.to_hex());
+    assert!(vault.quarantined_projects()?.is_empty());
+    assert!(vault.project_revisions(child_id)?.contains(&(
+        super::history::head_of(child_id, &takeover)?,
         ProjectVerdict::Quarantined("project widening needs board holder proof")
-    );
-    // The last authorized revision repairs the hidden row at the live door.
+    )));
+    // The last authorized revision repairs the stored row at the live door.
     vault.put_project(child_id, &before, 3)?;
     assert_eq!(vault.project(child_id)?, Some(before));
     assert!(vault.quarantined_projects()?.is_empty());
@@ -1031,10 +1077,10 @@ fn a_non_leader_change_by_sync_is_quarantined_not_dropped() -> Result<()> {
 }
 
 /// Replay may only quarantine: an unsigned row laid over a signed one is
-/// stored but hidden until a signed row lands again.
+/// stored, and the project keeps its signed authority (PR 3 ruling 7).
 #[cfg(feature = "sync")]
 #[test]
-fn a_replayed_row_that_strips_the_proof_stays_quarantined() -> Result<()> {
+fn a_replayed_row_that_strips_the_proof_keeps_the_signed_authority() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let (root_id, root, leader) = root_leader(&vault)?;
@@ -1061,12 +1107,15 @@ fn a_replayed_row_that_strips_the_proof_stays_quarantined() -> Result<()> {
         ErrorKind::InvalidProjectBody
     );
     replay_project(&vault, child_id, &stripped, 2)?;
-    assert!(vault.project(child_id)?.is_none());
+    let view = vault
+        .project_frontier(child_id)?
+        .and_then(|frontier| frontier.effective)
+        .expect("the signed spawn still stands");
+    assert_eq!(view.leader, signed.leader);
+    assert_eq!(verdict_of(&vault, child_id)?, None);
     assert_eq!(
-        verdict_of(&vault, child_id)?,
-        Some(ProjectVerdict::Quarantined(
-            "signed project replaced by an unsigned row"
-        ))
+        seated(&vault, child_id)?,
+        BTreeSet::from([EntityId::from_hex(&signed.leader)?])
     );
     replay_project(&vault, child_id, &signed, 3)?;
     assert_eq!(vault.project(child_id)?, Some(signed));
@@ -1083,7 +1132,7 @@ fn every_project_read_path_goes_through_the_read_fold() {
     let tree = SourceTree::read(&src);
     // Write doors judge a body before it lands; they read the stored row.
     let write_doors = [
-        "workspace_roster/project/read.rs",
+        "workspace_roster/project/read/mod.rs",
         "workspace_roster/project/proof.rs",
         "workspace_roster/project/projection.rs",
         "workspace_roster/project/deletion.rs",
@@ -1126,7 +1175,7 @@ fn every_project_read_path_goes_through_the_read_fold() {
 }
 
 /// The members a project's home room seats, as a member check reads them.
-fn seated(vault: &Vault, project: EntityId) -> Result<BTreeSet<EntityId>> {
+pub(super) fn seated(vault: &Vault, project: EntityId) -> Result<BTreeSet<EntityId>> {
     let room = home_room_id(project)?;
     Ok(vault.room_audience_members(room)?.into_iter().collect())
 }
@@ -1162,11 +1211,11 @@ fn a_roster_entry_added_under_an_unchanged_proof_admits_no_one() -> Result<()> {
         vault.bind_room_handle(room, "@writer", writer).is_err(),
         "a roster entry no proof signs seated its writer"
     );
-    assert!(vault.project(child_id)?.is_none());
-    assert!(matches!(
-        verdict_of(&vault, child_id)?,
-        Some(ProjectVerdict::Quarantined(_))
-    ));
+    assert!(vault.project_revisions(child_id)?.contains(&(
+        super::history::head_of(child_id, &forged)?,
+        ProjectVerdict::Quarantined("project revision signature does not verify")
+    )));
+    assert!(vault.quarantined_projects()?.is_empty());
     Ok(())
 }
 

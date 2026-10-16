@@ -147,7 +147,6 @@ pub(crate) enum BatchOp {
 /// the only reason this constructor exists in a featureless test build.
 ///
 /// [`BatchBuilder::put_replicated`]: super::BatchBuilder::put_replicated
-#[cfg(any(feature = "sync", test))]
 pub(super) fn replicated_put_op(
     id: &EntityId,
     entity_type: u8,

@@ -59,6 +59,7 @@ pub(in crate::sync) fn classify_tombstone(
     if matches!(vault.read_entity_header(&id), Ok(None))
         && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
         && let Some(header) = admitted_concurrent_delete_protected_header(&id, &entity_blob)
+            .or_else(|| concurrent_project_revision_header(vault, &id, &entity_blob))
     {
         return TombstoneStep::Refuse {
             id: Some(id),
@@ -71,6 +72,21 @@ pub(in crate::sync) fn classify_tombstone(
         id,
         hard: decoded.is_hard(),
     }
+}
+
+/// A concurrent project revision carrier is protected only when its body is
+/// the canonical revision its id derives from: a forged carrier earns nothing.
+fn concurrent_project_revision_header(
+    vault: &Vault,
+    id: &EntityId,
+    blob: &[u8],
+) -> Option<EntityMetadataHeader> {
+    let header = EntityMetadataHeader::parse(blob)?;
+    if !crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type) {
+        return None;
+    }
+    crate::workspace_roster::decode_revision(*id, blob.get(ENTITY_METADATA_HEADER_LEN..)?).ok()?;
+    Some(header)
 }
 
 /// Classifies a concurrent peer envelope for tombstone protection only after running the same

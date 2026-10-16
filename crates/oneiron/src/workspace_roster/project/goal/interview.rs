@@ -124,8 +124,8 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            let project = self
-                .visible_project_in_txn(txn, project_id)?
+            let (project, effective) = self
+                .effective_project_in_txn(txn, project_id)?
                 .ok_or_else(invalid)?;
             let room = EntityId::from_hex(&project.home_room).map_err(|_| invalid())?;
             require_member(self, txn, room, actor)?;
@@ -140,8 +140,8 @@ impl Vault {
                 .into_iter()
                 .collect::<Result<Vec<_>>>()?;
             if rows.iter().any(|row| row.room_id != room.to_hex())
-                || rows[0].actor != project.leader
-                || rows[2].actor != project.leader
+                || rows[0].actor != effective.leader
+                || rows[2].actor != effective.leader
                 || rows[1].actor != actor.to_hex()
                 || rows[3].actor != actor.to_hex()
                 || !(rows[0].at < rows[1].at

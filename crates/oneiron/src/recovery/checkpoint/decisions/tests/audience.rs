@@ -7,7 +7,9 @@ use crate::test_util::entity;
 use crate::voice_identity::{
     VoiceAttributionEvidence, VoiceResolvedSegment, VoiceSessionRosterV1, put_voice_roster_for_test,
 };
-use crate::workspace_roster::{LEADER_CHAT_RULE_PREDICATE, ProjectRecord};
+use crate::workspace_roster::{
+    LEADER_CHAT_RULE_PREDICATE, ProjectProofVersion, ProjectRecord, ProjectWriteProof,
+};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
 use rmpv::Value;
@@ -270,31 +272,42 @@ pub(super) fn leader_chats() -> Result<Case> {
     )
 }
 
-/// The read fold hides a signed project that replay replaced with an
-/// unsigned row. One replaced since the backup, its authority fields
-/// unchanged, is one a restore would show again.
+/// The read fold hides a project with no valid signed history whose signed
+/// row replay replaced with an unsigned one: here an owner-door project
+/// whose replayed signed row never verified. One replaced since the backup,
+/// its authority fields unchanged, is one a restore would show again. (A
+/// project with valid signed history keeps it across the strip.)
 pub(super) fn project_verdicts() -> Result<Case> {
     let (dir, vault) = open_vault();
     let root = vault.root_project()?;
     let parent = vault.project(root)?.ok_or(Error::EntityNotFound)?;
     let child = entity(0xC7);
-    crate::workspace_roster::spawn_signed_project_for_test(
-        &vault,
-        root,
+    let leader = EntityId::from_hex(&parent.leader)?;
+    vault.put_project(
         child,
-        EntityId::from_hex(&parent.leader)?,
-        entity(0xC8),
-        parent.slice,
+        &ProjectRecord::new(child, Some(root), root, leader)?,
         1,
     )?;
     Case::after_backup("project verdicts", (dir, vault), new_person, move |vault| {
-        let mut unsigned = vault.project(child)?.ok_or(Error::EntityNotFound)?;
-        unsigned.write_proof = None;
-        let bytes = rmp_serde::to_vec_named(&unsigned)
-            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-        vault
-            .batch()
-            .put_replicated(&child, vault.project_type_byte()?, at(2), 2, &bytes)
-            .commit()
+        let unsigned = vault.project(child)?.ok_or(Error::EntityNotFound)?;
+        let slip = vault.ensure_host_root_slip(&crate::test_util::test_host_issuer())?;
+        let mut forged = unsigned.clone();
+        forged.write_proof = Some(ProjectWriteProof {
+            slip_wire: slip.to_token()?,
+            holder_signature: vec![9; 64],
+            signed_at: slip.claims.issued_at,
+            anchor: Some(Box::new(unsigned.anchor())),
+            version: ProjectProofVersion::V3,
+        });
+        let kind = vault.project_type_byte()?;
+        for (row, time) in [(forged, 2), (unsigned, 3)] {
+            let bytes = rmp_serde::to_vec_named(&row)
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+            vault
+                .batch()
+                .put_replicated(&child, kind, at(time), time, &bytes)
+                .commit()?;
+        }
+        Ok(())
     })
 }
