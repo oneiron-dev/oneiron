@@ -1838,7 +1838,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lens/validate.rs` | src | s | 14 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
+| `src/lens/validate.rs` | src | s | 15 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
 | `src/lib.rs` | src | m | 178 mod · 72 re-export · 18 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
@@ -2464,7 +2464,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/psych_profile/keys.rs` | src | s | 1 struct · 1 fn | PsychProfileKey | Stable Person x Facet x World addressing and entity-id derivation |
 | `src/psych_profile/mirror.rs` | src | m | 6 struct · 1 enum · 8 fn · 1 const | PsychMirrorDriftAnchor, PsychMirrorDriftAnchorEvent, PsychMirrorDriftAnchorState, PsychMirrorSelectedSource, PsychMirrorSelectionScore, PsychMirrorSelectionWeights, PsychMirrorSourceCandidate | Psych Mirror source selection scoring, entropy, and drift anchors |
 | `src/psych_profile/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | PsychProfile snapshot record substrate |
-| `src/psych_profile/record.rs` | src | s | 2 struct · 3 enum · 5 fn · 2 const · 17 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
+| `src/psych_profile/record.rs` | src | s | 2 struct · 3 enum · 5 fn · 3 const · 19 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
 | `src/psych_profile/store.rs` | src | s | 5 fn · 2 crate-vis | — | Vault put/get/state maintenance-gated persistence for profiles |
 | `src/psych_profile/tests.rs` | test | s | — | — | — |
 | `src/query_expansion.rs` | src | s | 6 struct · 1 enum · 1 trait · 1 fn · 3 const · 2 crate-vis | CompletionCandidate, CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeExpansion, HydeOptions, HydeRequest | Host-injected HyDE query-expansion seam |
@@ -3437,6 +3437,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/channel_identity_email_adapter_smoke.rs` | test | s | — | — | — |
 | `tests/it/channel_identity_slack_adapter_smoke.rs` | test | m | — | — | — |
 | `tests/it/code_consent.rs` | test | m | — | — | Integration coverage for host-bound code-emission consent at the real write door |
+| `tests/it/collection_bounds.rs` | test | s | — | — | F05 repros at the SDK surface: a lens tree, a generated-UI segment stream, a client state patch and a… |
 | `tests/it/counterparty_opt_out_shipping_paths_oracle.rs` | test | m | — | — | ONE-1868 (CA-07) per-shipping-path oracle for the counterparty opt-out wall |
 | `tests/it/decide_path_fitness.rs` | test | m | — | — | DECIDE-PATH (owner, 2026-10-16): `decide()` under `crates/oneiron/src/llm/decision/` is the one required… |
 | `tests/it/effect_spine_oracle.rs` | test | XL | 69 crate-vis | — | Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener |
