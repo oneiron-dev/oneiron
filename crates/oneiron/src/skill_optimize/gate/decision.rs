@@ -264,7 +264,7 @@ fn rule_on_proposal(
     let before = headline.before;
     let after = headline.after;
     // A pending tradeoff climbs the preference ladder here, outside any write
-    // transaction, because its Jev rung is a model call.
+    // transaction, because its judgment rung is a model call.
     let ladder = tradeoff::plan(vault, proposal, &inputs.basis, &goal_axes, scorer)?;
 
     // The scored set has done its work; what the row keeps of it is the bounded

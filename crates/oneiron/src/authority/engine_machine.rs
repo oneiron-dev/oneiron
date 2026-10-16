@@ -53,7 +53,7 @@ impl Vault {
     }
 
     /// Every engine MACHINE writer, its row created on first use.
-    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 6]> {
+    pub(super) fn engine_machine_actors(&self) -> Result<[EntityId; 7]> {
         let seed = ENGINE_MACHINE_SEED_TIME;
         Ok([
             self.ensure_commitment_projection_machine(seed)?,
@@ -62,6 +62,7 @@ impl Vault {
             crate::reaction::ensure_conversation_mirror_actor(self, seed)?,
             self.ensure_esign_artifact_machine(seed)?,
             self.dreamer_authority()?.entity_ref(),
+            self.coach_authority()?.entity_ref(),
         ])
     }
 

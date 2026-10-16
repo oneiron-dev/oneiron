@@ -197,9 +197,7 @@ pub enum TradeoffRung {
     /// An authored or learned preference rule matched the axis signature.
     Preference,
     /// A typed judgment on the band: a verdict bound to the exact question, at
-    /// or above the high band. Stored rows spell it `jev`, the frozen v1 wire
-    /// token, so the rename touches code only.
-    #[serde(rename = "jev")]
+    /// or above the high band.
     Judgment,
     /// The authenticated person: the owner door or an A/B pick.
     Person,
