@@ -28,6 +28,26 @@ pub enum RecordError {
     /// A project parent or the signer of its depth fact has not materialized yet.
     #[error("project dependency is not materialized")]
     ProjectDependencyPending,
+    /// A different body at a held project revision's content-derived id.
+    #[error("project revision {} is held with another body", id.to_hex())]
+    ProjectRevisionCollision { id: EntityId },
+    /// Project revisions are engine-written; no public door writes one.
+    #[error("project revisions are written by the engine only")]
+    ProjectRevisionWrite,
+    /// A project's signed history passed its budget; it serves its last
+    /// verified frontier and takes no new authority until the owner acts.
+    #[error("project {} history over budget: {held} revisions, limit {max}", project.to_hex())]
+    ProjectHistoryOverBudget {
+        project: EntityId,
+        held: u64,
+        max: u64,
+    },
+    /// The project's signed history has no single head this door can build on.
+    #[error("project {} authority unresolved: {reason}", project.to_hex())]
+    ProjectAuthorityUnresolved {
+        project: EntityId,
+        reason: &'static str,
+    },
     #[error("message stream recovery refused: {0}")]
     MessageStreamRecoveryFailed(String),
     #[error("invalid conversation body: {0}")]
@@ -240,6 +260,10 @@ impl RecordError {
             Self::InvalidProjectBody(_) => ErrorKind::InvalidProjectBody,
             Self::InvalidProjectRoomBody(_) => ErrorKind::InvalidProjectRoomBody,
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
+            Self::ProjectRevisionCollision { .. } => ErrorKind::ProjectRevisionCollision,
+            Self::ProjectRevisionWrite => ErrorKind::ProjectRevisionWrite,
+            Self::ProjectHistoryOverBudget { .. } => ErrorKind::ProjectHistoryOverBudget,
+            Self::ProjectAuthorityUnresolved { .. } => ErrorKind::ProjectAuthorityUnresolved,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
             Self::ConversationState(_) => ErrorKind::ConversationState,
             Self::ConversationDenied | Self::LeaderChatRule { .. } => ErrorKind::ConversationDenied,
