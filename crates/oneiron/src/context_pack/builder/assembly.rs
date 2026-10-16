@@ -636,6 +636,12 @@ impl<'a> ContextPackBuilder<'a> {
                 &retrieval_quality,
             );
 
+            let units: Vec<_> = results
+                .iter()
+                .chain(&neighbors)
+                .map(|row| row.id)
+                .collect();
+            let instruction_files = self.vault.code_instruction_handles(&units)?;
             Ok(ContextPackRun {
                 vector_completed: pipeline_output.vector_completed,
                 temporal_hints: pipeline_output.temporal_hints,
@@ -646,6 +652,7 @@ impl<'a> ContextPackBuilder<'a> {
                     retrieval_quality,
                     results,
                     neighbors,
+                    instruction_files,
                     stats,
                     empty,
                 },

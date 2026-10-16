@@ -141,9 +141,16 @@ side_tables! {
     /// created. Key: ().
     /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
     SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw;
+    /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
+    /// id) ":" hex32 (receipt id).
+    SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
+    /// The execution receipt of one shared act or membership change. Key: hex32 (receipt id).
+    SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
+    /// The executed delete-the-vault act and its backup retention deadline. Key: ().
+    SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().
@@ -181,6 +188,11 @@ side_tables! {
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
+    /// The highest attribution evidence sequence the positive lane has read. Key: ().
+    SKILL_ATTRIBUTION_POSITIVE_CURSOR: VaultMeta b"skill_attribution:positive_cursor:v1" Named;
+    /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill.
+    /// Key: u64be (evidence sequence).
+    SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;
@@ -264,8 +276,16 @@ side_tables! {
     SKILL_HUB_SOURCE_RETIRED: VaultMeta b"skill_hub/source-retired/v1\0" Raw;
     /// Portable goal-axis identity of a skill under optimization. Key: id16.
     SKILL_OPTIMIZE_GOAL: VaultMeta b"skill_optimize/goal/v1\0" Raw;
+    /// A proposal's live goal-axis report, bound to its bodies, evidence and plan (MessagePack
+    /// named map). Key: id16 (proposal).
+    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v1\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
+    /// A skill goal's join to a project's goal record (MessagePack named map). Key: id16 (goal).
+    SKILL_OPTIMIZE_PROJECT_GOAL: VaultMeta b"skill_optimize/project_goal/v1\0" Raw;
+    /// A learned preference proposed for a project's goal record (MessagePack named map). Key:
+    /// id16 (project) + id16 (row).
+    SKILL_OPTIMIZE_PROJECT_GOAL_PROPOSAL: VaultMeta b"skill_optimize/project_goal_proposal/v1\0" Raw;
     /// One pending skill-edit tradeoff ask (MessagePack named map: pending proposal, question, bound
     /// Jev verdict). Key: id16 (proposal).
     SKILL_OPTIMIZE_TRADEOFF_ASK: VaultMeta b"skill_optimize/tradeoff_ask/v1\0" Raw;
@@ -279,6 +299,21 @@ side_tables! {
     /// Fence on a displaced candidate judge revision: its replacement revision (UTF-8). Key: string
     /// (the displaced revision).
     SKILL_OPTIMIZE_DISPLACED_REVISION: VaultMeta b"skill_optimize:displaced_revision:v1:" Raw;
+    /// One eval case in a seat's derivation ledger (MessagePack named map). Key: id16 (case).
+    SKILL_OPTIMIZE_EVAL_CASE: VaultMeta b"skill_optimize:eval_case:v1:" Raw;
+    /// One date-cut sealed eval cohort (MessagePack named map). Key: id16 (cohort).
+    SKILL_OPTIMIZE_EVAL_COHORT: VaultMeta b"skill_optimize:eval_cohort:v1:" Raw;
+    /// One counted serving of a sealed eval cohort (MessagePack named map). Key: id16 (cohort) +
+    /// id16 (exposure).
+    SKILL_OPTIMIZE_EVAL_EXPOSURE: VaultMeta b"skill_optimize:eval_exposure:v1:" Raw;
+    /// One eval source family and its purpose (MessagePack named map). Key: id16 (family).
+    SKILL_OPTIMIZE_EVAL_FAMILY: VaultMeta b"skill_optimize:eval_family:v1:" Raw;
+    /// One owner-label ask a waiting decision put (MessagePack named map). Key: sha256 of the
+    /// decision and the case.
+    SKILL_OPTIMIZE_EVAL_LABEL_ASK: VaultMeta b"skill_optimize:eval_label_ask:v1:" Raw;
+    /// The eval family a source root belongs to, per seat. Key: seat token + NUL + root; value:
+    /// id16 (family).
+    SKILL_OPTIMIZE_EVAL_ROOT: VaultMeta b"skill_optimize:eval_root:v1:" Raw;
     /// One proposed judge-calibration A/B ask (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
@@ -446,6 +481,11 @@ side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
+    /// The vault data key's commitment and birth (OF-570 E1). Never the key. Key: ().
+    VAULT_KEY_STATE: VaultMeta b"vault_key:state:v1" Named;
+    /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public
+    /// metadata. Key: string (wrap id).
+    VAULT_KEY_WRAP: VaultMeta b"vault_key:wrap:v1:" Named;
     /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named;
     /// Per-owner index over voice reference bank rows. Key: id16 (owner) + the indexed row's full
@@ -491,4 +531,16 @@ side_tables! {
     /// Per-workspace roster preset (org, venture name, house actor/identity, house display name).
     /// Key: string (workspace_ref).
     WORKSPACE_ROSTER_PRESET: VaultMeta b"workspace_roster:preset:v1:" Raw;
+    /// Permanent fact that a world's keys were destroyed with the world, with its ids-only
+    /// receipt. Refuses a late pad, a remint and an open for that world. Key: id16 hex (world).
+    WORLD_KEY_DESTROYED: VaultMeta b"world_keys:destroyed:v1:" Named;
+    /// A reader's own Loro document of one sealed private-world window: the history its sealed
+    /// packets continue. Purged with the world. Key: hex32 (world) ":" string (window label).
+    WORLD_KEY_SEALED_MIRROR: VaultMeta b"world_keys:mirror:v1:" Raw;
+    /// When a shelved sealed packet was retired (u64be vault seconds); it is purged 30 days on.
+    /// Key: hex64 (tag) ":" hex64 (packet digest).
+    WORLD_KEY_SEALED_RETIRED: VaultMeta b"world_keys:sealed-retired:v1:" Raw;
+    /// One sealed packet of a private world's window, kept for a reader by a node that may not
+    /// read the world (OF-570). Key: hex64 (tag) ":" hex64 (packet digest).
+    WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw;
 }

@@ -55,11 +55,13 @@ mod types;
 
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
-pub use self::residence::{ResidenceHit, ResidenceSearch, SearchSource, ThinItem};
+pub use self::residence::{
+    OpenedItem, ResidenceHit, ResidenceIndexWindow, ResidenceSearch, SearchSource, ThinItem,
+};
 pub use self::sync_frames::next_backoff;
 pub use self::types::{
-    EphemeralChangeOrigin, NoteSyncSession, SyncClientConfig, SyncEvent, SyncResidenceMode,
-    SyncStatus, SyncTransportCredential,
+    EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,
+    SyncResidenceMode, SyncStatus, SyncTransportCredential,
 };
 
 #[cfg(test)]

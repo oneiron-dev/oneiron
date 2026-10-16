@@ -17,7 +17,8 @@ mod log;
 use super::gate::{CompactionCheck, CompactionRefusal};
 
 use super::epoch::{
-    mint_epoch_summary_with, prior_epoch_in_txn, validate_epoch_boundary, validate_window_span,
+    mint_epoch_summary_in_overlay, mint_epoch_summary_with, prior_epoch_in_txn,
+    validate_epoch_boundary, validate_window_span,
 };
 
 /// Registered class of a compaction backend.
@@ -153,10 +154,26 @@ pub struct CompactionRequest {
 /// the mint folds and whose lineage is its durable epoch summaries; or a log
 /// the host numbers itself (an executor run), whose lineage is the host's
 /// own coverage rows, so erasing a summary never moves the run's position.
+/// A host log also says how many of its calls the `sources` were read from:
+/// the next epoch lets this one stand for the ids those calls served.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowLog {
     Conversation,
-    Host { prior: Option<super::PriorEpoch> },
+    Host {
+        prior: Option<super::PriorEpoch>,
+        calls: u64,
+    },
+}
+
+impl CompactionRequest {
+    /// The host calls a host-numbered log's `sources` were read from; `None`
+    /// for a conversation.
+    pub(crate) const fn host_calls(&self) -> Option<u64> {
+        match self.log {
+            WindowLog::Conversation => None,
+            WindowLog::Host { calls, .. } => Some(calls),
+        }
+    }
 }
 
 /// What a backend produced.
@@ -629,6 +646,38 @@ impl CompactionDriver {
         sources: Vec<EntityId>,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
+        let prior = match log {
+            WindowLog::Conversation => {
+                let rtxn = vault.store.env.read_txn()?;
+                prior_epoch_in_txn(&vault.store, &rtxn, session_ref)?
+            }
+            WindowLog::Host { prior, .. } => prior,
+        };
+        self.seal_request_as(
+            vault.store.clock.entity_id()?,
+            session_ref,
+            window,
+            pins,
+            sources,
+            prior,
+            log,
+        )
+    }
+
+    /// [`Self::seal_request`] with the request's id and the epoch before it
+    /// already in hand: a host that reads through a room's view supplies
+    /// both.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn seal_request_as(
+        &mut self,
+        request_id: EntityId,
+        session_ref: &EntityId,
+        window: Vec<CompactionWindowMessage>,
+        pins: Vec<String>,
+        sources: Vec<EntityId>,
+        prior: Option<crate::compaction::PriorEpoch>,
+        log: WindowLog,
+    ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, request } = &self.state else {
             return Err(Error::InvariantViolation(
                 "request_for is legal only while compacting",
@@ -641,18 +690,10 @@ impl CompactionDriver {
         }
         let watermark = *watermark;
         let (turn_start, _) = validate_window_span(&window)?;
-
-        let prior = match log {
-            WindowLog::Conversation => {
-                let rtxn = vault.store.env.read_txn()?;
-                prior_epoch_in_txn(&vault.store, &rtxn, session_ref)?
-            }
-            WindowLog::Host { prior } => prior,
-        };
         validate_epoch_boundary(prior, turn_start)?;
 
         let request = CompactionRequest {
-            request_id: vault.store.clock.entity_id()?,
+            request_id,
             session_ref: *session_ref,
             summary_token_budget: self.summary_token_budget(),
             window,

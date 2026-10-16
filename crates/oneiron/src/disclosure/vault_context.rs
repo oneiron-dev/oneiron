@@ -335,8 +335,8 @@ impl DisclosureContext {
     /// so the clamp admits a turn only when it admits each of them too: a
     /// withheld message would otherwise reach the assembly through its turn's
     /// vector hit or joined text. An epoch summary's words are its sources',
-    /// so it is admitted only with each of them
-    /// (`compaction::epoch_sources_admitted_in`).
+    /// so it is admitted only with each of them, and only while neither it
+    /// nor any of them is withdrawn (`compaction::epoch_disclosable_in`).
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -348,7 +348,11 @@ impl DisclosureContext {
         if self.mode == DisclosureMode::OwnerAlone {
             return Ok(true);
         }
-        if !self.admits_row(store, rtxn, id, entity_type, claim_body)? {
+        // The record itself must be live; what it was written from is judged
+        // only for disclosure, since a summary outlives a superseded source.
+        if !Self::live(store, rtxn, id, entity_type, claim_body)?
+            || !self.admits_row(store, rtxn, id, entity_type, claim_body)?
+        {
             return Ok(false);
         }
         if entity_type != ENTITY_TYPE_SUMMARY {
@@ -357,14 +361,14 @@ impl DisclosureContext {
         let Some(row) = store.port_entity_record(rtxn, id)? else {
             return Ok(false);
         };
-        let admitted = crate::compaction::epoch_sources_admitted_in(
+        crate::compaction::epoch_disclosable_in(
             store,
             rtxn,
             id,
+            entity_type,
             &row.body,
             |source, source_row| self.admits_row(store, rtxn, source, source_row.entity_type, None),
-        )?;
-        Ok(admitted.unwrap_or(true))
+        )
     }
 
     /// [`Self::admits`] for one record's own row, not what it was written from.
@@ -389,6 +393,35 @@ impl DisclosureContext {
             return Ok(false);
         };
         Ok(self.disclosable.admits(&record_scope))
+    }
+
+    /// A withdrawn record never reaches anyone but the owner (P3): a deleted,
+    /// archived or stale row, or a claim that is no longer surfaceable
+    /// (closed, unconsented or stale), the live-record rule the scoped lane
+    /// applies. A claim whose body does not decode is withdrawn too.
+    fn live(
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
+        let deletion = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
+        if deletion.deleted || deletion.stale {
+            return Ok(false);
+        }
+        if entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(true);
+        }
+        let stored;
+        let body = match claim_body {
+            Some(body) => Some(body),
+            None => {
+                stored = read_stored_claim_body(store, rtxn, id)?;
+                stored.as_ref()
+            }
+        };
+        Ok(body.is_some_and(crate::claim::claim_surfaceable))
     }
 
     /// Whether a record may reach anyone but the owner at all: never a

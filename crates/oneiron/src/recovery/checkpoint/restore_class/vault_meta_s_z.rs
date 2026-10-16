@@ -57,8 +57,11 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARE_BRIEF_ADMISSION, SHARE_ADMISSIONS),
     (&t::SHARE_BRIEF_DELETE_RESERVATION, CONTENT),
     (&t::SHARED_ACT_EVENT, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_ACT_RECEIPT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
@@ -105,12 +108,23 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_SOURCE_CUSTODY, CONTENT),
     (&t::SKILL_HUB_SOURCE_RETIRED, CONTENT),
     (&t::SKILL_OPTIMIZE_GOAL, CONTENT),
+    (&t::SKILL_OPTIMIZE_LIVE_AXES, CONTENT),
     (&t::SKILL_OPTIMIZE_ORIGIN_MARKER, CONTENT),
+    (&t::SKILL_OPTIMIZE_PROJECT_GOAL, CONTENT),
+    (&t::SKILL_OPTIMIZE_PROJECT_GOAL_PROPOSAL, CONTENT),
     (&t::SKILL_OPTIMIZE_TRADEOFF_ASK, CONTENT),
     (&t::SKILL_OPTIMIZE_TRADEOFF_PREFERENCES, CONTENT),
     (&t::SKILL_EDIT_VERDICT, CONTENT),
     (&t::SKILL_OPTIMIZE_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_OPTIMIZE_DISPLACED_REVISION, CONTENT),
+    (&t::SKILL_OPTIMIZE_EVAL_CASE, CONTENT),
+    // A restore cannot make a spent cohort fresh: cut, retirement and every
+    // serving stand as the live vault holds them.
+    (&t::SKILL_OPTIMIZE_EVAL_COHORT, LIVE),
+    (&t::SKILL_OPTIMIZE_EVAL_EXPOSURE, LIVE),
+    (&t::SKILL_OPTIMIZE_EVAL_FAMILY, CONTENT),
+    (&t::SKILL_OPTIMIZE_EVAL_LABEL_ASK, CONTENT),
+    (&t::SKILL_OPTIMIZE_EVAL_ROOT, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_ASK, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_LABEL, CONTENT),
     (&t::SKILL_RELIABILITY_AMENDED, CONTENT),
@@ -174,6 +188,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_CLEANUP_TASK_RETENTION_DAYS, LIVE),
     (&t::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED, CONTENT),
     (&t::VAULT_IDENTITY_LOCAL, LIVE),
+    // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_STATE, LIVE),
+    (&t::VAULT_KEY_WRAP, LIVE),
     (&t::VOICE_OWNER_REF, LIVE),
     (&t::VOICE_OWNER_REF_OWNER_INDEX, LIVE),
     (&t::VOICE_REF_IDENTITY, LIVE),
@@ -193,4 +210,11 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),
     (&t::WORKSPACE_ONBOARDING, CONTENT),
     (&t::WORKSPACE_ROSTER_PRESET, CONTENT),
+    // A destroyed world stays destroyed: no image restores its keys.
+    (&t::WORLD_KEY_DESTROYED, LIVE),
+    // Sealed copies and their mirrors follow the live vault: an image never brings
+    // back a copy a delete or the 30-day expiry purged.
+    (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
+    (&t::WORLD_KEY_SEALED_RETIRED, LIVE),
+    (&t::WORLD_KEY_SEALED, LIVE),
 ];

@@ -1,8 +1,14 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
-use super::store::{ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path};
+use super::store::{
+    ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
+    RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path,
+    is_bridge_result_output_path, recoverable_output_path, result_handle_json, result_read_path,
+    write_json,
+};
 use super::types::{
-    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
+    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeStream,
+    SelfDispatchResponse,
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorCallSite,
@@ -28,6 +34,14 @@ pub(super) struct RecordingJsHost<'a, 's> {
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
     recoverable: Vec<(u64, CodeRunRawOutput, OutputRef)>,
+    /// The step's result as the guest streams it, written into the run's
+    /// body store frame by frame.
+    streamed: StreamedOutputs,
+    /// The run's earlier bridge results stored as bodies, which the guest
+    /// may read back.
+    results: Vec<CodeRunRawOutput>,
+    /// This step's bridge results stored as bodies, for the record.
+    pub(super) captured: Vec<CodeRunRawOutput>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
@@ -60,6 +74,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             legibility,
             storage: None,
             recoverable: Vec::new(),
+            streamed: StreamedOutputs::default(),
+            results: Vec::new(),
+            captured: Vec::new(),
             bridge_calls: Vec::new(),
             durable_wait: None,
             hard_failure: None,
@@ -83,8 +100,81 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .into_iter()
             .map(|(seq, output, observation)| (seq, output, observation.source))
             .collect();
+        self.results = record
+            .outputs
+            .iter()
+            .filter(|output| is_bridge_result_output_path(&output.path))
+            .cloned()
+            .collect();
         self.storage = Some(storage);
         Ok(self)
+    }
+
+    /// A verb answer too large for one reply, stored whole as a body of the
+    /// run as it is encoded. The guest and the replay row get its handle
+    /// (`result_handle_json`), never the answer; nothing is refused for size.
+    fn store_large_answer(
+        &mut self,
+        seq: u64,
+        outcome: SelfDispatchOutcome,
+    ) -> Result<SelfDispatchOutcome> {
+        let SelfDispatchOutcome::AgentVerb(mut answer) = outcome else {
+            return Ok(outcome);
+        };
+        let mut size = ByteCount::default();
+        serde_json::to_writer(&mut size, &answer.output).map_err(|error| {
+            Error::InvalidConfig(format!("verb answer encoding failed: {error}"))
+        })?;
+        if size.0 <= RESULT_REPLY_INLINE_BYTES {
+            return Ok(SelfDispatchOutcome::AgentVerb(answer));
+        }
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, &answer.output)?;
+        let output = storage.publish_code_run_output(
+            bridge_result_output_path(seq),
+            sink,
+            true,
+            self.run_id,
+        )?;
+        answer.output = result_handle_json(&output);
+        self.captured.push(output);
+        Ok(SelfDispatchOutcome::AgentVerb(answer))
+    }
+
+    /// One chunk of a stored bridge result of this run, read by range.
+    fn read_stored_result(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        for output in self.results.iter().chain(&self.captured) {
+            let base = result_read_path(output.output_ref());
+            let Some(offset) = path.strip_prefix(&format!("{base}/chunk/")) else {
+                continue;
+            };
+            let offset = offset
+                .parse::<u64>()
+                .ok()
+                .filter(|parsed| offset == parsed.to_string())
+                .ok_or(Error::InvalidConfig(
+                    "invalid stored result reference".into(),
+                ))?;
+            if offset > output.raw_len {
+                return Err(Error::InvalidConfig(
+                    "stored result offset exceeds its body".into(),
+                ));
+            }
+            return storage
+                .read_code_run_raw_output_range(output, offset, RECOVERABLE_OUTPUT_CHUNK_BYTES)?
+                .ok_or(Error::CorruptedIndex("executor replay output bytes"))
+                .map(Some);
+        }
+        Err(Error::InvalidConfig(
+            "stored result is outside this run".into(),
+        ))
     }
 
     /// A recorded-output read answers where the step's next bridge call
@@ -113,6 +203,11 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         Ok(())
     }
 
+    /// The step's streamed result, for the executor to publish.
+    pub(super) fn take_streamed(&mut self) -> StreamedOutputs {
+        std::mem::take(&mut self.streamed)
+    }
+
     fn budget(&self) -> Option<BudgetLegibilityEnvelope> {
         self.legibility.as_ref().map(ExecutorLegibility::envelope)
     }
@@ -129,6 +224,14 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 }
 
 impl JsCodeModeHost for RecordingJsHost<'_, '_> {
+    fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        self.streamed.write(storage, stream, frame)?;
+        Ok(true)
+    }
+
     fn read_recoverable_output(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor recoverable output storage unavailable".into(),
@@ -144,6 +247,9 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             let refused = Error::InvalidConfig(format!("recorded output read refused: {outcome}"));
             self.hard_failure = Some(err);
             return Err(refused);
+        }
+        if path.starts_with(RESULT_READ_ROOT) {
+            return self.read_stored_result(storage, path);
         }
         for (seq, output, source) in &self.recoverable {
             if !path.starts_with(&format!("/mnt/outputs/.oneiron-context-ref/{seq}/")) {
@@ -241,7 +347,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let dispatched = self
             .gated_write
             .dispatch_for_executor_run(site, call.clone());
-        let outcome = match dispatched {
+        let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
             Ok(outcome) => outcome,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
@@ -317,8 +423,11 @@ fn records_failed_effect(effect: SelfEffect) -> bool {
 }
 
 pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
+    // The step's streamed result: console lines, the answer and its files.
+    "oneiron.output.text",
+    "oneiron.output.bytes",
     "vault.agents.put",
-    // `self.memory`: the verb table, the memory rows the run answers included.
+    // The verb table at each row's SDK path, the memory rows the run answers included.
     "self.verbs.names",
     "self.verbs.call",
     "self.report_blocked",
@@ -390,7 +499,7 @@ pub(super) fn executor_system_prompt(wire: &str) -> String {
 }
 
 /// The declarations the system prompt teaches, in its order: the WIT host
-/// verbs, the verb table's `self.memory`, and the interpreter's own
+/// verbs, the verb table at each row's SDK path, and the interpreter's own
 /// functions. A shadow check reads these same texts.
 pub(super) fn executor_declarations() -> [oneiron_code_check::Declaration<'static>; 3] {
     [

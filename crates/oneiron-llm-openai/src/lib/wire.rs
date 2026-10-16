@@ -373,7 +373,7 @@ pub fn classify_openai_status(
         return FatalLlmError::ContentFiltered.into();
     }
     if limit::is_limit_status(status, body) {
-        return limit::limit_refusal(headers, body).into();
+        return limit::limit_refusal(status, headers, body).into();
     }
 
     match status {

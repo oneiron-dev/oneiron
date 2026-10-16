@@ -9,6 +9,11 @@ pub use self::image::{
     DirectOpenAiImageBackend, OpenAiImageBody, OpenAiImageHttpRequest, OpenAiImageHttpResponse,
     OpenAiImagePart, OpenAiImageTransport, OpenAiImageTransportFuture,
 };
+mod media;
+pub use self::media::{
+    OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
+    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
+};
 mod options;
 mod stream;
 mod transport;

@@ -206,7 +206,9 @@ fn native_data(
     slide: &str,
     unit: &Unit,
 ) -> Result<bool, EmitError> {
-    let (Content::Table(dataset) | Content::Chart(dataset)) = &unit.content else {
+    let (Content::Table(dataset) | Content::Chart(dataset) | Content::Share(dataset)) =
+        &unit.content
+    else {
         return Ok(true);
     };
     let Some(dataset) = plan.data().iter().find(|data| data.id == *dataset) else {
@@ -233,19 +235,36 @@ fn native_data(
             .collect()
     };
     if matches!(unit.content, Content::Table(_)) {
-        let text = |cell: &Cell| match cell {
+        let text = |cell: &Cell, column: usize| match cell {
             Cell::Missing => dataset.missing.clone().unwrap_or_default(),
-            Cell::Number(value) => number(*value),
+            Cell::Number(value) => dataset
+                .columns
+                .get(column)
+                .map_or_else(|| number(*value), |column| column.display(*value)),
             Cell::Text(text) | Cell::Date(text) => text.clone(),
+        };
+        // A merge's continuation cells are written empty.
+        let continuation = |row: usize, col: usize| {
+            dataset.merges.iter().any(|merge| {
+                (merge.row..merge.row + merge.rows).contains(&row)
+                    && (merge.col..merge.col + merge.cols).contains(&col)
+                    && (merge.row, merge.col) != (row, col)
+            })
         };
         let expected: Vec<Vec<String>> =
             std::iter::once(dataset.columns.iter().map(header).collect::<Vec<_>>())
-                .chain(
-                    dataset
-                        .rows
-                        .iter()
-                        .map(|row| row.iter().map(text).collect::<Vec<_>>()),
-                )
+                .chain(dataset.rows.iter().enumerate().map(|(r, row)| {
+                    row.iter()
+                        .enumerate()
+                        .map(|(c, cell)| {
+                            if continuation(r + 1, c) {
+                                String::new()
+                            } else {
+                                text(cell, c)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                }))
                 .collect();
         let read: Vec<Vec<String>> = inside(&tree, frame)
             .filter(|(_, node)| node.is(DML, "tr"))
@@ -336,7 +355,9 @@ fn reads_as(
         Content::Text(paragraphs) => (ShapeKind::Shape, Some(paragraphs.clone())),
         Content::Picture(_) => (ShapeKind::Picture, None),
         Content::Figure(_) => (ShapeKind::Group, None),
-        Content::Table(_) | Content::Chart(_) => (ShapeKind::GraphicFrame, None),
+        Content::Table(_) | Content::Chart(_) | Content::Share(_) => {
+            (ShapeKind::GraphicFrame, None)
+        }
     };
     let expected = match fit {
         FitTrace::Exact { placed } if within(*placed, bounds) => *placed,

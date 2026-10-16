@@ -155,7 +155,7 @@ impl Memory<'_> {
                     (ask_record::member_id(group_ref, *actor)?, self.actor()),
                     entry,
                     effective.what.label.clone(),
-                    &facade_provenance("tasks.ask"),
+                    &facade_provenance("ask"),
                     now,
                 )?;
                 // Local executors use the SAME exhaustive TASK route; remote

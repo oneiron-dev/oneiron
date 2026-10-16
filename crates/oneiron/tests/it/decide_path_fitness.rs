@@ -45,8 +45,15 @@ const SEAM_SUFFIXES: &[&str] = &[
     "Critic",
     "Grader",
 ];
-const SEAM_TRAITS: &[&str] = &["ReviewNotes", "SlideReviewProvider"];
-const SEAM_STRUCTS: &[&str] = &["CampaignTasteJudgment"];
+const SEAM_TRAITS: &[&str] = &[
+    "ReviewNotes",
+    "AttributionNotes",
+    "SlideReviewProvider",
+    "SeatNotes",
+    "DescriptionNotes",
+    "AutoCheckNotes",
+];
+const SEAM_STRUCTS: &[&str] = &[];
 
 /// The one path every typed decision takes.
 const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
@@ -54,7 +61,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 20;
+const BYPASS_CEILING: usize = 14;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -135,36 +142,6 @@ const BYPASSES: &[Pin] = &[
         "routed verdict: a caller's schema verdict sent through the step seam after a description-judge route",
     ),
     pin(
-        "crates/oneiron/src/llm/seat.rs",
-        "trait SeatJudge",
-        "pub trait SeatJudge: Send + Sync {",
-        "seat pick: which eligible model and effort a new seat pins",
-    ),
-    pin(
-        "crates/oneiron/src/llm/routing.rs",
-        "trait DescriptionJudge",
-        "pub trait DescriptionJudge {",
-        "route pick: a fitness grade per candidate model description",
-    ),
-    pin(
-        "crates/oneiron/src/llm/autocheck.rs",
-        "trait AutoChecker",
-        "pub trait AutoChecker: Send + Sync + 'static {",
-        "claim-write auto check: allow or hold",
-    ),
-    pin(
-        "crates/oneiron/src/fanout_auto.rs",
-        "trait FanoutAskClassifier",
-        "pub trait FanoutAskClassifier {",
-        "fan-out ask: allow, deny or escalate to a person",
-    ),
-    pin(
-        "crates/oneiron/src/skill_attribution/judge.rs",
-        "trait AttributionJudge",
-        "pub trait AttributionJudge {",
-        "edit attribution: which lane each hunk belongs to, with a confidence (its model tier)",
-    ),
-    pin(
         "crates/oneiron/src/skill_optimize/gate/basis.rs",
         "trait HeldOutReplayScorer",
         "pub trait HeldOutReplayScorer {",
@@ -199,12 +176,6 @@ const BYPASSES: &[Pin] = &[
         "trait SlideReviewProvider",
         "pub trait SlideReviewProvider {",
         "slide review: a second typed ladder (band escalation and receipt) beside decide()",
-    ),
-    pin(
-        "crates/oneiron/src/autoreason_campaign/judge.rs",
-        "struct CampaignTasteJudgment",
-        "pub struct CampaignTasteJudgment {",
-        "campaign judge: a [0, 1] score supplied as data by a model outside the tree",
     ),
 ];
 
@@ -437,6 +408,30 @@ const OUTSIDE: &[Pin] = &[
         "trait ReviewNotes",
         "pub trait ReviewNotes {",
         "critic notes: evidence refs and a suggested edit beside a decided review (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/skill_attribution/judge.rs",
+        "trait AttributionNotes",
+        "pub trait AttributionNotes {",
+        "attribution notes: why a doubtful hunk is unclear, beside a decided attribution (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/llm/seat/decisions.rs",
+        "trait SeatNotes",
+        "pub trait SeatNotes: Send + Sync {",
+        "seat notes: the receipt's why beside a decided seat pick (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/llm/routing/decisions.rs",
+        "trait DescriptionNotes",
+        "pub trait DescriptionNotes {",
+        "route notes: a routed seat's receipt reason beside its decided grade (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/llm/autocheck.rs",
+        "trait AutoCheckNotes",
+        "pub trait AutoCheckNotes: Send + Sync {",
+        "auto-check notes: a decided hold's receipt reasons (generation)",
     ),
 ];
 
