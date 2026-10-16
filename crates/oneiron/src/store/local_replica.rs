@@ -25,7 +25,9 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::sync::WindowKey;
 use crate::sync::bridge::format_edge_key;
-use crate::sync::loro_support::{TombstoneIndex, doc_from_snapshot, import_doc, map_contains_binary};
+use crate::sync::loro_support::{
+    TombstoneIndex, doc_from_snapshot, import_doc, map_contains_binary,
+};
 use crate::sync::residence::residence_window_for_blob;
 use crate::sync::window_rows::{
     OFF_RECORD_PROMOTE_PICKUP, PENDING_TOMBSTONE, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT,
@@ -327,7 +329,8 @@ impl<'a> Census<'a> {
             return Ok(true);
         }
         let prefix = format!("{}:", id.to_hex());
-        let mut frames = PENDING_DOCUMENT_FRAMES.iter_raw_from(self.store, txn, prefix.as_bytes())?;
+        let mut frames =
+            PENDING_DOCUMENT_FRAMES.iter_raw_from(self.store, txn, prefix.as_bytes())?;
         let mut notes = PENDING_NOTE_REQUESTS.iter_raw_from(self.store, txn, prefix.as_bytes())?;
         Ok(frames.next().is_some() || notes.next().is_some())
     }
@@ -361,7 +364,8 @@ fn remove_member(
     let Some(raw) = store.port_entity_raw(txn, id)? else {
         return Ok(());
     };
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
     // Thread meta reads the RepliesTo edges, so it is marked dirty first.
     crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, txn, *id)?;
     crate::task_verb::index_owner_fact(store, txn, id, None)?;
