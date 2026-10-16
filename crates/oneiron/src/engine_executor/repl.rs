@@ -153,6 +153,9 @@ impl EngineNativeExecutor<'_> {
             }
 
             self.land_finished_compaction()?;
+            let turn = self
+                .pre_turn_hooks(config, completed_steps)?
+                .map_err(Error::from)?;
             let request = self.build_llm_request(config, &record, &wire_prompt.text)?;
             if let Some(reason) = self.feed_compaction(config, &record, &request)? {
                 return Ok(self.outcome(
@@ -166,6 +169,7 @@ impl EngineNativeExecutor<'_> {
             }
             let request_hash = request.canonical_hash()?;
             let response = self.backend.generate(request, self.lease).await?;
+            self.post_turn_hooks(turn, &response)?;
             // The reply as the provider gave it, kept apart from the program
             // healed out of it: evidence, never executed.
             record_reply_evidence(
@@ -1106,7 +1110,7 @@ impl EngineNativeExecutor<'_> {
             wait.wait_id.to_hex()
         );
         let text = if output.raw_len <= RESULT_REPLY_INLINE_BYTES as u64
-            && clean_for_context(&self.storage, output)?
+            && clean_for_context(&self.storage, Some(record.run_id), output)?
         {
             let body: serde_json::Value =
                 serde_json::from_str(&load_utf8_output(&self.storage, record, &output.path)?)
@@ -1114,7 +1118,12 @@ impl EngineNativeExecutor<'_> {
             format!("{head}:\n{}", serde_json::to_string(&body["reply"])?)
         } else {
             let name = format!("wait{seq}");
-            let card = crate::code_run::result_card(&self.storage, output, Some(name.as_str()))?;
+            let card = crate::code_run::result_card(
+                &self.storage,
+                record.run_id,
+                output,
+                Some(name.as_str()),
+            )?;
             format!(
                 "{head}; the reply is the result {name}:\n{}",
                 serde_json::to_string(&card)?
