@@ -90,9 +90,7 @@ fn release_unheld_bytes(
     if asset_id == *artifact {
         return Ok(());
     }
-    let stored_type = store
-        .entities
-        .get(wtxn, asset_id.as_bytes())?
+    let stored_type = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &asset_id)?
         .map(|raw| raw.first().copied());
     match stored_type {
         None => fence_released_asset(store, wtxn, &asset_id),

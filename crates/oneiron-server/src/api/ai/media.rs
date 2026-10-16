@@ -182,7 +182,11 @@ impl AiAnswer {
     fn new(response: MediaResponse) -> Self {
         Self {
             model: response.model.to_string(),
-            parts: response.parts.into_iter().map(WirePart::from_part).collect(),
+            parts: response
+                .parts
+                .into_iter()
+                .map(WirePart::from_part)
+                .collect(),
             usage: response.usage,
         }
     }
@@ -260,13 +264,11 @@ fn admit(
         params: body.params,
     };
     if let Some(key) = request.admission_request().route_selector_override() {
-        return Err(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": {"code": "route_selector_forbidden", "key": key}})),
-            )
-                .into_response(),
-        );
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": {"code": "route_selector_forbidden", "key": key}})),
+        )
+            .into_response());
     }
     let context = oneiron::llm::HostInferenceContext {
         binding: oneiron::llm::HostInferenceBinding::Advertised { model, locality },
@@ -296,7 +298,9 @@ pub(super) fn failure(error: &LlmError) -> Response {
         LlmError::Fatal(FatalLlmError::ContentFiltered) => {
             (StatusCode::UNPROCESSABLE_ENTITY, "content_filtered")
         }
-        LlmError::Fatal(FatalLlmError::EmptyResponse) => (StatusCode::BAD_GATEWAY, "empty_response"),
+        LlmError::Fatal(FatalLlmError::EmptyResponse) => {
+            (StatusCode::BAD_GATEWAY, "empty_response")
+        }
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
         LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
@@ -368,7 +372,11 @@ pub(super) async fn video_job(
     Path(job): Path<String>,
 ) -> Response {
     if !auth.is_owner_grade() {
-        return refusal(StatusCode::FORBIDDEN, "owner_required", "video jobs are the owner's");
+        return refusal(
+            StatusCode::FORBIDDEN,
+            "owner_required",
+            "video jobs are the owner's",
+        );
     }
     match server.ai.model_runtime().media().poll(&job).await {
         Ok(MediaJobState::Done { response }) => Json(serde_json::json!({
@@ -393,7 +401,11 @@ pub(super) async fn cancel_video_job(
     Path(job): Path<String>,
 ) -> Response {
     if !auth.is_owner_grade() {
-        return refusal(StatusCode::FORBIDDEN, "owner_required", "video jobs are the owner's");
+        return refusal(
+            StatusCode::FORBIDDEN,
+            "owner_required",
+            "video jobs are the owner's",
+        );
     }
     match server.ai.model_runtime().media().cancel(&job).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

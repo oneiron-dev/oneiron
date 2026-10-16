@@ -2,8 +2,7 @@
 //! what the owner approved in the run tray, one rung at a time, and never
 //! deletes: its last rung is a retraction, which keeps history.
 use super::super::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome,
+    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use super::{CURATOR_FACET, MAINTENANCE_QUEUE_KIND, invalid, load_row, proposals};
 use crate::attempt_queue::AttemptId;
@@ -13,8 +12,8 @@ use crate::edge::EdgeKind;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId, Error,
-    Result, Vault,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId, Error, Result,
+    Vault,
 };
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -289,7 +288,10 @@ fn apply_approved(vault: &Vault, value: &serde_json::Value, now: u64) -> Result<
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
             || raw.len() == ENTITY_METADATA_HEADER_LEN
-            || blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).to_hex().as_str() != source_hash
+            || blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .to_hex()
+                .as_str()
+                != source_hash
         {
             return Ok(None);
         }
@@ -336,8 +338,7 @@ fn apply_approved(vault: &Vault, value: &serde_json::Value, now: u64) -> Result<
         // A critical predicate parks the demotion behind the owner's Gate
         // consent; the parked action is the applied state until it resolves.
         Err(Error::Gate(crate::error::GateError::GateWriteRejected {
-            outcome: "pending",
-            ..
+            outcome: "pending", ..
         })) => Ok(Some(target)),
         Err(error) => Err(error),
     }

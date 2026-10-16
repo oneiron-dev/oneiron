@@ -196,6 +196,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.edges.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
             ),
+            (
+                "self.fold",
+                crate::code_run::vault_read::request_schema::<crate::compaction::FoldMarkInput>(),
+            ),
+            (
+                "self.compact",
+                crate::code_run::vault_read::request_schema::<crate::compaction::FoldCompactInput>(
+                ),
+            ),
+            (
+                "self.unfold",
+                crate::code_run::vault_read::request_schema::<crate::compaction::FoldUnfoldInput>(),
+            ),
+            (
+                "self.folds",
+                crate::code_run::vault_read::request_schema::<crate::compaction::FoldsInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)
@@ -766,6 +783,10 @@ pub fn describe(
     } else if input.key.is_some() {
         Err(MemoryError::bad_request(
             "describe(card key) expands a board card, which only a live board session holds",
+        ))?
+    } else if input.fold.is_some() {
+        Err(MemoryError::bad_request(
+            "describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds",
         ))?
     } else {
         memory.describe(
