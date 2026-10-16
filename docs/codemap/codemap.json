@@ -1473,6 +1473,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/engine/task_lease.rs",
+     "purpose": "Named-task lease doors for the task highway (OF-220): claim the one ready try of a named TASK, and renew a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/engine/workflow.rs",
      "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
      "surface": {
@@ -40062,7 +40072,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 21,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -40326,6 +40336,36 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BriefConstraints",
+      "BriefContext",
+      "BriefIntent",
+      "BriefStamp",
+      "Care",
+      "ComposerStamp",
+      "Criterion",
+      "DoneMeans",
+      "EscalationRule",
+      "EscalationTrigger",
+      "PinnedPack",
+      "PinnedRef",
+      "QueueTaskBrief",
+      "SpawnPins",
+      "StoredBrief",
+      "TypeRef"
+     ],
+     "path": "src/task_verb/brief.rs",
+     "purpose": "The queue task brief (OF-220): the typed why-carrier one TASK holds",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 2,
+      "fn": 4,
+      "struct": 14
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -40333,7 +40373,7 @@
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
       "const": 1,
-      "crate-vis": 11
+      "crate-vis": 17
      }
     },
     {
@@ -40467,7 +40507,7 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -40481,7 +40521,7 @@
      "path": "src/task_verb/create_spec.rs",
      "purpose": "—",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -40494,6 +40534,19 @@
      "surface": {
       "crate-vis": 18,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskDecisions"
+     ],
+     "path": "src/task_verb/decision_port.rs",
+     "purpose": "The task highway's three surface questions, asked through the shared decision ladder (OF-220)",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
      }
     },
     {
@@ -40530,6 +40583,87 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway.rs",
+     "purpose": "The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and…",
+     "surface": {
+      "crate-vis": 15,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_accept.rs",
+     "purpose": "The highway's Accept arm (OF-220): take a TASK addressed to you",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_post.rs",
+     "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_report.rs",
+     "purpose": "The highway's Report arm (OF-220): progress, blocked, done, failed and release against a fenced handle, the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_status.rs",
+     "purpose": "The highway's Status arm (OF-220): any handle's status, and a poll",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AttemptHandle",
+      "AttemptView",
+      "HostBinding",
+      "TaskAccept",
+      "TaskCall",
+      "TaskCallReceipt",
+      "TaskHandle",
+      "TaskLifecycleRecord",
+      "TaskOutcome",
+      "TaskPhase",
+      "TaskPost",
+      "TaskReport",
+      "TaskReportBody",
+      "TaskStatusQuery",
+      "TaskStatusView",
+      "TaskVia"
+     ],
+     "path": "src/task_verb/highway_types.rs",
+     "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 6,
+      "fn": 1,
+      "struct": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -40561,9 +40695,9 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 1,
-      "re-export": 19
+      "re-export": 22
      }
     },
     {
@@ -40642,7 +40776,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -41090,7 +41224,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -41100,7 +41234,7 @@
      "path": "src/task_verb/wire_encode.rs",
      "purpose": "Write side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -44770,7 +44904,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46002,7 +46136,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 84,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -46149,9 +46283,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 70,
+   "over_bar": 72,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2771,
+   "source_files": 2780,
    "test_files": 903
   },
   "oneiron-android": {
