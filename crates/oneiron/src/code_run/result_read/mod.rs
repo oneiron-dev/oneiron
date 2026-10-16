@@ -297,7 +297,14 @@ impl ResultRead {
         match facet {
             ResultFacet::Slice => slice::slice(&body, &reference, input, &bounds),
             ResultFacet::Search => search::search(&body, &reference, input, &bounds),
-            ResultFacet::Query => query::query(&body, &reference, input, &bounds, spill),
+            ResultFacet::Query => query::query(
+                &body,
+                &reference,
+                &self.output.handle,
+                input,
+                &bounds,
+                spill,
+            ),
             ResultFacet::Chunks => {
                 chunks::chunks(&body, &reference, &self.output.handle, input, &bounds)
             }
@@ -627,8 +634,10 @@ impl Vault {
     /// whether the rows the run's answers were served from (`None` when one
     /// kept no set) stay where the caller is not; then the result's taint
     /// is checked as in the run. A selection past one reply pages, as
-    /// nothing outside a run binds a new result. The reply is the run's
-    /// own: `{"output": ...}` or a `denied` refusal.
+    /// nothing outside a run binds a new result, and one picked value past
+    /// one reply comes back as a range ref over its own bytes, with its
+    /// first page. The reply is the run's own: `{"output": ...}` or a
+    /// `denied` refusal.
     pub fn read_code_run_result(
         &self,
         run_id: EntityId,

@@ -9,12 +9,15 @@
 //! from a byte cursor under the scan bound.
 //!
 //! A selection past one reply streams into the spill sink when the caller
-//! gave one (a code run binds it as a result); without one it pages.
+//! gave one (a code run binds it as a result); without one it pages. One
+//! picked document value past one reply, with no sink, is answered as a
+//! range ref over its own bytes in the body, with its first page.
 
 use super::{
     READ_PIECE_BYTES, ReadBounds, Reply, ResultBody, SHAPE_HEAD_BYTES, Scan, decode, invalid_input,
     refusal, scan_limit, shape,
 };
+use crate::code_run::CodeRunOutputKind;
 use crate::limit_ask::EngineLimit;
 use crate::store::BodySink;
 use crate::{Error, Result};
@@ -22,6 +25,7 @@ use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, SeqAccess, V
 use serde::{Deserialize, Deserializer};
 use serde_json::value::RawValue;
 use serde_json::{Map, Value, json};
+use std::cell::Cell;
 
 /// Bytes of a reply kept for its fields around the picked values.
 const REPLY_FIELD_BYTES: usize = 4 * 1024;
@@ -318,6 +322,12 @@ struct Picked<'s> {
     seen: u64,
     stop: Option<Stop>,
     failed: Option<Error>,
+    /// The one document value that did not fit an empty reply, with no
+    /// sink to stream it into.
+    oversized: Option<Box<RawValue>>,
+    /// The bytes the parser had taken from the body when the last picked
+    /// value ended.
+    value_end: u64,
 }
 
 impl Picked<'_> {
@@ -352,6 +362,9 @@ impl Picked<'_> {
         if !self.spilling && self.held_bytes + item.get().len() + 1 > self.budget {
             let (rows, many) = (self.rows(), self.many);
             let Some(sink) = self.spill.as_deref_mut() else {
+                if self.held.is_empty() && self.filter.is_none() {
+                    self.oversized = Some(item);
+                }
                 self.stop = Some(Stop::Budget);
                 return Ok(false);
             };
@@ -450,10 +463,12 @@ fn write_item(
     Ok(())
 }
 
-/// `query`: see the module.
+/// `query`: see the module. `handle` is the handle of the result `body`
+/// is of, which a range ref over one picked value names.
 pub(super) fn query(
     body: &dyn ResultBody,
     reference: &str,
+    handle: &str,
     input: Value,
     bounds: &ReadBounds<'_>,
     spill: Option<&mut BodySink>,
@@ -515,9 +530,11 @@ pub(super) fn query(
         seen: 0,
         stop: None,
         failed: None,
+        oversized: None,
+        value_end: 0,
     };
     match table {
-        None => document(body, reference, &steps, picked, bounds),
+        None => document(body, reference, handle, &steps, picked, bounds),
         Some(delimiter) => table_rows(body, reference, &steps, delimiter, &cursor, picked, bounds),
     }
 }
@@ -526,17 +543,23 @@ pub(super) fn query(
 fn document(
     body: &dyn ResultBody,
     reference: &str,
+    handle: &str,
     steps: &[Step],
     mut picked: Picked<'_>,
     bounds: &ReadBounds<'_>,
 ) -> Result<Reply> {
     let mut reader = BodyReader { body, at: 0 };
+    let consumed = Cell::new(0);
     let parsed = {
         let buffered = std::io::BufReader::with_capacity(READ_PIECE_BYTES, &mut reader);
-        let mut parser = serde_json::Deserializer::from_reader(buffered);
+        let mut parser = serde_json::Deserializer::from_reader(Counted {
+            inner: buffered,
+            consumed: &consumed,
+        });
         Pick {
             steps,
             picked: &mut picked,
+            consumed: &consumed,
         }
         .deserialize(&mut parser)
     };
@@ -557,12 +580,120 @@ fn document(
             return Ok(Reply::Denied(refused));
         }
     };
+    if picked.stop == Some(Stop::Budget)
+        && let Some(raw) = picked.oversized.take()
+        && let Some(paged) = page_value(body, handle, &raw, picked.value_end, bounds)?
+    {
+        let mut reply = json!({
+            "ref": reference,
+            "count": 1,
+            "done": !picked.many,
+            "paged": paged,
+        });
+        if picked.many {
+            reply["next"] = json!({"skip": picked.seen});
+        }
+        return Ok(Reply::Output(reply));
+    }
     let next = match picked.stop {
         Some(Stop::Limit) => Some(json!({"skip": picked.seen})),
         Some(Stop::Budget) => Some(json!({"skip": picked.seen.saturating_sub(1)})),
         _ => None,
     };
     picked.finish(reference, done, next)
+}
+
+/// The one picked value `raw` too large for a reply, as a range ref over
+/// its own bytes in the body (`<handle>#<start>-<end>`, in the whole
+/// body's offsets) with its size and its first page, as `slice` reads it:
+/// the reader goes on with `slice` of that ref from the page's `next`. The
+/// parser had taken `end` bytes from the body when `raw` ended, one of them
+/// perhaps a byte it peeked past it, so the value sits at `end - k` for a
+/// `k` of 0 or 1: the one whose bytes there are `raw`'s. `None` when
+/// neither is.
+fn page_value(
+    body: &dyn ResultBody,
+    handle: &str,
+    raw: &RawValue,
+    end: u64,
+    bounds: &ReadBounds<'_>,
+) -> Result<Option<Value>> {
+    let text = raw.get().as_bytes();
+    let len = text.len() as u64;
+    let head = &text[..text.len().min(64)];
+    let mut start = None;
+    for peeked in [0, 1] {
+        let Some(at) = end.checked_sub(len + peeked) else {
+            continue;
+        };
+        if body.read(at, head.len())? == head && body.read(at + len - 1, 1)?.last() == text.last()
+        {
+            start = Some(at);
+            break;
+        }
+    }
+    let Some(start) = start else {
+        return Ok(None);
+    };
+    let window = ValueWindow { body, start, len };
+    let from = window.base();
+    let range_ref = format!("{handle}#{from}-{}", from + len);
+    let page_bounds = ReadBounds {
+        reply_bytes: bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES),
+        watch: bounds.watch,
+    };
+    match super::slice::slice(&window, &range_ref, json!({"bytes": [0]}), &page_bounds)? {
+        Reply::Output(mut page) => {
+            page["bytes"] = json!(len);
+            Ok(Some(page))
+        }
+        Reply::Denied(_) | Reply::Spilled { .. } => Ok(None),
+    }
+}
+
+/// The bytes of one picked value, as a window of the body it is in.
+struct ValueWindow<'b> {
+    body: &'b dyn ResultBody,
+    start: u64,
+    len: u64,
+}
+
+impl ResultBody for ValueWindow<'_> {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn kind(&self) -> CodeRunOutputKind {
+        self.body.kind()
+    }
+
+    fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
+        let take = usize::try_from(self.len.saturating_sub(offset).min(len as u64))
+            .map_err(|_| Error::ArithmeticOverflow("code-run result read"))?;
+        self.body.read(self.start + offset, take)
+    }
+
+    fn line_index(&self) -> Option<Vec<u64>> {
+        None
+    }
+
+    fn base(&self) -> u64 {
+        self.body.base() + self.start
+    }
+}
+
+/// A reader that counts the bytes taken from it.
+struct Counted<'c, R> {
+    inner: R,
+    consumed: &'c Cell<u64>,
+}
+
+impl<R: std::io::Read> std::io::Read for Counted<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.consumed.set(self.consumed.get() + read as u64);
+        Ok(read)
+    }
 }
 
 /// A body as a byte reader, a piece at a time.
@@ -584,10 +715,12 @@ impl std::io::Read for BodyReader<'_> {
 }
 
 /// The value at one point of the document, read as the rest of the path
-/// steers: past its last step, the picked value whole.
+/// steers: past its last step, the picked value whole. `consumed` counts
+/// the bytes the parser has taken from the body.
 struct Pick<'a, 's> {
     steps: &'a [Step],
     picked: &'a mut Picked<'s>,
+    consumed: &'a Cell<u64>,
 }
 
 impl<'de> DeserializeSeed<'de> for Pick<'_, '_> {
@@ -604,6 +737,7 @@ impl<'de> DeserializeSeed<'de> for Pick<'_, '_> {
                 return Ok(());
             }
             let raw = Box::<RawValue>::deserialize(deserializer)?;
+            self.picked.value_end = self.consumed.get();
             return match self.picked.offer_raw(raw) {
                 Ok(true) => Ok(()),
                 Ok(false) => Err(D::Error::custom(STOPPED)),
@@ -617,6 +751,7 @@ impl<'de> DeserializeSeed<'de> for Pick<'_, '_> {
             step,
             rest,
             picked: self.picked,
+            consumed: self.consumed,
         })
     }
 }
@@ -626,6 +761,7 @@ struct Descend<'a, 's> {
     step: &'a Step,
     rest: &'a [Step],
     picked: &'a mut Picked<'s>,
+    consumed: &'a Cell<u64>,
 }
 
 impl<'de> Visitor<'de> for Descend<'_, '_> {
@@ -646,6 +782,7 @@ impl<'de> Visitor<'de> for Descend<'_, '_> {
                 map.next_value_seed(Pick {
                     steps: self.rest,
                     picked: &mut *self.picked,
+                    consumed: self.consumed,
                 })?;
             } else {
                 map.next_value::<IgnoredAny>()?;
@@ -666,6 +803,7 @@ impl<'de> Visitor<'de> for Descend<'_, '_> {
                 seq.next_element_seed(Pick {
                     steps: self.rest,
                     picked: &mut *self.picked,
+                    consumed: self.consumed,
                 })?
                 .is_some()
             } else {
