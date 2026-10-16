@@ -180,6 +180,14 @@ pub(crate) async fn execute_mcp_generated_verb(
                     None
                 };
                 let produced = execute_mcp_agent_verb(server, &args, actor, &mut served).await;
+                let produced = match produced {
+                    // A verb hook's stop is a result the client reads, not a
+                    // refusal (ARCH-0080 §3).
+                    Err(McpGatewayError {
+                        hook: Some(stop), ..
+                    }) => return mcp_hook_stop_result(server, &args, actor, *stop, &served),
+                    produced => produced,
+                };
                 // A refusal is released by the rows its verb served first.
                 let (output, source, carrier, epoch) = produced.map_err(|error| {
                     super::device_release::mcp_release_error(
@@ -371,6 +379,9 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
 
 /// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
 pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+    if let Some(stop) = error.hook {
+        return mcp_hook_stop(*stop);
+    }
     if let Some(correction) = error.wrong_root {
         let mut refusal = McpGatewayError::new(-32601, "wrong_root", error.message);
         refusal.wrong_root = Some(correction);
@@ -405,6 +416,46 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         }
         None => McpGatewayError::new(code, "facade_error", error.message),
     }
+}
+
+/// A verb hook's stop as a gateway refusal (ARCH-0080 §3): its stable kind,
+/// and the typed stop a code-mode door hands back to its run.
+pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGatewayError {
+    use oneiron::runtime_hooks::VerbHookStop;
+    let kind = match &stop {
+        VerbHookStop::Skipped { .. } => "verb_hook_skipped",
+        VerbHookStop::Pending { .. } => "verb_hook_pending",
+        VerbHookStop::Hidden { .. } => "verb_hook_hidden",
+    };
+    let mut error = McpGatewayError::new(-32020, kind, stop.to_string());
+    error.hook = Some(Box::new(stop));
+    error
+}
+
+/// A verb hook's stop as the tool result a client reads (ARCH-0080 §3): the
+/// verb gave no output, so `isError` is set, and `structuredContent.hook`
+/// carries the typed stop, a pending ask's invocation and handle included.
+fn mcp_hook_stop_result(
+    server: &Arc<SyncServer>,
+    args: &McpVerbToolArgs,
+    actor: &McpCallContext,
+    stop: oneiron::runtime_hooks::VerbHookStop,
+    served: &[oneiron::EntityId],
+) -> Result<Value, McpGatewayError> {
+    let text = stop.to_string();
+    let structured = json!({
+        "tool": args.tool.name,
+        "family": args.tool.family.as_str(),
+        "verb": args.tool.verb,
+        "hook": stop,
+        "actor": mcp_actor_result(actor),
+    });
+    let result = json!({
+        "content": [mcp_text_content(text)],
+        "structuredContent": structured,
+        "isError": true,
+    });
+    mcp_release_result(server, actor, served, false, result)
 }
 
 /// Every structured refusal states the same four things: the machine code, the
@@ -461,6 +512,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         stamp.stamp_json(object);
+    }
+    if let Some(stop) = error.hook
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("hook".to_owned(), json!(*stop));
     }
     json!({
         "jsonrpc": "2.0",
@@ -533,6 +589,8 @@ fn mcp_agent_verb_input(
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
+        "self.identity.answer" => a.spec.clone().ok_or_else(invalid),
+        "self.identity.settle" => a.spec.clone().ok_or_else(invalid),
         "vault.people.list" => a.spec.clone().ok_or_else(invalid),
         "vault.people.get" => a.spec.clone().ok_or_else(invalid),
         "self.message" => a.spec.clone().ok_or_else(invalid),
@@ -624,6 +682,8 @@ fn mcp_agent_verb_input(
         "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.list" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.default" => a.spec.clone().ok_or_else(invalid),
+        "vault.disclosure.offer" => a.spec.clone().ok_or_else(invalid),
+        "vault.shares.create" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
@@ -654,6 +714,14 @@ fn mcp_agent_verb_input(
                 map.insert("after".to_owned(), json!(value));
             }
             Ok(Value::Object(map))
+        }
+        "vault.rooms.participants" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
         }
         "vault.rooms.render" => {
             let mut map = serde_json::Map::new();
@@ -748,6 +816,7 @@ fn mcp_agent_verb_input(
             Ok(Value::Object(map))
         }
         "vault.companions.sharing.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.companions.sharing.set" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.work_companion.get" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.work_companion.set" => a.spec.clone().ok_or_else(invalid),
         "self.skills.save" => a.spec.clone().ok_or_else(invalid),
@@ -831,6 +900,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.identity.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.identity.settle" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.people.list" => {
@@ -999,6 +1074,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.lenses.default" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.disclosure.offer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shares.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.hooks.replay" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1063,6 +1144,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("after") {
                 arguments.insert("turn_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.rooms.participants" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
             }
         }
         "vault.rooms.render" => {
@@ -1159,6 +1246,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "vault.companions.sharing.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.companions.sharing.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.workspace.work_companion.get" => {
@@ -1313,7 +1403,9 @@ pub(crate) async fn execute_agent_verb_input(
 }
 
 /// [`execute_agent_verb_input`], its surface listing in `producers` the rows
-/// its reads pick.
+/// its reads pick. Every MCP and code-mode row crosses its verb hooks here,
+/// once (ARCH-0080 §3), under the invocation the call carried or a fresh
+/// one: the pre chain before the row, the post chain over its result.
 async fn execute_agent_verb_listing(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -1345,12 +1437,20 @@ async fn execute_agent_verb_listing(
             format!("{tool} input names unknown field `{field}`"),
         ));
     }
+    if !oneiron::task_verb::sdk::AgentVerb::from_name(tool)
+        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp)
+    {
+        return Err(invalid());
+    }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).
     let mut position = actor.scope.birth_position();
     if let Ok(Some(facet)) = actor.landing {
         position.facet = Some(facet);
     }
+    let invocation = actor
+        .invocation
+        .unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
     let memory = crate::api::credential_memory(
         &server.vault,
         actor.auth.as_ref(),
@@ -1359,10 +1459,53 @@ async fn execute_agent_verb_listing(
     )
     .at(actor.locality())
     .with_birth_position(position)
-    .listing_producers(producers);
+    .listing_producers(producers)
+    .with_invocation(invocation);
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
+    };
+    let hooks = crate::api::facade::row_hooks_pre(
+        server,
+        actor.actor_ref,
+        actor.actor_class,
+        Some(invocation),
+        tool,
+        input,
+    )
+    .await
+    .map_err(mcp_facade_error)?;
+    let (output, source, carrier, epoch) =
+        execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
+    let output = crate::api::facade::row_hooks_post(server, hooks, output)
+        .await
+        .map_err(mcp_facade_error)?;
+    Ok((output, source, carrier, epoch))
+}
+
+/// One row of [`execute_agent_verb_listing`], on the args its pre chain left.
+async fn execute_agent_verb_row(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    input: Value,
+    actor: &McpCallContext,
+    memory: oneiron::Memory<'_>,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
     };
     match tool {
         "report" => {
@@ -1434,6 +1577,22 @@ async fn execute_agent_verb_listing(
             let input: oneiron::memory::DiaryReviewAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_memory_diary_review(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.identity.answer" => {
+            let input: oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_identity_answer(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.identity.settle" => {
+            let input: oneiron::dreamer_runner::maintenance::identity::IdentityActNowRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_identity_settle(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -2033,6 +2192,22 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.disclosure.offer" => {
+            let input: oneiron::task_verb::sdk::DisclosureOfferRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_disclosure_offer(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shares.create" => {
+            let input: oneiron::task_verb::sdk::ShareCreateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_shares_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.hooks.replay" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.hooks.replay", &input)
@@ -2220,6 +2395,20 @@ async fn execute_agent_verb_listing(
             )
             .rows_at("rows")
             .resumed_by("next_after", "turn_ref");
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.participants" => {
+            let input: oneiron::workspace_roster::ParticipantsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_participants(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("rows");
             mcp_agent_verb_output(output, source)
         }
         "vault.rooms.render" => {
@@ -2413,6 +2602,14 @@ async fn execute_agent_verb_listing(
             let input: oneiron::task_verb::sdk::CompanionSharingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_companions_sharing_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.companions.sharing.set" => {
+            let input: oneiron::task_verb::sdk::CompanionSharingSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_companions_sharing_set(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

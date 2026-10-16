@@ -14,6 +14,7 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
             crate::task_verb::ask_soft_confirm::SOFT_CONFIRM => {
                 Some(crate::task_verb::ask_soft_confirm::SOFT_CONFIRM)
             }
+            super::attendee_entry::ATTENDEE_ENTRY => Some(super::attendee_entry::ATTENDEE_ENTRY),
             _ => None,
         }
     })
@@ -155,6 +156,20 @@ pub(crate) fn guard_ask_fact_put(
             {
                 return Err(invalid());
             }
+        }
+        Some(super::attendee_entry::ATTENDEE_ENTRY) => {
+            // The entry time is the attendee's history cut: it is the
+            // engine's stamp on the fact, and the id is the attendee's.
+            let fact: super::attendee_entry::AttendeeEntryFact =
+                decode(data, super::attendee_entry::ATTENDEE_ENTRY)?.ok_or_else(invalid)?;
+            if occurred.start != fact.entered_at
+                || occurred.end != fact.entered_at
+                || learned_at != fact.entered_at
+                || super::attendee_entry::attendee_entry_id(fact.container, &fact.attendee)? != id
+            {
+                return Err(invalid());
+            }
+            fact.validate()?;
         }
         Some("tasks.ask_settlement") => {
             let result = decode::<crate::task_verb::TaskAskResult>(data, "tasks.ask_settlement")?

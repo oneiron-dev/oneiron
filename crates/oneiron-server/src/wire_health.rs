@@ -21,8 +21,8 @@ use oneiron::llm::decision::questions::{
     HEALTH_OUTCOME_PREDICATE, HealthAnswer, OutcomeBinding, OutcomeSource,
 };
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionProvider, DecisionQuestion,
-    DecisionRung, HeldLadder, ProviderCapability, ProviderDecision, ProviderPin, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionCall, DecisionProvider, DecisionQuestion, DecisionRung,
+    HeldLadder, ProviderCapability, ProviderDecision, ProviderPin, Reversibility,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::scan_check::ScanCheck;
@@ -165,7 +165,9 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 fn cursor(vault: &Vault, key: &str) -> Result<Option<String>> {
     vault
         .sync_state_get(key)?
-        .map(|bytes| String::from_utf8(bytes).map_err(|_| Error::CorruptedIndex("wire health cursor")))
+        .map(|bytes| {
+            String::from_utf8(bytes).map_err(|_| Error::CorruptedIndex("wire health cursor"))
+        })
         .transpose()
 }
 
@@ -312,7 +314,10 @@ fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
 /// one that still covers it, counts it; otherwise it is a new held check.
 fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
     let key = format!("{CHECK}{}", crossing.subject);
-    let existing: Option<HealthCheck> = vault.sync_state_get(&key)?.map(|b| decode(&b)).transpose()?;
+    let existing: Option<HealthCheck> = vault
+        .sync_state_get(&key)?
+        .map(|b| decode(&b))
+        .transpose()?;
     let check = match existing {
         Some(mut check) if check.open() || check.covers(crossing.raised_at) => {
             check.crossings = check.crossings.saturating_add(1);
@@ -518,9 +523,12 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
         return Ok(());
     };
     let unit_id = EntityId::from_hex(unit)?;
-    server
-        .vault()
-        .record_health_outcome(owner, unit_id, &label, oneiron_vault_contract::now_ts())?;
+    server.vault().record_health_outcome(
+        owner,
+        unit_id,
+        &label,
+        oneiron_vault_contract::now_ts(),
+    )?;
     check.state = CheckState::Answered {
         answer: label,
         probability: None,

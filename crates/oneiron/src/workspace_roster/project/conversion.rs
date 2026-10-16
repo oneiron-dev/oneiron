@@ -127,14 +127,25 @@ impl Vault {
                 row.task_ids.push(task.to_hex());
                 rooms::TURNS.put(&self.store, txn, &thread, &row)?;
             }
-            Ok(())
+            // OF-529: an agent holding the task joins the thread now when a
+            // Ready receipt stands there, else at its first passing claim.
+            rooms::record_bound_task_in_txn(self, txn, room, &row, task)
         })
     }
 
-    /// Convert a room thread once. A host may explicitly name a leader;
-    /// the policy row resolves the otherwise unchosen leader and roster.
+    /// Convert a room thread once, as the owner's act: the owner is
+    /// revalidated in the grouped write, the owner-project signer signs the
+    /// new state for the owner, and only an installed head commits. A host
+    /// may explicitly name a leader; the policy row resolves the otherwise
+    /// unchosen leader and roster.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the owner door binds its owner, signer, source, chosen leader and time"
+    )]
     pub fn convert_thread_to_project(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         room: EntityId,
         thread: EntityId,
         source_message: EntityId,
@@ -148,6 +159,7 @@ impl Vault {
             source_message,
             project_id,
             leader,
+            Some((owner, signer)),
             None,
             now,
         )
@@ -193,7 +205,16 @@ impl Vault {
             digest,
             after,
         };
-        match self.convert_thread_impl(room, thread, message, project_id, None, Some(birth), now) {
+        match self.convert_thread_impl(
+            room,
+            thread,
+            message,
+            project_id,
+            None,
+            None,
+            Some(birth),
+            now,
+        ) {
             Ok((project, Some(receipt))) => Ok((project, receipt)),
             Ok((_, None)) => Err(invalid()),
             Err(err) => {
@@ -220,9 +241,11 @@ impl Vault {
             .ok_or_else(invalid)
     }
 
+    /// Every conversion is the owner's act: the bare path carries its owner
+    /// and signer in `bare`, a card tap in its `CardBirth`.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the private atomic door binds the source, chosen terms and time"
+        reason = "the private atomic door binds the source, chosen terms, owner and time"
     )]
     fn convert_thread_impl<A>(
         &self,
@@ -231,6 +254,7 @@ impl Vault {
         source_message: EntityId,
         project_id: EntityId,
         leader: Option<EntityId>,
+        bare: Option<(&crate::consent::AuthenticatedOwner, &OwnerProjectSigner<'_>)>,
         card: Option<CardBirth<'_, A>>,
         now: u64,
     ) -> Result<(ProjectRecord, Option<ProjectMintReceipt>)>
@@ -240,6 +264,11 @@ impl Vault {
         let kind = self.project_type_byte()?;
         self.backfill_tasks_by_owner()?;
         self.with_write_txn_grouped(|txn| {
+            // The bare path's owner is revalidated here, before anything is
+            // read for it; a card's below, with its intent.
+            if let Some((owner, _)) = bare {
+                owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            }
             if let Some(birth) = &card {
                 let principal_ref = birth.owner.principal_ref_in_txn(self, txn)?;
                 let intent = birth.intent;
@@ -445,10 +474,28 @@ impl Vault {
                     (birth.after)(txn, &receipt)?;
                     Some(receipt)
                 }
+                // The bare conversion is the owner's act as well: the host
+                // signs the new state for the owner in this grouped write, it
+                // lands as history, and only an installed head commits. No
+                // conversion writes an unsigned row.
                 None => {
+                    let Some((owner, signer)) = bare else {
+                        return Err(invalid());
+                    };
+                    let signed_at = owner_signer::owner_signed_at(self, txn)?;
+                    self.sign_owner_project_in_txn(
+                        txn,
+                        owner,
+                        signer,
+                        project_id,
+                        &mut project,
+                        None,
+                        signed_at,
+                    )?;
                     self.batch_in()
-                        .put(&project_id, kind, at, now, &encode(&project)?)
+                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
                         .apply(txn)?;
+                    self.require_owner_head_in_txn(txn, project_id, &project)?;
                     None
                 }
             };

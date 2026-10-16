@@ -16,6 +16,7 @@ pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_
 mod ask_soft_confirm_delivery;
 mod ask_soft_confirm_types;
 mod ask_types;
+mod attendee_answer;
 mod board_task;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
@@ -76,8 +77,7 @@ mod tests;
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
     ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutMode,
-    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope,
-    FanoutMeterRow,
+    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
 };
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,
@@ -213,9 +213,12 @@ mod recall_door;
 pub mod sdk;
 mod sdk_connector;
 mod sdk_diary;
+mod sdk_disclosure;
 mod sdk_host;
 mod sdk_self;
+mod sdk_share;
 mod sdk_shared;
+pub mod verb_hook_boundary;
 
 #[cfg(test)]
 mod ask_outcome_tests;
@@ -228,7 +231,10 @@ pub(crate) use ask_option_link::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use ask_record::waits_for_ask_group;
-pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
+pub(crate) use ask_record::{
+    AttendeeEntryFact, admit_attendee_entry_in_txn, ask_notice_at_in, attendee_entry_id,
+    guard_ask_fact_put, read_attendee_entry_in,
+};
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };

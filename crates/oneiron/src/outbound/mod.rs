@@ -16,6 +16,7 @@ mod intent;
 mod manifests;
 mod receipt_fields;
 mod retry_audit;
+mod served_sink;
 mod window_door;
 
 #[cfg(test)]
@@ -47,6 +48,7 @@ pub use self::dispatch_types::{
     OutboundExecutionSink,
 };
 pub use self::executor::ConnectorTaskExecutorError;
+pub use self::served_sink::ServedChannelSink;
 pub use self::intent::{
     OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft, OutboundIntentSource,
     OutboundIntentTrigger,

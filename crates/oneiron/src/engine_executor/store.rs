@@ -271,13 +271,16 @@ pub(super) fn record_text_output(
     record_output(storage, record, path, text.as_bytes())
 }
 
-/// Whether `output`'s body may enter model context as it stands: a body
-/// the secret scan marked, or one under live or stale taint, never does.
+/// Whether the occurrence of `output` that run `owner` holds may enter
+/// model context as it stands: one the secret scan marked, or one under
+/// live or stale taint, never does. A context output has no `owner`, and is
+/// read as its bytes are.
 pub(crate) fn clean_for_context(
     storage: &ExecutorStorage<'_>,
+    owner: Option<EntityId>,
     output: &CodeRunRawOutput,
 ) -> Result<bool> {
-    Ok(!storage.code_run_result_taint(output)?.0.is_tainted())
+    Ok(!storage.code_run_result_taint(owner, output)?.0.is_tainted())
 }
 
 /// A text output as model context reads it: its body, or the withheld mark
@@ -292,7 +295,7 @@ pub(super) fn load_context_output(
         .iter()
         .find(|output| output.path == path)
         .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-    if !clean_for_context(storage, output)? {
+    if !clean_for_context(storage, Some(record.run_id), output)? {
         return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
     }
     load_utf8_output(storage, record, path)
@@ -356,7 +359,7 @@ pub(super) fn load_observation_window(
         .iter()
         .find(|output| output.path == path)
         .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-    if !clean_for_context(storage, output)? {
+    if !clean_for_context(storage, Some(record.run_id), output)? {
         return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
     }
     if output.raw_len <= cap as u64 {

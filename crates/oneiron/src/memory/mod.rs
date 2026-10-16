@@ -55,6 +55,7 @@ mod machine_write;
 mod notes;
 mod outbound;
 mod owner_door;
+mod presented_credential;
 mod read_lane;
 mod reads;
 mod recall;
@@ -77,6 +78,7 @@ pub use asset_resolve::{
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
     pull_image,
 };
+pub(crate) use asset_resolve::asset_image_in_lane;
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
@@ -96,10 +98,6 @@ pub use claims::{
     PendingWrite, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
-pub use people_verbs::{
-    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
-    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
-};
 pub use diary_read::{
     DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
     DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
@@ -124,8 +122,13 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial,
-    MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
+    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
+    MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
+    MemoryWrongRoot,
+};
+pub use people_verbs::{
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
 // OF-063: a write that names a record its writer cannot resolve is refused
 // with this code; hover and open resolve a typed record ref through the lens.
