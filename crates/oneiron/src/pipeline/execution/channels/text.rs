@@ -11,7 +11,7 @@ use crate::pipeline::channels::{
 };
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
-    claim_status_gate_allows, import_claim_gate_decisions_for_scores,
+    claim_status_gate_allows, import_claim_gate_decisions_for_scores, import_claim_gate_rejections,
     pipeline_candidate_matches_filters_and_gate,
 };
 use crate::pipeline::types::{
@@ -279,6 +279,9 @@ impl PipelineBuilder<'_> {
                     &mut retry_prefix_probe_claim_gate,
                     &results,
                 );
+                if filter_all && self.candidate_filter.is_none() {
+                    import_claim_gate_rejections(claim_gate, &retry_prefix_probe_claim_gate);
+                }
                 acc.admit_channel(
                     AdmitSignal {
                         components: RetrievalSignal::Text,
@@ -424,6 +427,9 @@ impl PipelineBuilder<'_> {
             &mut prefix_probe_claim_gate,
             &text_results,
         );
+        if filter_all && self.candidate_filter.is_none() {
+            import_claim_gate_rejections(claim_gate, &prefix_probe_claim_gate);
+        }
         Ok(text_results)
     }
     /// Keeps the rows of a widened text read that the run's own scope
