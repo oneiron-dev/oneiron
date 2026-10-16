@@ -24,6 +24,7 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+mod holders;
 mod lifecycle;
 mod provenance;
 mod references;
@@ -36,6 +37,10 @@ pub use self::body::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES,
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
+};
+pub(crate) use self::holders::{
+    artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
+    held_content_hashes_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
