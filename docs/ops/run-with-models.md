@@ -546,6 +546,15 @@ one distinct token on the served tokenizer, or every read is refused. Option
 digest of the recipe and its template: change either and decide()'s pins name
 a new read.
 
+The read goes to llama.cpp's raw `/completion`, which applies no chat
+template, and the server adds no text: the rendered template is the whole
+prompt, byte for byte, a trailing newline included. So the template carries
+the chat framing the read was measured with. For the house Qwen model that is
+the system and user turns, then
+`<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n` (each `\n` a
+newline), and the label cue as the template's last bytes. A template without
+that framing is not the calibrated read.
+
 Every read checks that no text came back and that generation stopped at the
 forced end token; a read that fails a check, or misses a label, is refused
 typed (`LabelRead`: `EmittedText`, `NotEosStop`, `MissingLabels`,
