@@ -70,6 +70,7 @@ pub(super) fn lag_resync_frames(server: &SyncServer, state: &ConnState) -> Vec<V
                     super::window_sync::authorize_promoted_window(
                         server,
                         auth,
+                        state.peer_machine(server.vault()),
                         key,
                         selector,
                         &window.doc,

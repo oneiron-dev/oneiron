@@ -88,6 +88,7 @@ impl<'a> AttemptQueue<'a> {
     pub fn new(vault: &'a Vault) -> Self {
         Self {
             store: &vault.store,
+            vault: Some(vault),
         }
     }
 
