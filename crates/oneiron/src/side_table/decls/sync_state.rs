@@ -40,6 +40,9 @@ side_tables! {
     AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
     /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
     AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
+    /// Cached minted host-held project.write slip token ("v2.slip."+hex(JSON)) the owner's project
+    /// signer uses, for one host signing key. Key: hex64.
+    AUTHORITY_OWNER_PROJECT_SLIP_CACHE: SyncState b"authority:owner-project-slip:v1:" Raw;
     /// The facet a paired credential's writes are born in, as the owner named it on the link
     /// (raw id). Key: hex64 (the slip id).
     AUTHORITY_PAIRING_WRITE_FACET: SyncState b"authority:pairing-write-facet:v1:" Raw;

@@ -18,6 +18,15 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultArtifactsView,
+    VaultArtifactsExport,
+    VaultArtifactsBornFrom,
+    VaultArtifactsProposals,
+    VaultArtifactsProposeDeck,
+    VaultArtifactsProposeOutput,
+    VaultArtifactsKeep,
+    VaultArtifactsDiscard,
+    VaultArtifactsUndo,
     Can,
     Peek,
     Ask,
@@ -63,6 +72,15 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultArtifactsView,
+        Self::VaultArtifactsExport,
+        Self::VaultArtifactsBornFrom,
+        Self::VaultArtifactsProposals,
+        Self::VaultArtifactsProposeDeck,
+        Self::VaultArtifactsProposeOutput,
+        Self::VaultArtifactsKeep,
+        Self::VaultArtifactsDiscard,
+        Self::VaultArtifactsUndo,
         Self::Can,
         Self::Peek,
         Self::Ask,
@@ -111,6 +129,15 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultArtifactsView => "vault.artifacts.view",
+            Self::VaultArtifactsExport => "vault.artifacts.export",
+            Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
+            Self::VaultArtifactsProposals => "vault.artifacts.proposals",
+            Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
+            Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
+            Self::VaultArtifactsKeep => "vault.artifacts.keep",
+            Self::VaultArtifactsDiscard => "vault.artifacts.discard",
+            Self::VaultArtifactsUndo => "vault.artifacts.undo",
             Self::Can => "can",
             Self::Peek => "peek",
             Self::Ask => "ask",
@@ -155,6 +182,15 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultArtifactsView
+                | Self::VaultArtifactsExport
+                | Self::VaultArtifactsBornFrom
+                | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsProposeDeck
+                | Self::VaultArtifactsProposeOutput
+                | Self::VaultArtifactsKeep
+                | Self::VaultArtifactsDiscard
+                | Self::VaultArtifactsUndo
                 | Self::Can
                 | Self::Peek
                 | Self::Ask
@@ -207,6 +243,15 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultArtifactsView
+                | Self::VaultArtifactsExport
+                | Self::VaultArtifactsBornFrom
+                | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsProposeDeck
+                | Self::VaultArtifactsProposeOutput
+                | Self::VaultArtifactsKeep
+                | Self::VaultArtifactsDiscard
+                | Self::VaultArtifactsUndo
                 | Self::Can
                 | Self::Peek
                 | Self::Ask
@@ -248,6 +293,7 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultArtifactsProposals
                 | Self::Peek
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
@@ -278,6 +324,15 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultArtifactsView
+                | Self::VaultArtifactsExport
+                | Self::VaultArtifactsBornFrom
+                | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsProposeDeck
+                | Self::VaultArtifactsProposeOutput
+                | Self::VaultArtifactsKeep
+                | Self::VaultArtifactsDiscard
+                | Self::VaultArtifactsUndo
                 | Self::Can
                 | Self::Peek
                 | Self::Ask
@@ -318,6 +373,11 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultArtifactsProposeDeck
+                | Self::VaultArtifactsProposeOutput
+                | Self::VaultArtifactsKeep
+                | Self::VaultArtifactsDiscard
+                | Self::VaultArtifactsUndo
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
@@ -356,6 +416,15 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultArtifactsView => &["spec"],
+            Self::VaultArtifactsExport => &["spec"],
+            Self::VaultArtifactsBornFrom => &["spec"],
+            Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsProposeDeck => &["spec"],
+            Self::VaultArtifactsProposeOutput => &["spec"],
+            Self::VaultArtifactsKeep => &["spec"],
+            Self::VaultArtifactsDiscard => &["spec"],
+            Self::VaultArtifactsUndo => &["spec"],
             Self::Can => &["spec"],
             Self::Peek => &["spec"],
             Self::Ask => &["spec"],
@@ -402,6 +471,15 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultArtifactsView => &["spec"],
+            Self::VaultArtifactsExport => &["spec"],
+            Self::VaultArtifactsBornFrom => &["spec"],
+            Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsProposeDeck => &["spec"],
+            Self::VaultArtifactsProposeOutput => &["spec"],
+            Self::VaultArtifactsKeep => &["spec"],
+            Self::VaultArtifactsDiscard => &["spec"],
+            Self::VaultArtifactsUndo => &["spec"],
             Self::Can => &["spec"],
             Self::Peek => &["spec"],
             Self::Ask => &["spec"],
