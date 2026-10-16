@@ -489,16 +489,15 @@ fn person(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     }
 }
 
-/// A participant who would save, on a credential that writes; the engine
-/// checks that it carries this vault's write grant. An agent whose
-/// credential cannot write asks a holder instead.
+/// A participant who would save, on a credential that writes over every
+/// record; the engine checks that it carries this vault's write grant. An
+/// agent whose credential cannot asks a holder instead.
 fn holder(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiError> {
     let (actor, class) = participant(auth)?;
-    if class == EdgeActorClass::Agent && !auth.has_scope(CoreScope::Write) {
-        return Err(ask_a_holder());
+    match auth.require(CoreScope::Write) {
+        Err(_) if class == EdgeActorClass::Agent => Err(ask_a_holder()),
+        admitted => admitted.map(|()| (actor, class)),
     }
-    auth.require(CoreScope::Write)?;
-    Ok((actor, class))
 }
 
 /// The owner's proof for `actor`, for a server with no slips (a dev server).

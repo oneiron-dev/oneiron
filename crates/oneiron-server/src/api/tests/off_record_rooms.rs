@@ -695,14 +695,15 @@ async fn an_agent_holding_the_write_grant_saves_and_the_room_hears_it() {
 async fn an_agent_without_the_grant_asks_and_a_holder_answers() {
     let (dir, server) = auth_test_server();
     let room = room(&server);
-    let (asker_id, keeper_id) = (agent(&server, "asker"), agent(&server, "keeper"));
+    // One authority key binds one actor, so only the holder is bound.
+    let (asker_id, keeper_id) = (person(&server, "asker"), agent(&server, "keeper"));
     join(&server, &room, asker_id, 5);
     join(&server, &room, keeper_id, 6);
     let mina = slip("mina", room.mina, "human");
     let owner = slip("owner", room.owner, "human");
     let keeper = slip("keeper", keeper_id, "agent");
-    // This vault's own agent on a slip that only proposes, and an agent on a
-    // slip that writes but that is not this vault's.
+    // An agent on a slip that only proposes, and an agent on a slip that
+    // writes but that is not this vault's.
     let asker = test_bearer(&format!(
         "jti=asker;principal_ref={};actor_class=agent;scope=core:read,core:propose",
         asker_id.to_hex()
@@ -784,9 +785,8 @@ async fn a_shared_vaults_member_saves_and_its_viewer_does_not() {
     let (dir, server) = auth_test_server();
     let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
     let (gil, ana) = (person(&server, "Gil"), person(&server, "Ana"));
-    for who in [gil, ana] {
-        crate::test_credentials::bind_actor(server.vault(), "secret", who, "human");
-    }
+    // One authority key binds one actor: the Member writes, so it is bound.
+    crate::test_credentials::bind_actor(server.vault(), "secret", ana, "human");
     let room = conversation(&server, owner_id, &[owner_id, gil, ana]);
     let proof = server
         .vault()

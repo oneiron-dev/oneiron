@@ -29,17 +29,23 @@ impl OffRecordSession<'_> {
     /// `authority` again and, in a room, checks that they are still there and
     /// see every moment of each turn it keeps. The room hears a `saved_talk`
     /// notice whether or not there was anything new to keep, each turn's
-    /// receipt names them, and no save suggestion waits any more.
+    /// receipt names them, and no save suggestion waits any more. With
+    /// `answering` (a holder's confirm) it saves only while a suggestion
+    /// waits, read under the same lock, and is `None` otherwise.
     pub(super) fn save_talk(
         &self,
         initiator: PromoteInitiator,
         room: Option<EntityId>,
         authority: impl FnOnce(&Vault, &heed::RoTxn<'_>) -> Result<()>,
-    ) -> Result<SavedTurns> {
+        answering: bool,
+    ) -> Result<Option<SavedTurns>> {
         let by = initiator.actor();
         let windows = room.map(|room| self.vault.windows(room, by)).transpose()?;
         let saved = {
             let mut state = self.recording_state()?;
+            if answering && state.record.suggestions.is_empty() {
+                return Ok(None);
+            }
             let snapshot = self.entry.overlay.snapshot()?;
             let (mut plans, mut times, mut appended) = (Vec::new(), Vec::new(), Vec::new());
             for (turn, minted_here) in pending_turns(&snapshot) {
@@ -121,7 +127,7 @@ impl OffRecordSession<'_> {
         };
         let turns: Vec<EntityId> = saved.iter().map(|(turn, _)| *turn).collect();
         self.refresh_promoted_turns(&turns);
-        Ok(saved)
+        Ok(Some(saved))
     }
 }
 

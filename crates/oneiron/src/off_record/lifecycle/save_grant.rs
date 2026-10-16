@@ -250,14 +250,6 @@ impl OffRecordSession<'_> {
         self.put_on_record(holder, SaverProof::Grant(grant.clone()), recheck)
     }
 
-    /// Whether a save suggestion waits in the room.
-    fn suggestion_waits(&self) -> Result<bool> {
-        Ok(!super::registry::session_entry_state(&self.entry)?
-            .record
-            .suggestions
-            .is_empty())
-    }
-
     /// The whole-talk save of a holder on their slip; with `answering`, only
     /// while a suggestion waits.
     pub(super) fn save_talk_for_holder(
@@ -278,10 +270,7 @@ impl OffRecordSession<'_> {
             authority(self.vault, &txn)?;
             grant.initiator_in_txn(self.vault, &txn)?
         };
-        if answering && !self.suggestion_waits()? {
-            return Ok(None);
-        }
-        self.save_talk(initiator, Some(room), authority).map(Some)
+        self.save_talk(initiator, Some(room), authority, answering)
     }
 
     /// The owner's whole-talk save on their proof; with `answering`, only
@@ -307,11 +296,12 @@ impl OffRecordSession<'_> {
         };
         // Refused the same way whether or not there is anything to save yet.
         authority(self.vault, &self.vault.store.env.read_txn()?)?;
-        if answering && !self.suggestion_waits()? {
-            return Ok(None);
-        }
-        self.save_talk(PromoteInitiator::owner(self.vault, owner)?, room, authority)
-            .map(Some)
+        self.save_talk(
+            PromoteInitiator::owner(self.vault, owner)?,
+            room,
+            authority,
+            answering,
+        )
     }
 
     fn decline_save(
