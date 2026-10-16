@@ -125,7 +125,8 @@ fn bold_text(docx: &[u8]) -> String {
             .filter(|n| n.has_tag_name((W, "rPr")))
             .flat_map(|props| props.children())
             .any(|n| {
-                n.has_tag_name((W, "b")) && !matches!(n.attribute((W, "val")), Some("0" | "false"))
+                n.has_tag_name((W, "b"))
+                    && !matches!(n.attribute((W, "val")), Some("0" | "false" | "off"))
             })
     };
     doc.descendants()

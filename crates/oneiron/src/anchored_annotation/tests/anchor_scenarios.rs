@@ -533,11 +533,16 @@ fn docx_paragraph_slot_taken_by_other_text_never_rebinds_a_lost_anchor() {
     assert_pinned(&vault, &artifact, &thread, &budget, 1, 2);
     let lost_head = live(&vault, &artifact, &thread).head_claim_id;
 
+    // A thread opened on v1 now is still live, so the 1 -> 3 sweep shows it the
+    // other paragraph in the old slot; the lost thread it must pass over.
+    let late = open(&vault, artifact, 1, &budget, actor);
     upload(&vault, &artifact, actor, &v3, 14);
-    let summary = sweep(&vault, &artifact, 2, 3, &[], actor);
+    let summary = sweep(&vault, &artifact, 1, 3, &[], actor);
     assert!(summary.remapped.is_empty());
+    assert_eq!(summary.drifted.len(), 1);
+    assert_eq!(summary.drifted[0].thread_id, late.thread_id);
+    assert_pinned(&vault, &artifact, &late, &budget, 1, 3);
     // Still lost, and no new head per bump while it stays lost.
-    assert!(summary.drifted.is_empty());
     assert_pinned(&vault, &artifact, &thread, &budget, 1, 2);
     assert_eq!(live(&vault, &artifact, &thread).head_claim_id, lost_head);
 }
@@ -582,14 +587,21 @@ fn xlsx_removed_sheet_that_returns_by_name_never_rebinds_a_lost_anchor() {
     assert_pinned(&vault, &artifact, &thread, &cell, 1, 2);
     let lost_head = live(&vault, &artifact, &thread).head_claim_id;
 
-    // A sheet named Q3 is back in v3 and gets edited.
+    // A sheet named Q3 is back in v3 and gets edited. The 1 -> 3 manifest names
+    // the removal too; the lost thread sits on version 1, so only its drift
+    // keeps it out of this sweep.
     upload(&vault, &artifact, actor, b"workbook bytes v3", 14);
-    let edited = [ReanchorOp::InsertRows {
-        sheet: "Q3".to_owned(),
-        at_row: 1,
-        count: 1,
-    }];
-    let summary = sweep(&vault, &artifact, 2, 3, &edited, actor);
+    let edited = [
+        ReanchorOp::RemoveSheet {
+            sheet: "Q3".to_owned(),
+        },
+        ReanchorOp::InsertRows {
+            sheet: "Q3".to_owned(),
+            at_row: 1,
+            count: 1,
+        },
+    ];
+    let summary = sweep(&vault, &artifact, 1, 3, &edited, actor);
     assert!(summary.remapped.is_empty());
     assert!(summary.drifted.is_empty());
     assert_pinned(&vault, &artifact, &thread, &cell, 1, 2);
@@ -639,10 +651,15 @@ fn pptx_removed_shape_that_returns_under_its_old_native_id_never_rebinds() {
     assert_pinned(&vault, &artifact, &thread, &native, 1, 2);
     let lost_head = live(&vault, &artifact, &thread).head_claim_id;
 
+    // A thread opened on v1 now is still live, so the 1 -> 3 sweep shows it the
+    // new shape under native id 2; the lost thread it must pass over.
+    let late = open(&vault, artifact, 1, &native, actor);
     upload(&vault, &artifact, actor, &v3, 14);
-    let summary = sweep(&vault, &artifact, 2, 3, &[], actor);
+    let summary = sweep(&vault, &artifact, 1, 3, &[], actor);
     assert!(summary.remapped.is_empty());
-    assert!(summary.drifted.is_empty());
+    assert_eq!(summary.drifted.len(), 1);
+    assert_eq!(summary.drifted[0].thread_id, late.thread_id);
+    assert_pinned(&vault, &artifact, &late, &native, 1, 3);
     assert_pinned(&vault, &artifact, &thread, &native, 1, 2);
     assert_eq!(live(&vault, &artifact, &thread).head_claim_id, lost_head);
 }
