@@ -160,9 +160,19 @@ impl AudienceCache {
                     .get(&(room, revision))
                     .ok_or(Error::CorruptedIndex("audience snapshot"))?;
                 for person in audience {
+                    // An unplaced speaker stays in the audience under the
+                    // cut its entry fact froze (ILDF2 P5): never dropped,
+                    // never wider than from its entry into this room.
                     if !membership::windows_rows(rows, *person)?
                         .iter()
                         .any(|w| w.contains(h.occurred_start))
+                        && !attendee::speaker_entry_covers_in(
+                            vault,
+                            txn,
+                            room,
+                            *person,
+                            h.occurred_start,
+                        )?
                     {
                         return Ok(false);
                     }

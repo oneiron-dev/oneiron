@@ -424,6 +424,39 @@ impl<T: ManifestDbs> super::EdgeStoreRead for T {
             .map(|value| Ok(crate::edge::parse_strict_edge_record(&key, &value)?.into_edge_info()))
             .transpose()
     }
+    fn port_edge_present(
+        &self,
+        txn: &RoTxn<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+        kind: crate::EdgeKind,
+        peer: &EntityId,
+    ) -> Result<bool> {
+        // Both tables key a row by its own side first.
+        let key = crate::store::Store::encode_edge_key(center, kind, peer);
+        for (enabled, db) in [
+            (direction != super::EdgeDirection::In, self.edges_out()),
+            (direction != super::EdgeDirection::Out, self.edges_in()),
+        ] {
+            if enabled && db.get(txn, &key)?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    fn port_edge_get_incoming(
+        &self,
+        txn: &RoTxn<'_>,
+        center: &EntityId,
+        kind: crate::EdgeKind,
+        peer: &EntityId,
+    ) -> Result<Option<crate::edge::EdgeInfo>> {
+        let key = crate::store::Store::encode_edge_key(center, kind, peer);
+        self.edges_in()
+            .get(txn, &key)?
+            .map(|value| Ok(crate::edge::parse_strict_edge_record(&key, &value)?.into_edge_info()))
+            .transpose()
+    }
 }
 impl super::EdgeStoreRead for Vault {
     fn port_edge_has_any(
@@ -481,6 +514,26 @@ impl super::EdgeStoreRead for Vault {
         target: &EntityId,
     ) -> Result<Option<crate::edge::EdgeInfo>> {
         self.store.port_edge_get(txn, source, kind, target)
+    }
+    fn port_edge_present(
+        &self,
+        txn: &RoTxn<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+        kind: crate::EdgeKind,
+        peer: &EntityId,
+    ) -> Result<bool> {
+        self.store
+            .port_edge_present(txn, center, direction, kind, peer)
+    }
+    fn port_edge_get_incoming(
+        &self,
+        txn: &RoTxn<'_>,
+        center: &EntityId,
+        kind: crate::EdgeKind,
+        peer: &EntityId,
+    ) -> Result<Option<crate::edge::EdgeInfo>> {
+        self.store.port_edge_get_incoming(txn, center, kind, peer)
     }
 }
 
