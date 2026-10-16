@@ -36,8 +36,10 @@ pub(crate) fn withdrawn_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(super::TombstoneStoreRead::port_deletion_state(store, txn, id)?.deleted
-        || super::stale_in_txn(store, txn, id)?)
+    Ok(
+        super::TombstoneStoreRead::port_deletion_state(store, txn, id)?.deleted
+            || super::stale_in_txn(store, txn, id)?,
+    )
 }
 
 pub(crate) fn body_is_stale(bytes: &[u8]) -> bool {

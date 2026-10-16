@@ -84,17 +84,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<(EntityId, PackSource)>> {
         let mut sources = Vec::new();
-        for (n, entry) in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_ASSET])?
-            .enumerate()
+        for (n, entry) in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_ASSET,
+            None,
+        )?
+        .enumerate()
         {
             if n >= 100_000 {
                 return Err(invalid("pack catalog scan exceeds bound"));
             }
-            let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let id = entry?;
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
                 continue;
             }
