@@ -1,5 +1,7 @@
 //! ARCH-0038 deletion/redaction contract types.
 
+mod coop_delivery;
+mod coop_reply;
 mod coop_request;
 mod delete;
 mod derived_rows;
@@ -17,11 +19,26 @@ pub(crate) mod topology_delete_intent;
 #[cfg(test)]
 mod tests;
 
+pub use coop_delivery::{
+    COOP_DELETION_DELIVERY_ATTEMPT_KIND, COOP_DELETION_GIVE_UP_SECS, COOP_DELETION_PEER_PATH,
+    COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDelivery,
+    CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
+    CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
+    CooperativeDeletionTry, IncomingCooperativeDeletion, cooperative_deletion_recipient_id,
+    parse_hex,
+};
+pub use coop_reply::{
+    COOP_DELETION_REPLY_BODY_KEYS, COOP_DELETION_REPLY_DOMAIN, COOP_DELETION_REPLY_SCHEMA_VERSION,
+    CooperativeDeletionReply, CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply,
+    decode_and_verify_cooperative_deletion_reply, encode_cooperative_deletion_reply_body,
+    encode_signed_cooperative_deletion_reply,
+};
 pub use coop_request::{
     COOP_DELETION_REQUEST_BODY_KEYS, COOP_DELETION_REQUEST_DOMAIN,
     COOP_DELETION_REQUEST_SCHEMA_VERSION, CooperativeDeletionRequest, MAX_COOP_DELETION_WORLDS,
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
-    encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
+    decode_self_signed_cooperative_deletion_request, encode_cooperative_deletion_request_body,
+    encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
 };
 pub use delete::{
     DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview, HeldBytes, LfsChunkImpact,

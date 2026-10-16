@@ -1,5 +1,6 @@
 //! Sync server state and maintenance jobs, split by concern.
 mod board_publisher;
+mod cooperative_deletion;
 mod core;
 mod embedding;
 mod housekeeping;
