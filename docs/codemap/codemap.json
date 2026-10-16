@@ -6711,7 +6711,7 @@
      "path": "src/campaign/claims/store.rs",
      "purpose": "Store-aware claim reads: stage CAS, live-head scans, and DNC matching",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -10548,6 +10548,14 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/comm/consent_projection_tests.rs",
+     "purpose": "F06: an inbound STOP ends a projector pass as a durable, readable opt-out on every vault shape, and a STOP…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/comm/mod.rs",
@@ -10555,6 +10563,16 @@
      "surface": {
       "crate-vis": 6,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/opt_out_slots.rs",
+     "purpose": "One (party, channel) opt-out slot read across the party's redirect shells, and the pending human-clear gates…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -13605,7 +13623,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 4
      }
     },
@@ -20769,7 +20787,7 @@
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 4
      }
     },
@@ -41965,7 +41983,7 @@
      "purpose": "—"
     },
     "comm": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43080,8 +43098,8 @@
    },
    "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2592,
-   "test_files": 879
+   "source_files": 2593,
+   "test_files": 880
   },
   "oneiron-android": {
    "files": [
