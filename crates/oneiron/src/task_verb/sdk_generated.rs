@@ -285,6 +285,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "vault.rooms.join",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::JoinRequest>(
+                ),
+            ),
+            (
+                "vault.rooms.consent",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::ConsentAnswer>(
+                ),
+            ),
+            (
                 "vault.projects.goal.revisions",
                 crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
             ),
@@ -1026,6 +1036,24 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.rooms.join" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
+        "vault.rooms.consent" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.projects.goal.revisions" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1554,6 +1582,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
+        "vault.rooms.join" => {
+            let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
+        }
+        "vault.rooms.consent" => {
+            let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
+        }
         "vault.projects.goal.revisions" => {
             let _input: ProjectRefRequest = decode(value.clone())?;
         }
@@ -1822,6 +1856,8 @@ pub fn invoke(
         "vault.rooms.reply_strips" => encode(vault_rooms_reply_strips(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
+        "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
         "vault.projects.goal.revisions" => {
             encode(vault_projects_goal_revisions(memory, decode(value)?)?)
         }
@@ -2450,6 +2486,18 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn vault_rooms_join(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::JoinRequest,
+) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
+    memory.rooms_join(&input)
+}
+pub fn vault_rooms_consent(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ConsentAnswer,
+) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
+    memory.rooms_consent(&input)
 }
 pub fn vault_projects_goal_revisions(
     memory: &Memory<'_>,

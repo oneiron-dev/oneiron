@@ -61,6 +61,8 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultRoomsJoin,
+    VaultRoomsConsent,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
     VaultProjectsRouteTradeoff,
@@ -180,6 +182,8 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultRoomsJoin,
+        Self::VaultRoomsConsent,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
         Self::VaultProjectsRouteTradeoff,
@@ -302,6 +306,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
@@ -420,6 +426,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -546,6 +554,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -708,6 +718,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -791,6 +803,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -898,6 +912,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -1018,6 +1034,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],

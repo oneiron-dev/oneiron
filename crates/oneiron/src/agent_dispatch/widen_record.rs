@@ -75,6 +75,9 @@ pub(super) struct WidenIntent {
     /// The spawn's `budget` (OF-532), carved at approval like any launch.
     #[serde(default)]
     pub budget: Option<u64>,
+    /// The room the spawn works in (OF-531), re-proved at approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<crate::workspace_roster::RoomWork>,
 }
 
 impl WidenIntent {
@@ -98,6 +101,7 @@ impl WidenIntent {
             healer_case: spawn.healer_case.clone(),
             type_ref: spawn.type_ref.clone(),
             budget: spawn.budget,
+            room: spawn.room,
         })
     }
 
@@ -144,6 +148,7 @@ impl WidenIntent {
                 spend: None,
                 // A widened spawn is a child: it inherits its parent's origin.
                 origin_conversation: None,
+                room: self.room,
             },
         ))
     }

@@ -1222,6 +1222,31 @@
       "section": false
     },
     {
+      "name": "vault.rooms.join",
+      "input": "crate::workspace_roster::JoinRequest",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_join(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.consent",
+      "input": "crate::workspace_roster::ConsentAnswer",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_consent(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.projects.goal.revisions",
       "input": "ProjectRefRequest",
       "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
