@@ -434,25 +434,38 @@ async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved(
     ] {
         assert_eq!(rpc(&server, &auth, "receipts", value)["result"], json!([]));
     }
-    for method in ["recall", "receipts"] {
-        for limit in [0, 1001] {
-            let reply = rpc(
-                &server,
-                &auth,
-                method,
-                json!({"query":"solar","limit":limit}),
-            );
-            assert_error(&reply, "BAD_REQUEST");
-            assert_eq!(
-                reply["error"]["message"],
-                "limit must be between 1 and 1000"
-            );
-            assert_eq!(
-                reply["error"]["suggestions"],
-                json!(["Request a smaller page and paginate."])
-            );
-        }
+    for limit in [0, 1001] {
+        let reply = rpc(
+            &server,
+            &auth,
+            "receipts",
+            json!({"query":"solar","limit":limit}),
+        );
+        assert_error(&reply, "BAD_REQUEST");
+        assert_eq!(
+            reply["error"]["message"],
+            "limit must be between 1 and 1000"
+        );
+        assert_eq!(
+            reply["error"]["suggestions"],
+            json!(["Request a smaller page and paginate."])
+        );
     }
+    // Recall serves a limit past the ceiling at it and says so (F21 H46); a
+    // zero limit is still refused.
+    let reply = rpc(
+        &server,
+        &auth,
+        "recall",
+        json!({"query":"solar","limit":1001}),
+    );
+    assert_eq!(
+        reply["result"]["retrieval_meta"]["limit_clamped"], true,
+        "{reply}"
+    );
+    let reply = rpc(&server, &auth, "recall", json!({"query":"solar","limit":0}));
+    assert_error(&reply, "BAD_REQUEST");
+    assert_eq!(reply["error"]["message"], "limit must be at least 1");
     for value in [
         Value::Null,
         json!({}),

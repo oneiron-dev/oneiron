@@ -96,6 +96,15 @@ impl ConvergenceSession {
         }
     }
 
+    /// The re-bootstrap's proof set: the replayed rows' windows and every
+    /// forced window, with no `fr:w:` carve-out. The documents were dropped
+    /// and the forced windows fetched whole, so each server witness is fresh.
+    pub(super) fn confirming(queued: &[QueuedUpdate], windows: &BTreeSet<String>) -> Self {
+        let mut session = Self::from_queued(queued);
+        session.pending.extend(windows.iter().cloned());
+        session
+    }
+
     /// Starts the next convergence round: returns SyncStep1 `VV_REQUEST`
     /// frames (carrying our VV) for every pending window, or `None` once the
     /// `MAX_CONVERGENCE_ROUNDS` budget is exhausted (→ force re-bootstrap).

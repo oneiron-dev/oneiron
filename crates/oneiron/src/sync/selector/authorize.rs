@@ -613,6 +613,23 @@ pub(super) fn filter_window_doc(
         });
     }
 
+    // Project revisions (decision 9) never travel on their own scope: each
+    // goes exactly when its PROJECT row does, every one of them whatever
+    // month it was learned in, and none for a withheld project.
+    let revision_kind = crate::workspace_roster::project_revision_type(&vault.store);
+    if let Some(revision_kind) = revision_kind {
+        let mut carriers = BTreeSet::new();
+        map_for_each_value_bytes(&source_entities, |key, blob| {
+            if blob
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == revision_kind)
+                && let Ok(id) = EntityId::from_hex(key)
+            {
+                carriers.insert(id);
+            }
+        });
+        kept.retain(|id| !carriers.contains(id));
+    }
     // A fresh peer may hold a valid selected target but only part of its
     // scoped birth/event/handoff closure in the source CRDT. Never emit the
     // target alone: the receiving replica would mistake missing history for
@@ -676,6 +693,18 @@ pub(super) fn filter_window_doc(
         .copied()
         .collect::<BTreeSet<_>>();
     let withheld = unbacked_epochs(vault, &rtxn, source, &shipped)?;
+    let mut revision_rows = Vec::new();
+    if revision_kind.is_some() {
+        for project in shipped.iter().filter(|id| !withheld.contains(id)) {
+            for companion in
+                crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, *project)?
+            {
+                if let Some(raw) = vault.get_raw_in(&rtxn, &companion)? {
+                    revision_rows.push((companion, raw));
+                }
+            }
+        }
+    }
     drop(rtxn);
     #[cfg(any(test, feature = "test-hooks"))]
     crate::sync::window::test_hooks::run_device_only_flag_race(vault)?;
@@ -683,6 +712,9 @@ pub(super) fn filter_window_doc(
     shipped.retain(|id| !withheld.contains(id));
 
     let out_entities = out.get_map("entities");
+    for (id, raw) in &revision_rows {
+        map_insert_bytes(&out_entities, &id.to_hex(), raw)?;
+    }
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let Ok(id) = EntityId::from_hex(raw_key) else {
