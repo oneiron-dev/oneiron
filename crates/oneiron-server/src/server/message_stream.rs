@@ -1,5 +1,6 @@
 //! Host-owned stream timer and local presence relay. No durable partial queue.
 use super::core::BroadcastPayload;
+use super::presence::PresenceCharge;
 use crate::config::SyncServerConfig;
 use oneiron::sync::{EphemeralStore, decode_ephemeral_states};
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use tokio::sync::broadcast;
 pub(super) fn spawn_message_stream_producer(
     vault: &Arc<oneiron::Vault>,
     hub: &Arc<EphemeralStore>,
+    presence: &Arc<PresenceCharge>,
     outgoing: &broadcast::Sender<BroadcastPayload>,
     config: &SyncServerConfig,
 ) {
@@ -17,9 +19,9 @@ pub(super) fn spawn_message_stream_producer(
     let mut frames = vault.subscribe_message_stream_presence();
     let vault = Arc::downgrade(vault);
     let hub = Arc::downgrade(hub);
+    let presence = Arc::downgrade(presence);
     let outgoing = outgoing.clone();
     let payload_limit = config.max_ephemeral_payload_bytes;
-    let snapshot_limit = config.max_ephemeral_snapshot_bytes;
     let ttl = config.ephemeral_timeout_ms;
     runtime.spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -27,8 +29,8 @@ pub(super) fn spawn_message_stream_producer(
         loop {
             tokio::select! {
                 _ = tick.tick() => {
-                    let (Some(vault), Some(hub)) = (vault.upgrade(), hub.upgrade()) else { break; };
-                    hub.remove_outdated();
+                    let (Some(vault), Some(hub), Some(presence)) = (vault.upgrade(), hub.upgrade(), presence.upgrade()) else { break; };
+                    presence.lock().expire(&hub);
                     match vault.pump_message_streams() {
                         Ok(report) => for (message, _) in report.refused {
                             tracing::warn!(?message, reason = "stream_finalization_refused", "stream idle finalization refused; output retained");
@@ -42,8 +44,8 @@ pub(super) fn spawn_message_stream_producer(
                         Err(broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(broadcast::error::RecvError::Closed) => break,
                     };
-                    let Some(hub) = hub.upgrade() else { break; };
-                    if let Some(frame) = apply_bounded_partial(&hub, &frame, payload_limit, snapshot_limit, ttl) {
+                    let (Some(hub), Some(presence)) = (hub.upgrade(), presence.upgrade()) else { break; };
+                    if let Some(frame) = apply_bounded_partial(&hub, &presence, &frame, payload_limit, ttl) {
                         let _ = crate::broadcast::broadcast(&outgoing, 0, frame);
                     }
                 }
@@ -52,11 +54,14 @@ pub(super) fn spawn_message_stream_producer(
     });
 }
 
+/// Applies one native presence frame to the hub, charged to the retained
+/// line like a socket's (rule 5): past a full line it meets the memory floor
+/// and is not kept.
 fn apply_bounded_partial(
     hub: &EphemeralStore,
+    presence: &PresenceCharge,
     frame: &[u8],
     payload_limit: usize,
-    snapshot_limit: usize,
     ttl: i64,
 ) -> Option<Vec<u8>> {
     if frame.first() != Some(&oneiron::sync::TAG_EPHEMERAL) {
@@ -70,14 +75,16 @@ fn apply_bounded_partial(
     if states.len() != 1 {
         return None;
     }
-    hub.remove_outdated();
+    let mut charge = presence.lock();
+    charge.expire(hub);
     let scratch = EphemeralStore::new(ttl);
     scratch.apply(&hub.encode_all()).ok()?;
     scratch.apply(payload).ok()?;
-    if scratch.encode_all().len() > snapshot_limit {
+    if !charge.fit(scratch.encode_all().len()) {
         return None;
     }
     hub.apply(payload).ok()?;
+    drop(charge);
     oneiron::sync::encode_ephemeral(&hub.encode(&states[0].key))
         .into_result()
         .ok()

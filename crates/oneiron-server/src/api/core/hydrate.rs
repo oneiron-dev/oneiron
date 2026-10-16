@@ -45,6 +45,12 @@ pub(crate) struct CoreHydrateRequest {
     #[serde(default)]
     #[schema(example = "full")]
     view: Option<View>,
+    /// Whether the reader's model takes images in: a live generated image
+    /// is then served as its bytes, base64, rather than its text form.
+    /// Defaults to false.
+    #[serde(default, rename = "image_input", alias = "imageInput")]
+    #[schema(example = true)]
+    image_input: bool,
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
@@ -158,6 +164,12 @@ pub(crate) struct CoreBatchShortIdHydrateRequest {
     #[serde(default)]
     #[schema(example = "full")]
     view: Option<View>,
+    /// Whether the reader's model takes images in: a live generated image
+    /// is then served as its bytes, base64, rather than its text form.
+    /// Defaults to false.
+    #[serde(default, rename = "image_input", alias = "imageInput")]
+    #[schema(example = true)]
+    image_input: bool,
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
@@ -254,12 +266,13 @@ pub(crate) async fn core_hydrate(
         short_id.clone(),
         content_hash,
         view,
+        &hydrate_reader(req.image_input, view),
         mode,
         observations.as_deref_mut(),
         &mut served,
     )?;
     // The observation guard is the server's: release it before the read
-    // waits on the write that records the text it served.
+    // waits on the write that records the form it served.
     drop(observations);
     scoped_read
         .commit_served_forms(&served)
@@ -307,6 +320,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
     }
 
     let view = req.view.unwrap_or(View::Full);
+    let reader = hydrate_reader(req.image_input, view);
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     let mut observations =
@@ -344,6 +358,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
                     short_id,
                     content_hash,
                     view,
+                    &reader,
                     mode,
                     values.next().flatten(),
                     staged_observations.as_mut(),
@@ -395,7 +410,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
     if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
         *target = staged;
     }
-    // Every text the batch served is recorded in one write, once the
+    // Every form the batch served is recorded in one write, once the
     // server's observation guard is released.
     drop(observations);
     scoped_read
@@ -407,13 +422,24 @@ pub(crate) async fn core_batch_short_id_hydrate(
     }))
 }
 
-/// One short ref hydrated. A text form it serves joins `served`, for the
-/// caller to record before it answers.
+/// The reader a hydrate serves: one that reads images when its request says
+/// so and its `view` carries the body they would be served in.
+fn hydrate_reader(image_input: bool, view: View) -> oneiron::memory::AssetConsumer {
+    oneiron::memory::AssetConsumer::hydrate_reader(image_input && !matches!(view, View::Summary))
+}
+
+/// One short ref hydrated for `reader`. A form it serves in place of an
+/// image's body joins `served`, for the caller to record before it answers.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one short ref: its view, reader, mode, observations and served forms"
+)]
 pub(crate) fn hydrate_short_id_response_with_mode(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     short_id: String,
     content_hash: u8,
     view: View,
+    reader: &oneiron::memory::AssetConsumer,
     mode: oneiron::memory::ReadMode,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
     served: &mut Vec<oneiron::receipt::ServedForm>,
@@ -432,6 +458,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
         short_id,
         content_hash,
         view,
+        reader,
         mode,
         read.value,
         observations,
@@ -446,8 +473,9 @@ pub(crate) fn hydrate_short_id_response_with_mode(
 }
 
 /// The receipt one hydrated item starts from, the response receipt that
-/// also takes any successor the item's observation reads, and the text forms
-/// the response serves, which its door records before it answers.
+/// also takes any successor the item's observation reads, and the forms the
+/// response serves in place of an image's body, which its door records
+/// before it answers.
 pub(crate) struct ItemReceipts<'a> {
     pub(crate) start: oneiron::claim::ScopedReadReceipt,
     pub(crate) response: &'a mut oneiron::claim::ScopedReadReceipt,
@@ -456,13 +484,14 @@ pub(crate) struct ItemReceipts<'a> {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "one hydrated item: its ref, mode, row and receipts, and the batch's body budget"
+    reason = "one hydrated item: its ref, reader, mode, row and receipts, and the batch's body budget"
 )]
 pub(crate) fn project_hydrated_short_id(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     short_id: String,
     content_hash: u8,
     view: View,
+    reader: &oneiron::memory::AssetConsumer,
     mode: oneiron::memory::ReadMode,
     hydrated: Option<oneiron::claim::ReadRow>,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
@@ -504,15 +533,15 @@ pub(crate) fn project_hydrated_short_id(
         Some(bodies) => (bodies.admits(body.len()), Some(bodies)),
         None => (true, None),
     };
-    // A live generated image is served the form a reader that declared no
-    // image input reads (OF-329): its ASSET_TEXT, read through this lane, its
-    // stored body charged to the same budget.
+    // A live generated image is served the form `reader` reads (OF-329): its
+    // bytes, or its ASSET_TEXT read through this lane, each body charged to
+    // the same budget; bytes the budget cannot hold are served as the text.
     let served = if decoded
         && matches!(mode, oneiron::memory::ReadMode::Live)
         && entity_type == oneiron::registry::ENTITY_TYPE_ASSET
     {
         let mut admits = |len: usize| bodies.as_mut().is_none_or(|bodies| bodies.admits(len));
-        let asset = oneiron::memory::hydrated_asset(scoped_read, id, &mut admits)
+        let asset = oneiron::memory::hydrated_asset(scoped_read, id, reader, None, &mut admits)
             .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
         narrowing.restrict_with(&asset.receipt);
         response.restrict_with(&asset.receipt);
@@ -543,17 +572,24 @@ pub(crate) fn project_hydrated_short_id(
             entity_type,
             learned_at,
             match &served {
-                oneiron::memory::HydratedAsset::Text { body: text, .. } => text,
+                oneiron::memory::HydratedAsset::Image { body: form, .. }
+                | oneiron::memory::HydratedAsset::Text { body: form, .. } => form,
                 _ => &body,
             },
             view,
         ),
     };
-    // A Summary item carries the image's label alone, so it serves no text.
-    if let oneiron::memory::HydratedAsset::Text { asset_text, .. } = served
-        && !matches!(view, View::Summary)
-    {
-        served_forms.push(oneiron::receipt::ServedForm::text(id, asset_text));
+    // A Summary item carries the image's label alone, so it serves no form.
+    if !matches!(view, View::Summary) {
+        match served {
+            oneiron::memory::HydratedAsset::Image { .. } => {
+                served_forms.push(oneiron::receipt::ServedForm::image(id));
+            }
+            oneiron::memory::HydratedAsset::Text { asset_text, .. } => {
+                served_forms.push(oneiron::receipt::ServedForm::text(id, asset_text));
+            }
+            oneiron::memory::HydratedAsset::Stored | oneiron::memory::HydratedAsset::Omitted => {}
+        }
     }
     Ok(Some(CoreHydrateResponse {
         narrowing,

@@ -188,6 +188,8 @@ pub enum ErrorKind {
     #[cfg(feature = "sync")]
     WindowBusy,
     #[cfg(feature = "sync")]
+    LiveDocumentWaitedOut,
+    #[cfg(feature = "sync")]
     SyncProtocolError,
     #[cfg(feature = "sync")]
     SyncEngineError,
@@ -602,6 +604,9 @@ impl Error {
             // external window handle drops (ONE-1150).
             #[cfg(feature = "sync")]
             Self::Sync(SyncError::WindowBusy { .. }) => true,
+            // A deadline on a turn past a row: the next turn may come.
+            #[cfg(feature = "sync")]
+            Self::Sync(SyncError::LiveDocumentWaitedOut) => true,
             Self::Io(error) => matches!(
                 error.kind(),
                 std::io::ErrorKind::Interrupted

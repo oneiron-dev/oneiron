@@ -121,7 +121,6 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
     }
 
     /// How many pieces of work wait for a permit.
-    #[cfg(test)]
     pub(crate) fn waiting(&self) -> usize {
         lock(&self.pool.queue).waiters()
     }

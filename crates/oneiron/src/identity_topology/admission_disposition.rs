@@ -97,7 +97,7 @@ impl AdmissionDisposition {
         verdict: AdmissionVerdict,
         reason: Option<EntityId>,
     ) -> Result<Self> {
-        let (_, key) = crate::identity::load_or_mint_machine_in_txn(vault, wtxn)?;
+        let (_, key) = crate::identity::machine_signer_in_txn(vault, wtxn)?;
         let core_digest = core_digest(core)?;
         let signature = key
             .sign(&Self::transcript(&target, &core_digest, verdict, reason))

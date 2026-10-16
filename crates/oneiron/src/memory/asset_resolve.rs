@@ -7,6 +7,7 @@
 //! does not, and the text under budget pressure. It only picks the form of
 //! what the reader's scope already admits; a read no form fits fails closed.
 
+use base64::Engine as _;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +61,20 @@ impl AssetConsumer {
         Self {
             capabilities: Vec::new(),
             purpose,
+        }
+    }
+
+    /// The reader a hydrate door serves: it reads for an answer, and reads
+    /// images only when its request says its model takes them in.
+    #[must_use]
+    pub fn hydrate_reader(image_input: bool) -> Self {
+        Self {
+            capabilities: if image_input {
+                vec![LlmCapability::ImageInput]
+            } else {
+                Vec::new()
+            },
+            purpose: CallPurpose::AnswerGen,
         }
     }
 
@@ -191,9 +206,10 @@ impl Memory<'_> {
     }
 
     /// Hydrate's half of OF-329: each live image ASSET among `views` with a
-    /// text this reader admits is served as [`hydrated_asset`] serves it.
-    /// Every other view keeps its body. The texts served are recorded, in
-    /// one write, before the hydrate answers.
+    /// text this reader admits is served as [`hydrated_asset`] serves a
+    /// reader that declared no image input. Every other view keeps its body.
+    /// The texts served are recorded, in one write, before the hydrate
+    /// answers.
     pub(super) fn serve_hydrated_assets(
         &self,
         lane: &ScopedRead<'_>,
@@ -202,6 +218,7 @@ impl Memory<'_> {
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<()> {
         let asset_kind = kind_string_for_type(ENTITY_TYPE_ASSET);
+        let consumer = AssetConsumer::hydrate_reader(false);
         let mut served_forms = Vec::new();
         for (target, view) in targets.iter().zip(views) {
             let Some((asset, ReadMode::Live)) = target else {
@@ -210,7 +227,7 @@ impl Memory<'_> {
             if view.kind != asset_kind {
                 continue;
             }
-            let served = hydrated_asset(lane, *asset, &mut |_| true)?;
+            let served = hydrated_asset(lane, *asset, &consumer, None, &mut |_| true)?;
             receipt.restrict_with(&served.receipt);
             if let HydratedAsset::Text { body, asset_text } = served.value {
                 view.body = decode_body_json(&body);
@@ -241,14 +258,24 @@ fn served_form(
     })
 }
 
-/// What a hydrate serves, for one ASSET its lane admitted live, to a reader
-/// that declared no image input.
+/// What a hydrate serves, for one ASSET its lane admitted live.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HydratedAsset {
     /// The door's stored body: an ASSET that holds no image, an image with no
-    /// text this reader admits (its body still names the image, bytes
+    /// form this reader is served (its body still names the image, bytes
     /// nulled), or an asset gone since the door read it.
     Stored,
+    /// A generated image, served as its bytes to a reader that reads images.
+    Image {
+        /// `{form, mime_type, bytes, asset_text_ref}` as MessagePack, the
+        /// bytes as standard base64 so a JSON door carries them where it
+        /// nulls a binary: the body the door projects in place of the stored
+        /// one.
+        body: Vec<u8>,
+        /// The ASSET_TEXT the body names as the image's caption, a row the
+        /// reader did not name.
+        caption: Option<EntityId>,
+    },
     /// A generated image, served as its text form.
     Text {
         /// `{form, asset_text_ref, text}` as MessagePack: the body the door
@@ -262,6 +289,17 @@ pub enum HydratedAsset {
     Omitted,
 }
 
+/// The image form's body.
+#[derive(Serialize)]
+struct ImageFormBody<'a> {
+    form: ServedAssetForm,
+    mime_type: &'a str,
+    /// Standard base64.
+    bytes: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    asset_text_ref: Option<String>,
+}
+
 /// The text form's body.
 #[derive(Serialize)]
 struct TextFormBody<'a> {
@@ -271,36 +309,33 @@ struct TextFormBody<'a> {
 }
 
 /// Hydrate's half of OF-329, for every door that reads through its own
-/// lane: what `asset`, an ASSET `lane` admitted live, serves a reader that
-/// declared no image input, its ASSET_TEXT read through the same lane. Each
-/// text's stored body is charged to `admits` before it decodes, so a door
-/// that bounds the bodies it decodes bounds these too. The bytes go only
-/// through [`Memory::resolve_asset`].
+/// lane: what `asset`, an ASSET `lane` admitted live, serves `consumer`
+/// under `budget`, its ASSET_TEXT read through the same lane. A consumer
+/// that reads images, outside budget pressure, is served the image's bytes;
+/// any other its text form. Each text's stored body, and then the image
+/// form's body, is charged to `admits` before it decodes, so a door that
+/// bounds the bodies it decodes bounds these too: an image past the bound
+/// is served as its text form.
 pub fn hydrated_asset(
     lane: &ScopedRead<'_>,
     asset: EntityId,
+    consumer: &AssetConsumer,
+    budget: Option<&BudgetRead>,
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<HydratedAsset>> {
-    let consumer = AssetConsumer::text_only(CallPurpose::AnswerGen);
     let ScopedReadResult { value, receipt } =
-        asset_forms_in_lane(lane, asset, &consumer, true, admits)?;
+        asset_forms_in_lane(lane, asset, consumer, true, admits)?;
     let value = match value {
-        Some(forms) if forms.omitted => HydratedAsset::Omitted,
-        Some(forms) if forms.image.is_some() => match (forms.form(&consumer, None), forms.text) {
-            (Some(ServedAssetForm::AssetText), Some((asset_text, text))) => {
-                let body = rmp_serde::to_vec_named(&TextFormBody {
-                    form: ServedAssetForm::AssetText,
-                    asset_text_ref: asset_text.to_hex(),
-                    text: &text,
-                })
-                .map_err(|_| MemoryError::bad_request("body is not MessagePack-encodable"))?;
-                HydratedAsset::Text { body, asset_text }
-            }
-            _ => HydratedAsset::Stored,
-        },
+        Some(forms) if forms.image.is_some() => forms.hydrated(consumer, budget, admits)?,
         _ => HydratedAsset::Stored,
     };
     Ok(ScopedReadResult { value, receipt })
+}
+
+/// `body` as a named MessagePack map.
+fn form_body(body: &impl Serialize) -> MemoryResult<Vec<u8>> {
+    rmp_serde::to_vec_named(body)
+        .map_err(|_| MemoryError::bad_request("body is not MessagePack-encodable"))
 }
 
 /// The forms one admitted ASSET holds, and where budget pressure starts for
@@ -328,6 +363,45 @@ impl AssetForms {
             self.image.is_some(),
             self.text.is_some(),
         )
+    }
+
+    /// What [`hydrated_asset`] serves of an asset that holds an image: its
+    /// bytes, when `consumer` is served them under `budget` and `admits`
+    /// holds their body, captioned only by a text that decoded. Otherwise
+    /// its text form, a text `admits` refused omitting the body, and with no
+    /// text the stored body.
+    fn hydrated(
+        self,
+        consumer: &AssetConsumer,
+        budget: Option<&BudgetRead>,
+        admits: &mut dyn FnMut(usize) -> bool,
+    ) -> MemoryResult<HydratedAsset> {
+        if self.form(consumer, budget) == Some(ServedAssetForm::Image)
+            && let Some(image) = &self.image
+        {
+            let caption = self.text.as_ref().map(|(id, _)| *id);
+            let body = form_body(&ImageFormBody {
+                form: ServedAssetForm::Image,
+                mime_type: &image.media_type,
+                bytes: base64::engine::general_purpose::STANDARD.encode(&image.bytes),
+                asset_text_ref: caption.map(|id| id.to_hex()),
+            })?;
+            if admits(body.len()) {
+                return Ok(HydratedAsset::Image { body, caption });
+            }
+        }
+        if self.omitted {
+            return Ok(HydratedAsset::Omitted);
+        }
+        let Some((asset_text, text)) = self.text else {
+            return Ok(HydratedAsset::Stored);
+        };
+        let body = form_body(&TextFormBody {
+            form: ServedAssetForm::AssetText,
+            asset_text_ref: asset_text.to_hex(),
+            text: &text,
+        })?;
+        Ok(HydratedAsset::Text { body, asset_text })
     }
 
     /// The asset as `consumer` is served it under `budget`; `None` fails closed.

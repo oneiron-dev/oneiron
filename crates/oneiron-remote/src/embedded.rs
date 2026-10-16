@@ -210,6 +210,8 @@ fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVau
         config.dimensions = dimensions;
     }
     let vault = Vault::open_owned(canonical, config).map_err(map_lease_error)?;
+    // Signing doors (delete receipts) need this install's keys from the keystore.
+    vault.install_default_keystore(canonical);
     STORE_OPEN_COUNT.fetch_add(1, Ordering::Relaxed);
     Ok(SharedVault {
         vault,
