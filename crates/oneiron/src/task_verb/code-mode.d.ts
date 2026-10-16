@@ -4,7 +4,7 @@ declare const ai: {
   options(input: { inputs?: string[]; operation?: string | null }): Promise<unknown>;
   speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
   transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
-  verdict(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; deadline_ms?: number | null; evidence?: string[]; options?: string[]; question: string; reversibility?: "reversible_read" | "outbound_effect"; state?: unknown }): Promise<unknown>;
+  verdict(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; deadline_ms?: number | null; evidence?: string[]; image?: string | null; locate?: boolean; misses?: number; options?: string[]; question: string; reversibility?: "reversible_read" | "outbound_effect"; routine?: boolean; state?: unknown; until_ms?: number | null }): Promise<unknown>;
   video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }) => Promise<unknown>) & {
     cancel(input: { job: string }): Promise<unknown>;
     poll(input: { job: string }): Promise<unknown>;
@@ -92,6 +92,7 @@ declare const vault: {
     handoff_alarms: ((input: object) => Promise<unknown>) & {
       acknowledge(input: { signer: string }): Promise<unknown>;
     };
+    audit(input: { after?: string | null; kinds?: ("grant" | "revoke" | "confirm" | "other")[]; limit?: number | null }): Promise<unknown>;
   };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
@@ -130,6 +131,9 @@ declare const vault: {
   hydrate(input: { refs: string[] }): Promise<unknown>;
   images: {
     view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
+  };
+  inspection: {
+    resolve(input: { handle: string }): Promise<unknown>;
   };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;
