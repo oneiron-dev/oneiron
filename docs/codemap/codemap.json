@@ -1268,7 +1268,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 8
      }
     },
