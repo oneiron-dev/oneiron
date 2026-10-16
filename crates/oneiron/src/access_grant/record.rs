@@ -19,12 +19,16 @@ pub enum AccessGrantScope {
     Summaries { space_ref: EntityId },
     /// Relationship claims in exactly one relationship space.
     RelationshipClaims { space_ref: EntityId },
-    /// Access to one companion persona profile in one person scope.
+    /// Read of one PERSON's companion profile, at one FACET or at all of them.
+    ///
+    /// The grant names the PERSON, never a profile record: the profile read
+    /// derives its PSYCH_PROFILE from `PsychProfileKey { person, facet, world }`.
     CompanionProfile {
-        /// Person scope the companion profile belongs to.
+        /// PERSON whose profile is addressed.
         person_ref: EntityId,
-        /// Persona/profile record being addressed.
-        persona_ref: EntityId,
+        /// FACET the read is bounded to. `None` covers the PERSON at every
+        /// facet; a named facet covers that facet only.
+        facet_ref: Option<EntityId>,
     },
     /// Calendar disclosure at one rung (ARCH-0062 R1).
     ///
@@ -67,10 +71,10 @@ pub enum AccessGrantScope {
 impl AccessGrantScope {
     /// Constructs a companion profile scope.
     #[must_use]
-    pub const fn companion_profile(person_ref: EntityId, persona_ref: EntityId) -> Self {
+    pub const fn companion_profile(person_ref: EntityId, facet_ref: Option<EntityId>) -> Self {
         Self::CompanionProfile {
             person_ref,
-            persona_ref,
+            facet_ref,
         }
     }
 
@@ -80,16 +84,24 @@ impl AccessGrantScope {
         Self::Calendar { calendar_ref, rung }
     }
 
-    /// Returns whether this scope exactly names the supplied companion profile.
+    /// Returns whether this scope covers the supplied PERSON at the supplied
+    /// facet. A person-wide grant covers every facet and the unfaceted
+    /// profile; a facet grant covers that facet only.
     #[must_use]
-    pub fn matches_companion_profile(&self, person_ref: &EntityId, persona_ref: &EntityId) -> bool {
+    pub fn matches_companion_profile(
+        &self,
+        person_ref: &EntityId,
+        facet_ref: Option<&EntityId>,
+    ) -> bool {
         match self {
             Self::CompanionProfile {
                 person_ref: grant_person_ref,
-                persona_ref: grant_persona_ref,
+                facet_ref: grant_facet_ref,
             } => {
                 grant_person_ref.as_bytes() == person_ref.as_bytes()
-                    && grant_persona_ref.as_bytes() == persona_ref.as_bytes()
+                    && grant_facet_ref.as_ref().is_none_or(|grant_facet| {
+                        facet_ref.is_some_and(|facet| grant_facet.as_bytes() == facet.as_bytes())
+                    })
             }
             Self::Messages { .. }
             | Self::Summaries { .. }
@@ -101,14 +113,14 @@ impl AccessGrantScope {
         }
     }
 
-    /// Returns companion profile refs when this scope uses that shape.
+    /// Returns the PERSON and optional FACET when this scope uses that shape.
     #[must_use]
-    pub const fn companion_profile_refs(&self) -> Option<(EntityId, EntityId)> {
+    pub const fn companion_profile_refs(&self) -> Option<(EntityId, Option<EntityId>)> {
         match self {
             Self::CompanionProfile {
                 person_ref,
-                persona_ref,
-            } => Some((*person_ref, *persona_ref)),
+                facet_ref,
+            } => Some((*person_ref, *facet_ref)),
             Self::Messages { .. }
             | Self::Summaries { .. }
             | Self::RelationshipClaims { .. }
@@ -277,13 +289,13 @@ impl AccessGrant {
     pub fn companion_profile_read(
         principal_ref: EntityId,
         person_ref: EntityId,
-        persona_ref: EntityId,
+        facet_ref: Option<EntityId>,
         created_at: u64,
     ) -> Self {
         Self {
             authority_scope: crate::federation::scope_codec::read_preset(),
             principal_ref,
-            scope: AccessGrantScope::companion_profile(person_ref, persona_ref),
+            scope: AccessGrantScope::companion_profile(person_ref, facet_ref),
             capability: AccessGrantCapability::CompanionProfileRead,
             status: AccessGrantStatus::Active,
             created_at,
@@ -404,22 +416,21 @@ impl AccessGrant {
         }
     }
 
-    /// Returns whether this grant authorizes the supplied companion profile.
+    /// Returns whether this grant authorizes reading the supplied PERSON's
+    /// companion profile at the supplied facet.
     #[must_use]
     pub fn allows_companion_profile_read(
         &self,
         principal_ref: &EntityId,
         person_ref: &EntityId,
-        persona_ref: &EntityId,
+        facet_ref: Option<&EntityId>,
         now: u64,
     ) -> bool {
         crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.capability == AccessGrantCapability::CompanionProfileRead
             && self.principal_ref.as_bytes() == principal_ref.as_bytes()
-            && self
-                .scope
-                .matches_companion_profile(person_ref, persona_ref)
+            && self.scope.matches_companion_profile(person_ref, facet_ref)
     }
 
     /// Returns the rung this grant discloses of `calendar_ref` to

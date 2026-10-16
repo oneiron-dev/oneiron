@@ -1,8 +1,28 @@
+declare const ai: {
+  embed(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  image(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  options(input: { inputs?: string[]; operation?: string | null }): Promise<unknown>;
+  speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  verdict(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; deadline_ms?: number | null; evidence?: string[]; options?: string[]; question: string; reversibility?: "reversible_read" | "outbound_effect"; state?: unknown }): Promise<unknown>;
+  video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }) => Promise<unknown>) & {
+    cancel(input: { job: string }): Promise<unknown>;
+    poll(input: { job: string }): Promise<unknown>;
+  };
+};
 declare function ask(input: object): Promise<unknown>;
 declare function can(input: { ask: object }): Promise<unknown>;
 declare function cancel(input: { task_ref: string }): Promise<unknown>;
-declare function describe(input: { frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
+declare const connector: {
+  list(input: { query?: string | null }): Promise<unknown>;
+  outbound: {
+    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
+  };
+  status(input: { name: string }): Promise<unknown>;
+};
+declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
+declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
     batch(input: { steps: (object | object | object | object | object | object | object)[]; subgoal?: string | null }): Promise<unknown>;
@@ -19,28 +39,91 @@ declare namespace self {
     wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
     zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
   };
+  const compact: (input: { note?: string | null }) => Promise<unknown>;
   const focus: {
     refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
+  const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
+  const folds: (input: object) => Promise<unknown>;
+  const memory: {
+    diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
+      reads(input: { limit?: number | null }): Promise<unknown>;
+      review(input: { request: string; approve: boolean }): Promise<unknown>;
+    };
+  };
+  const skills: {
+    call(input: { args: unknown; skill: string }): Promise<unknown>;
+    callables(input: object): Promise<unknown>;
+    fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
+    save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
+  };
+  const unfold: (input: { fold: string }) => Promise<unknown>;
 }
+declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
+  refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { task_ref: string }): Promise<unknown>;
 };
 declare const vault: {
+  artifacts: {
+    append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
+    born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
+    discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
+    keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    proposals(input: { artifact_ref: string }): Promise<unknown>;
+    propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;
+    propose_output(input: { artifact_ref: string; content_base64: string; made_by?: unknown; media_type: string; name: string; report?: unknown; run_ref: string }): Promise<unknown>;
+    put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
+    read(input: { artifact_ref: string; version: number }): Promise<unknown>;
+    release_wait(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    view(input: { artifact_ref: string }): Promise<unknown>;
+    waits(input: { artifact_ref: string }): Promise<unknown>;
+  };
   claims: {
+    admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
+    history(input: { claim_ref: string }): Promise<unknown>;
+    list(input: { lifecycle?: string | null; limit: number; predicate?: string | null; subject_ref?: string | null }): Promise<unknown>;
     put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
+    retract(input: { claim_ref: string }): Promise<unknown>;
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
     upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   };
+  commit(input: { claims: object[] }): Promise<unknown>;
+  companions: {
+    sharing: {
+      get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
+    };
+  };
+  conversations: {
+    turn: {
+      continue(input: { turn_id: string }): Promise<unknown>;
+      retry(input: { turn_id: string }): Promise<unknown>;
+    };
+  };
+  delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
   export(input: { format?: string | null }): Promise<unknown>;
+  forget(input: object): Promise<unknown>;
+  get(input: { entity_ref: string }): Promise<unknown>;
+  habits: {
+    checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
+  };
+  hooks: {
+    replay(input: { binding: string; limit?: number | null; since?: string | null }): Promise<unknown>;
+  };
+  hydrate(input: { refs: string[] }): Promise<unknown>;
+  images: {
+    view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
+  };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;
     get(input: { key: string; namespace: string[] }): Promise<unknown>;
@@ -48,19 +131,66 @@ declare const vault: {
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
   };
+  lenses: {
+    activate(input: { compiled_hash: string; expected_active_ref?: string | null; lens_ref: string }): Promise<unknown>;
+    deactivate(input: { expected_active_ref: string; slot: object }): Promise<unknown>;
+    default(input: { dossiers?: object[]; ledger?: string[]; threads?: string[]; title: string }): Promise<unknown>;
+    list(input: { after?: string | null; limit?: number | null; pack_name?: string | null; with_compiled?: boolean }): Promise<unknown>;
+    propose(input: { compiled: unknown; intent_prompt: string; pack_content_hash: string; slot: object }): Promise<unknown>;
+  };
+  neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
+  notes: {
+    create(input: { kind: string; markdown: string }): Promise<unknown>;
+    edit(input: { edit: object; note_ref: string }): Promise<unknown>;
+    from_entity(input: { kind: string; source_ref: string }): Promise<unknown>;
+  };
+  packs: {
+    put(input: { files: object[] }): Promise<unknown>;
+  };
+  projects: {
+    goal: {
+      dismiss(input: { expected_goal_ref: string; project_ref: string; question_digest: string }): Promise<unknown>;
+      revisions(input: { project_ref: string }): Promise<unknown>;
+    };
+    route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
+  };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
-  receipts(input: { limit?: number | null }): Promise<unknown>;
+  receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
+    get(input: { receipt_ref: string }): Promise<unknown>;
+  };
+  remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   rooms: {
     claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
     find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     get(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
+    host(input: { room_ref: string; session_ref?: string | null }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
+    reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;
+    sharing(input: { room_ref: string }): Promise<unknown>;
     speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
     trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
   };
-  search(input: { limit?: number | null; query: string }): Promise<unknown>;
+  search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
+    bm25(input: { limit: number; query: string }): Promise<unknown>;
+  };
+  structural: {
+    put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
+  };
+  weave: {
+    digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
+  };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
+  workspace: {
+    work_companion: {
+      get(input: { workspace_ref: string }): Promise<unknown>;
+      set(input: { policy: "choose" | "suggest" | "require"; workspace_ref: string }): Promise<unknown>;
+    };
+  };
+  writes: {
+    pending(input: { limit?: number | null }): Promise<unknown>;
+  };
 };
 declare function wait(input: { handle: object; step_key: string }): Promise<unknown>;

@@ -5,11 +5,13 @@ use super::{
     ConsultFanOutScope, ConsultFanOutSpec, ConsultPayloadRef,
 };
 use crate::Vault;
+use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::outbound_chokepoint::{
     FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink,
+    FanoutWidthCheck, FanoutWidthClass,
 };
 use crate::receipt::ReceiptRecord;
 use crate::side_table::{self, HexId, Named, SideTable};
@@ -118,7 +120,12 @@ pub(super) struct StoredFanout {
     pub(super) input: FrozenInput,
     pub(super) plan: FanoutPlan,
     pub(super) estimate: FanoutEstimate,
+    /// Stated before any TASK was minted; every read returns this copy.
+    pub(super) statement: FanoutStatement,
     pub(super) pause: Option<FanoutApprovalRow>,
+    /// The non-blocking question row of the exceptional-width check of a
+    /// full-access run above the threshold. The run was minted regardless.
+    pub(super) check_row: Option<FanoutApprovalRow>,
     pub(super) dispatched_at: Option<u64>,
     pub(super) task_refs: Vec<String>,
     pub(super) denied: bool,
@@ -151,13 +158,14 @@ impl StoredFanout {
                 total_count: self.estimate.total_count,
                 per_peer: self.estimate.per_peer.clone(),
                 plan_digest: self.estimate.plan_digest,
-                board_rows: crate::context_board::fanout_agent_rows(
+                board_rows: super::consult_fanout_types::fanout_meter_rows(
                     &self.correlation,
                     &self.estimate,
                     self.pause.as_ref().and_then(|row| row.pathology.as_ref()),
                     self.dispatched_at.is_none(),
                     self.denied,
                 ),
+                statement: self.statement.clone(),
             },
             paused: self
                 .pause
@@ -209,11 +217,14 @@ pub(super) fn policy_in(
 }
 
 /// The caller commits this transaction before returning any durable ref.
-/// A failed mint rolls back pause, choice, policy and TASK rows together.
+/// A failed mint rolls back pause, check, choice, policy and TASK rows
+/// together.
 pub(super) struct TxnSurface<'a, 'env> {
     pub(super) vault: &'a Vault,
     pub(super) txn: &'a mut heed::RwTxn<'env>,
     pub(super) run: &'a mut StoredFanout,
+    /// The accepted standing policy row an AUTO clearance stood on, if any.
+    pub(super) clearance: Option<String>,
 }
 
 impl FanoutSurfaceSink for TxnSurface<'_, '_> {
@@ -221,6 +232,35 @@ impl FanoutSurfaceSink for TxnSurface<'_, '_> {
         self.run.pause = Some(row.clone());
         save_run(self.vault, self.txn, self.run)?;
         Ok(row.row_ref.clone())
+    }
+
+    fn persist_width_check(&mut self, check: &FanoutWidthCheck) -> Result<Option<String>> {
+        let (classification, row) = match &check.class {
+            FanoutWidthClass::AutoClear => (
+                WidthCheckClass::AutoClear {
+                    policy_ref: self.clearance.clone(),
+                },
+                None,
+            ),
+            FanoutWidthClass::Asked { row } => (
+                WidthCheckClass::Asked {
+                    row_ref: row.row_ref.clone(),
+                },
+                Some(row),
+            ),
+        };
+        self.run
+            .statement
+            .raise_width_check(u64::from(check.threshold), classification);
+        let surface_ref = row.map(|row| {
+            let mut row = (**row).clone();
+            row.statement = Some(self.run.statement.clone());
+            let row_ref = row.row_ref.clone();
+            self.run.check_row = Some(row);
+            row_ref
+        });
+        save_run(self.vault, self.txn, self.run)?;
+        Ok(surface_ref)
     }
 
     fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String> {

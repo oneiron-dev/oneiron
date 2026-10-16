@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::migrations::PackMigration;
+use super::setup::PackSetup;
 use super::{AgentPackFacets, invalid};
 use crate::error::Result;
 use crate::saved_query::PackMigrationMap;
@@ -49,9 +50,16 @@ pub struct PackManifest {
     /// Hook folders under `hooks/`, by name (ARCH-0053 §7, PACK-HOOKS = A).
     /// Install binds each one; the runner is L11's.
     pub hooks: BTreeSet<String>,
+    /// Organ folders under `organs/`, by name (ARCH-0075 §9, OF-575). Each
+    /// pins its builds by platform; the builds travel as blob assets.
+    pub organs: BTreeSet<String>,
     /// Predicate migration maps this source ships for moves from earlier
     /// sources of the pack (ARCH-0059 §4, rung 1).
     pub migrations: Vec<PackMigration>,
+    /// The accounts, connections, permissions and credential names the
+    /// pack's guided setup walks the owner through (OF-378). Declaration
+    /// only; it grants nothing.
+    pub setup: Option<PackSetup>,
 }
 
 impl PackManifest {
@@ -178,7 +186,9 @@ impl PackManifest {
                     "effects",
                     "wakes",
                     "hooks",
+                    "organs",
                     "migrations",
+                    "setup",
                 ]
                 .iter()
                 .any(|key| fields.contains_key(key))
@@ -220,11 +230,23 @@ impl PackManifest {
         for hook in &hooks {
             super::hooks::validate_hook_name(hook)?;
         }
+        let organs = list("organs")?;
+        if organs.len() > 32 {
+            return Err(invalid("too many organs"));
+        }
+        for organ in &organs {
+            super::organs::validate_organ_name(organ)?;
+        }
         let migrations = fields
             .get("migrations")
             .map(|line| super::migrations::parse(line, &name, &version, &predicates))
             .transpose()?
             .unwrap_or_default();
+        let requested_grants = list("grants")?;
+        let setup = fields
+            .get("setup")
+            .map(|value| PackSetup::parse(value, kind, &requested_grants))
+            .transpose()?;
         Ok(Self {
             name,
             description,
@@ -239,11 +261,13 @@ impl PackManifest {
             agent_facets,
             predicates,
             kinds,
-            requested_grants: list("grants")?,
+            requested_grants,
             effects,
             wake_subscriptions: list("wakes")?,
             hooks,
+            organs,
             migrations,
+            setup,
         })
     }
 }
@@ -277,8 +301,10 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "effects"
                 | "wakes"
                 | "hooks"
+                | "organs"
                 | "facets"
                 | "migrations"
+                | "setup"
         ) {
             return Err(invalid("unknown PACK.md field"));
         }

@@ -7,8 +7,40 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("report", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_memory_diary(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.diary", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_memory_diary_reads(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.diary.reads", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_memory_diary_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.diary.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("cancel", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn steer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("steer", input).map_err(facade_error)
     }
     #[napi]
     pub fn describe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
@@ -103,6 +135,32 @@ impl NativeClient {
             .into_iter()
             .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
             .collect()
+    }
+    #[napi]
+    pub fn vault_images_view(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.images.view", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_receipts_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts.get", input)
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_kv_get(&self, request_json: String) -> napi::Result<String> {
@@ -205,6 +263,292 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_weave_report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.report", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_digest(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.digest", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.propose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_activate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.activate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_deactivate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.deactivate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_default(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.default", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.replay", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_view(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.view", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_export(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.export", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_born_from(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.born_from", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_proposals(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.proposals", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_waits(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.waits", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_release_wait(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.release_wait", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_propose_deck(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.propose_deck", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_propose_output(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.propose_output", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_keep(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.keep", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_discard(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.discard", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_artifacts_undo(&self, request_json: String) -> napi::Result<String> {
+        let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
+            facade_error(oneiron::memory::MemoryError {
+                code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+                message: format!("invalid keyed request: {error}"),
+                suggestions: vec!["Use the documented keyed DTO.".to_owned()],
+                successor_short_id: None,
+                gate_denial: None,
+                read_receipt: None,
+                policy_denial: None,
+                wrong_root: None,
+            })
+        })?;
+        let output = self
+            .inner
+            .agent_verb("vault.artifacts.undo", input)
+            .map_err(facade_error)?;
+        serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
     pub fn can(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -298,6 +642,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_reply_strips(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.reply_strips", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_claim(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.claim", input)
@@ -307,6 +660,336 @@ impl NativeClient {
     pub fn vault_rooms_speak(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.speak", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_projects_goal_revisions(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.projects.goal.revisions", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_projects_goal_dismiss(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.projects.goal.dismiss", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_projects_route_tradeoff(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.projects.route_tradeoff", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_conversations_turn_continue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.continue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_conversations_turn_retry(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.retry", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_host(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.host", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_sharing(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.sharing", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_companions_sharing_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.companions.sharing.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_work_companion_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.work_companion.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_work_companion_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.work_companion.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_save(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_fork(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.fork", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_callables(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.callables", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.options", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_image(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.image", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_speech(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.speech", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_transcribe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.transcribe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_embed(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.embed", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video_poll(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video.poll", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video_cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video.cancel", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_verdict(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.verdict", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_status(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_commit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_remember(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.remember", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_retract(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.retract", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_forget(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.forget", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_delete(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.delete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_writes_pending(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.writes.pending", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_hydrate(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hydrate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_search_bm25(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.bm25", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_neighbors(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.neighbors", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_structural_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.structural.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_habits_checkin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.habits.checkin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.admit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_append(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.append", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_outbound_schedule(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.outbound.schedule", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_from_entity(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.from_entity", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_edit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.edit", input)
             .map_err(facade_error)
     }
 }

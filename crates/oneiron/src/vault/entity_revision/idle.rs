@@ -1,6 +1,6 @@
 //! Idle debounce and atomic BM25/vector/frontier publication.
 
-use super::storage::{STATE, put_state, read_entity_revision_in_txn, state, text_fields};
+use super::storage::{STATE, put_state, read_entity_revision_in_txn, revision_text_fields, state};
 use super::vector_refill::{self, REFILL};
 use super::{
     IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput,
@@ -104,7 +104,7 @@ impl Vault {
                     entity: id,
                     entity_type: raw[0],
                     source_revision_ref: current.live,
-                    fields: text_fields(&body),
+                    fields: revision_text_fields(&self.store, &txn, &id, current.live, &body)?,
                     body,
                 });
             }
@@ -203,6 +203,8 @@ impl Vault {
                 &mut txn,
                 &input.entity,
                 input.source_revision_ref,
+                input.entity_type,
+                &input.body,
             )?;
             crate::batch::delete_from_phonetic_postings(&self.store, &mut txn, &input.entity)?;
             // Publish the stamp before the batch vector door in this SAME
@@ -340,7 +342,7 @@ impl Vault {
                     entity: id,
                     entity_type: raw[0],
                     source_revision_ref: revision,
-                    fields: text_fields(&body),
+                    fields: revision_text_fields(&self.store, &txn, &id, revision, &body)?,
                     body,
                 });
             }
@@ -501,6 +503,7 @@ pub(crate) fn drop_vector_state(
     }
     crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
     crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
+    crate::embed::delete_text_media_vectors_in_txn(&vault.store, txn, id)?;
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
     {

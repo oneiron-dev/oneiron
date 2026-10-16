@@ -56,6 +56,12 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                 )])
             }),
         ),
+        (
+            Value::from("type_ref"),
+            spec.type_ref
+                .as_ref()
+                .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
+        ),
         (Value::from("created_at"), Value::from(now)),
     ])
 }
@@ -158,6 +164,8 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,
     pub(super) spec: Value,
+    /// OF-543: the one placed type stamp; always settled before the write.
+    pub(super) type_ref: crate::task_type::TaskTypeRef,
 }
 
 /// Refuses a TASK label the board cannot render: a present label must carry a
@@ -199,6 +207,19 @@ pub(super) fn validate_task_create_in(
     if let Some(label) = spec.label.as_deref() {
         check_task_label(label)?;
     }
+    // OF-543: placed once, here at the only door to a TASK write. Placement
+    // runs against the seeded vault tree until OF-541's team-shape skill
+    // carries the learned tree; unsure lands on the root.
+    let kind_for_hint = spec.kind.unwrap_or(TaskKind::Standard);
+    let mut placement_request = crate::task_type::PlacementRequest::new(spec.label.clone(), None);
+    if let Some(hint) = kind_for_hint.seed_task_type() {
+        placement_request = placement_request.with_kind_hint(hint);
+    }
+    let type_ref = crate::task_type::ensure_type_ref(
+        &crate::task_type::TaskTypeTree::seeded(),
+        spec.type_ref.as_ref(),
+        &placement_request,
+    );
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -234,6 +255,7 @@ pub(super) fn validate_task_create_in(
                 consult: Some(payload.clone()),
                 ttl: Some(*ttl),
                 spec: Value::Nil,
+                type_ref,
             })
         }
         (TaskKind::Standard, None, assignee, ttl) => {
@@ -258,6 +280,7 @@ pub(super) fn validate_task_create_in(
                 consult: None,
                 ttl: *ttl,
                 spec: spec.spec.clone(),
+                type_ref,
             })
         }
         _ => Err(MemoryError::bad_request("invalid typed task shape")),

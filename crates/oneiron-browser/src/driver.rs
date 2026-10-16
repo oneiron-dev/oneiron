@@ -82,6 +82,9 @@ impl CdpDriver {
         ] {
             driver.page(method, params)?;
         }
+        if driver.pipe.mediated() {
+            crate::cdp::enable_network(&driver.pipe, &driver.session, Instant::now() + CALL)?;
+        }
         Ok(driver)
     }
 

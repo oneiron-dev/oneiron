@@ -31,18 +31,23 @@ mod compaction;
 pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
 mod harness;
+mod local_vision;
 mod policy;
 mod status;
 mod step;
 mod step_failure;
+mod stewardship;
 mod sync_wake;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+mod turn_actions;
 mod turns;
+pub(crate) mod waves;
 mod workflows;
 
+pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
@@ -245,11 +250,11 @@ impl AiHandle {
 
     /// Tells the Dreamer's session policy what the app saw. A no-op without
     /// a running Dreamer: no session is opened that nothing would close.
-    pub fn session_hint(&self, hint: SessionHint) {
+    pub fn session_hint(&self, key: oneiron::session_lifecycle::SessionKey, hint: SessionHint) {
         let Some(hints) = &self.hints else {
             return;
         };
-        if let Err(error) = hints.push_session_hint(hint, None) {
+        if let Err(error) = hints.push_session_hint(key, hint, None) {
             tracing::warn!(?error, ?hint, "dreamer session hint dropped");
         }
     }
@@ -272,6 +277,13 @@ impl AiHandle {
         self.hints.as_ref()?;
         let (vault, handle) = (Arc::clone(vault), self.clone());
         Some(tokio::task::spawn_blocking(move || {
+            // An agent waking under a dial its owner moved notes the move in
+            // its own diary before it acts again (OF-533).
+            if let WakeTurnSubject::Agent { id, .. } = subject
+                && let Err(error) = vault.note_refusal_dial_change(id)
+            {
+                tracing::warn!(%error, agent = %id.to_hex(), "refusal dial note not written");
+            }
             // Queued or not, the turn is news to the wake policy: the pass
             // the hint takes re-reads its rows and re-arms its quiet timer.
             match vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
@@ -366,6 +378,7 @@ impl AiHost {
             models,
             server.host_root_provisioned(),
             server.run_receipts(),
+            Some(server.host_account()),
         )
         .await;
         if host.handle.hints.is_some() {
@@ -375,7 +388,9 @@ impl AiHost {
                 &server.reassert_manager,
             ));
         }
-        let server = server.with_ai(host.handle.clone());
+        let server = server
+            .with_ai(host.handle.clone())
+            .with_decision_config(models);
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
             code_mode::bind(server, &host.handle.runtime, models, &host.handle.status).await;
@@ -386,7 +401,7 @@ impl AiHost {
     /// serve. Every model call they make is admitted as a run whose receipts
     /// are written to the log.
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
-        Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts)).await
+        Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts), None).await
     }
 
     /// `start`, with the run receipts going to `receipts`.
@@ -395,12 +410,17 @@ impl AiHost {
         models: Option<&ModelsConfig>,
         host_root: bool,
         receipts: Arc<dyn RunReceiptSink>,
+        account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
         recover_dead_leases(&vault);
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
-        let runtime =
-            Arc::new(ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts));
+        let mut runtime =
+            ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts);
+        if let Some(account) = account {
+            runtime = runtime.with_host_account(account);
+        }
+        let runtime = Arc::new(runtime);
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
             handle: handle.clone(),
@@ -427,6 +447,10 @@ impl AiHost {
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
         host.handle = handle;
+        turn_actions::spawn(&vault, &host.handle);
+        if host.dreamer.is_some() {
+            resume_on_recovery(&vault, &runtime);
+        }
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn. It
         // settles before start returns, so it reads only those turns: one
@@ -575,6 +599,66 @@ fn recover_dead_leases(vault: &Vault) {
     }
 }
 
+/// After each stable recovery of a provider that was down (OF-305), the
+/// attempts this server's Dreamer parked on an executor error are requeued,
+/// as a restart requeues them: the outage that failed their step is over.
+/// One parked on a signal (a budget or consent trap, a wait) or by a hard
+/// cut is not this resume's. The task holds the vault weakly and ends with
+/// the runtime.
+fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
+    let vault = Arc::downgrade(vault);
+    let mut recoveries = runtime.recoveries();
+    tokio::spawn(async move {
+        while recoveries.changed().await.is_ok() {
+            let Some(vault) = vault.upgrade() else {
+                return;
+            };
+            let resumed = tokio::task::spawn_blocking(move || resume_outage_parks(&vault)).await;
+            if let Err(error) = resumed {
+                tracing::warn!(panicked = error.is_panic(), "recovery resume did not finish");
+            }
+        }
+    });
+}
+
+/// Requeues every attempt this server's Dreamer parked on an executor error.
+fn resume_outage_parks(vault: &Vault) {
+    let rows = match AttemptQueue::new(vault).list() {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "recovery resume could not list attempts");
+            return;
+        }
+    };
+    let runner = DreamerRunnerStore::new(vault);
+    let mut resumed = 0usize;
+    for row in rows
+        .iter()
+        .filter(|row| matches!(row.state, AttemptState::Leased))
+    {
+        let Ok(Some(park)) = runner.parked_attempt(row.id) else {
+            continue;
+        };
+        if park.park_owner != dreamer::LEASE_OWNER
+            || !park
+                .reason
+                .starts_with(oneiron::DREAMER_EXECUTOR_ERROR_PARK_REASON)
+        {
+            continue;
+        }
+        match runner.resume_parked(row.id, &park.park_owner, unix_now()) {
+            Ok(Some(_)) => resumed += 1,
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, attempt = ?row.id, "an outage park was not resumed");
+            }
+        }
+    }
+    if resumed > 0 {
+        tracing::info!(resumed, "a provider recovered; attempts its outage parked resume");
+    }
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -651,6 +735,7 @@ async fn start_dreamer(
         egress,
         status: Arc::clone(status),
         idle,
+        windows: dreamer::dream_windows(models),
     })
     .await
     .map_err(|error| {
@@ -688,6 +773,11 @@ fn start_workflows(
 }
 
 impl AiHandle {
+    /// The model seats this host built: inert ones when `[models]` is unset.
+    pub(crate) fn models(&self) -> &Arc<ModelRuntime> {
+        &self.runtime
+    }
+
     /// The router the raw `/v1/llm` routes call, with its own meter.
     pub(crate) fn decision_read(&self) -> Option<crate::models::DecisionReadDoor> {
         self.runtime.decision_read().cloned()
@@ -703,6 +793,7 @@ impl AiHandle {
                 units,
                 oneiron::BudgetExhaustionPolicy::Suspend,
             ),
+            self.runtime.host_account(),
         ))
     }
 }

@@ -62,6 +62,30 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which quoted team shape should this spawn run (pattern at a width)?
+/// Keyed by task type. The options are the planner's own ranked shape
+/// tokens, so an answer can only re-rank what the floor already quoted.
+pub const PLANNER_SHAPE: QuestionFamily = QuestionFamily {
+    name: "planner.shape",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// What conversational signal does a received reaction carry? Host wording;
+/// the fixed labels are ack, agree, disagree, affect and none.
+pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
+    name: "conversation.reaction.meaning",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Replay scores, independent judge audits, blind preferences and skill tradeoffs.
+pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
+    name: "skill_optimize.judgment",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which label one changed hunk of an attribution takes (one region for an outcome with no
 /// edit). Keyed by lane and hunk position.
 pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
@@ -101,14 +125,146 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// A caller's own question through the host's ladder (`ai.verdict`): yes or
+/// no, or one of its labels. The wording is the caller's; keyed by the
+/// answer contract, so a changed label set is a new question.
+pub const AI_VERDICT: QuestionFamily = QuestionFamily {
+    name: "ai.verdict",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// The paired yes/no question every decision read asks beside the labels: does this need
+/// more thinking? Keyed by its wording alone.
+pub const THINK_MORE: QuestionFamily = QuestionFamily {
+    name: "decision.think_more",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// The host's person question, asked beside the call's questions when the dial reaches the
+/// person: ask up to the next authorised role? Keyed by its wording alone.
+pub const ASK_UP: QuestionFamily = QuestionFamily {
+    name: "decision.ask_up",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Does this candidate violate one owner-authored policy row? Keyed by the
+/// document hash, row reference and action; wording comes from the row.
+pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {
+    name: "policy_model.owner_row",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does this candidate violate one attested hosted-legal policy row? Never
+/// assembled on a local/BYO path. Keyed as the owner question is.
+pub const POLICY_HOSTED_ROW: QuestionFamily = QuestionFamily {
+    name: "policy_model.hosted_row",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How should this parked contradiction settle (keep one member, hold both, dismiss or
+/// escalate)? Keyed by the contested predicates.
+pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_settle",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Is everything okay past a wire, limit or scan threshold: a bot, or a valid burst
+/// (OF-520)? Keyed by the crossing.
+pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
+    name: "server.wire_health",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Which capability setting one connector grant-slate row drafts (auto, always ask or
+/// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
+pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
+    name: "connector.grant_slate.draft",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How a conflicting claim set the Dreamer extracted resolves (merge, supersede, accumulate
+/// or escalate), and which listed candidate's identity a merge keeps. Keyed by `resolution`,
+/// or by `identity` and the option group.
+pub const CONFLICT_RESOLUTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_resolution",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Which listed claim, if any, a candidate the Dreamer extracted corrects. Keyed by the
+/// candidate's position and the option group.
+pub const CORRECTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.correction",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does this candidate belong to the saved query its owner's rubric describes? Keyed by the
+/// rubric's hash and version.
+pub const SAVED_QUERY_MATCH: QuestionFamily = QuestionFamily {
+    name: "saved_query.match",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does the owner policy's safeguard model find a violation (binary contract), or which
+/// policy row the candidate violates, if any (category contracts)? Keyed by the document
+/// hash, the contract and the option group.
+pub const POLICY_OWNER_VIOLATION: QuestionFamily = QuestionFamily {
+    name: "policy_model.owner_violation",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// The owner question for an attested hosted-legal policy. Keyed as the owner question is,
+/// with the policy version.
+pub const POLICY_HOSTED_VIOLATION: QuestionFamily = QuestionFamily {
+    name: "policy_model.hosted_violation",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Is this booking turn off topic for scheduling (the turn ends with a deflect)? Keyed by
+/// the constraint schema version.
+pub const BOOKING_OFF_TOPIC: QuestionFamily = QuestionFamily {
+    name: "booking.off_topic",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
     CRITIC_REVIEW,
     FANOUT_ASK,
+    PLANNER_SHAPE,
+    REACTION_MEANING,
+    SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
     CAMPAIGN_TASTE,
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    AI_VERDICT,
+    THINK_MORE,
+    ASK_UP,
+    POLICY_OWNER_ROW,
+    POLICY_HOSTED_ROW,
+    CONFLICT_SETTLE,
+    WIRE_HEALTH,
+    CONNECTOR_SLATE_DRAFT,
+    CONFLICT_RESOLUTION,
+    CORRECTION,
+    SAVED_QUERY_MATCH,
+    POLICY_OWNER_VIOLATION,
+    POLICY_HOSTED_VIOLATION,
+    BOOKING_OFF_TOPIC,
 ];

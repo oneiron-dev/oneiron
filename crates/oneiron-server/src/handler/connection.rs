@@ -8,6 +8,7 @@ use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes, WebSocket, 
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
+use oneiron::sync::documents::document_frame_withheld_for;
 use tokio::time::Duration;
 
 use super::app_tier::{
@@ -268,8 +269,11 @@ async fn handle_connection(
                 match broadcast_result {
                     Ok(Some(data)) => {
                         if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
-                            let Some(frame) = app_connection.release(conn_state.locality, &data)
-                            else {
+                            let Some(frame) = app_connection.release_for(
+                                conn_state.locality,
+                                conn_state.peer_machine(server.vault()),
+                                &data,
+                            ) else {
                                 continue;
                             };
                             let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {
@@ -334,6 +338,7 @@ async fn handle_connection(
                                     if super::window_sync::authorize_promoted_window(
                                         &server,
                                         auth,
+                                        conn_state.peer_machine(server.vault()),
                                         &key,
                                         selector,
                                         &window.doc,
@@ -397,7 +402,11 @@ async fn handle_connection(
                 if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
                     #[cfg(test)]
                     crate::livequery::release_hook::run(&server);
-                    let Some(frame) = app_connection.release(conn_state.locality, &data) else {
+                    let Some(frame) = app_connection.release_for(
+                        conn_state.locality,
+                        conn_state.peer_machine(server.vault()),
+                        &data,
+                    ) else {
                         continue;
                     };
                     data = frame;
@@ -461,8 +470,15 @@ async fn handle_connection(
                         _ => break,
                     }
                 }
-                if window_update_withheld(&server, &data)
-                    || oneiron::sync::documents::document_frame_withheld(server.vault(), &data)
+                let peer = conn_state.peer_machine(server.vault());
+                let ledger_withheld =
+                    if conn_state.window_sync_mode == super::conn_state::WindowSyncMode::Selector {
+                        super::federation::selector_update_withheld(&server, &data, peer)
+                    } else {
+                        window_update_withheld(&server, peer, &data)
+                    };
+                if ledger_withheld
+                    || document_frame_withheld_for(server.vault(), peer, &data)
                     || (data.first() == Some(&oneiron::sync::transport::TAG_LFS_CHUNK_SYNC)
                         && super::lfs_chunks::chunk_reply_withheld(&server, &mut conn_state))
                 {
@@ -740,8 +756,28 @@ fn window_delivery(
     state: &super::conn_state::ConnState,
     frame: Vec<u8>,
 ) -> Option<Vec<u8>> {
+    // A sealed packet forwards only where its world may be read or a sealed
+    // copy may rest, judged for this socket's proved destination (OF-292).
+    // It is never turned into a WINDOW_INVALIDATE.
+    if let Some(world) = sealed_update_world(&frame) {
+        if !window_broadcast_allowed(protocol_version, state, &frame) {
+            return None;
+        }
+        let world = world?;
+        let vault = server.vault();
+        let destination = state.destination(vault);
+        let may = vault
+            .sealed_copy_may_rest_on(world, destination)
+            .unwrap_or(false)
+            || vault
+                .authority_fold()
+                .map(|fold| fold.world_readable_on(world, destination))
+                .unwrap_or(false);
+        return may.then_some(frame);
+    }
     if window_broadcast_allowed(protocol_version, state, &frame) {
-        return (!window_update_withheld(server, &frame)).then_some(frame);
+        let peer = state.peer_machine(server.vault());
+        return (!window_update_withheld(server, peer, &frame)).then_some(frame);
     }
     if !protocol::takes_window_invalidations(protocol_version) {
         return None;
@@ -750,7 +786,9 @@ fn window_delivery(
         .get(1..)
         .and_then(|payload| protocol::decode_window_sync(payload).ok())?;
     let window = oneiron::sync::WindowKey::try_new(key)?;
-    if !state.invalidates_window(&window) || window_update_withheld(server, &frame) {
+    if !state.invalidates_window(&window)
+        || window_update_withheld(server, state.peer_machine(server.vault()), &frame)
+    {
         return None;
     }
     protocol::encode_window_sync(key, protocol::window_sub_tags::WINDOW_INVALIDATE, &[])
@@ -758,10 +796,31 @@ fn window_delivery(
         .ok()
 }
 
+/// The world of a `SEALED_UPDATE` frame's window (`None` inside for a base
+/// window), or `None` when `frame` is not one.
+fn sealed_update_world(frame: &[u8]) -> Option<Option<oneiron::EntityId>> {
+    if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
+        return None;
+    }
+    let (key, sub_tag, _) = protocol::decode_window_sync(frame.get(1..)?).ok()?;
+    if sub_tag != protocol::window_sub_tags::SEALED_UPDATE {
+        return None;
+    }
+    match oneiron::sync::WindowKey::try_new(key) {
+        Some(window) => Some(window.world()),
+        None => Some(None),
+    }
+}
+
 /// Whether `frame` is a window UPDATE or REPLACEMENT this server now
-/// withholds as device-only. Read at the socket, since the flag may turn
-/// after the frame was queued for this connection.
-fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
+/// withholds from the machine `peer` proved on this socket, by that
+/// machine's own world read settings (OF-534 G6). Read at the socket, since
+/// the flag may turn after the frame was queued for this connection.
+fn window_update_withheld(
+    server: &SyncServer,
+    peer: oneiron::authority::PeerMachine,
+    frame: &[u8],
+) -> bool {
     if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
         return false;
     }
@@ -772,7 +831,12 @@ fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
             matches!(
                 sub_tag,
                 protocol::window_sub_tags::UPDATE | protocol::window_sub_tags::REPLACEMENT
-            ) && crate::server::withheld_from_peers(&server.reassert_manager, key, update)
+            ) && oneiron::sync::window::raw_update_verdict_for(
+                &server.reassert_manager,
+                key,
+                update,
+                peer,
+            ) != oneiron::sync::window::UpdateVerdict::Portable
         })
 }
 

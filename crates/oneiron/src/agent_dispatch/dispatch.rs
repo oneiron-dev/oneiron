@@ -33,6 +33,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.depth_remaining,
         &spawn.project_ref,
         &spawn.scope,
+        &spawn.type_ref,
         &spawn.budget,
         &spawn.spend,
     ))
@@ -92,6 +93,22 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
+        self.dispatch_with_task_context(input, spawn, None)
+    }
+
+    /// Shared admission for plain spawns and a leader realizing an existing
+    /// promise. Only the latter may attach a TASK backlink; neither mints one.
+    pub(super) fn dispatch_with_task_context(
+        &self,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+        leader_task: Option<EntityId>,
+    ) -> Result<AgentDispatchOutcome> {
+        if leader_task.is_some() && matches!(input.target, AgentDispatchTarget::Workflow(_)) {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a project leader is an agent, not a workflow",
+            )));
+        }
         if matches!(input.target, AgentDispatchTarget::Workflow(_)) {
             return self.dispatch_workflow(input, spawn);
         }
@@ -104,6 +121,9 @@ impl<'a> AgentDispatcher<'a> {
             ..spawn
         };
         if let Some(existing) = self.existing_dispatch_for_retry(&input, &spawn)? {
+            if let Some(task) = leader_task {
+                Self::require_leader_task_binding(&existing, task)?;
+            }
             return Ok(existing);
         }
         // Zero rejects HERE, before the descriptor is resolved, before any fork
@@ -129,7 +149,13 @@ impl<'a> AgentDispatcher<'a> {
         )?;
 
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let outcome = self.dispatch_in_txn(&mut wtxn, None, input, spawn)?;
+        if let Some(task) = leader_task {
+            self.validate_leader_task_in_txn(&wtxn, task, &input, &spawn)?;
+        }
+        let outcome = self.dispatch_in_txn(&mut wtxn, leader_task, input, spawn)?;
+        if let Some(task) = leader_task {
+            Self::require_leader_task_binding(&outcome, task)?;
+        }
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(outcome)
@@ -206,6 +232,8 @@ impl<'a> AgentDispatcher<'a> {
         let requested_ref = input.target.agent_definition_ref()?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
+        let origin =
+            self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
         let mut dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
         // OF-532: state the launch (count, expected spend, cap) in this
         // transaction and freeze it into the payload; the scope is reserved
@@ -219,7 +247,10 @@ impl<'a> AgentDispatcher<'a> {
             input.now,
         )?;
         dispatch_input.launch = Some(launch.statement.clone());
-        let encoded = encode_agent_dispatch_input(&dispatch_input)?;
+        let encoded = super::origin::with_origin_conversation(
+            encode_agent_dispatch_input(&dispatch_input)?,
+            origin,
+        );
         let outcome = self.runner.enqueue_with_task_ref_in_txn(
             wtxn,
             EnqueueDreamerAttempt {
@@ -275,6 +306,19 @@ impl<'a> AgentDispatcher<'a> {
                         input.now,
                     ),
                 )?;
+                // OF-368: a TASK a comment's assignment made waits while that
+                // comment is unattached. Its attempt is minted paused for the
+                // hold, never dropped; a reattach resumes it.
+                if let Some(task) = task_ref
+                    && let Some(hold) = self.vault.annotation_task_hold_in_txn(wtxn, &task)?
+                {
+                    status.attempt = AttemptQueue::new(self.vault).hold_for_annotation_in_txn(
+                        wtxn,
+                        status.attempt.id,
+                        hold,
+                        input.now,
+                    )?;
+                }
                 AgentDispatchOutcome::Dispatched(status)
             }
             EnqueueDreamerAttemptOutcome::Existing(status) => {
@@ -378,6 +422,19 @@ impl<'a> AgentDispatcher<'a> {
             }
         };
 
+        // OF-543: placed once, here at spawn. A spawner-supplied stamp is
+        // kept (an empty node is refused); absence is the unsure placement
+        // and lands on the root — never an untyped spawn.
+        let type_ref = match spawn.type_ref {
+            Some(type_ref) if type_ref.node_id.is_empty() => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "task_type_ref node_id must not be empty",
+                )));
+            }
+            Some(type_ref) => type_ref,
+            None => crate::task_type::TaskTypeRef::seeded_root(),
+        };
+
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
@@ -391,6 +448,7 @@ impl<'a> AgentDispatcher<'a> {
             project_ref: Some(project_ref),
             spawn_intent: Some(spawn_intent),
             scope,
+            type_ref,
             budget: spawn.budget,
             launch: None,
         })

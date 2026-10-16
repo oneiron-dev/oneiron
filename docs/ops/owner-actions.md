@@ -58,9 +58,12 @@ other's files. Each backup takes the next sequence number, and retention keeps t
 numbers, so a clock that steps back never makes a new backup look oldest, and the backup just
 taken is never the one pruned. A backup named before sequences (no `<sequence>` field) lists as
 older than every numbered one. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
-is written under a hidden partial name and renamed into place only once complete. Backups are
-not encrypted yet and include device key material, so keep `--dir` on a local disk, not a synced
-or cloud folder (see *Limits*).
+is written under a hidden partial name and renamed into place only once complete. Each backup
+is sealed: the records and the result bodies they name are one file of encrypted chunks under a
+key derived from the vault's data key, and a restore checks the whole file before it makes
+anything. The first backup mints that data key, wrapped to this device's keystore, when the vault
+has none; a rehearsal or a restore on this device unlocks it from that wrap (see *Limits*). The
+install that takes a backup signs it, and a restore checks that signature first.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -273,15 +276,55 @@ the repair for a vault refused after an analyzer or dictionary change. A running
 ## Export
 
 ```sh
-oneiron export --format md --out vault.md      # toon (default), md, json, yaml or txt
-oneiron export --format json > vault.json      # stdout when --out is omitted
+oneiron export --out vault.zip                 # the whole-vault archive (format `archive`)
+oneiron export > vault.zip                     # stdout when --out is omitted
 ```
 
-On a running server, `POST /v1/core/facade/vault.export` with `{"format": "md"}` and an owner
-credential. Each export tries to write a receipt (time, format, bytes, digest, who), and
-`doctor` shows the latest one recorded. The receipt is best effort: if it cannot be written the
-export still succeeds, a warning is logged, and `last_export` stays as it was. An export is a
-readable archive of your knowledge. It is not a backup: restore from a backup file.
+The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per record kind under
+`records/` (`records/entity/<kind>.jsonl` per entity type, then `edge`, `pack`, `agent_pack`,
+`derivation_envelope`, `run` and `result_body`), and each attached file once under
+`files/<blake3>` (skill and pack source files, code-run result bodies). The manifest lists every
+record file and attached file with its length and BLAKE3, and an import refuses an archive whose
+members disagree with it. It is plaintext and re-imports into a fresh vault
+(`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
+Credentials inside records are nulled by the serializer. Result bodies go through the release
+scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
+and credential-bearing bodies are withheld and named in `result_body.jsonl`.
+
+Your own archive also carries your keys, by default: each active secret-custody record's value,
+in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
+the archive as safe as the keys in it. To leave the values out, export with
+`--include-secrets false` (`{"include_secrets": false}` on `vault.export`): each custody record
+then goes as its handle and value-less metadata, the manifest says `secrets_included: false`, and
+a re-import lists those as `missing_secrets` to re-enter. A caller off this device gets values
+only for portable records (device-bound ones go as handles); suspended records always go as
+handles; an export-first removal's archive, like any export to a contact or share, carries no
+custody record.
+
+`oneiron export --format okf --out vault-okf.zip` is "Export to OKF": the vault as an Open
+Knowledge Format v0.1 bundle (Google's markdown-plus-YAML-frontmatter format) for importing into
+other tools. Each entity is one concept at `<kind>/<id>.md` with `type`, `title`, `description`
+and `timestamp` frontmatter; graph edges are markdown links; claim evidence is a `# Citations`
+list; `index.md` files list each folder. It is lossy by design and says so in its root
+`index.md` and in every file's `oneiron_copy: "lossy"`: it drops bi-temporal validity,
+confidence, approval and lifecycle, typed edge values, run results, source packages and every
+custody secret, and it does not re-import as a vault. The archive is the full copy.
+
+A diary is exported as a read of it (OF-490), through the diary door with the reason `export`:
+only the entries the exporter's `diary.read` Grant covers (`POST /v1/owner/diary/grants`) are
+read. Each agent's read is logged in its own read log, where it sees it, and on the export
+receipt. An agent that reviews each read first (on for Eiri) gets a pending review and its
+entries stay out until it says yes; one yes admits one export. Every held entry is named in the
+manifest's `diary_holds` (`not_covered_by_grant`, `agent_review_pending`, `declined`, or
+`read_log_unavailable` when the read log could not be written). An export-first removal reads as
+the removed owner, under their own Grants.
+
+On a running server, `POST /v1/core/facade/vault.export` with `{}` (or `{"format": "archive"}`)
+and an owner credential; the reply's `archive` is the ZIP in standard base64. Each export tries to
+write a receipt (time, format, bytes, digest, who, diary reads), and `doctor` shows the latest one
+recorded. The receipt is best effort: if it cannot be written the export still succeeds, a warning
+is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
+from a backup file, the vault's encrypted snapshot.
 
 ## Secret scan switch
 
@@ -314,6 +357,41 @@ moved since is refused. One is also refused while the repository has a push or p
 in flight; retry once it drains. After the cutover, a push here runs under this host's lease when
 it is the writer. Otherwise the push gets 403 naming the epoch: at a mirror (`"mirror": true`),
 or when another host writes the repository. Reads still serve. Only a live owner can cut over.
+
+## Mirror a served repository outward
+
+The repository's origin pushes its published refs to one https mirror (GitHub, GitLab, a Gitea)
+on a cadence you set. **That cadence is the repository's real RPO**: a promoted replica or the
+mirror holds what the last push carried, and nothing newer. Put the mirror's push token into
+custody first, bound to `origin:mirror-push`, then name the mirror:
+
+```sh
+oneiron api raw POST /v1/owner/secrets/register --data '{"name": "demo-mirror-token",
+  "class": "custody-portable", "rung": 0,
+  "bindings": [{"effector": "origin:mirror-push", "scopes": ["read"]}],
+  "value_base64": "<base64 of the token>"}'
+oneiron api raw POST /v1/owner/origin-mirror --data '{"repo": "demo",
+  "url": "https://github.com/you/demo.git", "secret_ref": "demo-mirror-token",
+  "every_secs": 900}'
+oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target and its last push
+oneiron api raw POST /v1/owner/origin-mirror/push --data '{"repo": "demo"}'   # push now
+oneiron api raw DELETE '/v1/owner/origin-mirror?repo=demo' # stop; the mirror keeps what it has
+```
+
+The token goes to git as a basic-auth header with the user `x-access-token` (GitHub's; pass
+`"user": "oauth2"` for GitLab). It is handed to the one push inside the custody door, never
+written to git config or disk. Every push is forced and carries only refs this vault published,
+never keep-refs or anything a push has not landed; a ref you delete here is deleted at the mirror
+on the next push. `every_secs` is at least 60. Only the host that is the repository's origin
+pushes: a host holding a mirror copy, or another host's epoch, does not. A failed push is
+recorded on the target (`last.failure`) and tried again next cadence. Git LFS objects are not
+pushed.
+
+The mirror's `main` is read-only. Work done on the mirror side comes back in through this
+vault's door: push it here as `refs/imported/<source>/<branch>` (for example
+`git push origin HEAD:refs/imported/github/fix-typo`), where the change index stamps it as a
+mirror import. Merge it here; the next mirror push carries the merge out. Imported refs are never
+pushed back to the mirror.
 
 ## Approve an import in one act
 
@@ -371,6 +449,26 @@ since, the action is refused (409) and you review again. Approve lands every pro
 every one as rejected. Either way one receipt represents the run. Routes: `GET
 /v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…` (or `?run_ref=…`), `POST /v1/owner/runs/approve` or
 `/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
+
+## Settle an open contradiction
+
+When two claims disagree and nothing settled them, the vault keeps a `conflict.open` marker
+beside both, and both stay active. An observed want next to a stated one is held this way:
+the observed one never outranks what you said. The marker stays open until you answer it.
+
+- `GET /v1/owner/conflicts` (optionally `?subject=<32 hex>&limit=<n>`): every unanswered
+  marker, oldest first, with its contested predicates and each member's value, source,
+  approval and lifecycle.
+- `POST /v1/owner/conflicts/settle` with `{"marker": "…", "settlement": "keep", "keep": "…"}`
+  keeps that member and supersedes every other live member with it. `"hold_both"` leaves every
+  member active, and `"dismiss"` says the marker named no real contradiction; neither takes a
+  `keep`. A generated claim still never supersedes what you stated.
+
+Each answer writes a `conflict.resolved` claim naming the marker, plus one receipt. The marker
+itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
+may settle that subject's conflicts too, but an agent never closes a claim you stated. The
+Dreamer asks its decision ladder only about conflicts its own delegation covers. Anything it
+can't settle stays here for you.
 
 ## Review cleanup
 
@@ -565,6 +663,36 @@ The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inb
 &limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
 carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
 
+## Answer the decision ladder's asks
+
+When a typed decision climbs past every model rung (the dial reaches the
+owner, the read says "ask up?", or the clock cut an irreversible step), the
+server's decision ladder queues it for you (run-with-models.md, section 12).
+The ask waits in the vault, through restarts, until you answer.
+
+`GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=true` lists them
+oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
+- its arrival number `seq`;
+- the question (its text and the answers its contract takes);
+- the principal it is for, and the evidence ids;
+- why it was asked;
+- the answer the ladder held, if any, and the model that read it;
+- your answer, once given.
+`open=true` keeps only the unanswered asks.
+
+Answer one with `POST /v1/owner/decisions/asks/answer`:
+
+```json
+{"seq": 3, "answer": {"kind": "choice", "value": "allow"}}
+```
+
+`kind` is `noul` (`value` true or false), `choice` (one of the question's
+options) or `score` (a number in its range). An abstention is not an answer.
+The decision waiting on the ask gets your answer. When your answer differs
+from the ladder's, the case is kept for the Coach, which tunes when the
+ladder asks you. Sending the same answer again changes nothing. A different
+answer to an answered ask is refused.
+
 ## Saved queries after a pack update
 
 When a new source of an installed pack is activated, the saved queries that read a predicate it
@@ -575,6 +703,22 @@ the query with its error. A map names a move between two versions, so a source c
 same version applies none, and no rewrite lands on a predicate the update drops.
 `GET /v1/owner/pack-drift` lists what the ladder did, query by query;
 a paused query shows its error on the query itself.
+
+## A forked root handoff
+
+When a key a held root handoff retired signs another row, the vault refuses the row and saves a
+fork alarm: the retired key (`suite:hex`), the refused row's hash, the handoffs the key signed,
+and when it was raised. The alarm stays until you acknowledge it. Acknowledging keeps it saved
+with that refused row marked seen, and only a refused row you have not seen raises it again.
+
+```sh
+oneiron handoff-alarms list                     # every saved alarm, open or acknowledged
+oneiron handoff-alarms acknowledge SUITE:HEX    # you have seen this key's alarm
+```
+
+Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
+`POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
+signer is 404, and acknowledging an acknowledged alarm changes nothing.
 
 ## The model catalog
 
@@ -633,6 +777,9 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
-- Backups are not encrypted yet, and they include device key material. Keep `--dir` (and
-  `[backup] dir`) on a local disk, not a synced or cloud folder. Encryption comes with the vault
-  cipher work.
+- Backups open only on the device that took them for now: the CLI unlocks the backup's key with
+  this device's keystore (the `[keystore]` settings), and takes no password, passkey or escrow
+  secret yet. A server with `[keystore] backend = "off"` cannot take a backup.
+- A backup is signed (Ed25519 and SLH-DSA) by the install that took it, and chained to the one
+  before it. A restore refuses a signer it does not trust: the CLI trusts only the signers this
+  device's keystore holds, so a backup another machine signed does not restore here yet.

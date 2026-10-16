@@ -428,6 +428,8 @@ pub enum BrowserError {
     Unavailable(String),
     #[error("the browser guest is gone")]
     GuestLost,
+    #[error("the browser sandbox was abandoned after its bridge reconnect window")]
+    Abandoned,
     #[error("no element has ref {0} now; observe again")]
     StaleRef(String),
     #[error("element {0} is covered by another element")]
@@ -585,6 +587,7 @@ impl BrowserError {
             Self::Input(_) => "browser_input_invalid",
             Self::Unavailable(_) => "browser_unavailable",
             Self::GuestLost => "browser_guest_lost",
+            Self::Abandoned => "browser_guest_abandoned",
             Self::StaleRef(_) => "browser_stale_ref",
             Self::Covered(_) => "browser_covered",
             Self::NoOption(_) => "browser_no_option",

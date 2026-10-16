@@ -49,6 +49,12 @@ fn route_selector_refusal(key: &str) -> Response {
         .into_response()
 }
 fn failure(error: LlmError) -> Response {
+    let (status, body) = failure_body(error);
+    (status, Json(body)).into_response()
+}
+/// A failed call's status and typed body, `{"error": {"code", "llm"}}`: the
+/// refusal before a stream starts, and a stream's last line once it has.
+fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
     use oneiron::{FatalLlmError, RetryableLlmError};
     let (status, code) = match &error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
@@ -60,6 +66,12 @@ fn failure(error: LlmError) -> Response {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
         }
         LlmError::Retryable(RetryableLlmError::Timeout) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
+        // A spent usage window or spent prepaid credit (OF-305): `llm`
+        // carries the window's reset or the credit park, and `quota` points
+        // at the owner's durable question.
+        LlmError::Retryable(RetryableLlmError::QuotaSpent { .. }) => {
+            (StatusCode::TOO_MANY_REQUESTS, "quota_spent")
+        }
         // A privacy hold, not a rate refusal: no offer the call may use on
         // this device answered.
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
@@ -67,11 +79,14 @@ fn failure(error: LlmError) -> Response {
         }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
-    (
-        status,
-        Json(serde_json::json!({"error":{"code":code,"llm":error}})),
-    )
-        .into_response()
+    let mut body = serde_json::json!({"error":{"code":code,"llm":error}});
+    if code == "quota_spent" {
+        body["error"]["quota"] = serde_json::json!({
+            "questions": "GET /v1/ai/status",
+            "answer": "POST /v1/ai/quota/{question}",
+        });
+    }
+    (status, body)
 }
 async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Response {
     if !auth.is_owner_grade() {
@@ -183,12 +198,15 @@ async fn generate(
         Err(e) => failure(e),
     }
 }
+/// A stream's last line when it fails once started: the same typed body a
+/// refusal before the stream gets, so credit spent mid-stream closes it
+/// with `quota_spent` and its question's pointer, not a bare cut.
 async fn send_error(
     send: &tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
     error: LlmError,
 ) {
-    let mut bytes = serde_json::to_vec(&serde_json::json!({"error":{"llm":error}}))
-        .expect("LLM error serializes");
+    let (_, body) = failure_body(error);
+    let mut bytes = serde_json::to_vec(&body).expect("LLM error serializes");
     bytes.push(b'\n');
     let _ = send.send(Ok(bytes)).await;
 }

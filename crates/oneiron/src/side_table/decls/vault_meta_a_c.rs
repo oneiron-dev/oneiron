@@ -13,6 +13,8 @@ side_tables! {
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
     /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
     AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
+    /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
+    AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
@@ -53,6 +55,13 @@ side_tables! {
     /// Legacy pre-1890 per-vault system-agent enable toggle (single byte 0x00/0x01), consumed once
     /// and deleted by the manifest seeder. Key: string.
     AGENT_DEF_SYSTEM_TOGGLE_LEGACY: VaultMeta b"agent_def:system_toggle:v1:" Raw;
+    /// The anchor a thread held before one re-anchor sweep moved it onto a version, so a restore
+    /// of that earlier version reattaches it by exact stored identity. Key: id16 (artifact) +
+    /// id16 (thread) + u64be (the version it moved to).
+    ANNOTATION_PRIOR_ANCHOR: VaultMeta b"anchored_annotation:prior:v1:" Named;
+    /// A detached comment's snapshot of the text it was anchored on, for the Unattached list and
+    /// the exact-words reattach offer. Key: id16 (artifact) + id16 (thread).
+    ANNOTATION_UNATTACHED: VaultMeta b"anchored_annotation:unattached:v1:" Named;
     /// Channel pointer (published/preview) naming the fork hash a codebase artifact currently serves.
     /// Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
@@ -61,6 +70,8 @@ side_tables! {
     /// Empty marker: this channel pointer changed and its publication has not reached the sync
     /// server yet. Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
+    /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
@@ -81,6 +92,28 @@ side_tables! {
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
+    /// One claim-authoring campaign (OF-366): its strategy skill pin, fixed config, strategy pin
+    /// and BEAM promotion receipt. Key: id16 (root attempt).
+    AUTORESEARCH_AUTHORING: VaultMeta b"autoresearch:authoring:v1:" Named;
+    /// One finalized claim-authoring tournament run: winner, landed approval, team receipt ref,
+    /// terminal receipt ref and settled outcome. Key: id16 (root attempt) + id16 (run attempt).
+    AUTORESEARCH_AUTHORING_RUN: VaultMeta b"autoresearch:authoring_run:v1:" Named;
+    /// One autoresearch candidate's held-out basis, its one sealed confirmation (consumed before
+    /// the cohort is released) and its promotion receipt. Key: id16 (root attempt) + id16
+    /// (candidate attempt).
+    AUTORESEARCH_BASIS: VaultMeta b"autoresearch:basis:v1:" Named;
+    /// One bound autoresearch campaign: its ruler, goal pin, policy digest, cohort and budget
+    /// share, written once. Key: id16 (root attempt).
+    AUTORESEARCH_BINDING: VaultMeta b"autoresearch:binding:v1:" Named;
+    /// One autoresearch experiment node annotating an existing attempt: lineage, candidate pin,
+    /// search and held-out evidence, buggy, weave and prune receipts. Key: id16 (root attempt) +
+    /// id16 (node attempt).
+    AUTORESEARCH_NODE: VaultMeta b"autoresearch:node:v1:" Named;
+    /// One RSI reservation an autoresearch campaign holds or held. Key: id16 (root attempt) +
+    /// id16 (reservation id).
+    AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
+    /// One autoresearch selection round's receipt. Key: id16 (root attempt) + u64be (round).
+    AUTORESEARCH_ROUND: VaultMeta b"autoresearch:round:v1:" Named;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
     /// Born-from projection: one row per version whose made_by names a trigger (task or ask) or
@@ -178,6 +211,9 @@ side_tables! {
     /// EVENT entity awaiting calendar-origin claim reconciliation after entity/claim/edge replay
     /// settled. Key: id16 (EVENT entity id).
     SYNC_CALENDAR_ORIGIN_PENDING: VaultMeta b"calendar_origin_pending:v1:" Raw;
+    /// One wire call's lasting receipt (OF-538): who called on which credential, which verb, how
+    /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
+    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
     /// Durable UTF-8 activation notice for one compliance-pack version, one row per version. Key:
@@ -213,6 +249,9 @@ side_tables! {
     CHECKOUT_SETTLEMENT: VaultMeta b"checkout:settlement:v1:" Raw;
     /// Retired checkout epoch high-water mark. Key: hex32.
     CHECKOUT_TOMBSTONE: VaultMeta b"checkout:tombstone:v1:" Raw;
+    /// The vault's last sealed checkpoint: its sequence and signed commitment's
+    /// BLAKE3, which the next one names as predecessor (OF-570 (e)). Key: ().
+    CHECKPOINT_CHAIN_HEAD: VaultMeta b"checkpoint_chain:head:v1" Named;
     /// Two-slot channel assignment index: occupant id16 then predecessor id16, all-zero for an
     /// empty slot. Key: bytes32 (blake3 of the length-framed channel and address).
     CHANNEL_IDENTITY_ASSIGNMENT: VaultMeta b"cid_assign:v1:" Raw;
@@ -255,6 +294,9 @@ side_tables! {
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
+    /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
+    /// rung per reminder window. Key: id16 of the ask's proposal.
+    COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;
     /// Immutable tested snapshot of a code document at one exact operation frontier (document id + op
     /// fold hash). Key: hash32 + hash32.
     CODE_DOCUMENT_FRONTIER: VaultMeta b"code_document:frontier:v1:" Named;
@@ -301,6 +343,9 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// Node-local fold ledger of one executor run: its marks, compact ask, folds and unfold
+    /// appends (JSON). Key: id16(run).
+    CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw;
     /// The secret scan's hit in one raw-output body (its reason string), keyed by the same
@@ -405,6 +450,9 @@ side_tables! {
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
     CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson;
+    /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
+    /// actor's one unsealed pad (tag 2) and each sealed pad (tag 3). Key: u8 tag + id16 [+ string].
+    CONTEXT_BOARD_SCRATCHPAD: VaultMeta b"context_board.scratchpad.v1:" Named;
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.

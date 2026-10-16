@@ -6,12 +6,14 @@ use crate::gate;
 
 use super::super::binding::{PolicyContentBinding, content_binding, relay_verify_content_binding};
 use super::super::classify::{pass_audit, wants_model};
+use super::super::decide::{SafeguardModel, safeguard_verdict};
 use super::super::pattern::{CompiledPatternRule, CompiledPatternRules, PolicyPatternRole};
 use super::super::planes::{HostedLegalPolicy, PolicyPlane, hosted_rubric_rows};
-use super::super::prompt::{AnswerPlane, render_classify_prompt, resolve_policy_model_response};
+use super::super::prompt::{AnswerPlane, render_classify_prompt};
 use super::super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::super::verdict::{
-    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyVerdictCategory,
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicySkipReason,
+    PolicyVerdictCategory,
 };
 use super::boundary::malformed_relay_policy_error;
 use super::outcome::{
@@ -109,7 +111,10 @@ impl Vault {
         let Some(verdict) = pass.boundary_verdict() else {
             return Ok(false);
         };
-        Ok(verdict.binding != self.relay_policy_binding(request, config)?)
+        Ok(
+            verdict.binding != self.relay_policy_binding(request, config)?
+                || verdict.decision_binding != config.decision_binding(PolicyPlane::HostedLegal),
+        )
     }
 }
 
@@ -166,15 +171,6 @@ impl Vault {
                 log_only_or_gated(&evaluation),
             ));
         }
-        let Some(safeguard) = safeguard else {
-            return Ok(degraded_hosted_pass(
-                binding,
-                config,
-                audit,
-                RelayBoundaryDegrade::SafeguardModelTierAbsent,
-                true,
-            ));
-        };
         let Some(contract) = policy.output_contract else {
             // Registration refuses this, so reaching it means the registry was
             // bypassed. Fail closed rather than guess the answer shape — and
@@ -194,51 +190,74 @@ impl Vault {
             hosted_rubric_rows(policy),
             contract,
         );
-        let response = match safeguard
-            .backend
-            .generate(prompt.llm_request(config), safeguard.lease)
-            .await
-        {
-            Ok(response) => response,
-            Err(_unavailable) => {
+        if let Some(decisions) = config.hosted_decisions.as_deref() {
+            let verdict = decisions.classify(
+                request,
+                &prompt,
+                AnswerPlane::Hosted(policy),
+                binding,
+                config,
+                audit,
+            )?;
+            if verdict.decision.skip_reason().is_some() {
                 return Ok(degraded_hosted_pass(
                     binding,
                     config,
-                    audit,
-                    RelayBoundaryDegrade::SafeguardModelUnavailable,
+                    verdict.audit.map(|audit| *audit).unwrap_or_default(),
+                    RelayBoundaryDegrade::SafeguardModelResponseUnusable,
                     true,
                 ));
             }
-        };
-        let Ok(resolved) =
-            resolve_policy_model_response(&response, &prompt, &AnswerPlane::Hosted(policy))
-        else {
+            return Ok(RelayBoundaryPass::classified(
+                verdict,
+                None,
+                true,
+                RelayResolution::ModelDecided,
+            ));
+        }
+        let Some(safeguard) = safeguard else {
             return Ok(degraded_hosted_pass(
                 binding,
                 config,
                 audit,
-                RelayBoundaryDegrade::SafeguardModelResponseUnusable,
+                RelayBoundaryDegrade::SafeguardModelTierAbsent,
                 true,
             ));
         };
-        let mut audit = audit;
-        audit.model_rule_ids = resolved.answer.rule_ids;
-        audit.model_rule_ids_dropped = resolved.dropped_rule_ids;
-        audit.model_confidence = resolved.answer.confidence;
-        audit.model_rationale = resolved.answer.rationale;
-        Ok(RelayBoundaryPass::classified(
-            PolicyClassifyVerdict::new(
-                resolved.decision,
-                resolved.category,
-                PolicyConfidence::MEDIUM,
-                binding,
-                config,
-                PolicyPlane::HostedLegal,
-            )
-            .with_audit(audit),
-            None,
+        let verdict = safeguard_verdict(
+            SafeguardModel::Leased {
+                backend: safeguard.backend,
+                lease: safeguard.lease,
+            },
+            request,
+            &prompt,
+            &AnswerPlane::Hosted(policy),
+            crate::vault::embedded_owner_actor_id()?,
+            binding,
+            config,
+            audit,
+        )
+        .await?;
+        let degrade = match verdict.decision.skip_reason() {
+            None => {
+                return Ok(RelayBoundaryPass::classified(
+                    verdict,
+                    None,
+                    true,
+                    RelayResolution::ModelDecided,
+                ));
+            }
+            Some(PolicySkipReason::ResponseUnusable) => {
+                RelayBoundaryDegrade::SafeguardModelResponseUnusable
+            }
+            Some(_) => RelayBoundaryDegrade::SafeguardModelUnavailable,
+        };
+        Ok(degraded_hosted_pass(
+            binding,
+            config,
+            verdict.audit.map(|audit| *audit).unwrap_or_default(),
+            degrade,
             true,
-            RelayResolution::ModelDecided,
         ))
     }
 }
@@ -317,7 +336,9 @@ impl Vault {
         // vault-side one — the hosted dial governs the pass the relay would
         // run instead, not the pass it is deciding whether to trust. A receipt
         // recording no dial at all predates the field and is not trusted.
-        if receipt.classifier_mode != Some(config.owner_classifier_mode) {
+        if receipt.classifier_mode != Some(config.owner_classifier_mode)
+            || receipt.decision_binding != config.decision_binding(PolicyPlane::OwnerPolicy)
+        {
             return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
                 reason: "classifier_mode_mismatch",
             }));

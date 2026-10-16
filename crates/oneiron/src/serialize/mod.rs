@@ -6,6 +6,9 @@
 //! and `yaml_format` are the writers.
 
 mod credential_nulling;
+mod value_json;
+pub(crate) use value_json::msgpack_value_projection;
+pub use value_json::{msgpack_value_from_json, msgpack_value_to_json};
 mod field_profile_table;
 mod group_labels;
 mod handles;
@@ -40,6 +43,8 @@ pub(crate) use pack_entry::{SerializedPackTelemetry, serialize_pack_with_telemet
 
 pub(crate) use oneiron_contracts::serialize::entity_ref;
 mod export_value;
+mod okf_bundle;
+mod vault_archive;
 mod vault_document;
 pub use export_value::{ExportBody, ExportValue};
 pub(crate) use vault_document::serialize_vault_snapshot;

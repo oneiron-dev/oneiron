@@ -1,4 +1,6 @@
-//! Generic bounded static HTTP index. No marketplace-specific URL rules.
+//! Generic bounded static HTTP index. No marketplace-specific URL rules: the
+//! engine's own schema-1 index, or the agentskills.io well-known discovery
+//! index (`/.well-known/agent-skills/index.json`) any publisher serves.
 use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::package_codec::invalid;
 use super::{HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillHubAdapter, SkillHubKind};
@@ -29,6 +31,39 @@ struct Entry {
 struct File {
     path: String,
     url: String,
+}
+
+/// The agentskills.io discovery index, v0.2.0 (one `skill-md` artifact named by
+/// its SHA-256) or v0.1.0 (a `files` list under `<name>/`). Unrecognized fields
+/// are ignored, as the spec requires.
+#[derive(Deserialize)]
+struct WellKnownIndex {
+    #[serde(rename = "$schema")]
+    schema: Option<String>,
+    skills: Vec<WellKnownEntry>,
+}
+#[derive(Deserialize)]
+struct WellKnownEntry {
+    name: String,
+    description: String,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    url: Option<String>,
+    digest: Option<String>,
+    files: Option<Vec<String>>,
+}
+const WELL_KNOWN_SCHEMA: &str = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
+
+enum Listing {
+    Native(Index),
+    WellKnown(WellKnownIndex),
+}
+
+/// What the index says a package is; a well-known index names no version.
+struct Expected {
+    name: String,
+    description: String,
+    version: Option<String>,
 }
 
 /// Generic index schema: `{schema:1,packages:[{name,description,version,content_hash,ref_string,files:[{path,url}]}]}`.
@@ -77,9 +112,45 @@ impl HttpEndpointSkillHubAdapter {
         }
         Ok(out)
     }
-    fn index(&self) -> Result<Index> {
-        let index: Index = serde_json::from_slice(&self.fetch(&self.endpoint, INDEX_LIMIT)?)
-            .map_err(|_| invalid("invalid hub index"))?;
+    fn listing(&self) -> Result<Listing> {
+        let value: serde_json::Value =
+            serde_json::from_slice(&self.fetch(&self.endpoint, INDEX_LIMIT)?)
+                .map_err(|_| invalid("invalid hub index"))?;
+        if value.get("schema").is_some() {
+            return Self::index(value).map(Listing::Native);
+        }
+        let index: WellKnownIndex =
+            serde_json::from_value(value).map_err(|_| invalid("invalid hub index"))?;
+        if index
+            .schema
+            .as_deref()
+            .is_some_and(|schema| schema != WELL_KNOWN_SCHEMA)
+            || index.skills.len() > 4096
+        {
+            return Err(invalid("unsupported or oversized discovery index"));
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for entry in &index.skills {
+            let name = entry.name.as_bytes();
+            if !names.insert(entry.name.as_str())
+                || name.is_empty()
+                || name.len() > 64
+                || name.starts_with(b"-")
+                || name.ends_with(b"-")
+                || entry.name.contains("--")
+                || !name
+                    .iter()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+                || entry.description.len() > 4096
+            {
+                return Err(invalid("invalid or duplicate discovery index entry"));
+            }
+        }
+        Ok(Listing::WellKnown(index))
+    }
+    fn index(value: serde_json::Value) -> Result<Index> {
+        let index: Index =
+            serde_json::from_value(value).map_err(|_| invalid("invalid hub index"))?;
         if index.schema != 1 || index.packages.len() > 4096 {
             return Err(invalid("unsupported or oversized hub index"));
         }
@@ -128,26 +199,59 @@ impl SkillHubAdapter for HttpEndpointSkillHubAdapter {
     fn kind(&self) -> SkillHubKind {
         SkillHubKind::HttpIndex
     }
+    /// A well-known index names neither a version nor the tree hash, so each
+    /// listed skill is fetched (under its digest) and read; one that does not
+    /// import is left out, and an import of it refuses with the reason.
     fn discover(&self) -> Result<Vec<HubIndexEntry>> {
-        self.index()?
-            .packages
-            .into_iter()
-            .map(|e| {
-                Ok(HubIndexEntry {
-                    name: e.name,
-                    description: e.description,
-                    version: e.version,
-                    content_hash: crate::skill::SkillContentHash::parse_hex(&e.content_hash)?,
-                    ref_string: e.ref_string,
-                })
-            })
-            .collect()
+        let index = match self.listing()? {
+            Listing::Native(index) => {
+                return index
+                    .packages
+                    .into_iter()
+                    .map(|e| {
+                        Ok(HubIndexEntry {
+                            name: e.name,
+                            description: e.description,
+                            version: e.version,
+                            content_hash: crate::skill::SkillContentHash::parse_hex(
+                                &e.content_hash,
+                            )?,
+                            ref_string: e.ref_string,
+                        })
+                    })
+                    .collect();
+            }
+            Listing::WellKnown(index) => index,
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        let mut entries = Vec::new();
+        for entry in &index.skills {
+            if std::time::Instant::now() > deadline {
+                return Err(invalid("discovery deadline exceeded"));
+            }
+            let Ok(package) = self
+                .well_known_files(entry)
+                .and_then(super::folder::package_from_files)
+            else {
+                continue;
+            };
+            entries.push(HubIndexEntry {
+                name: package.record.skill_id.clone(),
+                description: package.record.desc.clone(),
+                version: package.record.version.clone(),
+                content_hash: package.content_hash()?,
+                ref_string: entry.name.clone(),
+            });
+        }
+        Ok(entries)
     }
     fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
         let (entry, files) = self.fetch_tree(hub_ref)?;
         let package = super::folder::package_from_files(files)?;
         if package.record.skill_id != entry.name
-            || package.record.version != entry.version
+            || entry
+                .version
+                .is_some_and(|version| package.record.version != version)
             || package.record.desc != entry.description
         {
             return Err(invalid("package identity or index metadata drift"));
@@ -157,20 +261,25 @@ impl SkillHubAdapter for HttpEndpointSkillHubAdapter {
 }
 impl super::pack_catalog::PackSourceAdapter for HttpEndpointSkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<super::pack_catalog::PackSource> {
+        Ok(super::pack_catalog::PackSourceAdapter::fetch_pack_tree(self, reference)?.source)
+    }
+    fn fetch_pack_tree(&self, reference: &HubRef) -> Result<super::pack_catalog::PackTree> {
         let (entry, files) = self.fetch_tree(reference)?;
-        let source = super::pack_catalog::PackSource::from_files(files)?;
-        let manifest = source.manifest();
+        let tree = super::pack_catalog::PackSource::from_tree(files)?;
+        let manifest = tree.source.manifest();
         if manifest.name != entry.name
-            || manifest.version != entry.version
+            || entry
+                .version
+                .is_some_and(|version| manifest.version != version)
             || manifest.description != entry.description
         {
             return Err(invalid("pack identity or index metadata drift"));
         }
-        Ok(source)
+        Ok(tree)
     }
 }
 impl HttpEndpointSkillHubAdapter {
-    fn fetch_tree(&self, hub_ref: &HubRef) -> Result<(Entry, Vec<HubFile>)> {
+    fn fetch_tree(&self, hub_ref: &HubRef) -> Result<(Expected, Vec<HubFile>)> {
         if hub_ref.hub_id != self.hub_id {
             return Err(invalid("cross-hub fetch refused"));
         }
@@ -179,8 +288,32 @@ impl HttpEndpointSkillHubAdapter {
             return Err(invalid("HTTP index requires a content hash pin"));
         };
         let expected = crate::skill::SkillContentHash::parse_hex(pinned)?;
-        let entry = self
-            .index()?
+        let index = match self.listing()? {
+            Listing::Native(index) => index,
+            Listing::WellKnown(index) => {
+                let entry = index
+                    .skills
+                    .into_iter()
+                    .find(|e| e.name == hub_ref.ref_string)
+                    .ok_or_else(|| invalid("package not in index"))?;
+                let files = self.well_known_files(&entry)?;
+                let actual = crate::skill::canonical_skill_tree_hash(
+                    files
+                        .iter()
+                        .map(|f| (f.path.as_str(), f.content.as_slice())),
+                )?;
+                if actual != expected {
+                    return Err(invalid("package content hash drift"));
+                }
+                let entry = Expected {
+                    name: entry.name,
+                    description: entry.description,
+                    version: None,
+                };
+                return Ok((entry, files));
+            }
+        };
+        let entry = index
             .packages
             .into_iter()
             .find(|e| e.ref_string == hub_ref.ref_string)
@@ -215,6 +348,65 @@ impl HttpEndpointSkillHubAdapter {
         if actual != expected {
             return Err(invalid("package content hash drift"));
         }
+        let entry = Expected {
+            name: entry.name,
+            description: entry.description,
+            version: Some(entry.version),
+        };
         Ok((entry, files))
+    }
+
+    /// A well-known entry's files: a v0.2.0 `skill-md` artifact checked against
+    /// its SHA-256 digest, or v0.1.0's `files` under `<name>/` beside the index.
+    /// Archives are not read yet. Every URL is same-origin, as for the native index.
+    fn well_known_files(&self, entry: &WellKnownEntry) -> Result<Vec<HubFile>> {
+        match (entry.kind.as_deref(), &entry.url, &entry.files) {
+            (Some("skill-md"), Some(url), _) => {
+                let bytes = self.fetch(&self.same_origin(url)?, MAX_HUB_FILE_BYTES)?;
+                let digest = entry
+                    .digest
+                    .as_deref()
+                    .and_then(|digest| digest.strip_prefix("sha256:"))
+                    .ok_or_else(|| invalid("a well-known skill needs a sha256 digest"))?;
+                let actual = <sha2::Sha256 as sha2::Digest>::digest(&bytes);
+                let actual: String = actual.iter().map(|b| format!("{b:02x}")).collect();
+                if !digest.eq_ignore_ascii_case(&actual) {
+                    return Err(invalid("well-known skill digest drift"));
+                }
+                Ok(vec![HubFile::new("SKILL.md", bytes)])
+            }
+            (Some("archive"), _, _) => Err(invalid("well-known skill archives are not read yet")),
+            (None, _, Some(files)) if !files.is_empty() && files.len() <= MAX_HUB_PACKAGE_FILES => {
+                crate::skill::canonical_skill_tree_hash(
+                    files.iter().map(|f| (f.as_str(), &[][..])),
+                )?;
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                let mut remaining = MAX_HUB_PACKAGE_TOTAL_BYTES;
+                let mut out = Vec::with_capacity(files.len());
+                for file in files {
+                    if std::time::Instant::now() > deadline {
+                        return Err(invalid("package fetch deadline exceeded"));
+                    }
+                    let url = self.same_origin(&format!("{}/{file}", entry.name))?;
+                    let bytes = self.fetch(&url, MAX_HUB_FILE_BYTES.min(remaining))?;
+                    remaining -= bytes.len();
+                    out.push(HubFile::new(file.clone(), bytes));
+                }
+                Ok(out)
+            }
+            _ => Err(invalid("unsupported well-known skill entry")),
+        }
+    }
+
+    fn same_origin(&self, reference: &str) -> Result<reqwest::Url> {
+        let url = self
+            .endpoint
+            .join(reference)
+            .map_err(|_| invalid("invalid package URL"))?;
+        checked_url(url.as_str())?;
+        if url.origin() != self.endpoint.origin() {
+            return Err(invalid("cross-origin package URL refused"));
+        }
+        Ok(url)
     }
 }

@@ -12,13 +12,16 @@ mod deadline;
 mod driver;
 mod grain;
 mod legibility;
+pub(crate) mod nightly;
 mod policy;
 mod projector;
 mod recipe;
 mod recipe_wake;
+pub(crate) mod recipes;
+mod refusal_dial;
 mod scheduling;
 mod settlement;
-mod sieve;
+pub(crate) mod sieve;
 mod types;
 
 pub use self::deadline::*;
@@ -29,12 +32,13 @@ pub use self::policy::*;
 pub use self::projector::ProjectorPolicy;
 pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
 pub use self::recipe::*;
+pub use self::recipes::WakeRecipePolicy;
 pub use self::scheduling::*;
 pub(crate) use self::sieve::grant_written_in_txn as sieve_grant_written_in_txn;
 pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{
-    RuleClass, SievePass, SievePolicy, SieveQueue, SieveRung, SieveSkipped, SieveSpan, SpanBand,
-    SpanKind, SpanOrigin,
+    RuleClass, SieveAudit, SievePass, SievePolicy, SieveQueue, SieveRung, SieveSkipped, SieveSpan,
+    SpanBand, SpanKind, SpanOrigin,
 };
 pub use self::types::*;
 

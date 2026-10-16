@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use oneiron_organ_protocol::{FrameError, OrganError};
+#[cfg(unix)]
+use oneiron_organ_protocol::FrameError;
+use oneiron_organ_protocol::OrganError;
 
 /// Why an installed organ cannot take calls right now.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,8 +79,13 @@ pub enum HostError {
     Organ(#[from] OrganError),
     #[error(transparent)]
     Engine(#[from] oneiron::Error),
+    #[cfg(unix)]
     #[error(transparent)]
     Frame(#[from] FrameError),
+    /// Another of the owner's nodes ran the call and it failed there in a
+    /// way this host has no variant for; `detail` is that host's word.
+    #[error("organ call on node {machine} failed: {detail}")]
+    Remote { machine: String, detail: String },
     #[error("organ io: {0}")]
     Io(#[from] std::io::Error),
 }

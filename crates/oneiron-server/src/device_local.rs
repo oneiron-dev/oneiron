@@ -32,6 +32,32 @@ pub(crate) fn withholds_retained(
     Ok(vault.off_device_readable(named)?.len() != count)
 }
 
+/// [`withholds_retained`] for the machine `peer` proved on the socket
+/// (OF-534 G6): a proved machine's rows are judged by its own world read
+/// settings, so a private world it may read reaches it. An unproved peer is
+/// an unknown destination and keeps the device's own judgment.
+pub(crate) fn withholds_retained_for(
+    vault: &oneiron::Vault,
+    locality: CallerLocality,
+    peer: oneiron::authority::PeerMachine,
+    rows: &[EntityId],
+    payload: &[u8],
+) -> oneiron::Result<bool> {
+    if locality == CallerLocality::OnDevice {
+        return Ok(false);
+    }
+    if oneiron::sync::residence::withheld_from_peer(vault, peer)?.is_none() {
+        return withholds_retained(vault, locality, rows, payload);
+    }
+    let mut named = entity_ids_in(payload);
+    named.extend_from_slice(rows);
+    named.sort_unstable_by_key(|id| *id.as_bytes());
+    named.dedup();
+    Ok(!oneiron::sync::residence::rows_may_reach(
+        vault, peer, &named,
+    )?)
+}
+
 /// Whether a cached response replayed to a caller at `locality` stays on
 /// this device: one of the `rows` its handler listed, or a row its body
 /// names, is one a device-local world keeps now. A short ref in the body

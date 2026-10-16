@@ -18,6 +18,7 @@ mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod replay;
+mod result_read;
 mod run_verbs;
 mod storage;
 mod support;
@@ -41,8 +42,14 @@ pub use self::replay::{
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
     CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor,
-    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
+    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
     code_run_replay_abi_layout_checks,
+};
+pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
+pub use self::result_read::ResultFacet;
+pub(crate) use self::result_read::{
+    Reply as ResultReply, ResultRead, card as result_card, refusal as result_refusal,
+    resolve as resolve_result, unknown_handle,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
@@ -65,12 +72,13 @@ pub use self::types::{
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult, SelfSkillCall,
+    SelfSkillCallResult, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
+    SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange,
+    MemoryTimeRange, SkillCallInput, TaskRefuseDomain, TaskRefuseInput,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,

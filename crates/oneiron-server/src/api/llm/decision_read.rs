@@ -13,11 +13,11 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use oneiron::llm::run_admission::{CallOutcome, RunReceiptSink};
+use oneiron::BudgetLease;
+use oneiron::llm::run_admission::{CallOutcome, RunAdmission};
 use oneiron::llm::{
     FatalLlmError, LabelReadFailure, LabelReadRequest, LabelReadout, LabelSet, LlmError, LlmUsage,
 };
-use oneiron::{BudgetGuard, BudgetLease};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -135,20 +135,19 @@ pub(super) async fn decision_read(
     let Ok(turn) = server.decision_reads.admit(()).await else {
         return refusal(StatusCode::SERVICE_UNAVAILABLE, "decision_read_waited_out");
     };
-    let receipts = server.run_receipts();
+    let run = undeclared_run(
+        DECISION_READ_RUN,
+        meter,
+        Some(server.host_account()),
+        server.run_receipts(),
+    );
     // The read blocks on the runtime, so it runs on a blocking thread. Its
     // turn and its permit's settlement go with it: a caller that hangs up
     // ends nothing the read still holds.
     let read = tokio::task::spawn_blocking(move || {
         let _turn = turn;
         let questions = request.questions(&probe);
-        read(
-            &door,
-            &request.label_read(&questions),
-            reserve,
-            meter,
-            receipts,
-        )
+        read(&door, &request.label_read(&questions), reserve, run)
     })
     .await;
     match read {
@@ -164,14 +163,13 @@ fn read(
     door: &DecisionReadDoor,
     read: &LabelReadRequest<'_>,
     reserve: u64,
-    meter: BudgetGuard,
-    receipts: Arc<dyn RunReceiptSink>,
+    run: RunAdmission,
 ) -> Result<ReadAnswer, LlmError> {
-    let run = undeclared_run(DECISION_READ_RUN, meter, receipts);
-    let refused = |_| LlmError::from(oneiron::llm::BudgetDenied::AdmissionDenied);
-    let permit = run.admit_paid(door.connector(), reserve).map_err(refused)?;
+    let permit = run
+        .admit_paid(door.connector(), reserve)
+        .map_err(LlmError::from)?;
     run.dispatch_paid(permit.lease(), door.connector())
-        .map_err(refused)?;
+        .map_err(LlmError::from)?;
     let reader = door.reader();
     let lease: &BudgetLease = permit.lease();
     let answer = reader.read(read, lease);

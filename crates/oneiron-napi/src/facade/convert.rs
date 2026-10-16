@@ -339,6 +339,42 @@ pub(super) fn memory_pack_from_engine(
             out_of_scope_worlds: pack.scope_honesty.out_of_scope_worlds,
         },
         retrieval_meta: NapiRetrievalMeta {
+            quality: match pack.retrieval_meta.quality {
+                oneiron::retrieval_quality::RetrievalQuality::Full => "full",
+                oneiron::retrieval_quality::RetrievalQuality::Degraded => "degraded",
+                oneiron::retrieval_quality::RetrievalQuality::Passthrough => "passthrough",
+            }
+            .to_owned(),
+            degradation: pack
+                .retrieval_meta
+                .degradation
+                .into_iter()
+                .map(|reason| {
+                    match reason {
+                        oneiron::retrieval_quality::RetrievalDegradation::PprCacheMiss => {
+                            "ppr_cache_miss"
+                        }
+                        oneiron::retrieval_quality::RetrievalDegradation::EmbeddingTimeout => {
+                            "embedding_timeout"
+                        }
+                        oneiron::retrieval_quality::RetrievalDegradation::Bm25Stale => "bm25_stale",
+                        oneiron::retrieval_quality::RetrievalDegradation::TemporalSignalSkipped => {
+                            "temporal_signal_skipped"
+                        }
+                    }
+                    .to_owned()
+                })
+                .collect(),
+            confidence_adjustment: serde_json::to_value(pack.retrieval_meta.confidence_adjustment)
+                .map_err(|error| error.to_string())?
+                .as_f64()
+                .ok_or_else(|| "invalid confidence adjustment".to_owned())?,
+            rerank: pack
+                .retrieval_meta
+                .rerank
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|error| error.to_string())?,
             sparse: pack.retrieval_meta.sparse,
             total_candidates: ts_from_engine(
                 pack.retrieval_meta.total_candidates,

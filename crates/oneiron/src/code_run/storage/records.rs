@@ -71,7 +71,7 @@ impl RawValue for StoredBody {
 ///
 /// A sidecar keyed by the SAME handle, written in the SAME transaction, and
 /// absent for the overwhelmingly common untainted run.
-const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
+pub(super) const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
 
 /// The secret scan's hit in one raw-output body, keyed by the same handle
@@ -465,6 +465,7 @@ impl Vault {
     /// small bodies and explicit whole reads; context reads take ranges.
     pub fn get_code_run_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
+        let _pin = self.pin_result_body(output.raw_blake3);
         let body = {
             let rtxn = self.store.env.read_txn()?;
             RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)?
@@ -480,6 +481,7 @@ impl Vault {
         source: crate::compaction::output::OutputRef,
     ) -> Result<Option<Vec<u8>>> {
         let output = CodeRunRawOutput::of_ref(source);
+        let _pin = self.pin_result_body(source.hash);
         let body = {
             let rtxn = self.store.env.read_txn()?;
             RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)?
@@ -498,6 +500,7 @@ impl Vault {
         len: usize,
     ) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
+        let _pin = self.pin_result_body(output.raw_blake3);
         let rtxn = self.store.env.read_txn()?;
         let Some(row) = RAW_OUTPUTS.get_borrowed(&self.store, &rtxn, &output.handle)? else {
             return Ok(None);

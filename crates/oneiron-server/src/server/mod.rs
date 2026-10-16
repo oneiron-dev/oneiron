@@ -1,23 +1,27 @@
 //! Sync server state and maintenance jobs, split by concern.
 mod board_publisher;
+mod connector_events;
 mod cooperative_deletion;
 mod core;
 mod embedding;
 mod housekeeping;
 mod leases;
 mod lifecycle;
+mod media_embedding;
 mod message_stream;
 mod oversight;
 mod presence;
 mod read_shape;
 mod recall;
 mod recall_rerank;
+mod resident_pump;
 mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
+pub(crate) use self::media_embedding::MediaEmbedRefusal;
 pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::oversight::OversightStartError;
 pub use self::read_shape::RetrievalQueryCheck;

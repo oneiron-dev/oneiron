@@ -39,6 +39,7 @@ mod auth_mode;
 mod binding;
 mod codec;
 mod custody;
+mod facts;
 mod keys;
 mod lifecycle;
 mod record;
@@ -53,7 +54,8 @@ pub use address::{
 };
 pub use custody::{
     Custody, DelegatedGrant, DelegatedGrantScope, InboundDisposition, delegated_custody_effector,
-    delegated_custody_scopes, delegated_custody_subject_scope,
+    delegated_custody_granted_scope, delegated_custody_scopes, delegated_custody_scopes_for_grant,
+    delegated_custody_subject_scope,
 };
 pub use lifecycle::{DelegatedLifecycle, SelfHeldLifecycle};
 
@@ -61,6 +63,8 @@ pub use self::binding::{ChannelIdentityBinding, ChannelIdentityFulfillment};
 pub use self::codec::{
     decode_channel_identity_body, encode_channel_identity_body, is_channel_identity_claim_predicate,
 };
+pub use self::facts::ChannelIdentityFacts;
+pub(crate) use self::facts::channel_identity_facts_in_txn;
 pub use self::keys::{
     ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, CHANNEL_IDENTITY_BODY_KEYS,
     CHANNEL_IDENTITY_CLAIM_PREDICATES, CHANNEL_IDENTITY_DELEGATED_BODY_KEYS,

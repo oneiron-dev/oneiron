@@ -1,8 +1,10 @@
-//! ARCH-0072 typed per-tool grant slates. The drafter's floor is not an
-//! owner restriction: only an authenticated owner can set override columns.
+//! ARCH-0072 typed per-capability grant slates. Every row starts at `auto`
+//! and a draft never widens past it. Only an authenticated owner sets the
+//! override columns; the key's holder may only tighten its own rows.
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,17 +14,51 @@ const GRANT_SLATE: SideTable<EntityId, ConnectorGrantSlate, LegacyJson> =
 /// The one connector key a stamped slate admits. Key: slate id.
 const SLATE_BINDING: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::CONNECTOR_GRANT_SLATE_BINDING);
+/// ARCH-0054's one aggregate, with the slate's two named inputs: the
+/// manifest hash and the grant hash.
+const SLATE_STAMP_DOMAIN: &[u8] = b"connector-grant-slate-stamp-v1";
+const SLATE_GRANT_DOMAIN: &[u8] = b"connector-grant-slate-grant-v1";
 
 fn invalid() -> Error {
     Error::InvalidConfig("invalid typed connector grant slate".to_owned())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The four DEC-0006 capability settings. Declaration order is strictness,
+/// so `Ord` reads "tighter": always allow < auto < always ask < never allow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlateDisposition {
+    /// Bypasses the per-call ask inside the bound; never the catastrophe floor.
+    AlwaysAllow,
+    /// The default: the per-call verdict, learning through standing grants.
     Auto,
-    ConfirmFirst,
+    /// Asks for every call, even one a standing grant covers.
+    AlwaysAsk,
+    /// Removes the tool from the connector's callable catalog.
+    NeverAllow,
 }
+impl SlateDisposition {
+    pub const ALL: [Self; 4] = [
+        Self::AlwaysAllow,
+        Self::Auto,
+        Self::AlwaysAsk,
+        Self::NeverAllow,
+    ];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AlwaysAllow => "always_allow",
+            Self::Auto => "auto",
+            Self::AlwaysAsk => "always_ask",
+            Self::NeverAllow => "never_allow",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|setting| setting.as_str() == value)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlateDataClass {
@@ -30,6 +66,16 @@ pub enum SlateDataClass {
     Personal,
     Secret,
     Header,
+}
+impl SlateDataClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Personal => "personal",
+            Self::Secret => "secret",
+            Self::Header => "header",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,13 +96,22 @@ pub struct SlateToolManifest {
     pub legacy_ask: bool,
 }
 impl SlateToolManifest {
-    fn floor(&self) -> bool {
+    /// Irreversible or header-bearing: `auto` already asks per call for these.
+    pub(super) fn floor(&self) -> bool {
         self.destroys
             || self.spends
             || self.sends_outward
             || !self.header_parameters.is_empty()
             || self.data_class == SlateDataClass::Header
             || self.legacy_ask
+    }
+    /// A parameter that reaches the wire as a header is its own data class.
+    pub fn row_data_class(&self) -> SlateDataClass {
+        if self.header_parameters.is_empty() {
+            self.data_class
+        } else {
+            SlateDataClass::Header
+        }
     }
 }
 
@@ -69,30 +124,53 @@ pub struct SlateDraftRow {
     pub disposition: SlateDisposition,
     pub data_class: SlateDataClass,
     pub rationale: String,
-    pub enabled: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlateOwnerOverride {
     pub disposition: SlateDisposition,
-    pub enabled: bool,
+}
+/// An autonomous tightening by the key's holder. It needs no stamp and is
+/// provenance-marked, so it never reads as an owner tap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlateHolderNarrow {
+    pub disposition: SlateDisposition,
+    pub actor: String,
+    pub at: u64,
+}
+/// The holder's own facet narrowing, kept beside the owner's limit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlateFacetNarrow {
+    pub facets: BTreeSet<EntityId>,
+    pub actor: String,
+    pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlateRow {
     pub draft: SlateDraftRow,
     pub owner_override: Option<SlateOwnerOverride>,
+    pub holder_narrow: Option<SlateHolderNarrow>,
 }
 impl SlateRow {
-    pub fn effective_disposition(&self) -> SlateDisposition {
+    /// What the owner accepted: the override, else the stamped draft.
+    pub fn stamped_disposition(&self) -> SlateDisposition {
         self.owner_override
             .as_ref()
             .map_or(self.draft.disposition, |o| o.disposition)
     }
-    pub fn enabled(&self) -> bool {
-        self.owner_override
+    /// What a call meets: the stamped setting, tightened by any holder narrow.
+    pub fn effective_disposition(&self) -> SlateDisposition {
+        self.holder_narrow
             .as_ref()
-            .map_or(self.draft.enabled, |o| o.enabled)
+            .map_or(self.stamped_disposition(), |narrow| {
+                narrow.disposition.max(self.stamped_disposition())
+            })
+    }
+    pub fn enabled(&self) -> bool {
+        self.effective_disposition() != SlateDisposition::NeverAllow
     }
 }
 
@@ -105,10 +183,28 @@ pub struct ConnectorGrantSlate {
     revision: u64,
     owner_actor: Option<String>,
     owner_authentication: Option<String>,
+    /// The owner's opt-in facet limit on the Grant scope; `None` is every facet.
+    facet_limit: Option<BTreeSet<EntityId>>,
+    holder_facet_narrow: Option<SlateFacetNarrow>,
+    /// The slate this one revises (a drift delta); `None` at connector add.
+    prior: Option<EntityId>,
+    /// Rows new or expanded against `prior`: the only rows the tap re-asks.
+    reask: BTreeSet<String>,
+    /// The aggregate the last owner stamp bound.
+    stamped_aggregate: Option<[u8; 32]>,
 }
 impl ConnectorGrantSlate {
     pub fn rows(&self) -> &[SlateRow] {
         &self.rows
+    }
+    pub fn row(&self, tool: &str) -> Option<&SlateRow> {
+        self.rows.iter().find(|row| row.draft.tool == tool)
+    }
+    pub fn manifest(&self) -> &[SlateToolManifest] {
+        &self.manifest
+    }
+    pub fn tool(&self, name: &str) -> Option<&SlateToolManifest> {
+        self.manifest.iter().find(|tool| tool.name == name)
     }
     pub(in crate::connector_key) fn resolved_schemas(
         &self,
@@ -138,34 +234,61 @@ impl ConnectorGrantSlate {
     pub fn owner_actor(&self) -> Option<&str> {
         self.owner_actor.as_deref()
     }
-}
-
-/// Draft deterministic defaults, suitable as the typed input for a host model.
-/// The model may rewrite rationale/disposition only within the floor.
-pub fn draft_connector_slate(manifest: &[SlateToolManifest]) -> Vec<SlateDraftRow> {
-    manifest
-        .iter()
-        .map(|tool| SlateDraftRow {
-            tool: tool.name.clone(),
-            disposition: if tool.floor() {
-                SlateDisposition::ConfirmFirst
-            } else {
-                SlateDisposition::Auto
-            },
-            data_class: if tool.header_parameters.is_empty() {
-                tool.data_class
-            } else {
-                SlateDataClass::Header
-            },
-            rationale: if tool.floor() {
-                "external-effect-or-header"
-            } else {
-                "scoped-read"
-            }
-            .to_owned(),
-            enabled: !tool.legacy_ask,
-        })
-        .collect()
+    pub fn facet_limit(&self) -> Option<&BTreeSet<EntityId>> {
+        self.facet_limit.as_ref()
+    }
+    /// The facets the Grant reaches: the owner's limit met with the holder's.
+    pub fn effective_facets(&self) -> Option<BTreeSet<EntityId>> {
+        let narrow = self.holder_facet_narrow.as_ref().map(|n| &n.facets);
+        match (self.facet_limit.as_ref(), narrow) {
+            (None, None) => None,
+            (Some(only), None) | (None, Some(only)) => Some(only.clone()),
+            (Some(limit), Some(narrow)) => Some(limit.intersection(narrow).copied().collect()),
+        }
+    }
+    pub fn prior(&self) -> Option<EntityId> {
+        self.prior
+    }
+    pub fn reask(&self) -> &BTreeSet<String> {
+        &self.reask
+    }
+    /// The setting a call on `tool` meets. A tool the slate never declared
+    /// raises the ask rather than dying as a silent deny (DEC-0006 inv. 3).
+    pub fn tool_setting(&self, tool: &str) -> SlateDisposition {
+        self.row(tool)
+            .map_or(SlateDisposition::AlwaysAsk, SlateRow::effective_disposition)
+    }
+    /// The owner-accepted grant: each row's stamped setting and class, plus
+    /// the facet limit. Holder narrows sit outside it, so they never break it.
+    pub fn grant_hash(&self) -> [u8; 32] {
+        let rows: Vec<_> = self
+            .rows
+            .iter()
+            .map(|row| {
+                (
+                    row.draft.tool.as_str(),
+                    row.stamped_disposition().as_str(),
+                    row.draft.data_class.as_str(),
+                )
+            })
+            .collect();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(SLATE_GRANT_DOMAIN);
+        hasher.update(&serde_json::to_vec(&(rows, &self.facet_limit)).unwrap_or_default());
+        *hasher.finalize().as_bytes()
+    }
+    fn aggregate(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(SLATE_STAMP_DOMAIN);
+        hasher.update(&self.manifest_hash);
+        hasher.update(&self.grant_hash());
+        *hasher.finalize().as_bytes()
+    }
+    /// If either input moved since the owner's stamp, the stamp no longer
+    /// holds and the key cannot qualify until a human re-stamps it.
+    pub fn stamp_holds(&self) -> bool {
+        self.stamped_aggregate == Some(self.aggregate())
+    }
 }
 
 fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()> {
@@ -182,21 +305,17 @@ fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()
     let mut seen = BTreeSet::new();
     for row in rows {
         let tool = tools.get(row.tool.as_str()).ok_or_else(invalid)?;
+        // A draft grants nothing: it may pre-fill a tighter setting, but only
+        // the owner's own override can choose `always allow`.
         if !seen.insert(&row.tool)
             || row.rationale.trim().is_empty()
             || row.rationale.len() > 4096
-            || tool.floor() && row.disposition != SlateDisposition::ConfirmFirst
-            || tool.legacy_ask && row.enabled
+            || row.disposition == SlateDisposition::AlwaysAllow
             || !tool
                 .resolved_input_schema
                 .as_ref()
                 .is_some_and(|schema| schema.is_object() && is_resolved_schema(schema))
-            || row.data_class
-                != if tool.header_parameters.is_empty() {
-                    tool.data_class
-                } else {
-                    SlateDataClass::Header
-                }
+            || row.data_class != tool.row_data_class()
         {
             return Err(invalid());
         }
@@ -204,64 +323,67 @@ fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()
     Ok(())
 }
 
-/// Compare the fully typed grant declaration and the effective owner-approved
-/// dispositions. Unchanged or reduced authority carries its earlier consent;
-/// new tools, richer declarations and any enabled/auto expansion need a tap.
+/// Whether the declaration itself reaches further than before: a richer data
+/// class, new headers or effects, a changed trigger, or a schema that is not a
+/// provable restriction.
+pub(in crate::connector_key) fn declaration_expands(
+    old: &SlateToolManifest,
+    next: &SlateToolManifest,
+    carry: &BTreeSet<(String, String)>,
+) -> bool {
+    next.data_class != old.data_class
+        && !carry.contains(&(
+            next.data_class.as_str().into(),
+            old.data_class.as_str().into(),
+        ))
+        || next
+            .header_parameters
+            .iter()
+            .any(|param| !old.header_parameters.contains(param))
+        || next.destroys && !old.destroys
+        || next.spends && !old.spends
+        || next.sends_outward && !old.sends_outward
+        || next.legacy_ask && !old.legacy_ask
+        || next.trigger != old.trigger
+        || !schema_narrows(
+            old.resolved_input_schema.as_ref(),
+            next.resolved_input_schema.as_ref(),
+        )
+}
+
+/// A dropped facet limit, or a facet the old limit lacked, widens the Grant.
+fn facets_widen(old: Option<&BTreeSet<EntityId>>, next: Option<&BTreeSet<EntityId>>) -> bool {
+    match (old, next) {
+        (None, _) => false,
+        (Some(_), None) => true,
+        (Some(old), Some(next)) => !next.is_subset(old),
+    }
+}
+
+/// Compare the fully typed grant declaration and the effective settings.
+/// Unchanged or reduced authority carries its earlier consent; new tools,
+/// richer declarations, a looser setting or a wider facet set need a tap.
 pub(in crate::connector_key) fn slate_expands(
     old: &ConnectorGrantSlate,
     next: &ConnectorGrantSlate,
     carry: &BTreeSet<(String, String)>,
 ) -> bool {
-    next.manifest.iter().any(|tool| {
+    facets_widen(
+        old.effective_facets().as_ref(),
+        next.effective_facets().as_ref(),
+    ) || next.manifest.iter().any(|tool| {
         let row = next
-            .rows
-            .iter()
-            .find(|row| row.draft.tool == tool.name)
+            .row(&tool.name)
             .expect("validated slate has one row per tool");
         if !row.enabled() {
             return false;
         }
-        let Some(old_tool) = old.manifest.iter().find(|prior| prior.name == tool.name) else {
+        let (Some(old_tool), Some(old_row)) = (old.tool(&tool.name), old.row(&tool.name)) else {
             return true;
         };
-        let old_row = old
-            .rows
-            .iter()
-            .find(|row| row.draft.tool == tool.name)
-            .expect("validated slate has one row per tool");
-        !old_row.enabled()
-            || tool.data_class != old_tool.data_class
-                && !carry.contains(&(
-                    tool.data_class.as_str().into(),
-                    old_tool.data_class.as_str().into(),
-                ))
-            || tool
-                .header_parameters
-                .iter()
-                .any(|param| !old_tool.header_parameters.contains(param))
-            || tool.destroys && !old_tool.destroys
-            || tool.spends && !old_tool.spends
-            || tool.sends_outward && !old_tool.sends_outward
-            || tool.legacy_ask && !old_tool.legacy_ask
-            || tool.trigger != old_tool.trigger
-            || !schema_narrows(
-                old_tool.resolved_input_schema.as_ref(),
-                tool.resolved_input_schema.as_ref(),
-            )
-            || row.effective_disposition() == SlateDisposition::Auto
-                && old_row.effective_disposition() == SlateDisposition::ConfirmFirst
+        declaration_expands(old_tool, tool, carry)
+            || row.effective_disposition() < old_row.effective_disposition()
     })
-}
-
-impl SlateDataClass {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Public => "public",
-            Self::Personal => "personal",
-            Self::Secret => "secret",
-            Self::Header => "header",
-        }
-    }
 }
 
 /// Only a provable restriction carries consent. Anything unknown re-asks.
@@ -428,7 +550,50 @@ pub(crate) fn read_connector_slate_in_txn(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<ConnectorGrantSlate>> {
-    GRANT_SLATE.get(&vault.store, txn, &id)
+    read_slate_in_store_txn(&vault.store, txn, id)
+}
+
+pub(in crate::connector_key) fn read_slate_in_store_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<ConnectorGrantSlate>> {
+    GRANT_SLATE.get(store, txn, &id)
+}
+
+/// Every stored slate, for the drafter's read of the owner's past rulings.
+pub(in crate::connector_key) fn scan_slates_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, ConnectorGrantSlate)>> {
+    GRANT_SLATE.scan(store, txn)
+}
+
+/// A fresh, unstamped slate over validated draft rows. `prior` and `reask`
+/// are set only for a drift delta, which also carries the prior facet rows.
+pub(in crate::connector_key) fn new_slate(
+    manifest: &[SlateToolManifest],
+    rows: Vec<SlateRow>,
+    prior: Option<&ConnectorGrantSlate>,
+    prior_id: Option<EntityId>,
+    reask: BTreeSet<String>,
+) -> Result<ConnectorGrantSlate> {
+    let drafts: Vec<SlateDraftRow> = rows.iter().map(|row| row.draft.clone()).collect();
+    validate(manifest, &drafts)?;
+    let manifest_bytes = serde_json::to_vec(manifest).map_err(|_| invalid())?;
+    Ok(ConnectorGrantSlate {
+        manifest: manifest.to_vec(),
+        manifest_hash: *blake3::hash(&manifest_bytes).as_bytes(),
+        rows,
+        revision: 0,
+        owner_actor: None,
+        owner_authentication: None,
+        facet_limit: prior.and_then(|slate| slate.facet_limit.clone()),
+        holder_facet_narrow: prior.and_then(|slate| slate.holder_facet_narrow.clone()),
+        prior: prior_id,
+        reask,
+        stamped_aggregate: None,
+    })
 }
 
 impl Vault {
@@ -440,22 +605,20 @@ impl Vault {
         model_output: &str,
     ) -> Result<EntityId> {
         let rows: Vec<SlateDraftRow> = serde_json::from_str(model_output).map_err(|_| invalid())?;
-        validate(manifest, &rows)?;
-        let manifest_bytes = serde_json::to_vec(manifest).map_err(|_| invalid())?;
-        let slate = ConnectorGrantSlate {
-            manifest: manifest.to_vec(),
-            manifest_hash: *blake3::hash(&manifest_bytes).as_bytes(),
-            rows: rows
-                .into_iter()
-                .map(|draft| SlateRow {
-                    draft,
-                    owner_override: None,
-                })
-                .collect(),
-            revision: 0,
-            owner_actor: None,
-            owner_authentication: None,
-        };
+        let rows = rows
+            .into_iter()
+            .map(|draft| SlateRow {
+                draft,
+                owner_override: None,
+                holder_narrow: None,
+            })
+            .collect();
+        self.put_new_slate(new_slate(manifest, rows, None, None, BTreeSet::new())?)
+    }
+    pub(in crate::connector_key) fn put_new_slate(
+        &self,
+        slate: ConnectorGrantSlate,
+    ) -> Result<EntityId> {
         let id = EntityId::now();
         self.with_write_txn_grouped(|txn| {
             GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
@@ -474,6 +637,53 @@ impl Vault {
         id: EntityId,
         expected_revision: u64,
         overrides: &BTreeMap<String, SlateOwnerOverride>,
+    ) -> Result<ConnectorGrantSlate> {
+        self.stamp_slate(owner, id, expected_revision, overrides, None)
+    }
+    /// The same one tap, also setting the owner's opt-in facet limit on the
+    /// Grant scope (`None` reaches every facet). It clears a holder's facet
+    /// narrow: the owner is looking at the whole grant.
+    pub fn stamp_connector_slate(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        expected_revision: u64,
+        overrides: &BTreeMap<String, SlateOwnerOverride>,
+        facet_limit: Option<BTreeSet<EntityId>>,
+    ) -> Result<ConnectorGrantSlate> {
+        self.stamp_slate(owner, id, expected_revision, overrides, Some(facet_limit))
+    }
+    /// "Flip to all-manual": every row `always ask` (a `never allow` row
+    /// stays removed), then the one stamp.
+    pub fn accept_connector_slate_all_manual(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        expected_revision: u64,
+    ) -> Result<ConnectorGrantSlate> {
+        let slate = self.connector_slate(id)?.ok_or(Error::EntityNotFound)?;
+        let overrides = slate
+            .rows
+            .iter()
+            .filter(|row| row.stamped_disposition() != SlateDisposition::NeverAllow)
+            .map(|row| {
+                (
+                    row.draft.tool.clone(),
+                    SlateOwnerOverride {
+                        disposition: SlateDisposition::AlwaysAsk,
+                    },
+                )
+            })
+            .collect();
+        self.override_connector_slate(owner, id, expected_revision, &overrides)
+    }
+    fn stamp_slate(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        expected_revision: u64,
+        overrides: &BTreeMap<String, SlateOwnerOverride>,
+        facet_limit: Option<Option<BTreeSet<EntityId>>>,
     ) -> Result<ConnectorGrantSlate> {
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
@@ -498,8 +708,17 @@ impl Vault {
             }
             for row in &mut slate.rows {
                 if let Some(value) = overrides.get(&row.draft.tool) {
+                    // The owner's ruling on a row reverses a holder's narrow.
                     row.owner_override = Some(value.clone());
+                    row.holder_narrow = None;
                 }
+            }
+            if let Some(limit) = facet_limit {
+                if limit.as_ref().is_some_and(BTreeSet::is_empty) {
+                    return Err(invalid());
+                }
+                slate.facet_limit = limit;
+                slate.holder_facet_narrow = None;
             }
             slate.revision = slate
                 .revision
@@ -507,7 +726,79 @@ impl Vault {
                 .ok_or(Error::ArithmeticOverflow("slate revision"))?;
             slate.owner_actor = Some(actor.to_hex());
             slate.owner_authentication = Some(owner.decision_id().to_hex());
+            slate.stamped_aggregate = Some(slate.aggregate());
             GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
+            Ok(slate)
+        })
+    }
+    /// ARCH-0072 self-update: the key's own holder tightens rows or the facet
+    /// set of its bound slate, with no stamp. Narrowing is free, widening
+    /// never is. The tightening is receipted on the key's log and marked with
+    /// the holder, and the owner's stamp on a row reverses it.
+    pub fn narrow_connector_slate(
+        &self,
+        key_id: &EntityId,
+        holder: EntityId,
+        narrows: &BTreeMap<String, SlateDisposition>,
+        facets: Option<BTreeSet<EntityId>>,
+        at: u64,
+    ) -> Result<ConnectorGrantSlate> {
+        use crate::connector_key::record::invalid_body;
+        if narrows.is_empty() && facets.is_none() {
+            return Err(invalid_body("slate narrow names no row or facet"));
+        }
+        self.with_write_txn_grouped(|txn| {
+            let record = super::txn::read_connector_key_in_txn(&self.store, txn, key_id)?
+                .ok_or(Error::EntityNotFound)?;
+            if record.actor_entity_ref != Some(holder) {
+                return Err(invalid_body("only the key's holder narrows its slate"));
+            }
+            let slate_id = record
+                .slate_ref
+                .ok_or_else(|| invalid_body("connector slate missing"))?;
+            let mut slate = GRANT_SLATE
+                .get(&self.store, txn, &slate_id)?
+                .ok_or_else(|| invalid_body("connector slate missing"))?;
+            for (tool, disposition) in narrows {
+                let row = slate
+                    .rows
+                    .iter_mut()
+                    .find(|row| &row.draft.tool == tool)
+                    .ok_or_else(invalid)?;
+                if *disposition <= row.effective_disposition() {
+                    return Err(invalid_body("a holder narrow must tighten the row"));
+                }
+                row.holder_narrow = Some(SlateHolderNarrow {
+                    disposition: *disposition,
+                    actor: holder.to_hex(),
+                    at,
+                });
+            }
+            if let Some(facets) = facets {
+                if facets.is_empty()
+                    || slate
+                        .effective_facets()
+                        .is_some_and(|current| !facets.is_subset(&current))
+                {
+                    return Err(invalid_body("a holder facet narrow must tighten the set"));
+                }
+                slate.holder_facet_narrow = Some(SlateFacetNarrow {
+                    facets,
+                    actor: holder.to_hex(),
+                    at,
+                });
+            }
+            GRANT_SLATE.put(&self.store, txn, &slate_id, &slate)?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+            super::txn::append_connector_key_op_record(
+                &self.store,
+                txn,
+                key_id,
+                "gate.connector_key.slate_narrow",
+                &record,
+                policy.read_frontier_hash()?,
+                at,
+            )?;
             Ok(slate)
         })
     }

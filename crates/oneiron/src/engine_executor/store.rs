@@ -2,7 +2,9 @@
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
-use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage};
+use crate::code_run::{
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
+};
 use crate::compaction::output::OutputRef;
 use crate::entity_id::EntityId;
 use crate::store::BodySink;
@@ -107,7 +109,7 @@ impl std::io::Write for ByteCount {
 /// A verb answer whose JSON is longer than this is stored as a body of the
 /// run, and the guest and the replay row get its handle: no reply passes one
 /// message, and no answer is refused for its size.
-pub(super) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
+pub(crate) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
 
 /// The guest's read path for a stored result body; `<path>/chunk/<offset>`
 /// reads up to [`RECOVERABLE_OUTPUT_CHUNK_BYTES`] from `offset`.
@@ -124,7 +126,7 @@ pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
 /// size, kind, completion and preview, and where to read it.
-pub(super) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
+pub(crate) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
     json!({
         "handle": output.handle,
         "bytes": output.raw_len,
@@ -145,6 +147,8 @@ pub(super) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value
 pub(super) struct StreamedOutputs {
     console: Option<BodySink>,
     finish: Option<BodySink>,
+    /// The value the program is passing to `store`, until the host takes it.
+    store: Option<BodySink>,
     files: Vec<(String, BodySink)>,
 }
 
@@ -157,7 +161,8 @@ pub(super) struct StepBodies {
 
 impl StreamedOutputs {
     /// Appends one frame to its target's body. A finish frame that starts
-    /// an answer drops the answer before it.
+    /// an answer drops the answer before it; a store frame that starts a
+    /// value drops any value no `store` took.
     pub(super) fn write(
         &mut self,
         storage: &ExecutorStorage<'_>,
@@ -171,6 +176,12 @@ impl StreamedOutputs {
                     self.finish = None;
                 }
                 &mut self.finish
+            }
+            JsCodeModeStream::Store { start } => {
+                if start {
+                    self.store = None;
+                }
+                &mut self.store
             }
             JsCodeModeStream::File(path) => {
                 let at = match self.files.iter().position(|(held, _)| held == path) {
@@ -191,6 +202,12 @@ impl StreamedOutputs {
             Some(sink) => sink.write(frame),
             None => Err(Error::InvariantViolation("streamed result sink missing")),
         }
+    }
+
+    /// The value the program's last `store` streamed, taken to be stored
+    /// as a result of its own.
+    pub(super) fn take_store(&mut self) -> Option<BodySink> {
+        self.store.take()
     }
 
     /// The step's bodies: the answer of a finished step, else its console
@@ -251,6 +268,33 @@ pub(super) fn record_text_output(
     record_output(storage, record, path, text.as_bytes())
 }
 
+/// Whether `output`'s body may enter model context as it stands: a body
+/// the secret scan marked, or one under live or stale taint, never does.
+pub(crate) fn clean_for_context(
+    storage: &ExecutorStorage<'_>,
+    output: &CodeRunRawOutput,
+) -> Result<bool> {
+    Ok(!storage.code_run_result_taint(output)?.0.is_tainted())
+}
+
+/// A text output as model context reads it: its body, or the withheld mark
+/// in its place when the body is not clean.
+pub(super) fn load_context_output(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    path: &str,
+) -> Result<String> {
+    let output = record
+        .outputs
+        .iter()
+        .find(|output| output.path == path)
+        .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+    if !clean_for_context(storage, output)? {
+        return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
+    }
+    load_utf8_output(storage, record, path)
+}
+
 pub(super) fn decode_text_output(raw: Vec<u8>) -> Result<String> {
     String::from_utf8(raw)
         .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))
@@ -296,7 +340,8 @@ pub(super) fn load_utf8_output(
 pub(super) const COMPACTION_OBSERVATION_WINDOW_BYTES: usize = 256 * 1024;
 
 /// An observation for a compaction window: whole within `cap` bytes, else
-/// its first `cap` bytes, read by range, and the reference to the rest.
+/// its first `cap` bytes, read by range, and the reference to the rest. A
+/// body that is not clean is the withheld mark instead.
 pub(super) fn load_observation_window(
     storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
@@ -308,6 +353,9 @@ pub(super) fn load_observation_window(
         .iter()
         .find(|output| output.path == path)
         .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+    if !clean_for_context(storage, output)? {
+        return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
+    }
     if output.raw_len <= cap as u64 {
         return load_utf8_output(storage, record, path);
     }
@@ -388,11 +436,26 @@ pub(super) fn bridge_result_output_path(bridge_seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
 }
 
-/// Whether `path` names a stored bridge result.
-pub(super) fn is_bridge_result_output_path(path: &str) -> bool {
-    path.strip_prefix(SCRIPT_OUTPUT_DIR)
-        .and_then(|rest| rest.strip_prefix("/bridge/"))
+/// A value a program passed to `store`, named by its digest: the same bytes
+/// stored twice are one output.
+pub(super) fn store_result_output_path(digest: &[u8; 32]) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/store/{}.result",
+        crate::entity_id::bytes_to_hex_lower(digest)
+    )
+}
+
+/// Whether `path` names a result of the run the guest may read back: a
+/// stored bridge result or a stored value.
+pub(crate) fn is_result_output_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
+        return false;
+    };
+    rest.strip_prefix("/bridge/")
         .is_some_and(|rest| rest.ends_with(".result.json"))
+        || rest
+            .strip_prefix("/store/")
+            .is_some_and(|rest| rest.ends_with(".result"))
 }
 
 pub(super) fn script_output_path(seq: u64) -> String {

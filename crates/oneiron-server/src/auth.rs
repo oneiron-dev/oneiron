@@ -17,6 +17,7 @@ use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
+pub(crate) mod account_key;
 mod binding_admission;
 mod client_address;
 mod locality;
@@ -87,6 +88,12 @@ pub(crate) trait RevokedTokenJtis {
     ) -> Option<ApiError> {
         None
     }
+    /// Whether `proof`'s facet bounds leave its holder unbound, the owner
+    /// exemption the read lane applies (owner ruling FACET-READ = A). Fails
+    /// closed: an unreadable owner check exempts nothing.
+    fn credential_facets_owner_exempt(&self, _proof: &oneiron::authority::VerifiedSlip) -> bool {
+        false
+    }
 }
 
 /// The server-local persistent registry: one `sync_state` row per revoked
@@ -125,6 +132,10 @@ impl RevokedTokenJtis for oneiron::Vault {
              `oneiron serve` and run `oneiron recover-clock`"
         );
         Some(ApiError::proof_clock_ahead())
+    }
+
+    fn credential_facets_owner_exempt(&self, proof: &oneiron::authority::VerifiedSlip) -> bool {
+        oneiron::Vault::credential_facets_owner_exempt(self, proof).unwrap_or(false)
     }
 
     fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
@@ -262,6 +273,12 @@ pub(crate) struct CoreAuth {
     /// device until the request's own connection says otherwise; see
     /// [`caller_locality`].
     locality: CallerLocality,
+    /// The slip's facet bounds leave its holder unbound: the vault owner's
+    /// own credential, or a narrower one the owner still holds, judged by
+    /// the engine's read-key rule when the proof verified. A door that
+    /// refuses a facet narrowing admits this one; the read lane still judges
+    /// the owner binding in each read's own snapshot.
+    facets_owner_exempt: bool,
 }
 
 impl CoreAuth {
@@ -278,6 +295,49 @@ impl CoreAuth {
         // A token alone cannot bind a session: possession of the connection
         // private key is mandatory, even for an otherwise valid v2 MAC.
         Err(ApiError::unauthorized())
+    }
+
+    /// The caller a verified account API key establishes (OF-448 node
+    /// path): exactly the scopes the control plane's verdict granted the
+    /// key, never owner-grade, with the presented key's node-local
+    /// fingerprint as its instrument identity.
+    fn from_verified_account_key(verified: account_key::VerifiedAccountKey) -> Self {
+        Self {
+            principal: format!("account-key:{}", verified.key_id),
+            principal_ref: verified.principal_ref,
+            scopes: verified.scopes,
+            implicit_all_scopes: false,
+            jti: None,
+            actor_class: None,
+            org_ref: None,
+            verified_slip: None,
+            instrument: Some(verified.instrument),
+            locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
+        }
+    }
+
+    /// [`Self::for_server`] plus the account-key door, for callers that can
+    /// await. When a host installed a verifier, any Bearer [REDACTED] that is
+    /// not a v2 slip or token is presented to it, and its refusal is final
+    /// (the failure floor is paid inside `verify`). Managed-issuer servers
+    /// keep their supervisor-terminated posture and never reach that path.
+    pub(crate) async fn for_server_async(
+        headers: &HeaderMap,
+        server: &SyncServer,
+    ) -> Result<Self, ApiError> {
+        if server.managed_issuer.is_none()
+            && let Some(keys) = &server.account_keys
+            && let Ok(Some(token)) = bearer_token(headers)
+            && !token.starts_with(CORE_TOKEN_V2_PREFIX)
+        {
+            return keys
+                .verify(token.as_bytes(), oneiron_vault_contract::now_ts())
+                .await
+                .map(Self::from_verified_account_key)
+                .map_err(|_| ApiError::unauthorized());
+        }
+        Self::for_server(headers, server)
     }
 
     pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
@@ -325,6 +385,7 @@ impl CoreAuth {
             verified_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
         })
     }
 
@@ -341,6 +402,7 @@ impl CoreAuth {
             verified_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
         }
     }
 
@@ -492,7 +554,8 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::for_server(&parts.headers, server)
+        Self::for_server_async(&parts.headers, server)
+            .await
             .map(|auth| auth.at(caller_locality(&parts.headers, &parts.extensions)))
             .map_err(Into::into)
     }
@@ -630,6 +693,7 @@ fn core_auth_for_live_claims(
         verified_slip: None,
         instrument: None,
         locality: CallerLocality::OffDevice,
+        facets_owner_exempt: false,
     })
 }
 

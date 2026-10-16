@@ -15,9 +15,11 @@ use super::codec::{
 };
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
-    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
+    DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -208,7 +210,7 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Enqueues a SKILL-OPT attempt in a caller-owned write transaction, so a
     /// wake that registers one lands it as a durable fact of the wake.
-    fn enqueue_skill_optimize_in_txn(
+    pub(crate) fn enqueue_skill_optimize_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueDreamerSkillOptimizeAttempt,
@@ -365,6 +367,62 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// Enqueues the NOTE review (OF-073) as a Nightly child in the wake's own
+    /// commit. One review per wake key: the review pages through every NOTE
+    /// itself, so a second one in the same night would read the same pages.
+    pub(crate) fn enqueue_note_review_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_NOTE_REVIEW_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::Nil,
+                parent_attempt,
+            },
+            wake_key.map(|key| format!("{DREAMER_NOTE_REVIEW_ATTEMPT_KIND}:{key}")),
+            run_id,
+            now,
+        )
+    }
+
+    /// Enqueues `resident`'s own dreaming (OF-490) as a Nightly child in the
+    /// wake's own commit: one per resident per wake key. The resident's
+    /// stamp binds at enqueue.
+    pub(crate) fn enqueue_resident_dream_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        resident: crate::EntityId,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_RESIDENT_DREAM_ATTEMPT_KIND.to_owned(),
+                input: crate::dreamer_consolidation::resident_dream_input(resident),
+                parent_attempt,
+            },
+            wake_key.map(|key| {
+                format!(
+                    "{DREAMER_RESIDENT_DREAM_ATTEMPT_KIND}:{}:{key}",
+                    resident.to_hex()
+                )
+            }),
+            run_id,
+            now,
+        )
+    }
+
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
     /// take the advisory dedupe floor, and co-commit the private run-tree row
     /// whichever way the queue answered.
@@ -467,6 +525,13 @@ impl<'a> DreamerRunnerStore<'a> {
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome = self.vault.with_write_txn_grouped(|wtxn| {
+            // OF-220: a TASK's durable result lands before the lease clears.
+            crate::task_verb::highway_runner::report_leased_task_in_txn(
+                self.vault,
+                wtxn,
+                attempt_id,
+                crate::task_verb::highway_runner::RunnerSettle::Done,
+            )?;
             let outcome = crate::ports::JobQueue::port_job_complete(
                 self.vault,
                 wtxn,
@@ -478,6 +543,23 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
             )?;
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
+            // A finished agent launch settles its spend lease (OF-532) in the
+            // commit that finishes it: its parent pays what it spent and the
+            // unused hold goes back. Settling twice is a no-op.
+            let record = match &outcome {
+                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
+                    record
+                }
+            };
+            if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
+                payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+            }) {
+                crate::agent_dispatch::AgentDispatcher::new(self.vault).settle_child_in_txn(
+                    wtxn,
+                    &attempt_id,
+                    input.now,
+                )?;
+            }
             Ok(outcome)
         })?;
         match outcome {
@@ -526,6 +608,16 @@ impl<'a> DreamerRunnerStore<'a> {
                     "agent retry requires a dispatch attempt",
                 ));
             }
+            // OF-220: the TASK requeues before its try's lease clears.
+            crate::task_verb::highway_runner::report_leased_task_in_txn(
+                self.vault,
+                txn,
+                source.id,
+                crate::task_verb::highway_runner::RunnerSettle::Failed {
+                    error: input.last_error.as_deref().unwrap_or_default(),
+                    retryable: true,
+                },
+            )?;
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
@@ -553,6 +645,16 @@ impl<'a> DreamerRunnerStore<'a> {
                         "agent dispatch failures require typed detector evidence",
                     ));
                 }
+                // OF-220: the TASK fails before its try's lease clears.
+                crate::task_verb::highway_runner::report_leased_task_in_txn(
+                    self.vault,
+                    wtxn,
+                    attempt_id,
+                    crate::task_verb::highway_runner::RunnerSettle::Failed {
+                        error: &input.reason,
+                        retryable: false,
+                    },
+                )?;
                 let outcome = crate::ports::JobQueue::port_job_fail(
                     self.vault,
                     wtxn,
@@ -761,7 +863,10 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
+        || kind == DREAMER_RECIPE_WAKE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+        || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
+        || kind == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }

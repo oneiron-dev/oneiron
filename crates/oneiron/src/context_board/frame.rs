@@ -8,7 +8,6 @@
 //! Rendering is a pure function of typed state plus an explicit budget
 //! request: no store, cache, session, clock, or response is read or mutated.
 
-use super::agents::AgentsSection;
 use super::one_line_token;
 use super::tasks::TasksSection;
 use crate::tokenizer::count_context_pack_tokens;
@@ -124,27 +123,38 @@ pub enum ShedRank {
     CapabilityDiscovery,
     MemoriesSnippets,
     TasksToCounts,
-    AgentsToCounts,
     WorldsToCounts,
+}
+
+impl ShedRank {
+    /// Stable wire token for the rank, as a transport reports an applied shed.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PluginSections => "plugin_sections",
+            Self::CapabilityDiscovery => "capability_discovery",
+            Self::MemoriesSnippets => "memories_snippets",
+            Self::TasksToCounts => "tasks_to_counts",
+            Self::WorldsToCounts => "worlds_to_counts",
+        }
+    }
 }
 
 /// The canonical shed decision order. `PluginSections` is an outer first rank
 /// so plugins never outrank core state; it does not reorder the core four.
-pub const SHED_ORDER: [ShedRank; 6] = [
+pub const SHED_ORDER: [ShedRank; 5] = [
     ShedRank::PluginSections,
     ShedRank::CapabilityDiscovery,
     ShedRank::MemoriesSnippets,
     ShedRank::TasksToCounts,
-    ShedRank::AgentsToCounts,
     ShedRank::WorldsToCounts,
 ];
 
 /// The unchanged core-four subsequence of [`SHED_ORDER`].
-pub const CORE_SHED_ORDER: [ShedRank; 5] = [
+pub const CORE_SHED_ORDER: [ShedRank; 4] = [
     ShedRank::CapabilityDiscovery,
     ShedRank::MemoriesSnippets,
     ShedRank::TasksToCounts,
-    ShedRank::AgentsToCounts,
     ShedRank::WorldsToCounts,
 ];
 
@@ -269,62 +279,26 @@ impl BoardSection {
     }
 }
 
-/// PR-2 adapter over the landed producer outputs; `tasks.rs` / `agents.rs`
-/// stay byte-identical. It derives only the engine-owned `count: N` fallback
-/// and never infers domain semantics from row text.
-pub fn assemble_task_agent_sections(
+/// The TASKS section with `lead` detail rows ahead of the task rows (a
+/// project view rides here) and the structural overflow footer after them.
+/// The count fallback counts the task rows the window rendered.
+pub fn assemble_tasks_section(
     tasks: &TasksSection,
-    agents: &AgentsSection,
-) -> Result<[BoardSection; 2], BoardFrameError> {
-    let tasks_section = BoardSection::new(
+    lead: Vec<String>,
+) -> Result<BoardSection, BoardFrameError> {
+    let mut detail = lead;
+    detail.extend(tasks.rows.iter().map(|row| row.line.clone()));
+    detail.extend(tasks.overflow.and_then(|overflow| overflow.line()));
+    BoardSection::new(
         "TASKS",
         Vec::new(),
-        tasks.rows.iter().map(|row| row.line.clone()).collect(),
+        detail,
         vec![format!("count: {}", tasks.rows.len())],
         SectionPolicy {
             pinned: false,
             shed_rank: Some(ShedRank::TasksToCounts),
         },
-    )?;
-    let mut agents_section = BoardSection::new(
-        "AGENTS",
-        Vec::new(),
-        agents
-            .rows
-            .iter()
-            .filter(|row| row.lane != super::AgentLane::Cand)
-            .map(|row| row.line.clone())
-            .collect(),
-        vec![format!(
-            "count: {}",
-            agents
-                .rows
-                .iter()
-                .filter(|row| row.lane != super::AgentLane::Cand)
-                .count()
-        )],
-        SectionPolicy {
-            pinned: false,
-            shed_rank: Some(ShedRank::AgentsToCounts),
-        },
-    )?;
-    agents_section.discovery_rows = agents
-        .rows
-        .iter()
-        .filter(|row| row.lane == super::AgentLane::Cand)
-        .map(|row| row.line.clone())
-        .collect();
-    for (row_index, row) in agents_section.discovery_rows.iter().enumerate() {
-        if row.len() > MAX_BOARD_ROW_BYTES {
-            return Err(BoardFrameError::RowExceedsByteLimit {
-                section: "AGENTS".into(),
-                row_index,
-                actual_bytes: row.len(),
-                max_bytes: MAX_BOARD_ROW_BYTES,
-            });
-        }
-    }
-    Ok([tasks_section, agents_section])
+    )
 }
 
 /// The typed render input: header, mandatory legend, ordered sections.

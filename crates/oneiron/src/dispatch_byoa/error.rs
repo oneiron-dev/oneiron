@@ -1,5 +1,6 @@
 //! Error enum, literal refusal reasons, result alias, and the invalid() constructor.
 
+use super::seat::SeatSpent;
 use crate::code_sandbox::SandboxCredentialHandle;
 use crate::error::{ArtifactError, Error};
 // ---------------------------------------------------------------------------
@@ -99,16 +100,45 @@ pub(super) const ERR_LEASE_ID_ZERO: &str = "egress lease carries no lease id";
 
 pub(super) const ERR_LEASE_TAINT: &str = "egress lease taint refs are malformed";
 
+pub(super) const ERR_SEAT_COUNT: &str = "runner seat policy must order one to eight seats";
+
+pub(super) const ERR_SEAT_INDEX: &str = "runner seat index is past the policy's order";
+
+pub(super) const ERR_SEAT_LOGIN_HANDLE: &str =
+    "a vendor-login seat names no credential: the login stays with the runtime's CLI";
+
+pub(super) const ERR_SEAT_KEY_HANDLE: &str = "an API-key seat must name a custody handle";
+
+pub(super) const ERR_SEAT_TASK: &str = "runner attempt does not carry a registered runner's task";
+
+pub(super) const ERR_SEAT_ROUTE: &str = "official seat route label is not recognized";
+
+pub(super) const ERR_SEAT_SPEC: &str = "official seat spec is incomplete or unbounded";
+
+pub(super) const ERR_PKCE_VERIFIER: &str = "pkce verifier must be 43-128 unreserved characters";
+
 /// Every way a foreign-agent door can refuse.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ByoaError {
-    #[error("user BYOA login refused on cloud node")]
+    /// A vendor login asked to run on a hosted node its vendor's terms keep
+    /// on the person's own runtime ([`super::login_placement`]).
+    #[error("this vendor login runs only on the person's own runtime, not a hosted node")]
     CloudLoginRefused,
     #[error("duplicate Dreamer provider adapter: {0}")]
     DuplicateProvider(String),
     #[error("unknown Dreamer provider adapter: {0}")]
     UnknownProvider(String),
+    #[error("official seat route is not supported: {0}")]
+    SeatRouteUnsupported(String),
+    #[error("official seat login needs vendor approval first: {0}")]
+    SeatLoginNotApproved(String),
+    #[error("official seat refuses a modified vendor binary")]
+    SeatModifiedBinaryRefused,
+    #[error("duplicate official seat adapter: {0}")]
+    DuplicateSeatAdapter(String),
+    #[error("unknown official seat adapter: {0}")]
+    UnknownSeatAdapter(String),
     /// Network was attempted without a lease that admits it. This is the
     /// refusal a direct-socket attempt lands on: there is no other door.
     #[error("byoa egress denied for profile {profile_ref}: {reason}")]
@@ -120,6 +150,10 @@ pub enum ByoaError {
     /// The host-owned backend seam refused.
     #[error("byoa backend refused: {0}")]
     Backend(String),
+    /// The seat's provider refused for a spent quota or a rate limit. The
+    /// caller routes it under the owner's [`super::OnSeatSpent`].
+    #[error("byoa seat spent: {}", .0.reason())]
+    SeatSpent(SeatSpent),
     /// Any crate-level refusal raised beneath this module — a queue door, a
     /// vault write, or a connector validator.
     #[error(transparent)]

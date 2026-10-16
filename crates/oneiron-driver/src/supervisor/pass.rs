@@ -72,9 +72,15 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     if let Some(author) = config.milestones.clone() {
         driver = driver.with_milestone_author(author);
     }
-    let mut executor = factory
-        .executor(&guard)
-        .map_err(PassRunError::PreAdmission)?;
+    let mut executors = if scope == DreamerConsolidationScope::Macro {
+        let buckets = oneiron::DreamerRunnerStore::new(vault)
+            .macro_bucket_count()
+            .map_err(PassRunError::PreAdmission)?;
+        factory.macro_executors(&guard, buckets)
+    } else {
+        factory.executor(&guard).map(|executor| vec![executor])
+    }
+    .map_err(PassRunError::PreAdmission)?;
     let input = RunWakePass {
         trigger,
         scope,
@@ -98,8 +104,15 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
                 "scheduled digest projection failed; attempt pass continues"
             );
         }
+        // Each reader's due weave digest, on the same home-only timer.
+        if let Err(error) = vault.serve_due_weave_digests(input.now, config.local_node_id) {
+            tracing::error!(
+                ?error,
+                "scheduled weave digests failed; attempt pass continues"
+            );
+        }
     }
-    let pass = driver.run_wake_pass(input, &mut executor, cancel);
+    let pass = driver.run_wake_pass_concurrent(input, &mut executors, cancel);
     let Some(attachment) = attachment else {
         return pass.await.map_err(PassRunError::Failed);
     };

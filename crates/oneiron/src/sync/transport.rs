@@ -14,8 +14,9 @@ use std::ops::{Deref, DerefMut};
 
 mod documents;
 pub use documents::{
-    DocumentFrame, TAG_BATCH, TAG_DOCUMENT, decode_document, decode_document_batch,
-    document_sub_tags, encode_document, encode_document_batch,
+    DocumentFrame, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT, decode_document,
+    decode_document_batch, decode_node_batch, document_sub_tags, encode_document,
+    encode_document_batch, encode_node_batch,
 };
 
 // ─── Custom Message Tags ──────────────────────────────────────────────────────
@@ -208,6 +209,16 @@ pub mod window_sub_tags {
     /// subscription past `max_windows_per_connection`. A peer that follows the window sends
     /// `VV_REQUEST`, which subscribes it again. Empty payload. Server to a v13 peer only.
     pub const WINDOW_INVALIDATE: u8 = 14;
+    /// One sealed packet of a private world's window (`SealedResidenceContent`
+    /// frame bytes). The receiver holds no world key for it unless it may read
+    /// the world: a reader imports it through its sealing mirror, any other
+    /// admitted holder shelves and forwards it unread (OF-292).
+    pub const SEALED_UPDATE: u8 = 15;
+    /// Asks the peer for this window's sealed packets. Payload is the
+    /// requester's encoded sealing-mirror version vector, or empty when it
+    /// holds none. The peer answers with `SEALED_UPDATE` frames only where a
+    /// sealed copy may rest on the requester's machine, or it may read there.
+    pub const SEALED_REQUEST: u8 = 16;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).
