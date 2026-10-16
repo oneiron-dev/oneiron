@@ -255,6 +255,7 @@ impl LiveQuerySource for BoundSource {
                         &read,
                         timeline,
                         crate::projection::View::Full,
+                        server.config.limits.projection_body_bytes,
                     )
                     .map_err(AppError::from)?;
                     let response = serde_json::to_value(response).map_err(|_| {

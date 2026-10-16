@@ -2980,6 +2980,82 @@ fn a_severed_pacts_world_reads_stale_before_its_stamp_lands() -> Result<()> {
     Ok(())
 }
 
+/// The host's generic sync_state door neither registers a world to a pact nor
+/// writes or clears a stale stamp: only the registration and the stale sweep
+/// write those families.
+#[cfg(feature = "sync")]
+#[test]
+fn the_generic_sync_state_door_cannot_register_a_world_or_touch_its_stamp() -> Result<()> {
+    let fixture = stale_fixture(0x33, 0x39);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let world = foreign_world(0xF6);
+    let grant = entity(0x3B);
+    let connect = fixture.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        1,
+        authority_entry_hash(&fixture.genesis)?,
+    );
+    let disconnect = fixture.sever(
+        FederationLifecycleKind::Disconnect,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        2,
+        authority_entry_hash(&connect)?,
+    );
+    store_authority(&vault, &[&fixture.genesis, &connect]);
+    register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+    vault.put_authority_log_entry(&disconnect, TimeRange { start: 3, end: 3 }, 3)?;
+    let stamp =
+        foreign_world_stale_stamp(&vault, world.entity_id())?.expect("the sweep stamped it");
+    let registration = |world: EntityId| {
+        format!(
+            "{FEDERATION_WORLD_KEY_PREFIX}{}:{}",
+            bytes_to_hex_lower(&STALE_PACT_A),
+            world.to_hex()
+        )
+    };
+    let unregistered = foreign_world(0xF7).entity_id();
+    let keys = [
+        registration(world.entity_id()),
+        registration(unregistered),
+        federation_stale_key(world.entity_id()),
+        federation_stale_key(unregistered),
+    ];
+
+    for key in &keys {
+        assert!(
+            matches!(
+                vault.sync_state_put(key, &[0x01]),
+                Err(Error::InvalidConfig(_))
+            ),
+            "{key}"
+        );
+        assert!(
+            matches!(
+                vault.with_write_txn(|wtxn| vault.sync_state_put_in_write_txn(wtxn, key, &[0x01])),
+                Err(Error::InvalidConfig(_))
+            ),
+            "{key}"
+        );
+        assert!(
+            matches!(vault.sync_state_delete(key), Err(Error::InvalidConfig(_))),
+            "{key}"
+        );
+    }
+
+    assert_eq!(
+        foreign_world_stale_stamp(&vault, world.entity_id())?,
+        Some(stamp)
+    );
+    assert!(vault.sync_state_get(&keys[0])?.is_some());
+    assert!(vault.sync_state_get(&keys[1])?.is_none());
+    assert_eq!(read_stale_map(&vault)?.len(), 1);
+    Ok(())
+}
+
 /// ONE-1411 done-means 8 — malformed LOCAL rows are corruption, not rows to
 /// skip. Silently skipping any of these would un-stale a world whose pact is
 /// provably dead.
