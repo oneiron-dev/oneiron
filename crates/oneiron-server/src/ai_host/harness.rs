@@ -32,13 +32,27 @@ pub(super) fn record_tuning_config(
     let prompts = settings
         .summary_instruction
         .iter()
-        .map(|text| format!("summary_instruction:{}", blake3::hash(text.as_bytes()).to_hex()))
+        .map(|text| {
+            format!(
+                "summary_instruction:{}",
+                blake3::hash(text.as_bytes()).to_hex()
+            )
+        })
         .collect();
     #[allow(clippy::cast_precision_loss, reason = "dials far below 2^52")]
     let manifest_thresholds = BTreeMap::from([
-        ("idle_floor_secs".to_owned(), settings.idle_floor_secs as f64),
-        ("session_ceiling_secs".to_owned(), settings.session_ceiling_secs as f64),
-        ("pass_budget_units".to_owned(), settings.pass_budget_units as f64),
+        (
+            "idle_floor_secs".to_owned(),
+            settings.idle_floor_secs as f64,
+        ),
+        (
+            "session_ceiling_secs".to_owned(),
+            settings.session_ceiling_secs as f64,
+        ),
+        (
+            "pass_budget_units".to_owned(),
+            settings.pass_budget_units as f64,
+        ),
     ]);
     vault.record_dreamer_tuning_config(
         &DreamerTuningConfig {

@@ -4,7 +4,11 @@
 //! export file; propose a native deck transaction or an organ's output; and
 //! keep, discard or undo a proposal. Serving a pinned version stays on `/a/`.
 //!
-//! Keep, Discard and Undo are the owner's consent and take the owner door;
+//! Comments whose spot was deleted are listed as unattached with their words;
+//! the exact places those words read again are offered, and one is picked to
+//! reattach (OF-368). A version restore reattaches by exact stored identity.
+//!
+//! Keep, Discard, Undo and Restore are the owner's consent and take the owner door;
 //! the other writes take `core:write` and act as the caller.
 
 use std::sync::Arc;
@@ -21,6 +25,7 @@ use axum::{
 };
 use base64::Engine as _;
 use oneiron::EntityId;
+use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
     ArtifactVersionView, BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance,
     BornFromSource,
@@ -58,7 +63,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/v1/core/artifacts/{artifact}/deck/proposals",
             post(propose_deck),
         )
-        .route("/v1/core/artifacts/{artifact}/outputs", post(propose_output))
+        .route(
+            "/v1/core/artifacts/{artifact}/outputs",
+            post(propose_output),
+        )
         .route(
             "/v1/core/artifacts/{artifact}/proposals/{proposal}/keep",
             post(keep),
@@ -70,6 +78,19 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route(
             "/v1/core/artifacts/{artifact}/proposals/{proposal}/undo",
             post(undo),
+        )
+        .route(
+            "/v1/core/artifacts/{artifact}/versions/{version}/restore",
+            post(restore),
+        )
+        .route("/v1/core/artifacts/{artifact}/unattached", get(unattached))
+        .route(
+            "/v1/core/artifacts/{artifact}/reattach-offers",
+            get(reattach_offers),
+        )
+        .route(
+            "/v1/core/artifacts/{artifact}/threads/{thread}/reattach",
+            post(reattach),
         )
         .layer(DefaultBodyLimit::max(ARTIFACT_BODY_LIMIT))
 }
@@ -132,6 +153,32 @@ pub(super) struct Settle {
     brief_ref: Option<String>,
     #[serde(default)]
     reason: Option<String>,
+}
+
+/// A format-typed place in a version, as the offers name it.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum PlaceInput {
+    Xlsx {
+        sheet: String,
+        range: String,
+    },
+    Docx {
+        para_path: String,
+        char_start: u64,
+        char_end: u64,
+    },
+    Pptx {
+        slide: u64,
+        shape_id: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Reattach {
+    version: u64,
+    place: PlaceInput,
 }
 
 #[derive(Deserialize)]
@@ -233,9 +280,14 @@ pub(super) async fn create(
                 occurred,
                 now,
             )?,
-            None => {
-                vault.append_blob_artifact_version(&id, &bytes, &provenance, actor, occurred, now)?
-            }
+            None => vault.append_blob_artifact_version(
+                &id,
+                &bytes,
+                &provenance,
+                actor,
+                occurred,
+                now,
+            )?,
         };
         vault.blob_artifact_view(&id)
     })
@@ -332,7 +384,8 @@ async fn export(
     );
     headers.insert(
         CONTENT_DISPOSITION,
-        HeaderValue::from_str(&disposition).unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+        HeaderValue::from_str(&disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
     headers.insert(
@@ -590,5 +643,143 @@ pub(super) async fn undo(
         "version": version_json(&outcome.version),
         "remapped": outcome.reanchor.remapped.len(),
         "drifted": outcome.reanchor.drifted.len(),
+    })))
+}
+
+fn place_json(locator: &Locator) -> Value {
+    match locator {
+        Locator::Xlsx { sheet, range } => {
+            json!({ "xlsx": { "sheet": sheet, "range": range.to_a1() } })
+        }
+        Locator::Docx {
+            para_path,
+            char_start,
+            char_end,
+        } => json!({ "docx": {
+            "para_path": para_path,
+            "char_start": char_start,
+            "char_end": char_end,
+        } }),
+        Locator::Pptx { slide, shape_id } => {
+            json!({ "pptx": { "slide": slide, "shape_id": shape_id } })
+        }
+        _ => Value::Null,
+    }
+}
+
+fn place_locator(place: PlaceInput) -> Result<Locator, ApiError> {
+    match place {
+        PlaceInput::Xlsx { sheet, range } => Locator::xlsx(sheet, &range),
+        PlaceInput::Docx {
+            para_path,
+            char_start,
+            char_end,
+        } => Locator::docx(para_path, char_start, char_end),
+        PlaceInput::Pptx { slide, shape_id } => Locator::pptx(slide, shape_id),
+    }
+    .map_err(|_| ApiError::bad_request("place is not a valid locator", Some("place")))
+}
+
+pub(super) async fn restore(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((artifact, version)): Path<(String, u64)>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    let actor = owner_actor(&auth, &server)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let outcome = blocking("restore failed", move || {
+        let (occurred, now) = moment(&server);
+        server
+            .vault()
+            .restore_blob_artifact_version(&id, version, actor, occurred, now)
+    })
+    .await?;
+    Ok(Json(json!({
+        "version": version_json(&outcome.version),
+        "restored_version": outcome.undo.restored_version,
+        "reattached": outcome.reanchor.remapped.len(),
+    })))
+}
+
+pub(super) async fn unattached(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let threads = blocking("unattached list failed", move || {
+        server.vault().unattached_annotation_threads(&id)
+    })
+    .await?;
+    let threads: Vec<Value> = threads
+        .iter()
+        .map(|unattached| {
+            json!({
+                "thread": unattached.thread.thread_id,
+                "pinned_version": unattached.thread.anchor.version,
+                "place": place_json(&unattached.thread.anchor.locator),
+                "snapshot": unattached.snapshot,
+                "detached_at_version": unattached.detached_at_version,
+                "held_task": unattached.held_task,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "unattached": threads })))
+}
+
+pub(super) async fn reattach_offers(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let offers = blocking("reattach offers failed", move || {
+        server.vault().annotation_reattach_offers(&id)
+    })
+    .await?;
+    let offers: Vec<Value> = offers
+        .iter()
+        .map(|offer| {
+            json!({
+                "thread": offer.thread_id,
+                "version": offer.version,
+                "place": place_json(&offer.locator),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "offers": offers })))
+}
+
+pub(super) async fn reattach(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path((artifact, thread)): Path<(String, String)>,
+    payload: Result<Json<Reattach>, JsonRejection>,
+) -> Result<Json<Value>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let actor = actor(&auth, None)?;
+    let id = parse_entity_id_param(&artifact, "artifact")?;
+    let thread = parse_entity_id_param(&thread, "thread")?;
+    let request = json_payload(payload)?;
+    let locator = place_locator(request.place)?;
+    let reattached = blocking("reattach failed", move || {
+        let (occurred, now) = moment(&server);
+        server.vault().reattach_annotation_thread(
+            &id,
+            &thread,
+            request.version,
+            &locator,
+            actor,
+            occurred,
+            now,
+        )
+    })
+    .await?;
+    Ok(Json(json!({
+        "thread": reattached.thread_id,
+        "version": reattached.anchor.version,
+        "place": place_json(&reattached.anchor.locator),
     })))
 }

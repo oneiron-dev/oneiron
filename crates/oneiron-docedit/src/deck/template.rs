@@ -237,19 +237,27 @@ fn spacing(element: &'static str) -> impl Fn(&XmlTree, usize) -> Option<Found<Sp
     move |tree, node| {
         let at = child(tree, node, A, element)?;
         let (node, value) = if let Some(pct) = child(tree, at, A, "spcPct") {
-            let value = tree.nodes[pct].attr("val").and_then(|v| match v.strip_suffix('%') {
-                Some(percent) => percent
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|p| p.is_finite() && (0.0..=13_200.0).contains(p))
-                    .map(|p| Spacing::Percent((p * 1000.0).round() as i64)),
-                None => v.parse().ok().map(Spacing::Percent),
-            });
+            let value = tree.nodes[pct]
+                .attr("val")
+                .and_then(|v| match v.strip_suffix('%') {
+                    Some(percent) => percent
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|p| p.is_finite() && (0.0..=13_200.0).contains(p))
+                        .map(|p| Spacing::Percent((p * 1000.0).round() as i64)),
+                    None => v.parse().ok().map(Spacing::Percent),
+                });
             (pct, value)
         } else {
             let pts = child(tree, at, A, "spcPts")?;
-            (pts, tree.nodes[pts].attr("val").and_then(|v| v.parse().ok()).map(Spacing::Points))
+            (
+                pts,
+                tree.nodes[pts]
+                    .attr("val")
+                    .and_then(|v| v.parse().ok())
+                    .map(Spacing::Points),
+            )
         };
         Some(Found {
             node,

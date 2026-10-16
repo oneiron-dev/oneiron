@@ -125,7 +125,9 @@ impl TypeRef {
         let ok = !self.node_id.is_empty()
             && self.node_id.len() <= 128
             && self.node_id.bytes().all(|b| {
-                b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-' | b'.' | b'/')
+                b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || matches!(b, b'_' | b'-' | b'.' | b'/')
             });
         if ok {
             Ok(())
@@ -247,27 +249,38 @@ impl LearningCell {
         };
         match self.predicate {
             LearningPredicate::Reliability => {
-                need(self.executor.is_some(), "learning.reliability keys an executor")?;
-                need(self.type_ref.is_some(), "learning.reliability keys a typeRef")?;
+                need(
+                    self.executor.is_some(),
+                    "learning.reliability keys an executor",
+                )?;
+                need(
+                    self.type_ref.is_some(),
+                    "learning.reliability keys a typeRef",
+                )?;
                 need(self.axis.is_some(), "learning.reliability keys an axis")?;
             }
             LearningPredicate::EditCost => {
-                need(self.executor.is_some(), "learning.edit_cost keys an executor")?;
+                need(
+                    self.executor.is_some(),
+                    "learning.edit_cost keys an executor",
+                )?;
                 need(
                     self.consent_scope.is_some(),
                     "learning.edit_cost keys a consent scope",
                 )?;
             }
             LearningPredicate::RetestNoise => {
-                need(self.executor.is_some(), "learning.retest_noise keys an executor")?;
+                need(
+                    self.executor.is_some(),
+                    "learning.retest_noise keys an executor",
+                )?;
                 need(self.axis.is_some(), "learning.retest_noise keys an axis")?;
             }
             LearningPredicate::Setting => {
                 need(self.type_ref.is_some(), "learning.setting keys a typeRef")?;
-                let key = self
-                    .setting_key
-                    .as_deref()
-                    .ok_or(Error::InvalidClaimBody("learning.setting keys a setting_key"))?;
+                let key = self.setting_key.as_deref().ok_or(Error::InvalidClaimBody(
+                    "learning.setting keys a setting_key",
+                ))?;
                 need(
                     crate::learning_setting::setting_spec(key).is_some(),
                     "learning.setting keys a setting-catalog row",
@@ -345,7 +358,12 @@ impl LearningCell {
     /// Whether `other` is this cell under another task type or executor:
     /// every other qualifier matches.
     #[must_use]
-    pub fn same_question_modulo(&self, other: &Self, ignore_type: bool, ignore_executor: bool) -> bool {
+    pub fn same_question_modulo(
+        &self,
+        other: &Self,
+        ignore_type: bool,
+        ignore_executor: bool,
+    ) -> bool {
         self.predicate == other.predicate
             && self.subject == other.subject
             && self.axis == other.axis

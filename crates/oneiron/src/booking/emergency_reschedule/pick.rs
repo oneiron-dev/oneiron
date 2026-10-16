@@ -164,7 +164,12 @@ pub(crate) fn verify_pick_blob(
     let bytes = crate::calendar::read_calendar_invite_ics(vault, &picked.payload)
         .map_err(storage_failure)?;
     if bytes != picked.ics(item)?
-        || picked.payload.blob_version_ref().map_err(storage_failure)?.0 != blob_id(&bytes)?
+        || picked
+            .payload
+            .blob_version_ref()
+            .map_err(storage_failure)?
+            .0
+            != blob_id(&bytes)?
     {
         return Err(refused(
             "picked ICS differs from the durable proposal-bound content",

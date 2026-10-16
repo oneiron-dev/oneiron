@@ -27,15 +27,13 @@ pub fn project_bound_outcomes(
     }
     let facts = {
         let txn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .type_index
-            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_CLAIM])?
-            .map(|row| {
-                let (key, _) = row?;
-                crate::vault::entity_id_from_type_index_key(&key)
-            })
-            .collect::<Result<std::collections::BTreeSet<_>>>()?
+        crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &vault.store,
+            &txn,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            None,
+        )?
+        .collect::<Result<std::collections::BTreeSet<_>>>()?
     };
     vault.with_write_txn_grouped(|txn| {
         super::arrival::project_question_in_txn(&vault.store, txn, &facts, question)

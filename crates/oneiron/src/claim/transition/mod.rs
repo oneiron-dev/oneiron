@@ -150,12 +150,8 @@ impl crate::Vault {
                     "machine approval requires active proposal",
                 ));
             }
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
-                .ok_or(crate::Error::EntityNotFound)?
-                .to_vec();
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
+                .ok_or(crate::Error::EntityNotFound)?;
             let header = crate::batch::EntityMetadataHeader::parse(&raw)
                 .ok_or(crate::Error::CorruptedIndex("machine claim header"))?;
             let mut approved = body;

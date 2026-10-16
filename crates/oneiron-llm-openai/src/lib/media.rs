@@ -125,11 +125,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         }
     }
 
-    async fn image(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-    ) -> LlmResult<MediaResponse> {
+    async fn image(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         let references = request
             .reference_images()
@@ -147,7 +143,10 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
                 .map(|(i, reference)| reference_part("image[]", i, reference))
                 .collect::<LlmResult<Vec<_>>>()?;
             let fields = form_fields(&fields);
-            ("/v1/images/edits", OpenAiMediaBody::Multipart { fields, files })
+            (
+                "/v1/images/edits",
+                OpenAiMediaBody::Multipart { fields, files },
+            )
         };
         let reply = self
             .transport
@@ -180,11 +179,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         Ok(response)
     }
 
-    async fn speech(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-    ) -> LlmResult<MediaResponse> {
+    async fn speech(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         let input = request.text();
         if input.trim().is_empty() || !only_text(&request) {
@@ -297,11 +292,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         })
     }
 
-    async fn embed(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-    ) -> LlmResult<MediaResponse> {
+    async fn embed(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         let texts: Vec<&str> = request.texts().collect();
         if texts.is_empty() || !only_text(&request) {
@@ -315,7 +306,12 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             .or_insert_with(|| json!("float"));
         let body = OpenAiMediaBody::Json(Value::Object(body.into_iter().collect()));
         let reply = self
-            .send(OpenAiMediaMethod::Post, "/v1/embeddings".into(), body, lease)
+            .send(
+                OpenAiMediaMethod::Post,
+                "/v1/embeddings".into(),
+                body,
+                lease,
+            )
             .await?;
         let mut reply = reply.json();
         let vectors = indexed_vectors(&reply, texts.len()).ok_or(FatalLlmError::EmptyResponse)?;

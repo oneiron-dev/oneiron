@@ -11,9 +11,8 @@ use crate::booking::constraint::BookingError;
 use crate::booking::lifecycle::{ConfirmReceipt, booking_confirmation_context, hex_lower};
 use crate::calendar::ics::emit_imip_ics_with_organizer_zones;
 use crate::calendar::{
-    CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarInviteMethod,
-    CalendarInvitePayload, ImipEmitRequest, admit_calendar_invite, decode_frozen_calendar_invite,
-    persist_imip_blob,
+    CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarInviteMethod, CalendarInvitePayload,
+    ImipEmitRequest, admit_calendar_invite, decode_frozen_calendar_invite, persist_imip_blob,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

@@ -268,6 +268,9 @@ class Oneiron:
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
         @property
+        def artifacts(self) -> "Oneiron._VaultArtifactsVerbs":
+            return Oneiron._VaultArtifactsVerbs(self._client)
+        @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
     class _VaultClaimsVerbs:
@@ -294,6 +297,36 @@ class Oneiron:
         def namespaces(self, request: dict[str, Any]) -> list[list[str]]:
             """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
             return json.loads(_translate(lambda: self._client.vault_kv_namespaces(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def view(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """One artifact's kind, head and versions, each with its made_by and born-from."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_view(json.dumps(request, allow_nan=False))))
+        def export(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """One version's export file (base64), with its pinned name and media type."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_export(json.dumps(request, allow_nan=False))))
+        def born_from(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The artifacts and versions a task, ask, run, skill or agent run produced."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_born_from(json.dumps(request, allow_nan=False))))
+        def proposals(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+            """The proposals waiting beside one artifact for Keep or Discard."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_proposals(json.dumps(request, allow_nan=False))))
+        def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Runs one native deck transaction over the head and holds the proposal for Keep."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))
+        def propose_output(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Offers one native organ result as the artifact's next version, held for Keep."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_propose_output(json.dumps(request, allow_nan=False))))
+        def keep(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Keeps one waiting proposal as a new version, once, with its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_keep(json.dumps(request, allow_nan=False))))
+        def discard(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Discards one waiting proposal, once, with its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_discard(json.dumps(request, allow_nan=False))))
+        def undo(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Undoes one Keep with a new version; the settle stays consumed."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_undo(json.dumps(request, allow_nan=False))))
     class _VaultRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
