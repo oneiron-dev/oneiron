@@ -145,6 +145,21 @@ impl SyncServer {
                     "courtesy delete delivery failed"
                 );
             }
+            // Lapsed host orders, ended silences, owner erases no hold blocks
+            // any more, queued refusals and expired hold-log rows (OF-470).
+            let holds = Arc::clone(server.vault());
+            match tokio::task::spawn_blocking(move || holds.maintain_legal_holds()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(kind = ?error.kind(), "legal-hold maintenance failed");
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        panicked = error.is_panic(),
+                        "legal-hold maintenance task failed"
+                    );
+                }
+            }
             server
                 .end_lifecycle_job(LifecycleJobKind::Housekeeping)
                 .await;
