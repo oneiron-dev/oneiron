@@ -360,7 +360,26 @@ impl Memory<'_> {
             posture,
             claims,
             receipt,
+            host: None,
         })
+    }
+
+    /// [`Self::rooms_render`] with the room's host read among `session`'s
+    /// present participants and the caller ([`Self::rooms_host`]). A session
+    /// the vault holds no SESSION row for names no present set, so the
+    /// section carries no host, as it does with no session at all.
+    pub fn rooms_render_hosted(
+        &self,
+        room: EntityId,
+        session: Option<EntityId>,
+    ) -> MemoryResult<RoomSection> {
+        let mut section = self.rooms_render(room)?;
+        if let Some(session) = session
+            && self.vault().session_presence(session).is_ok()
+        {
+            section.host = Some(self.rooms_host(room, Some(session))?.hosting);
+        }
+        Ok(section)
     }
 }
 

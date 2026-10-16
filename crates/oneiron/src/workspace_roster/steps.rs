@@ -1,5 +1,6 @@
 //! Ordered onboarding writes and idempotent primitives.
 
+use super::records::PresetRow;
 use super::*;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
@@ -109,13 +110,38 @@ pub(super) fn validate_workspace_references(
             "house_identity_ref must name a live CHANNEL_IDENTITY",
         )?;
     }
-    if let Some(companion) = &intent.companion_birth {
-        require_kind(
+    match &intent.companion {
+        CompanionChoice::Work(companion) => require_kind(
             vault,
             &companion.work_facet_ref,
             ENTITY_TYPE_FACET,
             "companion work_facet_ref must name a live FACET",
-        )?;
+        )?,
+        CompanionChoice::Bring {
+            person,
+            actor,
+            work_facet,
+            ..
+        } => {
+            require_kind(
+                vault,
+                person,
+                ENTITY_TYPE_PERSON,
+                "a brought companion must name a live PERSON",
+            )?;
+            require_kind(
+                vault,
+                actor,
+                ENTITY_TYPE_AGENT_DEF,
+                "a brought companion's actor must name a live AGENT_DEF",
+            )?;
+            require_kind(
+                vault,
+                work_facet,
+                ENTITY_TYPE_FACET,
+                "a brought companion's work_facet must name a live FACET",
+            )?;
+        }
     }
 
     let mut minted = vec![
@@ -125,7 +151,7 @@ pub(super) fn validate_workspace_references(
             ENTITY_TYPE_FEDERATION_GRANT,
         ),
     ];
-    if let Some(companion) = &intent.companion_birth {
+    if let Some(companion) = intent.companion.birth() {
         minted.extend([
             (companion.person_ref, ENTITY_TYPE_PERSON),
             (companion.actor_ref, ENTITY_TYPE_AGENT_DEF),
@@ -299,6 +325,88 @@ pub(super) fn birth_companion(
     ensure_companion_profile_grant(vault, intent, companion, writer)
 }
 
+/// Step 4, brought: the member's own companion, as she already is.
+///
+/// Her PERSON, its model substrate, her actor and its anchor are checked and
+/// never written, so no PERSON is reminted and the personal vault is not
+/// annexed; the member's existing companion-profile grant must already name
+/// her. The work facet is the one association made here. The workspace's
+/// `work_companion` policy and the member's consent are read in the
+/// transaction that binds her, never taken from the caller.
+pub(super) fn bring_companion(
+    vault: &Vault,
+    intent: &MemberOnboardingIntent,
+    writer: &WriteActor,
+) -> Result<()> {
+    let CompanionChoice::Bring {
+        person,
+        actor,
+        work_facet,
+        proof,
+    } = &intent.companion
+    else {
+        return Err(invalid("only a brought companion is bound here"));
+    };
+    let now = vault.store.clock.now_recorded_at();
+    // Substrate is a settled fact about her, read before the writer opens.
+    if vault.person_substrate(person, now)? != Some(crate::subject_model::PersonSubstrate::Model) {
+        return Err(invalid("a brought companion must be a model-backed PERSON"));
+    }
+    let authorized_at = vault.store.authorization_now()?;
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
+        let policy = PRESET
+            .get(&vault.store, txn, &intent.workspace.workspace_ref)?
+            .ok_or_else(|| invalid("workspace preset is not settled"))?
+            .work_companion;
+        if !policy.admits(&intent.companion) {
+            return Err(invalid(WORK_COMPANION_REQUIRED));
+        }
+        if proof.revalidate_person_in_txn(vault, txn)? != intent.person_ref {
+            return Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "a brought companion needs her member's own authenticated consent",
+                ),
+            ));
+        }
+        let anchor = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, actor, now)?;
+        if anchor.is_none_or(|anchor| {
+            anchor.subject_ref != *person
+                || anchor.subject_kind != crate::subject_model::SubjectKind::Person
+        }) {
+            return Err(invalid(
+                "a brought companion's actor must be anchored to her PERSON",
+            ));
+        }
+        // Her member's profile grant over her, person-wide or at the work
+        // facet she wears here.
+        if crate::gate::companion_profile_access_grant(
+            &vault.store,
+            txn,
+            &intent.person_ref,
+            person,
+            Some(work_facet),
+            authorized_at,
+        )?
+        .is_none()
+        {
+            return Err(invalid(
+                "a brought companion must already be her member's companion",
+            ));
+        }
+        if vault
+            .store
+            .port_edge_get(txn, person, EdgeKind::HasFacet, work_facet)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        vault
+            .batch_in()
+            .edge(person, EdgeKind::HasFacet, work_facet, 1.0)
+            .apply(txn)
+    })
+}
+
 /// Step 5: bind a member-held mailbox through the landed delegated door.
 ///
 /// The custody NAME travels; the token does not exist in this call stack.
@@ -409,13 +517,12 @@ pub(super) fn record_roster_member(
 ) -> Result<()> {
     require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;
     let revision = verify_mailbox_revision(vault, intent, proofs)?;
-    let companion = intent.required_companion()?;
     let row = RosterMemberRow {
         person_ref: intent.person_ref,
         actor_ref: intent.actor_ref,
-        companion_person_ref: Some(companion.person_ref),
-        companion_actor_ref: Some(companion.actor_ref),
-        companion_facet_ref: Some(companion.work_facet_ref),
+        companion_person_ref: Some(intent.companion.person_ref()),
+        companion_actor_ref: Some(intent.companion.actor_ref()),
+        companion_facet_ref: Some(intent.companion.work_facet_ref()),
         identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
     };
     let key = RosterMemberKey {
@@ -683,24 +790,30 @@ pub(super) fn ensure_companion_profile_grant(
     })
 }
 
-/// Writes the preset row, or verifies the stored one agrees with it.
+/// Writes the preset row, or verifies the stored one agrees with it. A new
+/// workspace starts at the default `work_companion` policy; an existing one
+/// keeps whatever its owner set.
 pub(super) fn ensure_preset_row(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
     writer: &WriteActor,
 ) -> Result<()> {
-    PRESET.encode_value(preset)?;
+    let row = PresetRow {
+        preset: preset.clone(),
+        work_companion: WorkCompanionPolicy::default(),
+    };
+    PRESET.encode_value(&row)?;
     let key = preset.workspace_ref.clone();
     with_workspace_authority(vault, preset.workspace_vault_id, writer, |wtxn| {
         if let Some(existing) = PRESET.get(&vault.store, wtxn, &key)? {
-            if existing != *preset {
+            if existing.preset != *preset {
                 return Err(invalid(
                     "workspace_ref is already bound to a different workspace preset",
                 ));
             }
             return Ok(());
         }
-        PRESET.put(&vault.store, wtxn, &key, preset)?;
+        PRESET.put(&vault.store, wtxn, &key, &row)?;
         Ok(())
     })
 }
