@@ -15,8 +15,13 @@ pub enum ConversationKind {
     Mirror,
 }
 impl ConversationKind {
+    /// Whether a room of this kind shares its past with a newcomer when it
+    /// sets no rule of its own. None does (ILDF2 P5, "the default is from
+    /// now"); a room that shares its past says so in `history_visible`.
     pub const fn history_default(self) -> bool {
-        matches!(self, Self::Group | Self::Channel | Self::Mirror)
+        match self {
+            Self::Direct | Self::Agent | Self::Group | Self::Channel | Self::Mirror => false,
+        }
     }
 }
 
@@ -80,6 +85,8 @@ impl ConversationBody {
         self.validate()?;
         encode(self)
     }
+    /// The room's history rule: its own `history_visible` when the owner set
+    /// one, else its kind's default, which is from now.
     pub fn shares_history(&self) -> bool {
         self.history_visible.unwrap_or(self.kind.history_default())
     }

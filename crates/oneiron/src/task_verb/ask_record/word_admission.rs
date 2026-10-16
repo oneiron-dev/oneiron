@@ -2,6 +2,12 @@
 
 use super::*;
 
+/// `owner` is the live owner proof the writer's surface carries, if any; an
+/// attendee ask admits a word only under it (`attendee_answer::guard_word`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one admission over the word, its writer and the owner proof"
+)]
 pub(in crate::task_verb) fn admit_word(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -9,6 +15,7 @@ pub(in crate::task_verb) fn admit_word(
     group: &AskGroup,
     writer: crate::WriteActor,
     word: &TaskAskWord,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
     now: u64,
 ) -> Result<TaskAskAnswer> {
     admit_word_with_source(
@@ -18,6 +25,7 @@ pub(in crate::task_verb) fn admit_word(
         group,
         WordWriter::Authenticated(writer),
         word,
+        owner,
         now,
     )
 }
@@ -32,7 +40,16 @@ pub(in crate::task_verb) fn admit_link_word(
     word: &TaskAskWord,
     now: u64,
 ) -> Result<TaskAskAnswer> {
-    admit_word_with_source(vault, txn, id, group, WordWriter::Link(link), word, now)
+    admit_word_with_source(
+        vault,
+        txn,
+        id,
+        group,
+        WordWriter::Link(link),
+        word,
+        None,
+        now,
+    )
 }
 
 enum WordWriter {
@@ -40,6 +57,10 @@ enum WordWriter {
     Link((EntityId, [u8; 32])),
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one admission over the word, its writer and the owner proof"
+)]
 fn admit_word_with_source(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -47,6 +68,7 @@ fn admit_word_with_source(
     group: &AskGroup,
     source: WordWriter,
     word: &TaskAskWord,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
     now: u64,
 ) -> Result<TaskAskAnswer> {
     let (writer, token_digest) = match source {
@@ -87,6 +109,9 @@ fn admit_word_with_source(
     } else {
         TaskAskSource::Executor
     };
+    // An attendee ask's word is the authenticated owner's own, or nothing:
+    // refused here, before anything is recorded.
+    super::super::attendee_answer::guard_word(vault, txn, id, group, source, actor, word, owner)?;
     if word.confirmation.is_some() {
         if source != TaskAskSource::Human {
             return Err(invalid());

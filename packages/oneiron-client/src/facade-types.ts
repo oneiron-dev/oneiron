@@ -57,6 +57,12 @@ export type CompanionSharingRequest = {
   companion_ref: string
   contact_ref: string
 }
+export type CompanionSharingSetRequest = {
+  companion_ref: string
+  contact_ref: string
+  proposal_ref: string
+  expected_delta: string
+}
 export type WorkspaceRefRequest = {
   workspace_ref: string
 }

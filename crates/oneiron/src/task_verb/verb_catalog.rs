@@ -105,6 +105,7 @@ pub enum AgentVerb {
     VaultRoomsHost,
     VaultRoomsSharing,
     VaultCompanionsSharingGet,
+    VaultCompanionsSharingSet,
     VaultWorkspaceWorkCompanionGet,
     VaultWorkspaceWorkCompanionSet,
     SelfSkillsSave,
@@ -265,6 +266,7 @@ impl AgentVerb {
         Self::VaultRoomsHost,
         Self::VaultRoomsSharing,
         Self::VaultCompanionsSharingGet,
+        Self::VaultCompanionsSharingSet,
         Self::VaultWorkspaceWorkCompanionGet,
         Self::VaultWorkspaceWorkCompanionSet,
         Self::SelfSkillsSave,
@@ -430,6 +432,7 @@ impl AgentVerb {
             Self::VaultRoomsHost => "vault.rooms.host",
             Self::VaultRoomsSharing => "vault.rooms.sharing",
             Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
+            Self::VaultCompanionsSharingSet => "vault.companions.sharing.set",
             Self::VaultWorkspaceWorkCompanionGet => "vault.workspace.work_companion.get",
             Self::VaultWorkspaceWorkCompanionSet => "vault.workspace.work_companion.set",
             Self::SelfSkillsSave => "self.skills.save",
@@ -589,6 +592,7 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -756,6 +760,7 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -960,6 +965,7 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -1066,6 +1072,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
@@ -1215,6 +1222,7 @@ impl AgentVerb {
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultCompanionsSharingSet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],
@@ -1376,6 +1384,7 @@ impl AgentVerb {
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultCompanionsSharingSet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],

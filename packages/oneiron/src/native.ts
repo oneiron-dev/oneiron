@@ -128,6 +128,7 @@ vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
+vaultCompanionsSharingSet(input: unknown): unknown
 vaultWorkspaceWorkCompanionGet(input: unknown): unknown
 vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown

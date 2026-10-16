@@ -532,79 +532,99 @@ impl Vault {
         outcome: ContactDisclosureOutcome,
     ) -> Result<DisclosureConfirmationReceipt> {
         self.with_write_txn_grouped(|txn| {
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let proposal = self.open_contact_disclosure_offer_in_txn(
-                &*txn,
+            self.confirm_contact_disclosure_in_txn(
+                txn,
                 owner,
                 proposal_ref,
                 expected_delta,
-                now,
-            )?;
-            let offer = &proposal.offer;
-            require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
-            let prior = crate::disclosure::contact_clearance_in_txn(
-                &self.store,
-                &*txn,
-                &offer.contact_ref,
-            )?;
-            let before = contact_clearance_digest(prior.as_ref())?;
-            if before != proposal.prior_clearance_digest {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "contact clearance changed since the offer was filed",
-                )));
-            }
-            let mut receipt = DisclosureConfirmationReceipt {
-                decision_id: GateDecisionId::from_bytes([0; 16]),
-                act: ContactClearanceAct::Settled(outcome),
-                contact_ref: offer.contact_ref,
-                proposal_ref: Some(proposal_ref.to_owned()),
-                ask_ref: offer.ask_ref.clone(),
-                before_digest: before,
-                after_digest: before,
-                once_digest: None,
-            };
-            match outcome {
-                ContactDisclosureOutcome::Standing => {
-                    let created_at = prior
-                        .as_ref()
-                        .filter(|clearance| clearance.status == DisclosureScopeStatus::Active)
-                        .map_or(now, |clearance| clearance.created_at.min(now));
-                    let clearance = DisclosureScope {
-                        scope: offer.scope.clone(),
-                        purpose: offer.purpose.clone(),
-                        status: DisclosureScopeStatus::Active,
-                        created_at,
-                        updated_at: now,
-                    };
-                    self.set_counterparty_disclosure_scope_in_txn(
-                        txn,
-                        &offer.contact_ref,
-                        &clearance,
-                    )?;
-                    receipt.after_digest = contact_clearance_digest(Some(&clearance))?;
-                    receipt.decision_id =
-                        self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
-                }
-                ContactDisclosureOutcome::Once => {
-                    let digest = proposal.once_digest(proposal_ref)?;
-                    receipt.decision_id =
-                        self.approve_once_in_txn(txn, owner, digest)?.decision_id();
-                    receipt.once_digest = Some(digest);
-                }
-                ContactDisclosureOutcome::Deny => {
-                    let digest = proposal.once_digest(proposal_ref)?;
-                    receipt.decision_id =
-                        self.deny_consent_in_txn(txn, owner, digest)?.decision_id();
-                }
-            }
-            self.settle_widen_offer_in_txn(
-                txn,
-                proposal_ref,
-                outcome.as_str(),
-                receipt.decision_id,
-            )?;
-            Ok(receipt)
+                outcome,
+            )
         })
+    }
+
+    /// [`Self::confirm_contact_disclosure`] inside the caller's write
+    /// transaction, for an owner door that settles the offer together with
+    /// its own record.
+    pub(crate) fn confirm_contact_disclosure_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        proposal_ref: &str,
+        expected_delta: &[u8],
+        outcome: ContactDisclosureOutcome,
+    ) -> Result<DisclosureConfirmationReceipt> {
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let proposal = self.open_contact_disclosure_offer_in_txn(
+            &*txn,
+            owner,
+            proposal_ref,
+            expected_delta,
+            now,
+        )?;
+        let offer = &proposal.offer;
+        require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
+        let prior = crate::disclosure::contact_clearance_in_txn(
+            &self.store,
+            &*txn,
+            &offer.contact_ref,
+        )?;
+        let before = contact_clearance_digest(prior.as_ref())?;
+        if before != proposal.prior_clearance_digest {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "contact clearance changed since the offer was filed",
+            )));
+        }
+        let mut receipt = DisclosureConfirmationReceipt {
+            decision_id: GateDecisionId::from_bytes([0; 16]),
+            act: ContactClearanceAct::Settled(outcome),
+            contact_ref: offer.contact_ref,
+            proposal_ref: Some(proposal_ref.to_owned()),
+            ask_ref: offer.ask_ref.clone(),
+            before_digest: before,
+            after_digest: before,
+            once_digest: None,
+        };
+        match outcome {
+            ContactDisclosureOutcome::Standing => {
+                let created_at = prior
+                    .as_ref()
+                    .filter(|clearance| clearance.status == DisclosureScopeStatus::Active)
+                    .map_or(now, |clearance| clearance.created_at.min(now));
+                let clearance = DisclosureScope {
+                    scope: offer.scope.clone(),
+                    purpose: offer.purpose.clone(),
+                    status: DisclosureScopeStatus::Active,
+                    created_at,
+                    updated_at: now,
+                };
+                self.set_counterparty_disclosure_scope_in_txn(
+                    txn,
+                    &offer.contact_ref,
+                    &clearance,
+                )?;
+                receipt.after_digest = contact_clearance_digest(Some(&clearance))?;
+                receipt.decision_id =
+                    self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
+            }
+            ContactDisclosureOutcome::Once => {
+                let digest = proposal.once_digest(proposal_ref)?;
+                receipt.decision_id =
+                    self.approve_once_in_txn(txn, owner, digest)?.decision_id();
+                receipt.once_digest = Some(digest);
+            }
+            ContactDisclosureOutcome::Deny => {
+                let digest = proposal.once_digest(proposal_ref)?;
+                receipt.decision_id =
+                    self.deny_consent_in_txn(txn, owner, digest)?.decision_id();
+            }
+        }
+        self.settle_widen_offer_in_txn(
+            txn,
+            proposal_ref,
+            outcome.as_str(),
+            receipt.decision_id,
+        )?;
+        Ok(receipt)
     }
 
     /// Narrows a contact's standing clearance to `scope`, which must sit

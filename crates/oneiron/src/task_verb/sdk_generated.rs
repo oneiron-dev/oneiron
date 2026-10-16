@@ -506,6 +506,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<CompanionSharingRequest>(),
             ),
             (
+                "vault.companions.sharing.set",
+                crate::code_run::vault_read::request_schema::<CompanionSharingSetRequest>(),
+            ),
+            (
                 "vault.workspace.work_companion.get",
                 crate::code_run::vault_read::request_schema::<WorkspaceRefRequest>(),
             ),
@@ -1537,6 +1541,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.companions.sharing.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workspace.work_companion.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2151,6 +2162,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.companions.sharing.get" => {
             let _input: CompanionSharingRequest = decode(value.clone())?;
         }
+        "vault.companions.sharing.set" => {
+            let _input: CompanionSharingSetRequest = decode(value.clone())?;
+        }
         "vault.workspace.work_companion.get" => {
             let _input: WorkspaceRefRequest = decode(value.clone())?;
         }
@@ -2483,6 +2497,9 @@ pub fn invoke(
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
             encode(vault_companions_sharing_get(memory, decode(value)?)?)
+        }
+        "vault.companions.sharing.set" => {
+            encode(vault_companions_sharing_set(memory, decode(value)?)?)
         }
         "vault.workspace.work_companion.get" => {
             encode(vault_workspace_work_companion_get(memory, decode(value)?)?)
@@ -3468,6 +3485,12 @@ pub fn vault_companions_sharing_get(
         companion: crate::EntityId::from_hex(&input.companion_ref)?,
         contact: crate::EntityId::from_hex(&input.contact_ref)?,
     })
+}
+pub fn vault_companions_sharing_set(
+    memory: &Memory<'_>,
+    input: CompanionSharingSetRequest,
+) -> MemoryResult<crate::workspace_roster::CompanionSharingView> {
+    memory.companion_sharing_set(&input.target()?, &input.proposal_ref, &input.delta()?)
 }
 pub fn vault_workspace_work_companion_get(
     memory: &Memory<'_>,

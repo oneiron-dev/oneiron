@@ -1,4 +1,5 @@
 //! Room bodies, membership windows, session presence and audience visibility.
+mod attendee;
 mod body;
 mod deletion;
 mod membership;
@@ -8,6 +9,7 @@ mod session;
 mod turn_actions;
 mod visibility;
 
+pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
 pub use body::{ConversationBody, ConversationKind, RoomRole};
 pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
 #[cfg(test)]

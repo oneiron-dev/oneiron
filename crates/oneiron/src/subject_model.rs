@@ -561,6 +561,32 @@ pub fn person_substrate(
         ))
 }
 
+/// [`person_substrate`] in the caller's snapshot, for a reader already inside
+/// a transaction (room hosting reads it inside a write).
+pub(crate) fn person_substrate_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person_ref: &EntityId,
+    at: u64,
+) -> Result<Option<PersonSubstrate>> {
+    let mut substrate = None;
+    for (id, body) in person_substrate_bodies_in_txn(vault, txn, person_ref, at, false)? {
+        if crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)? {
+            substrate = Some(body);
+        }
+    }
+    let Some(body) = substrate else {
+        return Ok(None);
+    };
+    body.value
+        .as_str()
+        .and_then(PersonSubstrate::parse)
+        .map(Some)
+        .ok_or(Error::InvalidClaimBody(
+            "person.substrate must be meat or model",
+        ))
+}
+
 /// Reads the canonical person's claims without moving their historical subjects.
 /// The same snapshot supplies both the read and the superseding write's old head.
 fn person_substrate_bodies_in_txn(

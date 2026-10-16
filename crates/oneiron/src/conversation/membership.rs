@@ -13,12 +13,17 @@ pub(super) const MEMBERSHIP_ROWS: SideTable<(EntityId, u64), MembershipRow, Name
 pub(super) const MEMBERSHIP_SEQ: SideTable<EntityId, u64, Raw> =
     SideTable::new(&side_table::CONVERSATION_MEMBERSHIP_SEQ);
 
+/// How much of a room's past a joining member sees.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryChoice {
+    /// The room's own rule ([`ConversationBody::shares_history`]): from the
+    /// join when the room sets none (ILDF2 P5, "the default is from now").
     #[default]
     Inherit,
+    /// The whole past.
     Share,
+    /// From the join on.
     None,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,6 +294,28 @@ impl Vault {
         from: u64,
     ) -> Result<()> {
         self.change_membership(
+            conversation,
+            person,
+            actor,
+            at,
+            MembershipAction::History,
+            None,
+            Some(from),
+        )
+    }
+    /// [`Self::set_history_visibility`] inside the caller's write
+    /// transaction, for an owner decision that commits with its receipt.
+    pub(super) fn set_history_visibility_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+        actor: WriteActor,
+        at: u64,
+        from: u64,
+    ) -> Result<()> {
+        self.change_membership_in_txn(
+            txn,
             conversation,
             person,
             actor,
