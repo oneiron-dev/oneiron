@@ -166,7 +166,7 @@ impl McpCallEffect {
         arguments: &crate::mcp::McpVerbArguments,
     ) -> Self {
         let acts_at_once = || {
-            tool.name == oneiron::task_verb::sdk::AgentVerb::ClaimUpsert.as_str()
+            tool.name == oneiron::task_verb::sdk::AgentVerb::VaultClaimsUpsert.as_str()
                 && arguments.spec.clone().is_some_and(|spec| {
                     serde_json::from_value::<oneiron::memory::ClaimInput>(spec).is_ok_and(|input| {
                         input.id.is_some()

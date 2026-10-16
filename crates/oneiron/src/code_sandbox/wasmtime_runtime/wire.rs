@@ -295,14 +295,14 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
 /// never served undecoded.
 fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
     Ok(match verb {
-        RunVerb::Search => {
+        RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
             SelfCall::MemorySearch(SelfMemorySearchCall::new(
                 args.query,
                 args.limit.map_or(20, |limit| limit as usize),
             ))
         }
-        RunVerb::PutClaim => {
+        RunVerb::VaultClaimsPut => {
             let args: MemoryClaimInput = decode(input)?;
             let confidence = args.confidence.map(js_f32).transpose()?;
             let occurred = args.occurred.unwrap_or(MemoryTimeRange {
@@ -326,7 +326,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 args.learned_at.map_or(Ok(now), js_time)?,
             ))
         }
-        RunVerb::SupersedeClaim => {
+        RunVerb::VaultClaimsSupersede => {
             let args: MemorySupersedeInput = decode(input)?;
             SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(
                 EntityId::from_hex(&args.new_id)?,
@@ -334,7 +334,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 js_time(args.now)?,
             ))
         }
-        RunVerb::PutEdge => {
+        RunVerb::VaultEdgesPut => {
             let args: MemoryEdgeInput = decode(input)?;
             let weight = args.weight.map(js_f32).transpose()?;
             let kind =

@@ -102,7 +102,7 @@ impl Read {
                 let p: Receipts = params(value)?;
                 Self::Receipts(facade_limit(
                     p.limit,
-                    oneiron::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT,
+                    oneiron::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT,
                 )?)
             }
             "claimList" => {
