@@ -30,6 +30,10 @@ pub struct SelectionConfig {
     pub frequency_scale: u64,
     pub diversity_scale: u64,
     pub recency_window_ms: u64,
+    /// Maximum extraction calls in flight; low-trust partitions still run serially.
+    pub extraction_parallelism: usize,
+    /// Maximum TURNs in one neighbourhood child.
+    pub extraction_turns_per_child: usize,
 }
 impl Default for SelectionConfig {
     fn default() -> Self {
@@ -44,6 +48,8 @@ impl SelectionConfig {
             || self.frequency_scale == 0
             || self.diversity_scale == 0
             || self.recency_window_ms == 0
+            || self.extraction_parallelism == 0
+            || self.extraction_turns_per_child == 0
             || !unit(self.cosine_threshold)
             || !unit(self.default_type_prior)
             || self.type_priors.values().any(|n| !unit(*n))

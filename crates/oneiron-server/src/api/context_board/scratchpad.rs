@@ -139,14 +139,21 @@ pub(crate) async fn context_board_scratchpad(
     }))
 }
 
-/// The SCRATCHPAD rows an agent run's board carries: its session's live pad,
-/// read as the agent itself, with the pad's NOTE id for the served rows. Any
-/// other caller, or a run without a session, gets none.
-pub(super) fn scratchpad_rows(
+/// An agent run's live pad as its board serves it: the SCRATCHPAD section
+/// for the frame, its full-view rows, and the pad NOTE for the served rows.
+pub(super) struct ServedScratchpad {
+    pub(super) pad: oneiron::EntityId,
+    pub(super) rows: Vec<String>,
+    pub(super) section: oneiron::context_board::BoardSection,
+}
+
+/// The session's live pad, read as the agent itself. Any other caller, or a
+/// run without a session, gets none.
+pub(super) fn served_scratchpad(
     server: &SyncServer,
     auth: &CoreAuth,
     session: Option<&str>,
-) -> Result<Option<(oneiron::EntityId, Vec<String>)>, ApiError> {
+) -> Result<Option<ServedScratchpad>, ApiError> {
     let Some(session) =
         session.filter(|_| auth.actor_class() == Some("agent") && auth.principal_ref().is_some())
     else {
@@ -166,7 +173,11 @@ pub(super) fn scratchpad_rows(
         .chain(board.section.detail_rows())
         .cloned()
         .collect();
-    Ok(Some((board.pad, rows)))
+    Ok(Some(ServedScratchpad {
+        pad: board.pad,
+        rows,
+        section: board.section,
+    }))
 }
 
 /// The pad belongs to the authenticated entity principal under its declared
