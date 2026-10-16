@@ -46036,6 +46036,7 @@
      "notable": [
       "ProjectDisposition",
       "ProjectEffective",
+      "ProjectForkConflict",
       "ProjectFrontier",
       "ProjectRank",
       "ProjectWitness"
@@ -46043,10 +46044,10 @@
      "path": "src/workspace_roster/project/fold.rs",
      "purpose": "The fold over a project's held revisions (decisions 5-7)",
      "surface": {
-      "crate-vis": 57,
+      "crate-vis": 56,
       "enum": 2,
       "fn": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -46290,7 +46291,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/proof.rs",
@@ -46574,7 +46575,7 @@
      "path": "src/workspace_roster/project/validity.rs",
      "purpose": "Whether one held revision is valid on its own lineage, and the board's resolutions at one node (decisions 5…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 28
      }
     },
     {
