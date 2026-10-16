@@ -45,7 +45,13 @@ pub use crate::learning::{ROOT_TYPE_NODE, TypeRef};
 
 /// The seven seed node ids, all children of the root, in canon order.
 pub const SEED_TYPES: [&str; 7] = [
-    "generate", "refine", "solve", "research", "judge", "build", "negotiate",
+    "generate",
+    "refine",
+    "solve",
+    "research",
+    "judge",
+    "build",
+    "negotiate",
 ];
 
 /// The root node id: every unsure placement lands here.
@@ -219,7 +225,11 @@ pub enum DecisionAxis {
 }
 
 impl DecisionAxis {
-    pub const ALL: [Self; 3] = [Self::WinningPattern, Self::WinningModel, Self::TrustedCritic];
+    pub const ALL: [Self; 3] = [
+        Self::WinningPattern,
+        Self::WinningModel,
+        Self::TrustedCritic,
+    ];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -427,7 +437,12 @@ impl TaskTypeTree {
         for seed in SeedTaskType::ALL {
             nodes.insert(
                 seed.node_id().to_owned(),
-                TaskTypeNode::new(seed.node_id(), Some(ROOT_NODE_ID), seed.as_str(), Some(seed)),
+                TaskTypeNode::new(
+                    seed.node_id(),
+                    Some(ROOT_NODE_ID),
+                    seed.as_str(),
+                    Some(seed),
+                ),
             );
         }
         Self {
@@ -521,7 +536,10 @@ impl TaskTypeTree {
             if !node.is_thin() || node.parent.is_none() {
                 return self.type_ref(&node.node_id);
             }
-            cursor = node.parent.as_ref().and_then(|parent| self.nodes.get(parent));
+            cursor = node
+                .parent
+                .as_ref()
+                .and_then(|parent| self.nodes.get(parent));
         }
         self.root_ref()
     }
@@ -672,12 +690,12 @@ impl TaskTypeTree {
         if !a.is_live() || !b.is_live() || a.parent.is_none() || a.parent != b.parent {
             return false;
         }
-        DecisionAxis::ALL.iter().all(|axis| {
-            match (a.clear_winner(*axis), b.clear_winner(*axis)) {
+        DecisionAxis::ALL.iter().all(
+            |axis| match (a.clear_winner(*axis), b.clear_winner(*axis)) {
                 (Some(left), Some(right)) => left == right,
                 _ => true,
-            }
-        })
+            },
+        )
     }
 
     /// Merges two agreeing siblings back into their parent: counts fold up,
@@ -734,17 +752,20 @@ impl TaskTypeTree {
     /// vault tree's on any shared live node — the fork trigger.
     #[must_use]
     pub fn diverges_from(&self, vault: &Self) -> bool {
-        self.nodes.values().filter(|node| node.is_live()).any(|node| {
-            let Some(upstream) = vault.nodes.get(&node.node_id) else {
-                return false;
-            };
-            DecisionAxis::ALL.iter().any(|axis| {
-                matches!(
-                    (node.clear_winner(*axis), upstream.clear_winner(*axis)),
-                    (Some(mine), Some(theirs)) if mine != theirs
-                )
+        self.nodes
+            .values()
+            .filter(|node| node.is_live())
+            .any(|node| {
+                let Some(upstream) = vault.nodes.get(&node.node_id) else {
+                    return false;
+                };
+                DecisionAxis::ALL.iter().any(|axis| {
+                    matches!(
+                        (node.clear_winner(*axis), upstream.clear_winner(*axis)),
+                        (Some(mine), Some(theirs)) if mine != theirs
+                    )
+                })
             })
-        })
     }
 
     /// Forks this tree for one project. The fork carries the current shape
@@ -765,11 +786,7 @@ impl TaskTypeTree {
     /// Offers one leaf of this project fork back to `upstream`: promoted
     /// only when its held-out wins outnumber its held-out losses over at
     /// least [`PROMOTE_MIN_HELD_OUT_RUNS`] runs ("useful upstream?").
-    pub fn promote_leaf_to(
-        &self,
-        upstream: &mut Self,
-        node_id: &str,
-    ) -> Result<PromotionOutcome> {
+    pub fn promote_leaf_to(&self, upstream: &mut Self, node_id: &str) -> Result<PromotionOutcome> {
         let leaf = self
             .nodes
             .get(node_id)
