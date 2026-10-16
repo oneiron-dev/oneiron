@@ -153,6 +153,11 @@ git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while 
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
+code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
+code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
+code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor
+code_result_memory_bytes = 8589934592 # result bodies every run holds in memory at once (default: memory / 8, the least of RAM and the container limit)
+code_result_session_memory_bytes = 1073741824 # result bodies one run holds in memory (default: memory / 64); past either, a body is read from its file by range
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

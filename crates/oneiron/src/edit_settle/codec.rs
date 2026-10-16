@@ -6,10 +6,10 @@ use rmpv::Value;
 
 use super::keys::{
     KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR, KEY_ANCHOR_THREAD_ID, KEY_ANCHORS,
-    KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_MANIFEST_OPS, KEY_MANIFEST_REF,
-    KEY_OUTCOME, KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF,
-    KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_SHEET_ANSWERS, KEY_VERSION,
-    SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
+    KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_DECK, KEY_MANIFEST_OPS,
+    KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES,
+    KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_SHEET_ANSWERS,
+    KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
 };
 use super::records::{PptxReviewIdentity, SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::anchored_annotation::{decode_locator, encode_locator};
@@ -64,6 +64,16 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
             rmp_serde::to_vec_named(bundle)
                 .map(Value::Binary)
                 .map_err(|_| Error::InvariantViolation("typed answer receipt encode failed"))
+        })
+        .transpose()?
+        .unwrap_or(Value::Nil);
+    let deck = record
+        .deck
+        .as_ref()
+        .map(|evidence| {
+            rmp_serde::to_vec_named(evidence)
+                .map(Value::Binary)
+                .map_err(|_| Error::InvariantViolation("deck settle evidence encode failed"))
         })
         .transpose()?
         .unwrap_or(Value::Nil);
@@ -161,6 +171,7 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
             option_str_value(record.reason.as_deref()),
         ),
         (Value::from(KEY_SHEET_ANSWERS), sheet_answers),
+        (Value::from(KEY_DECK), deck),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -234,6 +245,13 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
                 bundle.ops().map_err(|_| corrupt())?;
                 Some(Box::new(bundle))
             }
+            _ => return Err(corrupt()),
+        },
+        deck: match field(&entries, KEY_DECK) {
+            Some(Value::Nil) => None,
+            Some(Value::Binary(bytes)) => Some(Box::new(
+                rmp_serde::from_slice(bytes).map_err(|_| corrupt())?,
+            )),
             _ => return Err(corrupt()),
         },
     })

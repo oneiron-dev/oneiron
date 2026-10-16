@@ -11,4 +11,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | s | 6 struct · 2 enum · 8 fn · 1 type | ContainerRuntime, Error, GuestLimits, GuestSeccomp, GuestSession, GuestSpec, ImageRef, SessionManifest | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice |
+| `src/lib.rs` | src | m | 6 struct · 2 enum · 8 fn · 1 type | ContainerRuntime, Error, GuestLimits, GuestSeccomp, GuestSession, GuestSpec, ImageRef, SessionManifest | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice |
