@@ -88,6 +88,12 @@ side_tables! {
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
+    /// One claim-authoring campaign (OF-366): its strategy skill pin, fixed config, strategy pin
+    /// and BEAM promotion receipt. Key: id16 (root attempt).
+    AUTORESEARCH_AUTHORING: VaultMeta b"autoresearch:authoring:v1:" Named;
+    /// One finalized claim-authoring tournament run: winner, landed approval, team receipt ref,
+    /// terminal receipt ref and settled outcome. Key: id16 (root attempt) + id16 (run attempt).
+    AUTORESEARCH_AUTHORING_RUN: VaultMeta b"autoresearch:authoring_run:v1:" Named;
     /// One autoresearch candidate's held-out basis, its one sealed confirmation (consumed before
     /// the cohort is released) and its promotion receipt. Key: id16 (root attempt) + id16
     /// (candidate attempt).
