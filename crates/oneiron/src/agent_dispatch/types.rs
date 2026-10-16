@@ -538,7 +538,9 @@ impl SpawnNeed {
         if let Some(width) = &self.width
             && *width.value() == 0
         {
-            return Err(super::widen_record::invalid("spawn width must be at least 1"));
+            return Err(super::widen_record::invalid(
+                "spawn width must be at least 1",
+            ));
         }
         let weights = [
             self.model.as_ref().map(SpawnOverride::weight_runs),

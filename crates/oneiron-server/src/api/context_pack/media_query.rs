@@ -136,11 +136,13 @@ pub(crate) async fn embed_media_seeds(
     text_query: Option<&str>,
 ) -> Result<Vec<MediaSeed>, ApiError> {
     let text_space = match text_query {
-        Some(_) => server
-            .vault
-            .kind_slot_bindings()
-            .map_err(|error| core_engine_error("kind slot bindings read failed", error))?
-            .text,
+        Some(_) => {
+            server
+                .vault
+                .kind_slot_bindings()
+                .map_err(|error| core_engine_error("kind slot bindings read failed", error))?
+                .text
+        }
         None => None,
     };
     let mut seeds = Vec::new();

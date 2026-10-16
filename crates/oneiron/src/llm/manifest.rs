@@ -20,7 +20,9 @@ const TEACHER_APPROVAL: SideTable<(), TeacherProbeApproval, LegacyJson> =
     SideTable::new(&side_table::LLM_EXTRACTION_TEACHER_PROBE);
 mod encoder_export;
 mod teacher_probe;
-pub use encoder_export::{CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork};
+pub use encoder_export::{
+    CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork,
+};
 pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -367,7 +369,9 @@ impl Vault {
         approval.verify(manifest, &policy)?;
         if let Some(export) = new_encoder_export {
             if &export.request.teacher_approval != approval {
-                return Err(invalid("encoder export requires the pinned teacher approval"));
+                return Err(invalid(
+                    "encoder export requires the pinned teacher approval",
+                ));
             }
             export.verify(manifest, &policy)?;
             encoder_export::ENCODER_EXPORT.put(&self.store, txn, &(), export)?;

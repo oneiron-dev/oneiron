@@ -3,8 +3,8 @@
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
-pub use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
 use oneiron::authority::PeerMachine;
+pub use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
 use oneiron::{ErrorKind, Vault, entity_id::EntityId};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -112,7 +112,9 @@ impl MachineGrants for PairedMachineGrants {
             .mesh_peer_machine(key, alpn)
             .map_err(|e| MeshError::Io(e.to_string()))?
         {
-            PeerMachine::Proven { machine: proven, .. } => Ok(proven == machine),
+            PeerMachine::Proven {
+                machine: proven, ..
+            } => Ok(proven == machine),
             PeerMachine::Unknown => Ok(false),
         }
     }

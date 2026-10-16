@@ -562,14 +562,11 @@ impl Vault {
                 relay_verify_content_binding(receipt.request, &policy)? == verify_at
             }
             (true, None) => false,
-            (false, _) => receipt
-                .pass
-                .boundary_verdict()
-                .is_some_and(|verdict| {
-                    verdict.binding == fresh
-                        && verdict.decision_binding
-                            == receipt.config.decision_binding(PolicyPlane::HostedLegal)
-                }),
+            (false, _) => receipt.pass.boundary_verdict().is_some_and(|verdict| {
+                verdict.binding == fresh
+                    && verdict.decision_binding
+                        == receipt.config.decision_binding(PolicyPlane::HostedLegal)
+            }),
         };
         if unmoved {
             return Ok(None);

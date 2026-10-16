@@ -371,7 +371,8 @@ impl Vault {
                 admit(&target, &live)?;
             }
             let writer = writer(kind, actor, made_by);
-            let (minted, commit) = edit_typed_body_in_txn(self, wtxn, artifact, base, writer, edit)?;
+            let (minted, commit) =
+                edit_typed_body_in_txn(self, wtxn, artifact, base, writer, edit)?;
             validate(kind, &self.loro_body(wtxn, artifact, kind, None)?.1)?;
             Ok(OfficeBodyEdit {
                 frontier: commit.frontier,
@@ -507,7 +508,9 @@ impl Vault {
             }
             let (head, live) = self.loro_body(wtxn, artifact, kind, None)?;
             if head.frontier != expected_head {
-                return Err(invalid("the body moved since the review; read the diff again"));
+                return Err(invalid(
+                    "the body moved since the review; read the diff again",
+                ));
             }
             let diff = three_way(kind, &live, &proposal, &record.base, &head.frontier)?;
             if diff.blocking() {
@@ -562,7 +565,8 @@ impl Vault {
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
         let at = self.now_recorded_at();
-        let Some((bytes, changes, recalc)) = self.project_body(artifact, &head, request.author, at)?
+        let Some((bytes, changes, recalc)) =
+            self.project_body(artifact, &head, request.author, at)?
         else {
             return Ok(OfficeBodyExport {
                 frontier: head.frontier,
@@ -628,7 +632,12 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at)? {
             Some((bytes, _, recalc)) => (bytes, recalc),
-            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, &head.frontier)?,
+            None => recalc_xlsx(
+                &self.body_source(artifact, &head)?,
+                limits,
+                at,
+                &head.frontier,
+            )?,
         };
         let book = read_xlsx_cells(&bytes, limits)
             .map_err(|_| invalid("the projected workbook could not be read"))?;
@@ -666,8 +675,12 @@ impl Vault {
         }
         let (live, base) = {
             let txn = self.store.env.read_txn()?;
-            let live = self.loro_body(&txn, artifact, head.kind, Some(&head.frontier))?.1;
-            let base = self.loro_body(&txn, artifact, head.kind, Some(&head.import_frontier))?.1;
+            let live = self
+                .loro_body(&txn, artifact, head.kind, Some(&head.frontier))?
+                .1;
+            let base = self
+                .loro_body(&txn, artifact, head.kind, Some(&head.import_frontier))?
+                .1;
             (live, base)
         };
         if head.kind == OfficeBodyKind::Docx {
@@ -848,7 +861,9 @@ fn check_made_by(actor: WriteActor, made_by: &MadeBy) -> Result<()> {
         || !made_by.process.is_valid()
         || made_by.inputs.len() > 1024
     {
-        return Err(invalid("the MadeBy envelope does not name this actor's process"));
+        return Err(invalid(
+            "the MadeBy envelope does not name this actor's process",
+        ));
     }
     Ok(())
 }
@@ -922,11 +937,15 @@ fn recalc_xlsx(
     match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {
         Ok(report) => Ok((
             report.bytes,
-            Some(format!("{} {}", report.engine.engine, report.engine.version)),
+            Some(format!(
+                "{} {}",
+                report.engine.engine, report.engine.version
+            )),
         )),
         Err(_) => Ok((
-            mark_full_calc(bytes, limits)
-                .map_err(|_| invalid("the projected workbook could not be marked to recalculate"))?,
+            mark_full_calc(bytes, limits).map_err(|_| {
+                invalid("the projected workbook could not be marked to recalculate")
+            })?,
             None,
         )),
     }
