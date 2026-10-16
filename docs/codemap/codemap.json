@@ -43843,7 +43843,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 174
+      "fn": 175
      }
     },
     {
@@ -51809,11 +51809,11 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BatchInput",
@@ -51823,16 +51823,23 @@
       "BrowserError",
       "ClickInput",
       "CropInput",
+      "DecideStep",
       "EffectReceipt",
       "ExpectInput",
       "ExpectOutput",
       "FindInput",
       "FindOutput",
       "ImageOutput",
+      "NoDecider",
       "Observation",
       "ObserveInput",
       "OpenInput",
+      "PointInput",
       "PressMode",
+      "RoutineAnswer",
+      "RoutineAsk",
+      "RoutineDecider",
+      "RoutineReply",
       "Row",
       "ScreenshotInput",
       "ScreenshotOutput",
@@ -51849,12 +51856,12 @@
      "path": "src/lib.rs",
      "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
-      "const": 7,
-      "enum": 5,
+      "const": 9,
+      "enum": 6,
       "fn": 8,
       "re-export": 2,
-      "struct": 23,
-      "trait": 1
+      "struct": 28,
+      "trait": 2
      }
     },
     {
@@ -51877,7 +51884,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     }
@@ -51912,7 +51919,7 @@
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
    "source_files": 5,
    "test_files": 0
@@ -63437,7 +63444,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 7
      }
     },
     {
