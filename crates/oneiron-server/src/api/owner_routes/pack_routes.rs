@@ -2,7 +2,8 @@
 //! The owner installs a pack from a folder on this host or from its files,
 //! lists what is installed, and binds or dials its hooks. Hub refs sync at
 //! their stored policy, and hub skills import, sync, restore and read their
-//! receipts here (OF-213).
+//! receipts here (OF-213). The organ inventory and the owner's organ build
+//! upload live here too (OF-575).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,13 +16,18 @@ use axum::routing::{get, post};
 use oneiron::EntityId;
 use oneiron::consent::ConsentReceipt;
 use oneiron::skill_hub::pack_catalog::{
-    PackHookBinding, PackInstallDisposition, PackInstallReceipt, hub_pin,
+    MAX_ORGAN_BUILD_BYTES, PackHookBinding, PackInstallDisposition, PackInstallReceipt,
+    PackOrganBuild, PackOrganEntry, hub_pin,
 };
 use oneiron::skill_hub::{
     HubAdmissionReceipt, HubAskSurface, HubFile, HubImportReceipt, HubPin, HubRef,
     HubSyncDisposition, HubSyncPolicy, TrackedHubRef,
 };
 use serde::{Deserialize, Serialize};
+
+use oneiron::connector_key::ProviderConnectionChecks;
+use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
+use oneiron::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
@@ -32,17 +38,24 @@ use crate::server::SyncServer;
 /// A folder read from disk stops here; the pack source applies its own,
 /// tighter bounds after.
 const MAX_FOLDER_FILES: usize = 1024;
-const MAX_FOLDER_BYTES: u64 = 64 * 1024 * 1024;
+/// Organ builds ride in the folder and leave the source as blob assets.
+const MAX_FOLDER_BYTES: u64 = 256 * 1024 * 1024;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/packs", get(installed).post(put))
         .route("/packs/install", post(install_from_hub))
+        .route("/packs/setup", get(setup_view))
+        .route("/packs/setup/prepare", post(setup_prepare))
+        .route("/packs/setup/answer", post(setup_answer))
+        .route("/packs/setup/verify", post(setup_verify))
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
         .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
         .route("/packs/sync", post(sync_pack))
+        .route("/packs/organs", get(pack_organs))
+        .route("/packs/organs/build", post(put_organ_build))
         .route("/packs/skills/import", post(import_skill))
         .route("/packs/skills/restore", post(restore_skill))
         .route(
@@ -330,6 +343,65 @@ async fn set_hook_enabled(
     })
     .await?;
     Ok(Json(()))
+}
+
+/// `GET /v1/owner/packs/organs`: every organ of an Active installation, with
+/// the platforms this vault holds a build for.
+async fn pack_organs(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<PackOrganEntry>> {
+    owner(&auth, &server)?;
+    let organs = blocking(move || Ok(server.vault().pack_organs()?)).await?;
+    Ok(Json(organs))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PutOrganBuild {
+    /// The staged pack source, as 32 hex.
+    source: String,
+    organ: String,
+    platform: String,
+    /// An absolute path to the build on this host.
+    path: PathBuf,
+}
+
+/// `POST /v1/owner/packs/organs/build`: hold one organ build for a staged
+/// pack source. The bytes must match the source's pin; holding grants nothing.
+async fn put_organ_build(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PutOrganBuild>, JsonRejection>,
+) -> OwnerReply<PackOrganBuild> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let build = blocking(move || {
+        let source = entity_id(&request.source, "source")?;
+        if !request.path.is_absolute() {
+            return Err(OwnerError::Invalid(
+                "a build path must be absolute".to_owned(),
+            ));
+        }
+        let length = std::fs::metadata(&request.path)
+            .map_err(|error| OwnerError::Host(error.into()))?
+            .len();
+        if length > MAX_ORGAN_BUILD_BYTES {
+            return Err(OwnerError::Invalid(
+                "the organ build is too large".to_owned(),
+            ));
+        }
+        let bytes = std::fs::read(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
+        Ok(server.vault().put_pack_organ_build(
+            &owner,
+            source,
+            &request.organ,
+            &request.platform,
+            &bytes,
+        )?)
+    })
+    .await?;
+    Ok(Json(build))
 }
 
 fn entity_id(hex: &str, what: &str) -> Result<EntityId, OwnerError> {
@@ -816,4 +888,198 @@ async fn approve_skill_activation(
     })
     .await?;
     Ok(Json(row))
+}
+
+/// One pack's setup: by name, and by content hash when several sources wait.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupKey {
+    pack: String,
+    /// One exact source; else the Active one, or the pack's one Candidate.
+    #[serde(default)]
+    source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupAnswerRequest {
+    pack: String,
+    #[serde(default)]
+    source: Option<String>,
+    /// A typed answer.
+    #[serde(default)]
+    answer: Option<PackSetupAnswer>,
+    /// Or one action from the setup's cards, with the card's `$state`.
+    #[serde(default)]
+    card_action: Option<PackSetupCardActionRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupCardActionRequest {
+    action_id: String,
+    #[serde(default)]
+    state: GeneratedUiStateSnapshot,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupVerifyRequest {
+    pack: String,
+    #[serde(default)]
+    source: Option<String>,
+    connection: String,
+}
+
+/// The setup, its GenUI cards and its plain text.
+#[derive(Serialize)]
+struct PackSetupReply {
+    setup: PackSetupView,
+    cards: Vec<GeneratedUiCard>,
+    text: String,
+    /// Set when a card asked to store a credential: the owner secrets door
+    /// takes the value, then a `secret_stored` answer pins its record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store_secret: Option<PackSetupStoreSecret>,
+}
+
+#[derive(Serialize)]
+struct PackSetupStoreSecret {
+    door: &'static str,
+    connection: String,
+    name: String,
+    /// The binding the stored credential needs, with the read scope.
+    effector: String,
+}
+
+impl PackSetupReply {
+    fn new(setup: PackSetupView) -> Result<Self, OwnerError> {
+        Ok(Self {
+            cards: setup.cards()?,
+            text: setup.text(),
+            setup,
+            store_secret: None,
+        })
+    }
+}
+
+/// `GET /v1/owner/packs/setup?pack=&source=`: the owner's guided setup of one
+/// pack (OF-378), readable while the pack is still a Candidate.
+async fn setup_view(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<PackSetupKey>, QueryRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let key = query_params(query)?;
+    let reply = blocking(move || {
+        PackSetupReply::new(server.vault().pack_setup(
+            &owner,
+            &key.pack,
+            key.source.as_deref(),
+        )?)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/prepare`: open, or resume, the setup. Opening
+/// grants nothing.
+async fn setup_prepare(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupKey>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        PackSetupReply::new(server.vault().prepare_pack_setup(
+            &owner,
+            &request.pack,
+            request.source.as_deref(),
+        )?)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/answer`: one typed answer, or one card action.
+/// A credential value never comes here: a card's store button answers with
+/// the owner secrets door to open.
+async fn setup_answer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupAnswerRequest>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        let vault = server.vault();
+        let source = request.source.as_deref();
+        let answer = match (request.answer, request.card_action) {
+            (Some(answer), None) => answer,
+            (None, Some(card)) => {
+                let view = vault.pack_setup(&owner, &request.pack, source)?;
+                match view.card_action(&card.action_id, &card.state)? {
+                    PackSetupCardAction::Answer(answer) => answer,
+                    PackSetupCardAction::Verify { connection } => {
+                        let checks = ProviderConnectionChecks::new()?;
+                        return PackSetupReply::new(vault.verify_pack_connection(
+                            &owner,
+                            &request.pack,
+                            source,
+                            &connection,
+                            &checks,
+                        )?);
+                    }
+                    PackSetupCardAction::StoreSecret {
+                        connection,
+                        secret,
+                        effector,
+                    } => {
+                        let mut reply = PackSetupReply::new(view)?;
+                        reply.store_secret = Some(PackSetupStoreSecret {
+                            door: "/v1/owner/secrets/register",
+                            connection,
+                            name: secret,
+                            effector,
+                        });
+                        return Ok(reply);
+                    }
+                }
+            }
+            _ => {
+                return Err(OwnerError::Invalid(
+                    "send exactly one of answer or card_action".to_owned(),
+                ));
+            }
+        };
+        PackSetupReply::new(vault.answer_pack_setup(&owner, &request.pack, source, &answer)?)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/verify`: check one connection before the pack
+/// uses it. The check is the engine's fixed read-only provider call for the
+/// declared check name; a pack never names a URL.
+async fn setup_verify(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupVerifyRequest>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        let checks = ProviderConnectionChecks::new()?;
+        PackSetupReply::new(server.vault().verify_pack_connection(
+            &owner,
+            &request.pack,
+            request.source.as_deref(),
+            &request.connection,
+            &checks,
+        )?)
+    })
+    .await?;
+    Ok(Json(reply))
 }

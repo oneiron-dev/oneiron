@@ -14,7 +14,9 @@ use crate::edit_roundtrip::slides_review::{
     SlideReviewError, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{DeckEditContext, EditOutcome};
-use crate::edit_settle::{KeepUndo, NativeOutput, PendingProposalView, SettleConsent};
+use crate::edit_settle::{
+    KeepUndo, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
+};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::decision::{
@@ -24,6 +26,7 @@ use crate::llm::decision::{
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
+use crate::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -41,9 +44,13 @@ pub struct ArtifactExportRequest {
     pub artifact_ref: String,
     #[serde(default)]
     pub version: Option<u64>,
+    /// The born-with text to send with the file; absent sends none (OF-491).
+    #[serde(default)]
+    pub travel: Option<TravelChoice>,
 }
 
-/// One version's export file, its bytes base64.
+/// One version's export file, its bytes base64, with the born-with text the
+/// sharer chose to send. Its made_by stays home; `vault.artifacts.view` reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactExportFile {
     pub artifact_ref: String,
@@ -52,7 +59,7 @@ pub struct ArtifactExportFile {
     pub name: String,
     pub media_type: String,
     pub content_hash: String,
-    pub made_by: MadeBy,
+    pub born_with: BornWith,
     pub content_base64: String,
 }
 
@@ -191,6 +198,10 @@ pub struct SlideUnitRefused {
     pub target: serde_json::Value,
     pub reason: String,
     pub offer: Option<serde_json::Value>,
+/// Whether a held organ call was let go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleasedWait {
+    pub released: bool,
 }
 
 /// A kept proposal: the version it became, the threads it moved, its receipt.
@@ -275,25 +286,35 @@ impl Memory<'_> {
             .blob_artifact_view(&entity(&input.artifact_ref)?)?)
     }
 
-    /// `vault.artifacts.export`: one version's export file.
+    /// `vault.artifacts.export`: one version's export file, with the born-with
+    /// text the caller chose to send and a share receipt listing it.
     pub fn artifacts_export(
         &self,
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
-        let Some(file) = self
-            .vault()
-            .export_blob_artifact(&entity(&input.artifact_ref)?, input.version)?
+        let vault = self.vault();
+        let Some(file) = vault.export_blob_artifact(&entity(&input.artifact_ref)?, input.version)?
         else {
             return Ok(None);
         };
+        let born_with = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact)
+            .project(vault.born_with_text(&file.artifact_id, Some(&file.made_by))?);
+        let content_hash = super::hash_hex(&file.content_hash);
+        vault.record_export_travel(
+            file.artifact_id.to_hex(),
+            file.version,
+            content_hash.clone(),
+            &self.actor(),
+            &born_with,
+        )?;
         Ok(Some(ArtifactExportFile {
             artifact_ref: file.artifact_id.to_hex(),
             version: file.version,
             kind: file.kind,
             name: file.name,
             media_type: file.media_type,
-            content_hash: super::hash_hex(&file.content_hash),
-            made_by: file.made_by,
+            content_hash,
+            born_with,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
         }))
     }
@@ -470,6 +491,23 @@ impl Memory<'_> {
                 })
                 .collect(),
         })
+    /// `vault.artifacts.waits`: the organ calls held beside one artifact
+    /// until one of the owner's nodes can run them, each saying why it waits.
+    pub fn artifacts_waits(&self, input: &ArtifactRefRequest) -> MemoryResult<Vec<OrganWaitView>> {
+        Ok(self.vault().organ_waits(&entity(&input.artifact_ref)?)?)
+    }
+
+    /// `vault.artifacts.release_wait`: lets one held organ call go, by its
+    /// run ref (`proposal_ref`), under the consent a Discard needs.
+    pub fn artifacts_release_wait(
+        &self,
+        input: &ProposalSettleRequest,
+    ) -> MemoryResult<ReleasedWait> {
+        self.artifact_consent(input.brief_ref.clone())?;
+        let released = self
+            .vault()
+            .release_organ_wait(&entity(&input.artifact_ref)?, &input.proposal_ref)?;
+        Ok(ReleasedWait { released })
     }
 
     /// `vault.artifacts.propose_deck`: runs one native deck transaction over

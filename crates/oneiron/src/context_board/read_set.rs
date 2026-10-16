@@ -12,6 +12,8 @@ const MAX_OWN_PROPOSALS: usize = 1024;
 /// deserialized inputs hold.
 pub(super) const MAX_EVENT_REF_BYTES: usize = 256;
 const MAX_EVENT_DIAGNOSTIC_BYTES: usize = 1024;
+/// Served rows one session keeps a why for; past it, the oldest key leaves.
+const MAX_SERVED_WHY: usize = 4096;
 
 /// Lifecycle version served to a caller. The claim lifecycle chain is the
 /// version; this rider does not introduce a second revision counter.
@@ -55,6 +57,28 @@ pub struct SessionReadSet {
     /// outcome covered. Each leaves once the cursor passes it.
     #[serde(default)]
     delivered_ahead: BTreeMap<String, u64>,
+    /// Why each served row appeared, by row id (OF-278): the run that served
+    /// it and the board tier it rode. The latest serving replaces the last.
+    #[serde(default)]
+    served_why: BTreeMap<String, ServedWhy>,
+}
+
+/// Why one served row appeared: the retrieval run that served it and its
+/// place there, and the MEMORIES tier and hook a board rendered it with. A
+/// pinned row a run never ranked names no run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServedWhy {
+    /// Hex retrieval run id, when the serving pack's telemetry persisted.
+    pub run_id: Option<String>,
+    /// 1-based place among the run's primary results; `None` for a neighbor
+    /// or a row no run served.
+    pub rank: Option<u32>,
+    /// Reached as a graph neighbor of a result, not ranked itself.
+    pub neighbor: bool,
+    /// `pinned`, `snippet` or `index_only`, when a board rendered it.
+    pub tier: Option<String>,
+    /// `<pack>/<hook>` when a hook block pinned it.
+    pub hook: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -175,6 +199,49 @@ impl SessionReadSet {
     /// body actually appended to the log. A new observation replaces the old.
     pub fn served(&mut self, id: impl Into<String>, lifecycle: ServedLifecycle) {
         self.rows.insert(id.into(), lifecycle);
+    }
+
+    /// Records that a pack run served `id`: its run and place there. A new
+    /// serving starts the row's why afresh.
+    pub fn served_from_run(
+        &mut self,
+        id: impl Into<String>,
+        run_id: Option<&str>,
+        rank: Option<u32>,
+        neighbor: bool,
+    ) {
+        self.put_why(
+            id.into(),
+            ServedWhy {
+                run_id: run_id.map(str::to_owned),
+                rank,
+                neighbor,
+                tier: None,
+                hook: None,
+            },
+        );
+    }
+
+    /// Records the MEMORIES tier, and any hook, a board rendered `id` with.
+    pub fn served_on_board(&mut self, id: impl Into<String>, tier: &str, hook: Option<&str>) {
+        let id = id.into();
+        let mut why = self.served_why.get(&id).cloned().unwrap_or_default();
+        why.tier = Some(tier.to_owned());
+        why.hook = hook.map(str::to_owned);
+        self.put_why(id, why);
+    }
+
+    /// Why `id` appeared in this session, if it was served here.
+    #[must_use]
+    pub fn served_why(&self, id: &str) -> Option<&ServedWhy> {
+        self.served_why.get(id)
+    }
+
+    fn put_why(&mut self, id: String, why: ServedWhy) {
+        if !self.served_why.contains_key(&id) && self.served_why.len() >= MAX_SERVED_WHY {
+            self.served_why.pop_first();
+        }
+        self.served_why.insert(id, why);
     }
 
     pub fn loaded_skill(&mut self, id: impl Into<String>, version: impl Into<String>) {

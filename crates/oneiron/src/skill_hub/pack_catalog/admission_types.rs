@@ -70,12 +70,15 @@ pub struct PackPermissions {
     /// Each hook's capability set as tokens: phase, verbs, actors, scope,
     /// outcome kinds, budget and the blocking dial.
     pub hooks: Vec<String>,
+    /// Each organ's ask and pinned builds as tokens (OF-575).
+    pub organs: Vec<String>,
     pub section_verbs: Vec<String>,
     pub section_authorities: Vec<String>,
     /// Only added powers are the widening passed to the fit ladder.
     pub widening_grants: Vec<String>,
     pub widening_wakes: Vec<String>,
     pub widening_hooks: Vec<String>,
+    pub widening_organs: Vec<String>,
     pub widening_section_verbs: Vec<String>,
     pub widening_section_authorities: Vec<String>,
 }

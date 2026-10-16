@@ -34,7 +34,7 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
-const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
+pub(super) const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_PENDING_PROPOSAL);
 
 /// The most report text one native output may carry.
@@ -42,7 +42,7 @@ pub const NATIVE_OUTPUT_REPORT_MAX_BYTES: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PendingRow {
+pub(super) struct PendingRow {
     proposal_ref: String,
     retained_by: EntityId,
     retained_at: u64,
@@ -575,7 +575,7 @@ fn output_record(
     }
 }
 
-fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
+pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
     if proposal_ref.trim().is_empty() || proposal_ref.len() > BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "proposal ref must be non-empty and within the run-ref length bound",

@@ -143,7 +143,8 @@ pub struct PptxShapeIdentity {
     pub shape_id: u32,
     pub creation_id: Option<String>,
     pub fingerprint: [u8; 32],
-    /// None for inherited, grouped, rotated, or otherwise unresolved geometry.
+    /// The verified slide-space top-left in EMU, through inherited placeholder
+    /// geometry, enclosing groups, rotation and flips; None when unresolved.
     pub position: Option<(i64, i64)>,
 }
 
