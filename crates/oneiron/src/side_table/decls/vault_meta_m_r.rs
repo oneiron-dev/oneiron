@@ -502,6 +502,10 @@ side_tables! {
     /// Chronological index of every turn in a room, walked for paged message history. Key: id16
     /// (room) + u64be (at) + id16 (turn).
     ROOMS_HISTORY: VaultMeta b"rooms.history.v1/" Raw;
+    /// A room's stored host (OF-528): the latest pin, by someone the room's grant allows, or
+    /// handoff, by the host it replaced. Latest write wins; it grants no scope, role or admission.
+    /// Key: id16 (room).
+    ROOMS_HOST_PIN: VaultMeta b"rooms.host_pin.v1/" Named;
     /// One room-join intent's receipt (OF-531): the request, each party's recorded answer, the three
     /// consents as last decided, and the participation a Ready decision committed. Key: string (hex64
     /// join ref).
@@ -509,6 +513,12 @@ side_tables! {
     /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
     /// subject hex "/" branch hex or "-").
     ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
+    /// One offer card (OF-530): who asks, what, the cost, the join it files and its state, with the
+    /// host's answer that settled it. Key: string (hex64 offer id).
+    ROOMS_OFFER: VaultMeta b"rooms.offer.v1/" LegacyJson;
+    /// The offer card current for one agent in one room or thread. Key: string (room hex "/" branch
+    /// hex or "-" "/" agent hex).
+    ROOMS_OFFER_CURRENT: VaultMeta b"rooms.offer_current.v1/" LegacyJson;
     /// One participation fact (OF-529): who took part in a room or one of its threads, how and since
     /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
     /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
