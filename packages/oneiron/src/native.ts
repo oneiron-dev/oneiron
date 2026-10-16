@@ -29,6 +29,8 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
+selfMemoryDiaryReads(input: unknown): unknown
+selfMemoryDiaryReview(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
