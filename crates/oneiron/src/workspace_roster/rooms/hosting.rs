@@ -4,10 +4,12 @@
 //! speaking part (ARCH-0067 §8). Only an agent hosts (owner ruling, OF-528):
 //! an AGENT_DEF that speaks as a persona and stands in the room, on its seat
 //! or a covering Ready receipt (OF-529). A person never hosts, nor does a
-//! companion acting as its PERSON; a companion hosts only through its own
-//! AGENT_DEF. The Dreamer, the Coach and every MACHINE never host. A room
-//! with no agent here, such as a humans-only room, has no host: it is a plain
-//! chatroom with the engine's roster, receipts and needs-you strip.
+//! companion acting as its PERSON. An AGENT_DEF anchored to a PERSON is that
+//! person's pen: a human's pen never hosts, and a companion's pen (its PERSON
+//! is model-backed) hosts as the agent it is. The Dreamer, the Coach and
+//! every MACHINE never host. A room with no agent here, such as a
+//! humans-only room, has no host: it is a plain chatroom with the engine's
+//! roster, receipts and needs-you strip.
 //!
 //! Who hosts, in order:
 //! 1. The room's stored host: the latest pin, by someone the room's grant
@@ -198,17 +200,30 @@ fn persona_member_in(
 }
 
 /// Whether `actor` may hold `room`'s host duty: an AGENT_DEF that stands in
-/// the room and speaks as a persona. A PERSON never does.
+/// the room and speaks as a persona. A PERSON never does. An AGENT_DEF
+/// anchored to a PERSON is that person, so it hosts only when that PERSON is
+/// model-backed (a companion's pen); a human's pen, or one whose substrate is
+/// unsettled or malformed, never does.
 fn may_host_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    Ok(
-        vault.get_entity_type_in_txn(txn, &actor)? == Some(ENTITY_TYPE_AGENT_DEF)
-            && persona_member_in(vault, txn, room, actor)?,
-    )
+    if vault.get_entity_type_in_txn(txn, &actor)? != Some(ENTITY_TYPE_AGENT_DEF)
+        || !persona_member_in(vault, txn, room, actor)?
+    {
+        return Ok(false);
+    }
+    let now = vault.store.clock.now_recorded_at();
+    let Some(JoinSubject::Person(person)) = participant_in_txn(vault, txn, actor, now)? else {
+        return Ok(true);
+    };
+    match crate::subject_model::person_substrate_in_txn(vault, txn, &person, now) {
+        Ok(substrate) => Ok(substrate == Some(crate::subject_model::PersonSubstrate::Model)),
+        Err(Error::InvalidClaimBody(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// The selection door every host passes: only an agent that stands in
