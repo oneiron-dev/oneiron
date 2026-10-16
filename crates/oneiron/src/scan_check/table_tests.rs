@@ -129,13 +129,22 @@ fn suppression(vault: &Vault, wtxn: &mut RwTxn<'_>, index: usize) -> Result<()> 
 /// A scan's read: the items it serves once it has read every row.
 type Read<'a> = Box<dyn Fn() -> Result<usize> + 'a>;
 
+/// The sync rematerialization markers a pack's exclusion index reads.
+const REMAT_MARKERS: crate::side_table::SideTable<String, (), crate::side_table::Raw> =
+    crate::side_table::SideTable::new(&crate::side_table::SYNC_REMAT_MARKER);
+
 /// Seeds `PAST` rows for `scan` and hands back what its read serves and the
 /// read, or `None` for a scan whose fixture lives with its own tests: the
 /// origin's table (`origin::smart_http::scan_cap_tests::
 /// no_origin_scan_refuses_for_its_row_count`), the mesh bind
 /// (`authority::tests::machine_identity::a_mesh_bind_reads_past_the_old_machine_cap`),
-/// and the task, ask and room scans (their own `task_verb`, `context_board`
-/// and `workspace_roster::rooms` tests).
+/// the task, ask and room scans (their own `task_verb`, `context_board` and
+/// `workspace_roster::rooms` tests), the temporal channel's two scans
+/// (`pipeline::tests::temporal::temporal_scans_read_past_their_threshold_rows_and_check_once`)
+/// and the synced edge map's walk, which runs inside a sync observer
+/// (`it_sync`'s `child_of_arbitration_walks_the_whole_map_past_its_threshold_row`)
+/// and a Dreamer selection retry (`dreamer_consolidation::tests::late_budget::
+/// manifest_retry_source_budget_truncates_and_holder_cannot_widen`).
 fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
     let src = id(0x51, 0);
     match scan {
@@ -154,8 +163,190 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::RoomPageRows
         | EngineScan::RoomHistoryRows
         | EngineScan::TaskBoardRows
+        | EngineScan::TemporalSpannerRows
+        | EngineScan::OccurredRangeRows
+        | EngineScan::ChildOfMapEntries
+        | EngineScan::DreamerRetryPeers
         | EngineScan::PendingCommStops
         | EngineScan::PartyContactClaims => None,
+        EngineScan::MentionRows => {
+            let seed = id(0x60, 0);
+            // `Mentions` is semantic: the strict read refuses a structural value.
+            let value = crate::edge::encode_edge_value(
+                EdgeKind::Mentions,
+                0.9,
+                1,
+                crate::Vad::NEUTRAL,
+                None,
+            )
+            .expect("mention value");
+            vault
+                .with_write_txn(|wtxn| {
+                    for index in 1..=PAST {
+                        let key =
+                            Store::encode_edge_key(&seed, EdgeKind::Mentions, &id(0x60, index));
+                        vault.store.edges_in.put(wtxn, &key, &value)?;
+                    }
+                    Ok(())
+                })
+                .expect("seed");
+            // The seed named twice keeps both slots; its mentions read once.
+            Some((
+                2,
+                Box::new(move || {
+                    let txn = vault.store.env.read_txn()?;
+                    Ok(crate::ppr::specificity_seed_weights(
+                        &vault.store,
+                        &txn,
+                        &[seed, seed],
+                        None,
+                    )?
+                    .len())
+                }),
+            ))
+        }
+        EngineScan::PprCacheDepRows => Some((
+            0,
+            // Each read seeds the dependency rows of one cache entry that no
+            // longer exists, then walks them all to delete them.
+            Box::new(move || {
+                vault.with_write_txn(|wtxn| {
+                    for index in 0..PAST {
+                        let key = [id(0x61, index).as_bytes().as_slice(), &[0x62; 16]].concat();
+                        vault.store.ppr_cache_deps.put(wtxn, &key, &[])?;
+                    }
+                    crate::ppr::invalidate_ppr_for_edge(
+                        &vault.store,
+                        wtxn,
+                        &id(0x61, 0),
+                        &id(0x61, PAST),
+                    )?;
+                    Ok(vault.store.ppr_cache_deps.iter(wtxn)?.count())
+                })
+            }),
+        )),
+        EngineScan::PackQuarantineRows => {
+            vault
+                .with_write_txn(|wtxn| {
+                    for index in 0..PAST {
+                        let marker = format!("fixture:{}", id(0x63, index).to_hex());
+                        REMAT_MARKERS.put(&vault.store, wtxn, &marker, &())?;
+                    }
+                    Ok(())
+                })
+                .expect("seed");
+            Some((
+                PAST,
+                Box::new(move || {
+                    crate::context_pack::quarantined_entity_count_for_test(&vault.store)
+                }),
+            ))
+        }
+        EngineScan::LexicalHintRows => {
+            // Hint-prefix CLAIM ids whose bodies are gone: read, never served.
+            vault
+                .with_write_txn(|wtxn| {
+                    for index in 0..PAST {
+                        let mut bytes = *id(0x64, index).as_bytes();
+                        bytes[..2].copy_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
+                        let hint = EntityId::from_bytes(bytes).expect("hint id");
+                        let key = Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &hint);
+                        vault.store.type_index.put(wtxn, &key, &[])?;
+                    }
+                    Ok(())
+                })
+                .expect("seed");
+            Some((
+                0,
+                Box::new(move || {
+                    vault.with_write_txn(|wtxn| {
+                        Ok(
+                            crate::batch::legacy_lexical_query_hint_claim_ids_for_target(
+                                &vault.store,
+                                wtxn,
+                                &id(0x64, PAST),
+                            )?
+                            .len(),
+                        )
+                    })
+                }),
+            ))
+        }
+        EngineScan::AnswerReceiptRows => {
+            let scope = crate::consent_graduation::RampScope::new("merge", "PERSON", "agent:table")
+                .expect("scope");
+            for _ in 0..PAST {
+                crate::edit_distance::graduation::unpin_scope(vault, &scope).expect("unpin");
+            }
+            Some((
+                PAST,
+                Box::new(move || {
+                    let query =
+                        crate::receipt::ReceiptQuery::new(PAST).with_kind(ReceiptKind::Gate);
+                    Ok(vault.receipts(query)?.len())
+                }),
+            ))
+        }
+        EngineScan::MinerArtifactRows => {
+            for index in 0..PAST {
+                let byte = u8::try_from(index).expect("fits");
+                crate::edit_distance::put_finalized_proposal_text(
+                    vault,
+                    &crate::edit_distance::FinalizedProposalText {
+                        artifact_ref: crate::edit_distance::ProposalArtifactRef::mint(),
+                        proposed_ref: crate::edit_distance::LoroOpRef::from_bytes(vec![1, byte]),
+                        final_ref: crate::edit_distance::LoroOpRef::from_bytes(vec![2, byte]),
+                        ops_by_actor: Vec::new(),
+                        proposed_text: format!("draft {index}"),
+                        final_text: format!("final {index}"),
+                        source_turn_ref: None,
+                    },
+                )
+                .expect("artifact");
+            }
+            // No judgment names them, so no cluster forms; each is indexed.
+            Some((
+                0,
+                Box::new(move || {
+                    Ok(crate::edit_distance::miner::mine_substitution_clusters(vault)?.len())
+                }),
+            ))
+        }
+        EngineScan::BlendTuningRuns => {
+            use crate::store::{
+                RetrievalAction, RetrievalBlendTuningConfig, RetrievalRunId, RetrievalRunRecord,
+            };
+            for _ in 0..PAST {
+                let run = RetrievalRunRecord::new(
+                    RetrievalRunId::now(),
+                    RetrievalAction::Pipeline,
+                    100,
+                    10,
+                    Vec::new(),
+                    Vec::new(),
+                    1,
+                    0,
+                    None,
+                );
+                vault.store.record_retrieval_run(&run).expect("run");
+            }
+            // Runs with no gated reward: the pass reads every one and, with no
+            // reward to learn from, answers that it has too few (not a count).
+            Some((
+                0,
+                Box::new(move || {
+                    let config = RetrievalBlendTuningConfig {
+                        max_runs: PAST,
+                        learning_rate: 0.1,
+                        min_reward_count: 1,
+                    };
+                    match vault.tune_retrieval_blend_weights(config) {
+                        Err(crate::Error::InvalidConfig(_)) => Ok(0),
+                        other => other.map(|_| PAST),
+                    }
+                }),
+            ))
+        }
         EngineScan::AccessGrantRows => {
             // Index rows whose grants are gone: read, skipped, never served.
             vault
