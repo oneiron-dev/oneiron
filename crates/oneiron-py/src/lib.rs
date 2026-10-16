@@ -208,6 +208,13 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "report")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("report", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "cancel")?;
         let output = py

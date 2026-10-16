@@ -36,6 +36,9 @@ impl OneironClient {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => {
                 match verb {
+                    "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
+                        client, verb, &input,
+                    ),
                     "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
                         client, verb, &input,
                     ),
@@ -150,6 +153,19 @@ impl OneironClient {
                 ))
             }
         }
+    }
+    pub fn report(
+        &self,
+        input: &oneiron::feedback::ReportRequest,
+    ) -> Result<oneiron::feedback::ReportReceipt, MemoryError> {
+        input.validate().map_err(MemoryError::from)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("report", value)
     }
     /// Cancels one task under the ladder's `auto` default. The receipt says
     /// what stopped and what became a proposal instead.

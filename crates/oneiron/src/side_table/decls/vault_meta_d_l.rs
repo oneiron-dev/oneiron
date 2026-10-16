@@ -328,6 +328,14 @@ side_tables! {
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
     /// it. Key: hex64.
     FEEDBACK_RECEIVED_DIGEST: VaultMeta b"feedback:received:v1:" Raw;
+    /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
+    FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
+    /// T2 report membership and vectors, keyed by the first ISSUE id.
+    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    /// Owner disclosure preference, keyed by the resolved publisher reference.
+    FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
+    /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
+    FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
     /// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent introduction.
     /// Key: id16.
     GATE_FOREIGN_AGENT_INTRODUCTION: VaultMeta b"gate.foreign-agent.v1:" Named;

@@ -191,6 +191,8 @@ class Oneiron:
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
     # BEGIN GENERATED FACADE VERBS
+    def report(self, spec):
+        return json.loads(_translate(lambda: self._client.report(json.dumps(spec))))
     def cancel(self, task_ref: str) -> dict[str, Any]:
         """Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."""
         return json.loads(_translate(lambda: self._client.cancel(json.dumps({"task_ref": task_ref}))))

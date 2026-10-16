@@ -127,6 +127,7 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  report(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.report(input) as unknown) }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
   /** Describes one task's card, or the whole TASKS section when no task is named. */

@@ -128,6 +128,7 @@ mod params;
 mod context_board;
 #[allow(dead_code)]
 mod reactive;
+mod report;
 mod run_tree;
 mod saved_query;
 mod scoped_auth;
@@ -404,6 +405,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .nest("/v1/core/facade", self::facade::facade_routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
+        .merge(self::report::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",

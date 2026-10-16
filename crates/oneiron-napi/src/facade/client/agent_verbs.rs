@@ -7,6 +7,10 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("report", input).map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("cancel", input).map_err(facade_error)
     }

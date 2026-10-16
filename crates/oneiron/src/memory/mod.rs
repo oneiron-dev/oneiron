@@ -53,6 +53,7 @@ mod outbound;
 mod read_lane;
 mod reads;
 mod recall;
+mod report;
 mod room_turn;
 mod structural;
 mod subscriptions;
