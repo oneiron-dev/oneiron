@@ -47,7 +47,10 @@ pub use self::replay::{
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::result_read::ResultFacet;
-pub(crate) use self::result_read::{Reply as ResultReply, ResultRead};
+pub(crate) use self::result_read::{
+    Reply as ResultReply, ResultRead, card as result_card, refusal as result_refusal,
+    resolve as resolve_result, unknown_handle,
+};
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_message_id_in_run, executor_speech_turn_id_for_run,

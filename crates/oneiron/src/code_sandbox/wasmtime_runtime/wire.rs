@@ -3,15 +3,17 @@
 use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
+    MemoryTimeRange, ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome,
+    SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySupersedeClaimCall, SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
     SandboxCredentialCall, SandboxCredentialHandle, SandboxReadFile, SandboxVirtualPath,
 };
 use crate::engine_executor::{
-    JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef, SelfDispatchResponse,
+    JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef, JsResultTarget,
+    SelfDispatchResponse,
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
@@ -257,12 +259,27 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
     }
 }
 
-/// A verb-table call the run answers from its own results: `store`, and a
-/// `describe` of a result rather than of a task. `None` for any other call.
+/// A verb-table call the run answers from its own results: `store`, a
+/// `describe` of a result rather than of a task, and the facets that read
+/// one (`slice`, `search`, `query`, `chunks`), whose input names the result
+/// by its `ref`. `None` for any other call.
 fn result_call(input: &str) -> Result<Option<JsResultCall>> {
     let Ok(args) = serde_json::from_str::<VerbCall>(input) else {
         return Ok(None);
     };
+    if let Some(facet) = ResultFacet::from_name(&args.verb) {
+        let Value::Object(mut fields) = args.input else {
+            return Err(failure("result ref must be a name, handle or card"));
+        };
+        let Some(Value::String(reference)) = fields.remove("ref") else {
+            return Err(failure("result ref must be a name, handle or card"));
+        };
+        return Ok(Some(JsResultCall::Read {
+            target: JsResultTarget::parse(&reference),
+            facet,
+            input: Value::Object(fields),
+        }));
+    }
     Ok(match args.verb.as_str() {
         "store" => Some(JsResultCall::Store {
             name: decode::<Store>(args.input)?.name,
@@ -273,9 +290,10 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
 }
 
 /// The result a `describe` input names, when it names one: a string (a bound
-/// name, or a handle, whose colon no name has), a result's card by its
-/// `handle`, or `{name}` with none of a task describe's fields.
-fn result_ref(input: Value) -> Option<JsResultRef> {
+/// name, or a handle, whose colon no name has, either with a range suffix),
+/// a result's card by its `ref` or `handle`, or `{name}` with none of a task
+/// describe's fields.
+fn result_ref(input: Value) -> Option<JsResultTarget> {
     const TASK_FIELDS: [&str; 6] = [
         "task_ref",
         "self",
@@ -285,17 +303,21 @@ fn result_ref(input: Value) -> Option<JsResultRef> {
         "fold",
     ];
     match input {
-        Value::String(text) if text.contains(':') => Some(JsResultRef::Handle(text)),
-        Value::String(text) => Some(JsResultRef::Name(text)),
+        Value::String(text) => Some(JsResultTarget::parse(&text)),
         Value::Object(mut fields) => {
-            if let Some(Value::String(handle)) = fields.remove("handle") {
-                return Some(JsResultRef::Handle(handle));
+            for key in ["ref", "handle"] {
+                if let Some(Value::String(reference)) = fields.remove(key) {
+                    return Some(JsResultTarget::parse(&reference));
+                }
             }
             if TASK_FIELDS.iter().any(|field| fields.contains_key(*field)) {
                 return None;
             }
             match fields.remove("name") {
-                Some(Value::String(name)) => Some(JsResultRef::Name(name)),
+                Some(Value::String(name)) => Some(JsResultTarget {
+                    reference: JsResultRef::Name(name),
+                    range: None,
+                }),
                 _ => None,
             }
         }
