@@ -23,7 +23,6 @@
 //! the media gate does not hold yet.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::future::Future;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Instant;

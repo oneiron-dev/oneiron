@@ -26,10 +26,11 @@ use oneiron_llm_openai::{
 };
 use serde::Serialize;
 
-use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig};
+use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind};
 
 use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::OfferCooldowns;
+use super::hosted_speech::{CARTESIA_VERSION, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder};
 use super::offer::{ServedOffer, media_offer};
@@ -620,10 +621,42 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
     let mut backends = BTreeMap::new();
     for (name, wire_models) in models {
         let provider = &config.providers[name];
-        match ProviderHttp::new(provider, KeyStyle::Bearer) {
-            Ok(http) => {
-                let backend: Arc<dyn MediaBackend> =
-                    Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models));
+        let built: anyhow::Result<Arc<dyn MediaBackend>> = match provider.kind {
+            ProviderKind::Cartesia => {
+                // Every Cartesia call names its API version.
+                let mut provider = provider.clone();
+                if !provider
+                    .headers
+                    .keys()
+                    .any(|header| header.eq_ignore_ascii_case("cartesia-version"))
+                {
+                    provider
+                        .headers
+                        .insert("Cartesia-Version".into(), CARTESIA_VERSION.into());
+                }
+                ProviderHttp::new(&provider, KeyStyle::ApiKeyHeader).map(|http| {
+                    Arc::new(HostedSpeech {
+                        http,
+                        wire: HostedWire::Cartesia,
+                        models: wire_models,
+                    }) as Arc<dyn MediaBackend>
+                })
+            }
+            ProviderKind::Elevenlabs => ProviderHttp::new(provider, KeyStyle::Named("xi-api-key"))
+                .map(|http| {
+                    Arc::new(HostedSpeech {
+                        http,
+                        wire: HostedWire::ElevenLabs,
+                        models: wire_models,
+                    }) as Arc<dyn MediaBackend>
+                }),
+            _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
+                Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
+                    as Arc<dyn MediaBackend>
+            }),
+        };
+        match built {
+            Ok(backend) => {
                 backends.insert(name.to_owned(), backend);
             }
             Err(error) => {
