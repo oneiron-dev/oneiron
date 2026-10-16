@@ -50,6 +50,11 @@ vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
 vaultPacksPut(input: unknown): unknown
+vaultLensesPropose(input: unknown): unknown
+vaultLensesActivate(input: unknown): unknown
+vaultLensesDeactivate(input: unknown): unknown
+vaultLensesList(input: unknown): unknown
+vaultLensesDefault(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string

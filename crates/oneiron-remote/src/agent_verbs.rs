@@ -114,6 +114,21 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.lenses.propose" => remote_agent_verb_output::<
+                    oneiron::receipt::LensProposalReceipt,
+                >(client, verb, &input),
+                "vault.lenses.activate" => remote_agent_verb_output::<
+                    oneiron::receipt::LensActivationReceipt,
+                >(client, verb, &input),
+                "vault.lenses.deactivate" => remote_agent_verb_output::<
+                    oneiron::receipt::LensActivationReceipt,
+                >(client, verb, &input),
+                "vault.lenses.list" => {
+                    remote_agent_verb_output::<oneiron::lens::LensListPage>(client, verb, &input)
+                }
+                "vault.lenses.default" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>,
+                >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::HookReplayRow>,
                 >(client, verb, &input),
@@ -706,6 +721,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.put", value)
+    }
+    pub fn vault_lenses_propose(
+        &self,
+        input: &oneiron::lens::LensProposeRequest,
+    ) -> Result<oneiron::receipt::LensProposalReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.propose", value)
+    }
+    pub fn vault_lenses_activate(
+        &self,
+        input: &oneiron::lens::LensActivateRequest,
+    ) -> Result<oneiron::receipt::LensActivationReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.activate", value)
+    }
+    pub fn vault_lenses_deactivate(
+        &self,
+        input: &oneiron::lens::LensDeactivateRequest,
+    ) -> Result<oneiron::receipt::LensActivationReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.deactivate", value)
+    }
+    pub fn vault_lenses_list(
+        &self,
+        input: &oneiron::lens::LensListRequest,
+    ) -> Result<oneiron::lens::LensListPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.list", value)
+    }
+    pub fn vault_lenses_default(
+        &self,
+        input: &oneiron::lens::LensDefaultRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.default", value)
     }
     pub fn vault_hooks_replay(
         &self,
