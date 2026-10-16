@@ -10,7 +10,7 @@
 //! as one score per document, in order ([`rerank_scores`]).
 use std::collections::BTreeMap;
 
-use oneiron::llm::SingleRouteBackend;
+use oneiron::llm::{SingleRouteBackend, limit};
 use oneiron::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmBackend,
     LlmCapability, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
@@ -170,8 +170,10 @@ impl LlmBackend for RerankBackend {
                 .map_err(transport)?;
             match reply.status {
                 200..=299 => {}
+                status if limit::is_limit_status(status, &reply.body) => {
+                    return Err(limit::limit_refusal(&reply.headers, &reply.body).into());
+                }
                 401 | 403 => return Err(FatalLlmError::Auth.into()),
-                429 => return Err(RetryableLlmError::RateLimited { retry_after: None }.into()),
                 400..=499 => return Err(FatalLlmError::InvalidRequest.into()),
                 _ => return Err(RetryableLlmError::ServerError.into()),
             }

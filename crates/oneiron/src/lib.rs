@@ -531,9 +531,9 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // private module, so the SDK backend that OWNS a lease value and compares the
 // contention message can only name them through this list.
 pub use crate::vault::{
-    ActorBound, HydratedShortId, ReaderTableShortfall, TextIndexStatus, VAULT_WRITER_LEASE_HELD,
-    VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
-    VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
+    ActorBound, HydratedShortId, IdScanPage, ReaderTableShortfall, TextIndexStatus,
+    VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport,
+    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,

@@ -873,6 +873,9 @@ pub enum Op {
     CommentCreate {
         target: NodeId,
         expect: String,
+        /// 1-based copy of `expect` to anchor when the quote repeats.
+        #[serde(default)]
+        occurrence: Option<usize>,
         /// Comment body text. Must be non-empty.
         body: String,
         #[serde(default)]
@@ -2362,6 +2365,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
         &[
             "target",
             "expect",
+            "occurrence",
             "body",
             "author",
             "semantic_hash",
@@ -5014,6 +5018,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
         Op::CommentCreate {
             target,
             expect,
+            occurrence,
             body,
             author,
             semantic_hash,
@@ -5021,6 +5026,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
         } => Ok(EditStep::CommentCreate {
             block_id: target,
             expect,
+            occurrence,
             semantic_hash,
             body,
             author,
