@@ -49,12 +49,11 @@ pub(crate) fn restore_recovery_shell_in_txn(
         start: header.occurred_start,
         end: header.occurred_end,
     };
-    let short_id = if vault
-        .store
-        .short_ids_reverse
-        .get(txn, id.as_bytes())?
-        .is_none()
-    {
+    let short_id = if !crate::ports::ShortIdStoreMaintenance::port_short_id_mapping_exists(
+        vault,
+        txn,
+        id,
+    )? {
         vault
             .store
             .short_id_prefix(header.entity_type)
