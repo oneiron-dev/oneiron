@@ -27,7 +27,8 @@ use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::workspace_roster::{
-    ConsentNeed, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, rooms_join_in_txn,
+    ConsentNeed, JoinDecision, JoinRefusal, JoinRequest, JoinSubject,
+    join_subject_for_actor_in_txn, rooms_join_in_txn,
 };
 use crate::{EntityId, Vault, WriteActor};
 
@@ -269,6 +270,15 @@ fn mint_in_txn(
     if vault.get_entity_type_in_txn(txn, &draft.agent)? != Some(ENTITY_TYPE_AGENT_DEF) {
         return Err(MemoryError::bad_request(
             "an offer card asks for an AGENT_DEF",
+        ));
+    }
+    // A PERSON-anchored AGENT_DEF is its person's pen and takes part as that
+    // person, who joins by writing; only an agent asks by a card.
+    if join_subject_for_actor_in_txn(vault, txn, draft.agent, now)?
+        != JoinSubject::Agent(draft.agent)
+    {
+        return Err(MemoryError::bad_request(
+            "a person's pen joins by writing as its person, not by an offer card",
         ));
     }
     // A room thread is named by its root turn, as joins and participation
