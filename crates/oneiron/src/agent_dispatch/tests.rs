@@ -2237,7 +2237,12 @@ fn failing_case(vault: &Vault) -> Result<(EntityId, AttemptId, HealerCase)> {
             retry_at: 15,
             now: 12,
         },
-        crate::failure_ladder::FailureScopePolicy::auto(fixture.scope),
+        // These cases drive the agent-def healer path, so the ladder's own
+        // Coach wake stays out of the queue they lease from.
+        crate::failure_ladder::FailureScopePolicy {
+            healer_slot: HealerSlot::Reserved,
+            ..crate::failure_ladder::FailureScopePolicy::auto(fixture.scope)
+        },
     )?;
     let crate::failure_ladder::FailureLadderOutcome::Healer(outcome) = outcome else {
         panic!("genuine ladder case");

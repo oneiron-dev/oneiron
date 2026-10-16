@@ -564,7 +564,8 @@ fn a_losing_skill_drafts_one_gated_proposal_citing_its_defect_evidence() -> Resu
     let Value::Map(ref provenance) = proposal.provenance else {
         panic!("proposal provenance is a map");
     };
-    let authority = vault.dreamer_authority()?;
+    // SKILL-OPT is the Coach's job (owner ruling 2026-10-16).
+    let authority = vault.coach_authority()?;
     assert!(provenance.iter().any(|(key, value)| {
         key.as_str() == Some("actor_entity_ref")
             && value.as_slice() == Some(authority.entity_ref().as_bytes().as_slice())
