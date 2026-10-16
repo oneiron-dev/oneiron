@@ -253,17 +253,22 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    // Its NOTEs already passed the selection that made `source`.
+    // Its NOTEs already passed the selection that made `source`, and so did
+    // the births of the rows it kept.
+    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
     crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
 }
 
 fn guest_share_metadata_blob(blob: &[u8]) -> bool {
+    // A world key pad is half of a world's key: a guest never holds one.
     EntityMetadataHeader::parse(blob).is_some_and(|header| {
         matches!(
             header.entity_type,
-            ENTITY_TYPE_FEDERATION_GRANT | ENTITY_TYPE_AUTHORITY_LOG
+            ENTITY_TYPE_FEDERATION_GRANT
+                | ENTITY_TYPE_AUTHORITY_LOG
+                | crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
         )
     })
 }
@@ -790,6 +795,8 @@ pub(super) fn filter_window_doc(
         }
     });
 
+    // Rule A: a birth crosses only beside an owner this filter shipped.
+    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
     crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)

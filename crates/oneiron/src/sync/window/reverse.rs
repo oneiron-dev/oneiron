@@ -376,6 +376,14 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             if dominates && delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
                 wrote_any = true;
             }
+            // Rule A: the row's birth rides beside its carrier, in the same
+            // bridge commit, whether the carrier was just written or was
+            // already present.
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::row_birth::mirror_local_birth(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
         }
 
         backfill_sources.push(*id);
@@ -598,6 +606,12 @@ pub(super) fn remove_entity_crdt_carriers(
         removed = true;
     }
     if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
+        removed = true;
+    }
+    // The row's birth leaves with its carrier.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
+        && crate::sync::row_birth::remove_birth_carrier(&doc, id)?
+    {
         removed = true;
     }
     Ok(removed)
