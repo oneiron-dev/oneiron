@@ -48,6 +48,9 @@ pub(crate) struct WorldKeySession {
     pub(crate) ring: Mutex<HashMap<WorldKeyId, Arc<WorldKey>>>,
     /// Each world's question, at its latest crossing.
     frontier: Mutex<BTreeMap<EntityId, WorldKeyFrontierCheck>>,
+    /// Held while a sealed window's mirror is read, extended and written back.
+    #[cfg(feature = "sync")]
+    pub(crate) sealing: Mutex<()>,
 }
 
 impl WorldKeySession {
