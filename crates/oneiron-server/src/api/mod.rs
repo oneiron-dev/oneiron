@@ -58,7 +58,7 @@ use crate::runtime::RuntimeRole;
 #[cfg(test)]
 use axum::http::HeaderMap;
 
-mod ai;
+pub(crate) mod ai;
 mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
@@ -260,6 +260,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/context-board/turns/{turn}",
             get(context_board_turn_history),
         )
+        .route("/context-board/scratchpad", post(context_board_scratchpad))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))

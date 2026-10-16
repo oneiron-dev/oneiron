@@ -71,6 +71,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         super::super::maintenance::representation::REPRESENTATION_FACET => {
             Some(super::super::maintenance::representation::REPRESENTATION_FACET)
         }
+        super::super::maintenance::stewardship::STEWARDSHIP_FACET => {
+            Some(super::super::maintenance::stewardship::STEWARDSHIP_FACET)
+        }
         crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE => {
             Some(crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE)
         }
