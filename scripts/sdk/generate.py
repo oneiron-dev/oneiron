@@ -345,8 +345,17 @@ def mcp_input_dispatch(row):
         body += f'let (value, source) = {row["mcp_result"]}; Ok((value, source, McpCarrierPolicy::Drain, None))'
         return f'{json.dumps(name)} => {{\n{body} }},\n'
     if 'page' in row:
+        # The engine's own cursor ends its page: the page reached the end of
+        # what it read, and a set cursor withholds the rows past it. The MCP
+        # cap counts the rows key named here, and `resume` names the argument
+        # the cursor goes back as.
         page = row['page']
-        body += f'let source = crate::mcp::McpPageSource::scoped_window(output.{page["rows"]}.len(), 0, 0, output.{page["cursor"]}.is_none());\n'
+        source = (f'crate::mcp::McpPageSource::scoped_window(output.{page["rows"]}.len(), 0, '
+                  f'usize::from(output.{page["cursor"]}.is_some()), true).rows_at({json.dumps(page["rows"])})')
+        if 'resume' in page:
+            assert page['resume'] in row['mcp_fields'], f'{name}: page.resume names no MCP argument'
+            source += f'.resumed_by({json.dumps(page["cursor"])}, {json.dumps(page["resume"])})'
+        body += f'let source = {source};\n'
     else:
         count = 'output.len()' if row['output'].startswith('Vec<') else '1'
         body += f'let source = crate::mcp::McpPageSource::complete({count});\n'
@@ -451,9 +460,20 @@ def run_catalog():
     out += ''.join('Self::' + variants[r['name']] + ' => crate::code_run::SelfEffect::' + r['effect'] + ',\n' for r in RUN_ROWS) + '} }\n'
     return out + '}\n'
 
+def default_const(row, arg):
+    'The engine constant that carries one binding default the manifest states.'
+    return f"{row['name'].replace('.', '_')}_{arg['name']}_default".upper()
+
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"]
     core = HEADER
+    # A count default is stated once, on its manifest argument. The engine
+    # reads it from here, and every binding signature is generated from the
+    # same number.
+    for r in ROWS:
+        for a in r.get('binding', {}).get('args', []):
+            if 'default' in a and ARGUMENTS[a['kind']]['rust'] == 'usize':
+                core += f"/// `{r['name']}`'s `{a['name']}` when a caller names none.\npub const {default_const(r, a)}: usize = {a['default']};\n"
     core += "pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {\n"
     # GLOBAL STATE: these schemas depend only on compiled verb types, never vault or actor data.
     # Sharing one immutable schema table avoids repeated schemars generation on tool listing.
