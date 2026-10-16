@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fixtures/edit_path/repo/src/lib.rs` | src | s | 2 fn · 1 mod | — | — |
 | `fixtures/edit_path/repo/src/math.rs` | src | s | 2 fn | — | — |
 | `src/beam/ablations.rs` | src | s | 2 crate-vis | — | Two explicit cost controls: uncapped context and neutralized OF-095 decay |
-| `src/beam/arms.rs` | src | m | 15 crate-vis | — | Deterministic and vanilla arms plus adapter dispatch |
+| `src/beam/arms.rs` | src | m | 17 crate-vis | — | Deterministic and vanilla arms plus adapter dispatch |
 | `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/beam/chroma/tests/support.rs` | test | s | — | — | — |
@@ -35,19 +35,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/fixture_protocol.rs` | src | s | 4 crate-vis | — | Retrieval-only gold-span protocol |
 | `src/beam/infra.rs` | src | s | 5 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
-| `src/beam/llm_host.rs` | src | m | 10 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
+| `src/beam/llm_host.rs` | src | m | 11 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
 | `src/beam/llm_judge.rs` | src | s | 8 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |
 | `src/beam/llm_judge/tests.rs` | test | s | — | — | — |
 | `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
 | `src/beam/mod.rs` | src | s | 6 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
 | `src/beam/model_scaffold.rs` | src | m | 12 crate-vis | — | Shared measured answerer scaffold |
+| `src/beam/model_scaffold/context.rs` | src | s | 4 crate-vis | — | Context each answerer arm hands the shared answer call, apart from packs |
 | `src/beam/model_scaffold/offline.rs` | src | s | 4 crate-vis | — | Stage-aware offline accounting for the measured scaffold |
+| `src/beam/model_scaffold/paired.rs` | src | s | 5 crate-vis | — | Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A) |
 | `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
 | `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
 | `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |
 | `src/beam/ppr_vad.rs` | src | m | 22 crate-vis | — | PPR-VAD sweep arm, sampling, and gates |
-| `src/beam/report.rs` | src | m | 23 crate-vis | — | Report assembly and serialization |
+| `src/beam/report.rs` | src | m | 24 crate-vis | — | Report assembly and serialization |
 | `src/beam/report_model.rs` | src | m | 40 crate-vis | — | Report and contract output types |
 | `src/beam/rung_fixture.rs` | src | s | 2 crate-vis | — | Deterministic-arm conformance across first attach and remote rung changes |
 | `src/beam/runner.rs` | src | m | 11 crate-vis | — | Subcommand run entry points and orchestration |

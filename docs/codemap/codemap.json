@@ -43281,7 +43281,7 @@
      "path": "src/beam/arms.rs",
      "purpose": "Deterministic and vanilla arms plus adapter dispatch",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -43407,7 +43407,7 @@
      "path": "src/beam/llm_host.rs",
      "purpose": "Host-owned HTTP transport for the shipped LlmBackend adapter",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -43472,10 +43472,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/beam/model_scaffold/context.rs",
+     "purpose": "Context each answerer arm hands the shared answer call, apart from packs",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/beam/model_scaffold/offline.rs",
      "purpose": "Stage-aware offline accounting for the measured scaffold",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/model_scaffold/paired.rs",
+     "purpose": "Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -43523,7 +43543,7 @@
      "path": "src/beam/report.rs",
      "purpose": "Report assembly and serialization",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -44391,7 +44411,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 39,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44484,7 +44504,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 108,
+   "source_files": 110,
    "test_files": 18
   },
   "oneiron-broker": {
