@@ -44,6 +44,7 @@ mod history_routes;
 mod inbox_routes;
 mod pack_routes;
 mod peer_confidence_routes;
+mod skill_judge_routes;
 mod proactivity_routes;
 mod space_posting_routes;
 
@@ -88,6 +89,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(pack_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(peer_confidence_routes::routes())
+        .merge(skill_judge_routes::routes())
         .merge(handoff_alarm_routes::routes())
         .merge(space_posting_routes::routes())
         .merge(super::owner_origin::routes())
