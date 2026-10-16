@@ -58,9 +58,11 @@ other's files. Each backup takes the next sequence number, and retention keeps t
 numbers, so a clock that steps back never makes a new backup look oldest, and the backup just
 taken is never the one pruned. A backup named before sequences (no `<sequence>` field) lists as
 older than every numbered one. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
-is written under a hidden partial name and renamed into place only once complete. Backups are
-not encrypted yet and include device key material, so keep `--dir` on a local disk, not a synced
-or cloud folder (see *Limits*).
+is written under a hidden partial name and renamed into place only once complete. Each backup
+is sealed: the records and the result bodies they name are one file of encrypted chunks under a
+key derived from the vault's data key, and a restore checks the whole file before it makes
+anything. The first backup mints that data key, wrapped to this device's keystore, when the vault
+has none; a rehearsal or a restore on this device unlocks it from that wrap (see *Limits*).
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -653,6 +655,8 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
-- Backups are not encrypted yet, and they include device key material. Keep `--dir` (and
-  `[backup] dir`) on a local disk, not a synced or cloud folder. Encryption comes with the vault
-  cipher work.
+- Backups open only on the device that took them for now: the CLI unlocks the backup's key with
+  this device's keystore at its default location, and takes no password, passkey or escrow
+  secret yet. A server with `[keystore] backend = "off"` cannot take a backup.
+- A backup is encrypted, not yet signed: anyone who holds the vault's data key could write one
+  that restores.
