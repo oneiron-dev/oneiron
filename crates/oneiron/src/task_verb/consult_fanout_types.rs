@@ -1,6 +1,7 @@
 //! Public fan-out governance inputs and observable outcomes.
 
 use super::TaskCreateRateLimit;
+use crate::agent_dispatch::FanoutStatement;
 use crate::context_board::AgentRow;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -10,6 +11,8 @@ pub use crate::outbound_chokepoint::FanoutApprovalMode as ConsultFanOutMode;
 /// Vault-owned approval knobs. There is no per-peer budget by default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsultFanOutPolicy {
+    /// The exceptional-width check threshold. It only marks the check, which
+    /// never holds; `mode` gates every fan-out at any width.
     pub approval_threshold: u32,
     pub mode: ConsultFanOutMode,
     /// Optional anomaly detector, not a spend cap. Crossings pause visibly.
@@ -35,6 +38,9 @@ pub struct ConsultFanOutRate {
 }
 
 /// A ruling on the exact digest the human saw. Denial parks; it never cancels.
+/// On a width check, which held nothing, approve-once acknowledges it,
+/// approve-and-remember acknowledges it and persists the receipted policy row
+/// AUTO reads next time, and deny is refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsultFanOutChoice {
     ApproveOnce,
@@ -57,6 +63,9 @@ pub struct ConsultFanOutMeter {
     pub plan_digest: [u8; 32],
     /// AGENTS rows, generated from this same estimate, not re-metered.
     pub board_rows: Vec<AgentRow>,
+    /// Stated before any TASK was minted and frozen with the run: counts,
+    /// expected spend, the cap or none, and any width check. Never re-priced.
+    pub statement: FanoutStatement,
 }
 
 /// Side-effect-free estimate of the counted consults in a submitted plan.
@@ -64,6 +73,9 @@ pub struct ConsultFanOutMeter {
 pub struct ConsultFanOutEstimate {
     pub total_count: u32,
     pub per_peer: BTreeMap<String, u32>,
+    /// What admission would state, without a caller cap (none) and without
+    /// the width check, which only admission classifies.
+    pub statement: FanoutStatement,
 }
 
 /// Policy path supplied by an authenticated host for a frozen consult plan.

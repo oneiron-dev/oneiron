@@ -24,6 +24,10 @@ pub enum SelfCall {
     /// The agent's own refusal of the run's bound TASK, through her refusal
     /// dial (OF-533). The TASK comes from the host binding.
     TasksRefuse(SelfTaskRefuseCall),
+    /// `self.skills.call` (OF-353): one agent-callable skill, run as a step
+    /// of its own under the running attempt's lease, with the caller's host
+    /// as its bridge. The lease, executor and runtime are the host's.
+    SkillsCall(SelfSkillCall),
     /// Fixture for `vault.search(...)`.
     MemorySearch(SelfMemorySearchCall),
     /// Internal fixture proving dispatcher-stamped writes use the batch/gate path.
@@ -82,6 +86,7 @@ impl SelfCall {
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::TasksRefuse(_) => SelfEffect::TasksRefuse,
+            Self::SkillsCall(_) => SelfEffect::SkillsCall,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
@@ -136,6 +141,8 @@ pub enum SelfEffect {
     TasksWait,
     /// The agent's own refusal of its bound TASK (OF-533).
     TasksRefuse,
+    /// An agent-callable skill run on the caller's lease (OF-353).
+    SkillsCall,
     MemorySearch,
     MemoryWriteFixture,
     MemoryPutClaim,
@@ -178,6 +185,7 @@ impl SelfEffect {
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::TasksRefuse => "tasks.refuse",
+            Self::SkillsCall => "self.skills.call",
             Self::MemorySearch => "self.memory.search",
             Self::MemoryWriteFixture => "self.memory.write_fixture",
             Self::MemoryPutClaim => "self.memory.put_claim",
@@ -217,6 +225,7 @@ impl SelfEffect {
             | Self::TasksAsk
             | Self::TasksWait
             | Self::TasksRefuse
+            | Self::SkillsCall
             | Self::MemorySearch
             | Self::MemoryWriteFixture
             | Self::MemoryPutClaim
@@ -567,6 +576,24 @@ pub enum SelfDispatchOutcome {
     Fold(String),
     /// What the agent's dial made of her refusal.
     TaskRefusal(SelfTaskRefusalResult),
+    /// What one callable skill returned.
+    SkillCall(SelfSkillCallResult),
+}
+
+/// `self.skills.call(...)`: the skill and the arguments its call contract
+/// takes. No lease, executor or runtime comes from the guest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfSkillCall {
+    pub skill: EntityId,
+    pub args: serde_json::Value,
+}
+
+/// What one callable skill returned: JSON its contract's `returns` shape
+/// admitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfSkillCallResult {
+    pub skill: EntityId,
+    pub output: serde_json::Value,
 }
 
 /// `tasks.refuse(...)`. The reason stays the caller's string until the
