@@ -90,6 +90,15 @@ side_tables! {
     /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
     /// lists the same ones. Ids only, never their text. Key: id16.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
+    /// Atomic merge/narrative outputs for one nightly fan-in receipt. Key: id16.
+    DREAMER_NIGHTLY_MERGED: VaultMeta b"dreamer:nightly:merged:v1:" Named;
+    /// Promoted/attached proposal ids returned by one nightly child. Key: id16.
+    DREAMER_NIGHTLY_OUTPUT: VaultMeta b"dreamer:nightly:output:v1:" Named;
+    /// The NOTE review's page cursor: the last NOTE id a review finished. Key: ().
+    DREAMER_NOTE_REVIEW_CURSOR: VaultMeta b"dreamer:note-review:cursor:v1" Named;
+    /// BLAKE3 of the markdown a NOTE review last read for one NOTE, so an unchanged NOTE is not
+    /// read again. Key: id16.
+    DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
@@ -125,6 +134,9 @@ side_tables! {
     DREAMER_PROJECTION_RIDES: VaultMeta b"dreamer:projection:rides:v1:" Named;
     /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
     DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
+    /// The refusal dial an agent last woke under (OF-533), so its next wake notes a change in its
+    /// own diary. Key: id16(agent).
+    DREAMER_REFUSAL_DIAL_SEEN: VaultMeta b"dreamer:refusal-dial:seen:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
@@ -136,11 +148,15 @@ side_tables! {
     /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
     /// successors. Key: id16.
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
+    /// Sample audit grade per durable rung attempt. Key: id16.
+    DREAMER_SIEVE_AUDIT: VaultMeta b"dreamer:sieve:audit:v1:" Named;
     /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
     /// Key: id16(turn).
     DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;
     /// Where the continuous sieve stands on the TURN timeline. Key: ().
     DREAMER_SIEVE_CURSOR: VaultMeta b"dreamer:sieve:cursor:v1" Named;
+    /// Retained original cheap span readings, for sampled expensive-path audits. Key: turn id16 + span hash32.
+    DREAMER_SIEVE_HISTORY: VaultMeta b"dreamer:sieve:history:v1:" Named;
     /// A TURN owed a new sieve read (new, changed words or saved tags). Key: id16(turn).
     DREAMER_SIEVE_OWED: VaultMeta b"dreamer:sieve:owed:v1:" Raw;
     /// The sieve's interest queue, one span per row. Key: u32be(inverted score) + hash32(span).
@@ -175,6 +191,8 @@ side_tables! {
     DREAMER_WAKE_STATE: VaultMeta b"dreamer:wake-policy:state:v1" LegacyJson;
     /// Digest (32 bytes) of the last queued wake projector image. Key: ().
     DREAMER_WAKE_PROJECTION: VaultMeta b"dreamer:wake:projection:v1" Raw;
+    /// Owner-authored wake recipe budgets and rung instructions. Key: ().
+    DREAMER_WAKE_RECIPE_POLICY: VaultMeta b"dreamer:wake:recipe_policy:v1" LegacyJson;
     /// Per-scope (micro/meso/macro) consolidation watermark: last learned_at/turn_id progress. Key:
     /// u8.
     DREAMER_WATERMARK: VaultMeta b"dreamer:watermark:v1:" Raw;
@@ -560,6 +578,8 @@ side_tables! {
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson;
+    /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
+    LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model

@@ -1,7 +1,8 @@
-//! The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional retrieval with its MEMORIES projection, and the per-session cursor (ARCH-0067 §2).
+//! The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional retrieval with its MEMORIES projection, the per-session cursor (ARCH-0067 §2), and the one rendered board frame: WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM (§1).
 //!
-//! Step two: `EmptyContext`/`memories` when retrieval is skipped: today `memories: None`; the tail always renders MEMORIES once the renderer lands.
+//! The board renders on every call; without retrieval it carries no MEMORIES section.
 
+mod board;
 mod cursor;
 mod history;
 mod memories;
@@ -9,6 +10,10 @@ mod prefix;
 mod session;
 mod standing;
 
+pub(crate) use board::{
+    ContextBoardAgentsControls, ContextBoardProjectControls, ContextBoardRenderBudget,
+    ContextBoardRoomControls,
+};
 pub(crate) use cursor::*;
 pub(crate) use history::*;
 pub(crate) use memories::*;
@@ -66,6 +71,26 @@ pub(crate) struct ContextBoardRequest {
     /// board history (ARCH-0067 §3). Needs `core:write`.
     #[serde(default)]
     turn: Option<ContextBoardTurnControls>,
+    /// The room whose ROOM section the board renders; the caller must sit in
+    /// it. Absent, the retrieval's `conversation_id` renders ROOM when the
+    /// caller sits in that room. Needs an entity principal with an actor class.
+    #[serde(default)]
+    #[schema(inline)]
+    room: Option<ContextBoardRoomControls>,
+    /// The project whose view rides TASKS. Absent, the room's project rides
+    /// there when the room is a project's.
+    #[serde(default)]
+    #[schema(inline)]
+    project: Option<ContextBoardProjectControls>,
+    /// AGENTS controls: the run whose children the child lane reads.
+    #[serde(default)]
+    #[schema(inline)]
+    agents: Option<ContextBoardAgentsControls>,
+    /// The caller's board token limit. The board renders under the smaller
+    /// of it and the harness default; it never widens the cap.
+    #[serde(default)]
+    #[schema(example = 1200)]
+    board_budget_tok: Option<usize>,
 }
 
 /// The assembled context for one turn.
@@ -93,22 +118,39 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<ContextBoardMemories>)]
     memories: Option<oneiron::MemoriesSection>,
-    /// One-way renderer: foreign worlds are guest-attributed evidence, never first-party memory.
+    /// The one rendered board frame (one-way renderer): WORLDS, MEMORIES,
+    /// TASKS, AGENTS, SKILLS and ROOM in canon order, under the board budget.
+    /// Foreign worlds render as guest-attributed evidence, never first-party
+    /// memory.
+    board: String,
+    /// How the board's budget settled and what it shed.
+    #[schema(inline)]
+    board_budget: ContextBoardRenderBudget,
+    /// WORLDS rows: the counts line, then each allowed world the caller's
+    /// read reads, ACTIVE or AVAILABLE-OFF.
+    worlds: Vec<String>,
+    /// TASKS detail rows: the project view when one rides, the caller's
+    /// readable task rows, and the overflow footer.
+    tasks: Vec<String>,
+    /// ROOM rows; absent when the board renders no room. A board whose
+    /// session id names a SESSION also names the room's host, or no host and
+    /// its candidates.
     #[serde(skip_serializing_if = "Option::is_none")]
-    rendered_memories: Option<String>,
+    room: Option<Vec<String>>,
     /// The context pack retrieval produced; absent when retrieval was skipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pack: Option<CoreContextPackResponse>,
     /// Read-time lifecycle changes; never an unsolicited push.
     changed: Vec<String>,
-    /// Turn discovery rows plus the session-long loaded skill line.
+    /// The session-long loaded skill line, then this turn's found rows, each
+    /// with its learning view (`rel=`, `fit=`) where the vault holds one.
     skills: Vec<String>,
     /// Host-authenticated self brief, in the prefix only at open/fold and
     /// otherwise appended in the tail on an explicit describe(self) read.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<serde_json::Value>)]
     self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
-    /// This turn's capability agent candidates.
+    /// The caller's live child agents, then this turn's capability candidates.
     agents: Vec<String>,
     /// What recording the named TURN's board wrote; absent without `turn`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -194,7 +236,7 @@ pub(crate) struct ContextBoardBudget {
     request_body(content = ContextBoardRequest, content_type = "application/json"),
     responses(
         (status = 200, description = "Context board hydrated.", body = ContextBoardResponse, content_type = "application/json"),
-        (status = 400, description = "Malformed context-board request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 400, description = "Malformed context-board request, a room the caller does not sit in, or a project it cannot read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or core:write when naming a turn.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "The named turn is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -227,6 +269,16 @@ pub(crate) async fn context_board_hydrate(
         retrieval.clamp_limits();
     }
     let board_turn = board_turn_target(&server, &auth, req.turn.as_ref())?;
+    let targets = board::board_targets(
+        &auth,
+        req.room.as_ref(),
+        req.retrieval
+            .as_ref()
+            .and_then(CoreContextPackRequest::conversation_id),
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+        req.project.as_ref(),
+        req.agents.as_ref(),
+    )?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing
         && let Some(retrieval) = &mut req.retrieval
@@ -332,20 +384,6 @@ pub(crate) async fn context_board_hydrate(
         .map_err(|error| super::core_engine_error("board lifecycle resolution failed", error))?
         .unwrap_or_default();
     let changed = changed_line.render();
-    let empty = oneiron::context_board::SessionReadSet::default();
-    let hits = pack
-        .as_ref()
-        .map(|pack| pack.capabilities.as_slice())
-        .unwrap_or_default();
-    let agents = oneiron::context_board::AgentsSection { rows: Vec::new() }
-        .with_candidates(hits)
-        .rows
-        .into_iter()
-        .map(|row| row.line)
-        .collect();
-    let skills =
-        oneiron::context_board::SkillsSection::project(hits, reads.as_deref().unwrap_or(&empty));
-    let skills = std::iter::once(skills.loaded).chain(skills.found).collect();
     let observed_reads = reads.as_deref().cloned().unwrap_or_default();
     drop(reads);
     let cursor = match advanced {
@@ -353,27 +391,41 @@ pub(crate) async fn context_board_hydrate(
         None => current_memories_cursor(&server, caller).await,
     };
 
-    let rendered_memories = memories
+    // One frame over every producer, rendered whether or not retrieval ran.
+    let hits = pack
         .as_ref()
-        .map(|memories| {
-            memories.render_board(
-                &oneiron::context_board::BoardBlockHeader {
-                    epoch: cursor.revision,
-                    scope: caller.to_owned(),
-                },
-                oneiron::context_board::BoardBudgetRequest {
-                    harness_default_tok: usize::try_from(budget.tokens_remaining)
-                        .unwrap_or(usize::MAX),
-                    caller_limit_tok: None,
-                    explicit_override_tok: None,
-                },
-            )
-        })
-        .transpose()
-        .map_err(|_| {
-            crate::error::ApiError::bad_request("memory board render failed", Some("memories"))
-        })?
-        .map(|render| render.text);
+        .map(|pack| pack.capabilities.as_slice())
+        .unwrap_or_default();
+    let parts = board::board_parts(
+        &server,
+        &auth,
+        &read,
+        &targets,
+        memories.as_ref(),
+        hits,
+        &observed_reads,
+    )?;
+    let board_render = oneiron::context_board::render_board_block(
+        &oneiron::context_board::BoardFrame {
+            header: &oneiron::context_board::BoardBlockHeader {
+                epoch: cursor.revision,
+                scope: parts.scope.clone(),
+            },
+            legend: &oneiron::context_board::BoardLegend::canonical(),
+            sections: &parts.sections,
+            changes: Some(&changed_line),
+        },
+        oneiron::context_board::BoardBudgetRequest {
+            harness_default_tok: standing.as_ref().map_or(
+                crate::mcp::MCP_BOARD_BUDGET_TOK,
+                |prefix| prefix.other_context_tokens,
+            ),
+            caller_limit_tok: req.board_budget_tok,
+            explicit_override_tok: None,
+        },
+    )
+    .map_err(board::board_frame_error)?;
+    let board_budget = ContextBoardRenderBudget::of(&board_render);
 
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
@@ -425,11 +477,15 @@ pub(crate) async fn context_board_hydrate(
         budget,
         cursor,
         memories,
-        rendered_memories,
+        board: board_render.text,
+        board_budget,
+        worlds: parts.worlds,
+        tasks: parts.tasks,
+        room: parts.room,
         pack,
         changed,
-        skills,
-        agents,
+        skills: parts.skills,
+        agents: parts.agents,
         self_brief,
         board_turn: None,
     };
@@ -442,6 +498,7 @@ pub(crate) async fn context_board_hydrate(
                 &server,
                 &read,
                 target,
+                &parts.authority,
                 &mut response,
                 within_standing_budget,
             )?;
@@ -457,7 +514,20 @@ pub(crate) async fn context_board_hydrate(
         run.emitted_epoch = Some(epoch);
     }
     drop(runs);
+    // Every row the board delivered: its MEMORIES rows (pins included), its
+    // capability hits, and the task intents, worlds, room and project it named.
+    let mut delivered: Vec<_> = response
+        .memories
+        .iter()
+        .flat_map(|memories| &memories.rows)
+        .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())
+        .collect();
+    delivered.extend(hits_of(response.pack.as_ref()));
+    delivered.extend(parts.named.iter().copied());
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
+        reads
+            .observe_rows(&read, &delivered)
+            .map_err(|error| super::core_engine_error("board read set failed", error))?;
         reads.observe_pack_inventory(&installed_packs);
         // The response is final: the rider it carries is delivered, and a
         // committed prefix now holds the current connector state.
@@ -480,6 +550,7 @@ pub(crate) async fn context_board_hydrate(
     admit.extend(rider_admits(&changed_line));
     admit.extend(pack_sources);
     admit.extend(named_refs);
+    admit.extend(parts.named);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
     }
@@ -506,6 +577,15 @@ pub(crate) async fn context_board_hydrate(
         }),
         Json(response),
     ))
+}
+
+/// The capability hits a pack carried.
+fn hits_of(
+    pack: Option<&CoreContextPackResponse>,
+) -> impl Iterator<Item = oneiron::EntityId> + '_ {
+    pack.into_iter()
+        .flat_map(|pack| &pack.capabilities)
+        .map(|hit| hit.id)
 }
 
 /// The rows a board's rider named or counted, each of which a replay of the

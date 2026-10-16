@@ -20,14 +20,20 @@
 //! its room through its subject, so threads inherit their room, and the
 //! audience rule also requires the reacted record itself to be readable.
 mod chain;
+mod channel_adapters;
 mod erase;
 mod mirror;
 mod outbound;
+mod outcomes;
 mod read;
 mod signal;
 mod value;
 mod write;
 
+pub use channel_adapters::{
+    IMESSAGE_TAPBACK_GLYPHS, IMessageTapback, IMessageTapbackInput, IMessageTapbackOperation,
+    ReactionChannelCapability, reaction_channel_capability,
+};
 pub(crate) use erase::{
     erase_reaction_claims, person_reaction_claims_in, record_reaction_claims_in,
 };
@@ -37,6 +43,11 @@ pub(crate) use outbound::release_cleared_reaction_in_txn;
 pub use outbound::{
     REACTION_OUTBOUND_ATTEMPT_KIND, ReactionOutboundAttempt, connector_declares_reaction_target,
 };
+pub use outcomes::{
+    PREDICATE_REACTION_OUTCOME, REACTION_MEANINGS, ReactionMeaning, ReactionOutcome,
+    ReactionOutcomeEvidence, reaction_outcome_question,
+};
+pub(crate) use outcomes::{outcome_fact_admissible_in, outcome_question, outcome_sources};
 pub(crate) use read::grouped_lines_in;
 pub use read::{REACTIONS_FIELD, ReactionHistoryEntry, ReactionPill, reaction_line};
 pub use signal::{

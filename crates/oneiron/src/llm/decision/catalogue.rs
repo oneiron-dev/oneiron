@@ -62,6 +62,30 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which quoted team shape should this spawn run (pattern at a width)?
+/// Keyed by task type. The options are the planner's own ranked shape
+/// tokens, so an answer can only re-rank what the floor already quoted.
+pub const PLANNER_SHAPE: QuestionFamily = QuestionFamily {
+    name: "planner.shape",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// What conversational signal does a received reaction carry? Host wording;
+/// the fixed labels are ack, agree, disagree, affect and none.
+pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
+    name: "conversation.reaction.meaning",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Replay scores, independent judge audits, blind preferences and skill tradeoffs.
+pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
+    name: "skill_optimize.judgment",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which label one changed hunk of an attribution takes (one region for an outcome with no
 /// edit). Keyed by lane and hunk position.
 pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
@@ -117,11 +141,22 @@ pub const POLICY_HOSTED_ROW: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// How should this parked contradiction settle (keep one member, hold both, dismiss or
+/// escalate)? Keyed by the contested predicates.
+pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_settle",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
     CRITIC_REVIEW,
     FANOUT_ASK,
+    PLANNER_SHAPE,
+    REACTION_MEANING,
+    SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
     CAMPAIGN_TASTE,
     SEAT_PICK,
@@ -129,4 +164,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     AUTO_CHECK,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
+    CONFLICT_SETTLE,
 ];

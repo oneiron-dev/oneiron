@@ -410,8 +410,10 @@ tries = 3
 
 The summary prompt is `blocks/engine-executor-compaction.md` in the same
 prompt package as the wire prompt. Its user message is one JSON object
-(`from`, `through`, `max_summary_tokens`, `pins`, `retry`, `steps`) and the
-reply is `{"from", "through", "summary"}`; the test package's block,
+(`from`, `through`, `max_summary_tokens`, `pins`, `note`, `retry`, `steps`)
+and the reply is `{"from", "through", "summary"}`. `note` is what the agent
+asked the summary to keep, as free text, or null; unlike a pin it need not
+occur in the steps, and the gate does not check it. The test package's block,
 `crates/oneiron/tests/fixtures/prompts/blocks/engine-executor-compaction.md`,
 is a working example. Passes are metered on `budget_units`. Without the
 block, a seat for the role, or `[models]`, compaction is off and never calls
@@ -442,6 +444,26 @@ closed or flipped on record while a pass runs refuses its summary, and the
 run keeps its raw window. An anonymous room keeps no summary, and a room
 already on record when the run started does not compact yet: both report
 `sticky` with `why: "off_record_run"`.
+
+The run can also fold spans of its own log (ARCH-0067 §2.2).
+`self.fold({from, through, note?})` marks steps `from`–`through` and returns
+the fold's handle (`f1`); the log does not change yet. `self.compact({note?})`
+asks for a pass at the next step boundary. It is the same seat, backend,
+single flight and gate as a crossing, it compacts the settled steps (the hot
+steps stay raw), and it folds every pending mark in one batch. A crossing
+folds the pending marks too. Each fold leaves one stub where its span was:
+`⟨f1 · t5–t8⟩`, the summary, the ids its steps name that the summary does
+not, and a read handle to each step's output and each stored result the span
+names. The stub is written once and kept byte for byte.
+`self.unfold({fold})` appends the fold's raw steps after the step that
+called it, labelled `unfolded from t5–t8`, and they stay there.
+`self.folds()` lists the folds and the pending marks, and
+`describe({fold: "f1"})` returns one fold's span, stub, ids and handles. The
+log's tail carries one line naming the folds and pending marks, never a
+summary. A mark that fails its pass keeps why and waits for the next
+`self.compact`. A run whose compaction is off answers its marks with
+`compaction is off for this run`. The ledger is node-local and follows the
+run's route, so an off-record room's folds stay in its overlay.
 
 ### Type check (shadow mode)
 
@@ -667,6 +689,21 @@ The owner can probe the read at `POST /v1/llm/decision_read`
 nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 `[limits] decision_reads` probes wait their turn.
 
+The decision read takes yes/no and choice questions over text. A Box question
+("where is `mug` in `camera`?"), and any question over images, goes only to a
+rung that reads images: a host `DecisionModel` whose `reads_images` is true,
+or the opt-in System One seat (`decide_at_remote_seat`). The ladder skips
+every other rung (`DecisionLadder::run_images`, `run_pack_images`). A Box
+answer is `{top, bottom, left, right}` in 0–1 fractions of the image from its
+top-left corner, edges in order, with its confidence; it is `null` when the
+target is absent. The box centre is the point answer. A call carries at most
+8 named PNG or JPEG images, 10 MiB each and 20 MiB in all. Each fills the
+state field of its name, and each receipt keeps every image's evidence ref
+and body version, never its pixels. The System One seat sends each image as an
+asset, downscaled to a 1,568-pixel long edge (a box in fractions reads the
+same on the smaller copy), with the `TypeSafe-Danger-Zone-Images: true`
+header that Jev 1.14 needs for images and boxes.
+
 ## 10. Media calls (`ai.image`, `ai.video`, `ai.speech`, `ai.transcribe`, `ai.embed`)
 
 Image, video, speech, transcription and embedding calls have their own seats,
@@ -704,6 +741,16 @@ A provider that counts tokens is charged them; one that counts images,
 seconds or characters is charged its row's `rates` (defaults: an image 4000
 tokens, an audio second 50, a video second 10000, four characters of speech
 one). `inputs = ["text", "image"]` narrows or widens what a row takes.
+
+An embed row takes text only until its `inputs` widen it (`inputs = ["text",
+"image", "audio"]` for a multimodal model). Texts go as one `input` batch. A
+call with an image or audio sends each part as its own document in the chat
+form (`messages` in place of `input`, an image as a `data:` URL, audio as
+`input_audio`), as vLLM serves multimodal embedding models, and gets one vector
+per part, in order. Every vector of one answer has one width, the `dimensions`
+param's when the call names one. The stored-media backfill and the context
+pack's `media` query embed through this row, and each refuses a vector whose
+width is not its space's declared width.
 
 The verbs, each the owner's and checked against the vault's inference policy:
 
@@ -748,3 +795,37 @@ spent, the reset if any, and the choices). Answer it with
 `POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
 `top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
 `add_account` close the question and leave the offer parked until its reset.
+
+## 12. Batch GPU pods (`[gpu]`)
+
+Re-embeds and backfills are retry-tolerant, so they may run on rented GPU
+pods, spot capacity included (ARCH-0019 §5). Queries never do: they stay on
+the configured `[embedder]` endpoint. Name one region's pods:
+
+```toml
+[gpu]
+region = "tokyo"
+# Optional: the pods' bearer key. The endpoint's own key never goes to a pod.
+api_key_env = "ONEIRON_GPU_POD_KEY"
+# Defaults: health_path = "/health", ready_path = "/v1/models", poll_seconds = 15.
+
+[[gpu.pods]]
+id = "pod-a"
+url = "https://pod-a.example:8000/v1"
+capacity = 4
+```
+
+`serve` polls each pod at start and then every `poll_seconds`. A pod is
+healthy when it answers at all (transport), answers `health_path` with a 2xx
+(app), and answers `ready_path` with a 2xx (inference). Both paths resolve
+against the pod's origin, so `/health` on `https://pod-a.example:8000/v1` is
+`https://pod-a.example:8000/health`. Each document batch
+of the endpoint embedder takes a lease on one healthy pod, picked from two at
+random by load. The lease renews every 60 s and ends when the batch does. A
+lease that lapses mid-batch (the pod was preempted or failed a poll) drops
+that batch's answer, and the worker sends it again. With no healthy pod, the
+batch goes to the `[embedder]` endpoint. Pods must serve the endpoint's model:
+an answer that names another model, or makes vectors another way, is refused
+as the endpoint's would be. On a vault bound to an account, each pod's answer
+is sealed to that account before it is read. Pod URLs follow the endpoint's
+rules: HTTPS unless loopback, and no credential or query in the URL.
