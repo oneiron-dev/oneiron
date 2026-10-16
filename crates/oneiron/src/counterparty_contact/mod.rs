@@ -30,11 +30,11 @@ pub(crate) use self::lifecycle::{
     drop_contact_index_rows_in_txn, rematerialize_party_contact_cache_in_txn,
     supersede_family_owned_claim_in_txn,
 };
-pub(crate) use self::storage::{
-    counterparty_contacts_for_send_in_claims_in_txn,
-    party_has_contact_on_class_in_claims_in_txn, read_counterparty_contact_in_txn,
-};
 pub use self::storage::{counterparty_contact_party_channel_index_key, normalize_channel_class};
+pub(crate) use self::storage::{
+    counterparty_contacts_for_send_in_claims_in_txn, party_has_contact_on_class_in_claims_in_txn,
+    read_counterparty_contact_in_txn,
+};
 pub(crate) use self::trusted_contact::TrustedContactFire;
 pub use self::trusted_contact::{
     TrustedContact, TrustedContactAcceptance, TrustedContactAnswer, TrustedContactAsk,

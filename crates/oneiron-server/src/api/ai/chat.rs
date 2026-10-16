@@ -30,11 +30,11 @@ use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::conversation::TurnActionAttempt;
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
-use oneiron::session_lifecycle::SessionKey;
 use oneiron::memory::{
     MessageStreamError, MessageStreamHandle, MessageStreamReceipt, MessageWriteMode, StreamCadence,
     StreamCancelReason, StreamSyncVisibility, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
+use oneiron::session_lifecycle::SessionKey;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
     EntityId, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmStream, LlmStreamEvent,

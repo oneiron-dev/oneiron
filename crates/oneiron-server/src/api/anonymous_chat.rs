@@ -195,7 +195,12 @@ async fn chat(
     let target = AnonymousChatTarget::from(request.target);
     let (model_request, offer) = match bind_target(&server, target, request.model.as_ref()) {
         Ok(binding) => binding,
-        Err(_) => return refusal(StatusCode::SERVICE_UNAVAILABLE, "anonymous_model_unavailable"),
+        Err(_) => {
+            return refusal(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "anonymous_model_unavailable",
+            );
+        }
     };
     let backend = if offer.binding.locality == ModelLocality::OnDevice {
         OffRecordBackendClass::Local
@@ -310,12 +315,14 @@ impl Responder for AnonymousChatResponder<'_> {
                 ));
             }
             let mut request = self.request.clone();
-            request.messages.extend(notices.iter().map(|notice| LlmMessage {
-                role: LlmMessageRole::System,
-                content: vec![ContentPart::Text {
-                    text: notice.body.clone(),
-                }],
-            }));
+            request
+                .messages
+                .extend(notices.iter().map(|notice| LlmMessage {
+                    role: LlmMessageRole::System,
+                    content: vec![ContentPart::Text {
+                        text: notice.body.clone(),
+                    }],
+                }));
             request.messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {

@@ -10,8 +10,8 @@ use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationDecisions,
-    ConsolidationExecutor, ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy,
-    LlmBackend, ModelId, Result, WriteActor,
+    ConsolidationExecutor, ConsolidationSink, DreamerAttemptExecutor,
+    DreamerClaimAuthoringStrategy, LlmBackend, ModelId, Result, WriteActor,
 };
 use oneiron::{Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};

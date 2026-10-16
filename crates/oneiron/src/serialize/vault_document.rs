@@ -7,8 +7,7 @@ use crate::batch::export::ExportSnapshot;
 use crate::batch::export::{
     ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportResultBody, ExportRun,
     ExportRunOutput, ExportRunResults, ExportSourceVault, VAULT_ARCHIVE_FORMAT,
-    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument, WholeVaultDocumentManifest,
-    WholeVaultExport,
+    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
 };
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};

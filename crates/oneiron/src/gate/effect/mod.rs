@@ -565,7 +565,8 @@ pub(crate) fn evaluate_external_effect_policy(
         // removes the tool; `always ask` asks unless this exact call was
         // approved once.
         if charter_wall.is_none() {
-            match connector_key::connector_tool_setting_in_txn(store, &*wtxn, &key, manifest_verb)? {
+            match connector_key::connector_tool_setting_in_txn(store, &*wtxn, &key, manifest_verb)?
+            {
                 connector_key::SlateDisposition::NeverAllow => {
                     charter_wall = Some(
                         GateDecision::deny(GateReasonCode::DenyCharterNeverList)

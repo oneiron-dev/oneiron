@@ -78,7 +78,10 @@ impl DecisionHost {
     /// The house model's decision read on the escalation rung, read on
     /// `meter`, and its recipe's person question as the ladder's. Without a
     /// paired question in the recipe the rung stays empty.
-    pub(crate) fn with_house_read(mut self, read: Option<&(DecisionReadDoor, BudgetGuard)>) -> Self {
+    pub(crate) fn with_house_read(
+        mut self,
+        read: Option<&(DecisionReadDoor, BudgetGuard)>,
+    ) -> Self {
         self.ladder.escalation = None;
         self.ladder.person = None;
         self.bands = DecisionBandPolicy::default();
@@ -101,7 +104,8 @@ impl DecisionHost {
             match ASK_UP.question(&[], wording.clone(), AnswerContract::Noul) {
                 Ok(person) => {
                     let mut bands = DecisionBandPolicy::default();
-                    match bands.set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
+                    match bands
+                        .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
                     {
                         Ok(()) => {
                             self.ladder.person = Some(person);

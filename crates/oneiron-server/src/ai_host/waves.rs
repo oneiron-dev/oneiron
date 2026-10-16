@@ -9,8 +9,8 @@ use oneiron::attempt_queue::{
 };
 use oneiron::compaction::output::{OutputRef, restore_output, store_output};
 use oneiron::wave_orchestration::{
-    PlannedTask, VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND,
-    WAVE_PLAN_SCHEMA_VERSION, WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
+    PlannedTask, VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION,
+    WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
 };
 use oneiron::{
     ContentPart, EdgeActorClass, EntityId, Error, LlmMessage, LlmMessageRole, ResponseFormat,

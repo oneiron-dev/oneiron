@@ -95,7 +95,8 @@ impl SyncConnection {
                         .read_txn()
                         .map_err(|error| error.to_string())?;
                     doc.kind == transport::document_sub_tags::ARTIFACT_PUBLICATION
-                        || DS_E.contains(&client.vault.store, &txn, &HexId(doc.entity))
+                        || DS_E
+                            .contains(&client.vault.store, &txn, &HexId(doc.entity))
                             .map_err(|error| error.to_string())?
                 };
                 if !subscribed || client.frame_withheld(frame) {

@@ -9,9 +9,9 @@ use serde_json::json;
 use super::*;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionQuestion,
-    DecisionRung, GeneratedDecisions, GeneratedRung, HeldLadder, ProviderPin, Reversibility,
-    TypedDecision, cut_text, fit_state,
+    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung,
+    GeneratedDecisions, GeneratedRung, HeldLadder, ProviderPin, Reversibility, TypedDecision,
+    cut_text, fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 

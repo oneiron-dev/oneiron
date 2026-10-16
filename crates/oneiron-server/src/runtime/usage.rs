@@ -145,9 +145,9 @@ impl VaultUsage {
                         unit: unit.as_str().to_owned(),
                         settlement_refused: allocation_error.is_some(),
                     });
-                let token_counts = usage.as_ref().map_or_else(
-                    UsageTokenCounts::default,
-                    |usage| UsageTokenCounts {
+                let token_counts = usage
+                    .as_ref()
+                    .map_or_else(UsageTokenCounts::default, |usage| UsageTokenCounts {
                         input_tokens: usage
                             .input
                             .total
@@ -156,8 +156,7 @@ impl VaultUsage {
                         output_tokens: usage.output.total,
                         cache_read_tokens: usage.input.cache_read,
                         cache_write_tokens: usage.input.cache_write,
-                    },
-                );
+                    });
                 let usage_reported = usage.as_ref().is_some_and(|usage| {
                     usage.input.total != 0
                         || usage.output.total != 0

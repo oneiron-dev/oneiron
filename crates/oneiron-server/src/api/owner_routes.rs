@@ -46,8 +46,8 @@ mod history_routes;
 mod inbox_routes;
 mod pack_routes;
 mod peer_confidence_routes;
-mod skill_judge_routes;
 mod proactivity_routes;
+mod skill_judge_routes;
 mod space_posting_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;

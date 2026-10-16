@@ -186,7 +186,11 @@ impl StalwartClient {
     }
 
     pub fn address_for_identity(&self, identity_ref: EntityId) -> String {
-        format!("{}@{}", Self::account_name(identity_ref), self.config.domain)
+        format!(
+            "{}@{}",
+            Self::account_name(identity_ref),
+            self.config.domain
+        )
     }
 
     fn account_name(identity_ref: EntityId) -> String {

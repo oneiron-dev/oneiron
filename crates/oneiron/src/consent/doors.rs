@@ -269,12 +269,14 @@ impl AuthenticatedOwner {
     /// The credential slip this proof was carried under, and that slip's
     /// parent. An offer refuses an answer from the lineage that opened it.
     pub(super) fn credential_lineage(&self) -> Vec<[u8; 32]> {
-        self.credential.as_ref().map_or_else(Vec::new, |credential| {
-            let claims = credential.claims();
-            std::iter::once(claims.slip_id)
-                .chain(claims.parent_id)
-                .collect()
-        })
+        self.credential
+            .as_ref()
+            .map_or_else(Vec::new, |credential| {
+                let claims = credential.claims();
+                std::iter::once(claims.slip_id)
+                    .chain(claims.parent_id)
+                    .collect()
+            })
     }
 
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {

@@ -79,9 +79,9 @@ mod repair;
 
 pub(crate) use repair::validate_repair_proposal;
 pub use repair::{
-    DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget,
-    Healer, HealerInvocationStamp, RepairActor, RepairBundle, RepairConsentRoute,
-    RepairCriticality, RepairOperation, RepairProposal, ReviewedRepair,
+    DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget, Healer,
+    HealerInvocationStamp, RepairActor, RepairBundle, RepairConsentRoute, RepairCriticality,
+    RepairOperation, RepairProposal, ReviewedRepair,
 };
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use repair::{RegisteredHealer, run_healer_proposals};

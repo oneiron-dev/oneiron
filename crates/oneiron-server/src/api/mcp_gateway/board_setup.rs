@@ -351,8 +351,8 @@ fn mcp_board_sections(
             .map_err(|error| mcp_engine_error("board agents failed", error))?
     };
     let agents = oneiron::context_board::render_agents_section(&children, &[]);
-    let agents_section = oneiron::context_board::assemble_agents_section(&agents)
-        .map_err(mcp_board_frame_error)?;
+    let agents_section =
+        oneiron::context_board::assemble_agents_section(&agents).map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section, tasks_section, agents_section];
     let packs = mcp_visible_pack_inventory(server, actor)?;
     let rows: Vec<String> = packs

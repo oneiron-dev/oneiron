@@ -36,7 +36,11 @@ pub(crate) struct WithdrawnCarriers {
 /// an envelope at or below `id`'s cutoff whose body is not the content-free
 /// keyframe. A carrier whose header does not parse cannot show its
 /// generation and counts as withdrawn.
-pub(crate) fn withdrawn_body(cutoffs: &BTreeMap<EntityId, u64>, id: &EntityId, blob: &[u8]) -> bool {
+pub(crate) fn withdrawn_body(
+    cutoffs: &BTreeMap<EntityId, u64>,
+    id: &EntityId,
+    blob: &[u8],
+) -> bool {
     let Some(cutoff) = cutoffs.get(id) else {
         return false;
     };

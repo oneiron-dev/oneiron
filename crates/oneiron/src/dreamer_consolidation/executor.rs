@@ -33,8 +33,9 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    DurableStepError, DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage,
+    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome,
+    TierPrecedence, call_as_step,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};

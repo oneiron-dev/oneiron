@@ -131,7 +131,8 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
                 .into_iter()
                 .map(serde_json::Value::String)
                 .collect();
-            let block = serde_json::Map::from_iter([(key.to_owned(), serde_json::Value::Array(entries))]);
+            let block =
+                serde_json::Map::from_iter([(key.to_owned(), serde_json::Value::Array(entries))]);
             add_requirements(&block, &mut caps)?;
             continue;
         }
@@ -170,7 +171,13 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
                 if !metadata_keys.insert(key) {
                     return Err(invalid("unsupported metadata scalar"));
                 }
-                metadata_requirements(&serde_json::Map::from_iter([(key.to_owned(), serde_json::Value::Object(vendor))]), &mut caps)?;
+                metadata_requirements(
+                    &serde_json::Map::from_iter([(
+                        key.to_owned(),
+                        serde_json::Value::Object(vendor),
+                    )]),
+                    &mut caps,
+                )?;
             } else if metadata_block {
                 if key == "version" {
                     metadata_version = Some(frontmatter_scalar(value.trim())?);
@@ -206,7 +213,11 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
         match key {
             "name" | "description" | "version" | "license" | "compatibility" | "role" => {}
             // Claude Code's invocation hints: read as inert, never a capability.
-            "homepage" | "model" | "argument-hint" | "user-invocable" | "disable-model-invocation" => {}
+            "homepage"
+            | "model"
+            | "argument-hint"
+            | "user-invocable"
+            | "disable-model-invocation" => {}
             "call" => {
                 if value.is_empty() {
                     in_call = true;

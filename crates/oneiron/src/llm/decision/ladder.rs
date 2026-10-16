@@ -875,7 +875,9 @@ impl DecisionLadder<'_> {
             return Err(invalid("decision provider cannot take the question"));
         }
         if !pack.deadline.decision_may_start() {
-            return Ok((0..pack.questions.len()).map(|_| Read::NotStarted).collect());
+            return Ok((0..pack.questions.len())
+                .map(|_| Read::NotStarted)
+                .collect());
         }
         take(&pin, pack, ask(provider, pack, person), readings)
     }

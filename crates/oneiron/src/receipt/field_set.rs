@@ -317,11 +317,7 @@ impl ReceiptRecord {
         if node_id.is_empty() {
             return None;
         }
-        let tree_version = self
-            .fields
-            .get(FIELD_TYPE_REF_TREE_VERSION)?
-            .parse()
-            .ok()?;
+        let tree_version = self.fields.get(FIELD_TYPE_REF_TREE_VERSION)?.parse().ok()?;
         Some(crate::task_type::TaskTypeRef::new(
             node_id.clone(),
             tree_version,

@@ -8,14 +8,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionCall, DecisionModel, DecisionRung, ProviderCapability,
     ProviderDecision, ProviderPin,
 };
+use oneiron::llm::manifest::ModelRole;
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, Error,
-    EntityId, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
+    BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    EntityId, Error, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
     TierPrecedence, Vault,
 };
 use serde_json::Value;
@@ -59,9 +59,9 @@ impl BigModel {
         default_units: u64,
         runtime: tokio::runtime::Handle,
     ) -> anyhow::Result<Self> {
-        let seat = models
-            .seat(settings.role)
-            .ok_or_else(|| anyhow::anyhow!("no [models] rung serves the {:?} seat", settings.role))?;
+        let seat = models.seat(settings.role).ok_or_else(|| {
+            anyhow::anyhow!("no [models] rung serves the {:?} seat", settings.role)
+        })?;
         let pin = ProviderPin {
             rung: DecisionRung::Big,
             model: seat.model.to_string(),
@@ -131,7 +131,9 @@ fn contract_line(contract: &AnswerContract) -> String {
         AnswerContract::Choice { options } => {
             format!("Answer with exactly one of: {}.", options.join(", "))
         }
-        AnswerContract::Score { min, max } => format!("Answer with one number from {min} to {max}."),
+        AnswerContract::Score { min, max } => {
+            format!("Answer with one number from {min} to {max}.")
+        }
         AnswerContract::Box => "Answer with a box.".to_owned(),
     }
 }
@@ -260,13 +262,11 @@ impl DecisionModel for BigModel {
         );
         let response = self
             .runtime
-            .block_on(admitted.ladder.generate_within(
-                &run,
-                admitted.request,
-                None,
-                &|| true,
-                left,
-            ))
+            .block_on(
+                admitted
+                    .ladder
+                    .generate_within(&run, admitted.request, None, &|| true, left),
+            )
             .map_err(|error| failed(format!("the seat failed: {error}")))?;
         let text: String = response
             .message

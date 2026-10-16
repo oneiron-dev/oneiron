@@ -52,7 +52,9 @@ impl HookGrant {
                 .iter()
                 .any(|glob| glob_match(glob, &claim.predicate)))
             && (self.worlds.is_empty()
-                || claim.world.is_some_and(|world| self.worlds.contains(&world)))
+                || claim
+                    .world
+                    .is_some_and(|world| self.worlds.contains(&world)))
     }
 }
 
@@ -80,7 +82,9 @@ impl Vault {
                 .iter()
                 .any(|glob| glob.is_empty() || glob.len() > 256)
         {
-            return Err(Error::InvalidConfig("hook grant is out of bounds".to_owned()));
+            return Err(Error::InvalidConfig(
+                "hook grant is out of bounds".to_owned(),
+            ));
         }
         if !self
             .pack_hook_bindings()?

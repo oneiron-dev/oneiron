@@ -427,7 +427,9 @@ fn restore_secrets_in_txn(
             return Err(invalid("archive custody record id appears twice"));
         }
         if secret.metadata.name != secret.name {
-            return Err(invalid("archive custody record name disagrees with its metadata"));
+            return Err(invalid(
+                "archive custody record name disagrees with its metadata",
+            ));
         }
         let Some(body) = &secret.body else {
             missing.push(secret.metadata.clone());
@@ -440,7 +442,8 @@ fn restore_secrets_in_txn(
         if record.metadata() != secret.metadata {
             return Err(invalid("archive custody record disagrees with its body"));
         }
-        if let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
+        if let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
         {
             if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
                 && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
@@ -450,7 +453,9 @@ fn restore_secrets_in_txn(
                 unchanged += 1;
                 continue;
             }
-            return Err(invalid("import ID collides with a different custody record"));
+            return Err(invalid(
+                "import ID collides with a different custody record",
+            ));
         }
         crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
         restored += 1;

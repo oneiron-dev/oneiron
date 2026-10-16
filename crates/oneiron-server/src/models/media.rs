@@ -406,7 +406,12 @@ impl MediaRuntime {
     ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + '_> {
         let ladder = self.ladder(&request)?;
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(MEDIA_RUN, meter, self.host.clone(), Arc::clone(&self.receipts));
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
         Ok(async move { ladder.media(&run, request, None).await })
     }
 
