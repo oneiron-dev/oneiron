@@ -133,24 +133,31 @@ pub struct ExportRun {
     pub outputs: Vec<ExportRunOutput>,
 }
 
-/// One result's manifest. Its preview and line index are derived from the
-/// body, so an import rebuilds them rather than reading them here.
+/// One result occurrence's manifest. Its preview and line index are derived
+/// from the body, so an import rebuilds them rather than reading them here.
+/// The egress door judges each occurrence on its own (Docs Q08): a withheld
+/// one says why and names no body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportRunOutput {
     pub path: String,
-    /// The body's BLAKE3, lowercase hex: its key in `bodies`.
-    pub blake3: String,
+    /// The body's BLAKE3, lowercase hex: its key in `bodies`. `None` when
+    /// this occurrence is withheld.
+    pub blake3: Option<String>,
     pub bytes: u64,
     pub kind: String,
     pub lines: u64,
     pub complete: bool,
+    /// Why this occurrence is withheld: the secret scan marked it, or it
+    /// carries taint refs.
+    pub withheld: Option<String>,
 }
 
-/// One result body. Its text goes out through the release door's scan;
-/// `content` is `None` when the body is withheld, and `withheld` says why:
-/// the secret scan marked it, it carries taint refs, the release scan found
-/// a credential in it, or it is no UTF-8 text.
+/// One result body, which a clean occurrence names. Its text goes out
+/// through the release door's scan; `content` is `None` when the body is
+/// withheld, and `withheld` says why: the release scan found a credential
+/// in it, or no row holds it any longer (`absent`). A body that is no UTF-8
+/// text goes in the archive's `files/` with neither.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportResultBody {

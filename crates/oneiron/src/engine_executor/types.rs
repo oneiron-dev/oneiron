@@ -152,16 +152,21 @@ impl EngineExecutorConfig {
 pub struct SelfDispatchResponse {
     pub outcome: SelfDispatchOutcome,
     pub budget: Option<BudgetLegibilityEnvelope>,
+    /// The guest's view of the outcome when a verb hook changed it
+    /// (ARCH-0080 §3): a Redact, or a blocking hook that hid the result. It
+    /// replaces the outcome's own body; the run's record keeps the outcome.
+    pub view: Option<serde_json::Value>,
 }
 
 impl SelfDispatchResponse {
     /// Serializes a guest-facing response body with THIS response's budget
     /// envelope attached under [`GUEST_BUDGET_RESPONSE_KEY`]. Runtimes use
     /// this instead of composing the envelope by hand, so the AC "every
-    /// host-call response carries budget" holds at one point.
+    /// host-call response carries budget" holds at one point. A hook's view
+    /// stands in for `body`.
     #[must_use]
     pub fn guest_json(&self, body: serde_json::Value) -> serde_json::Value {
-        guest_response_with_budget(body, self.budget.as_ref())
+        guest_response_with_budget(self.view.clone().unwrap_or(body), self.budget.as_ref())
     }
 }
 
@@ -229,6 +234,9 @@ pub enum JsResultCall {
     Store { name: Option<String> },
     /// `describe(r)`: the card of one of the run's results.
     Describe(JsResultTarget),
+    /// `can({read: r})`: whether this run may read one of its results now,
+    /// by the checks a read makes, without reading it.
+    CanRead(JsResultTarget),
     /// `slice`, `search`, `query` or `chunks` of one of the run's results:
     /// the facet, and its input less the reference.
     Read {

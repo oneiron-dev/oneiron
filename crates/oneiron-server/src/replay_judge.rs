@@ -17,10 +17,10 @@ use oneiron::compaction::output::{OutputRef, restore_output};
 use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
+use oneiron::learning::honesty::HONESTY_AXIS;
 use oneiron::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, TypedDecision,
 };
-use oneiron::learning::honesty::HONESTY_AXIS;
 use oneiron::posterior::Posterior;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::retrieval_depth::RetrievalDeadline;

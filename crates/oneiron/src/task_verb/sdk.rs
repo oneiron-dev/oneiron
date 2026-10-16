@@ -138,6 +138,53 @@ pub struct CompanionSharingRequest {
     pub companion_ref: String,
     pub contact_ref: String,
 }
+/// `vault.companions.sharing.set`: the owner's standing yes to one frozen
+/// clearance offer for the contact a companion's sharing is about.
+/// `expected_delta` is the offer's canonical bytes, as the owner was shown
+/// them, in lowercase hex.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionSharingSetRequest {
+    pub companion_ref: String,
+    pub contact_ref: String,
+    pub proposal_ref: String,
+    pub expected_delta: String,
+}
+impl CompanionSharingSetRequest {
+    /// The companion and contact this request names.
+    pub fn target(&self) -> MemoryResult<crate::workspace_roster::CompanionSharingTarget> {
+        let id = |reference: &str, field: &str| {
+            crate::EntityId::from_hex(reference)
+                .map_err(|_| MemoryError::bad_request(format!("invalid {field}")))
+        };
+        Ok(crate::workspace_roster::CompanionSharingTarget {
+            companion: id(&self.companion_ref, "companion_ref")?,
+            contact: id(&self.contact_ref, "contact_ref")?,
+        })
+    }
+
+    /// `expected_delta` decoded. Only lowercase hex decodes: the delta is
+    /// compared byte for byte, so it has one spelling.
+    pub fn delta(&self) -> MemoryResult<Vec<u8>> {
+        let pairs = self.expected_delta.as_bytes().chunks_exact(2);
+        if !pairs.remainder().is_empty() {
+            return Err(MemoryError::bad_request("invalid expected_delta"));
+        }
+        pairs
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .filter(|digits| {
+                        digits
+                            .bytes()
+                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                    })
+                    .and_then(|digits| u8::from_str_radix(digits, 16).ok())
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| MemoryError::bad_request("invalid expected_delta"))
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRefRequest {
@@ -260,8 +307,10 @@ pub struct RecallRequest {
 pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
 pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
+pub use super::sdk_disclosure::*;
 pub use super::sdk_host::*;
 pub use super::sdk_self::*;
+pub use super::sdk_share::*;
 pub use super::sdk_shared::*;
 
 /// `vault.writes.pending`'s one input.

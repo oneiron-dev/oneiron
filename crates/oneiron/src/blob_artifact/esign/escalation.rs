@@ -21,8 +21,7 @@ use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
 /// Held automated sign act, one per recipient. Key: document hex32/recipient.
-const HELD: SideTable<String, HeldSigning, Named> =
-    SideTable::new(&side_table::ESIGN_HELD_SIGNING);
+const HELD: SideTable<String, HeldSigning, Named> = SideTable::new(&side_table::ESIGN_HELD_SIGNING);
 
 /// The owner role's answer that lands the held signature.
 pub const HOLD_ALLOW: &str = "allow";
@@ -237,10 +236,7 @@ impl Vault {
                         && state.clone().apply(&signed, now).is_ok();
                     if lands {
                         let actor = EsignAuditActor {
-                            actor: format!(
-                                "{}; allowed by the vault owner role",
-                                held.actor.actor
-                            ),
+                            actor: format!("{}; allowed by the vault owner role", held.actor.actor),
                             ..held.actor.clone()
                         };
                         sign(self, txn, id, &state, recipient, &held.next, actor, now)?;

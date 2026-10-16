@@ -15,11 +15,14 @@
 //! the consent bound are projections of it, never a second editable store;
 //! narrowing and revoking rewrite that same row.
 
+use std::collections::BTreeSet;
+
 use rmpv::Value;
 
 use super::AuthenticatedOwner;
 use super::adapters::disclosure_grant_from_disclosure_scope;
-use super::effect::EffectDigest;
+use super::doors::approve_once_authorization_in_txn;
+use super::effect::{ApproveOnceAuthorization, EffectDigest};
 use super::grant::CONSENT_CONTENT_KIND;
 use super::support::normalized_ref;
 use super::widen::WidenProposal;
@@ -28,7 +31,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::counterparty_contact::{CounterpartyContactStatus, decode_counterparty_contact_body};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus, encode_disclosure_scope_body};
 use crate::entity_id::EntityId;
-use crate::error::GateError;
+use crate::error::{ErrorKind, GateError};
 use crate::federation::Scope;
 use crate::federation::scope_codec::{decode_scope_value, encode_scope_value};
 use crate::ports::EntityStoreRead;
@@ -364,6 +367,30 @@ pub fn contact_clearance_ref(contact: &EntityId) -> String {
     format!("contact_clearance:{}", contact.to_hex())
 }
 
+/// The channel a text room's disclosure travels on: `room:<room hex>`. The
+/// offer that files a disclosure and the assembly that delivers it both name
+/// a room this way.
+#[must_use]
+pub fn contact_disclosure_room_channel(room: &EntityId) -> String {
+    format!("room:{}", room.to_hex())
+}
+
+/// The channel a voice session's disclosure travels on:
+/// `voice:<voice_session_ref>`.
+#[must_use]
+pub fn contact_disclosure_voice_channel(voice_session_ref: &str) -> String {
+    format!("voice:{voice_session_ref}")
+}
+
+/// One `once` answer an assembly may still deliver: the settled offer, for a
+/// live and active contact whose clearance is the one the offer was filed
+/// against, with its approve-once marker still available.
+pub(crate) struct OnceContactDisclosure {
+    pub(crate) proposal_ref: String,
+    pub(crate) proposal: ContactDisclosureProposal,
+    pub(crate) authorization: ApproveOnceAuthorization,
+}
+
 /// Domain-separated digest of a contact's clearance row; all zero for none.
 fn contact_clearance_digest(clearance: Option<&DisclosureScope>) -> Result<[u8; 32]> {
     let Some(clearance) = clearance else {
@@ -505,79 +532,99 @@ impl Vault {
         outcome: ContactDisclosureOutcome,
     ) -> Result<DisclosureConfirmationReceipt> {
         self.with_write_txn_grouped(|txn| {
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let proposal = self.open_contact_disclosure_offer_in_txn(
-                &*txn,
+            self.confirm_contact_disclosure_in_txn(
+                txn,
                 owner,
                 proposal_ref,
                 expected_delta,
-                now,
-            )?;
-            let offer = &proposal.offer;
-            require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
-            let prior = crate::disclosure::contact_clearance_in_txn(
-                &self.store,
-                &*txn,
-                &offer.contact_ref,
-            )?;
-            let before = contact_clearance_digest(prior.as_ref())?;
-            if before != proposal.prior_clearance_digest {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "contact clearance changed since the offer was filed",
-                )));
-            }
-            let mut receipt = DisclosureConfirmationReceipt {
-                decision_id: GateDecisionId::from_bytes([0; 16]),
-                act: ContactClearanceAct::Settled(outcome),
-                contact_ref: offer.contact_ref,
-                proposal_ref: Some(proposal_ref.to_owned()),
-                ask_ref: offer.ask_ref.clone(),
-                before_digest: before,
-                after_digest: before,
-                once_digest: None,
-            };
-            match outcome {
-                ContactDisclosureOutcome::Standing => {
-                    let created_at = prior
-                        .as_ref()
-                        .filter(|clearance| clearance.status == DisclosureScopeStatus::Active)
-                        .map_or(now, |clearance| clearance.created_at.min(now));
-                    let clearance = DisclosureScope {
-                        scope: offer.scope.clone(),
-                        purpose: offer.purpose.clone(),
-                        status: DisclosureScopeStatus::Active,
-                        created_at,
-                        updated_at: now,
-                    };
-                    self.set_counterparty_disclosure_scope_in_txn(
-                        txn,
-                        &offer.contact_ref,
-                        &clearance,
-                    )?;
-                    receipt.after_digest = contact_clearance_digest(Some(&clearance))?;
-                    receipt.decision_id =
-                        self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
-                }
-                ContactDisclosureOutcome::Once => {
-                    let digest = proposal.once_digest(proposal_ref)?;
-                    receipt.decision_id =
-                        self.approve_once_in_txn(txn, owner, digest)?.decision_id();
-                    receipt.once_digest = Some(digest);
-                }
-                ContactDisclosureOutcome::Deny => {
-                    let digest = proposal.once_digest(proposal_ref)?;
-                    receipt.decision_id =
-                        self.deny_consent_in_txn(txn, owner, digest)?.decision_id();
-                }
-            }
-            self.settle_widen_offer_in_txn(
-                txn,
-                proposal_ref,
-                outcome.as_str(),
-                receipt.decision_id,
-            )?;
-            Ok(receipt)
+                outcome,
+            )
         })
+    }
+
+    /// [`Self::confirm_contact_disclosure`] inside the caller's write
+    /// transaction, for an owner door that settles the offer together with
+    /// its own record.
+    pub(crate) fn confirm_contact_disclosure_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        proposal_ref: &str,
+        expected_delta: &[u8],
+        outcome: ContactDisclosureOutcome,
+    ) -> Result<DisclosureConfirmationReceipt> {
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let proposal = self.open_contact_disclosure_offer_in_txn(
+            &*txn,
+            owner,
+            proposal_ref,
+            expected_delta,
+            now,
+        )?;
+        let offer = &proposal.offer;
+        require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
+        let prior = crate::disclosure::contact_clearance_in_txn(
+            &self.store,
+            &*txn,
+            &offer.contact_ref,
+        )?;
+        let before = contact_clearance_digest(prior.as_ref())?;
+        if before != proposal.prior_clearance_digest {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "contact clearance changed since the offer was filed",
+            )));
+        }
+        let mut receipt = DisclosureConfirmationReceipt {
+            decision_id: GateDecisionId::from_bytes([0; 16]),
+            act: ContactClearanceAct::Settled(outcome),
+            contact_ref: offer.contact_ref,
+            proposal_ref: Some(proposal_ref.to_owned()),
+            ask_ref: offer.ask_ref.clone(),
+            before_digest: before,
+            after_digest: before,
+            once_digest: None,
+        };
+        match outcome {
+            ContactDisclosureOutcome::Standing => {
+                let created_at = prior
+                    .as_ref()
+                    .filter(|clearance| clearance.status == DisclosureScopeStatus::Active)
+                    .map_or(now, |clearance| clearance.created_at.min(now));
+                let clearance = DisclosureScope {
+                    scope: offer.scope.clone(),
+                    purpose: offer.purpose.clone(),
+                    status: DisclosureScopeStatus::Active,
+                    created_at,
+                    updated_at: now,
+                };
+                self.set_counterparty_disclosure_scope_in_txn(
+                    txn,
+                    &offer.contact_ref,
+                    &clearance,
+                )?;
+                receipt.after_digest = contact_clearance_digest(Some(&clearance))?;
+                receipt.decision_id =
+                    self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
+            }
+            ContactDisclosureOutcome::Once => {
+                let digest = proposal.once_digest(proposal_ref)?;
+                receipt.decision_id =
+                    self.approve_once_in_txn(txn, owner, digest)?.decision_id();
+                receipt.once_digest = Some(digest);
+            }
+            ContactDisclosureOutcome::Deny => {
+                let digest = proposal.once_digest(proposal_ref)?;
+                receipt.decision_id =
+                    self.deny_consent_in_txn(txn, owner, digest)?.decision_id();
+            }
+        }
+        self.settle_widen_offer_in_txn(
+            txn,
+            proposal_ref,
+            outcome.as_str(),
+            receipt.decision_id,
+        )?;
+        Ok(receipt)
     }
 
     /// Narrows a contact's standing clearance to `scope`, which must sit
@@ -826,6 +873,61 @@ impl Vault {
             };
             self.append_contact_clearance_receipt_in_txn(txn, None, &receipt)
         })
+    }
+
+    /// The `once` answers still deliverable to `contacts`, read in `txn`, in
+    /// offer-reference order. An answer is void once its contact is gone or
+    /// inactive, or once the owner narrowed, revoked or re-cleared the
+    /// contact after the offer was filed: the newer act wins, as at confirm.
+    /// A spent or missing marker is skipped, never an error. The offer's
+    /// expiry bounded only the answer; the single-use marker bounds the
+    /// delivery.
+    pub(crate) fn once_contact_disclosures_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        contacts: &BTreeSet<EntityId>,
+    ) -> Result<Vec<OnceContactDisclosure>> {
+        let mut deliverable = Vec::new();
+        for (proposal_ref, proposal) in self.settled_contact_disclosure_offers_in_txn(
+            txn,
+            ContactDisclosureOutcome::Once.as_str(),
+        )? {
+            let contact = &proposal.offer.contact_ref;
+            if !contacts.contains(contact) {
+                continue;
+            }
+            match require_active_contact_in_txn(&self.store, txn, contact) {
+                Ok(()) => {}
+                Err(Error::EntityNotFound | Error::InvalidEntityType(_) | Error::Gate(_)) => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+            let clearance =
+                match crate::disclosure::contact_clearance_in_txn(&self.store, txn, contact) {
+                    Ok(clearance) => clearance,
+                    Err(error) if error.kind() == ErrorKind::InvalidDisclosureScope => continue,
+                    Err(error) => return Err(error),
+                };
+            if contact_clearance_digest(clearance.as_ref())? != proposal.prior_clearance_digest {
+                continue;
+            }
+            let authorization = match approve_once_authorization_in_txn(
+                &self.store,
+                txn,
+                &proposal.once_digest(&proposal_ref)?,
+            ) {
+                Ok(Some(authorization)) => authorization,
+                Ok(None) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => continue,
+                Err(error) => return Err(error),
+            };
+            deliverable.push(OnceContactDisclosure {
+                proposal_ref,
+                proposal,
+                authorization,
+            });
+        }
+        Ok(deliverable)
     }
 }
 

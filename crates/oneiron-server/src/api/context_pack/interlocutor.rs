@@ -7,6 +7,7 @@ use super::controls::{
 };
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the effective interlocutor set for a core context-pack request
 /// (OF-365 ILD-1, design §11).
@@ -276,18 +277,57 @@ pub(crate) fn resolve_core_disclosure(
     interlocutors: Option<&oneiron::InterlocutorSet>,
     room: Option<bool>,
 ) -> Result<Option<oneiron::DisclosureContext>, ApiError> {
+    resolve_core_disclosure_with_once(vault, interlocutors, room, &BTreeMap::new())
+}
+
+/// [`resolve_core_disclosure`] under the owner's `once` answers this
+/// assembly spent ([`spend_core_once_disclosures`]): each answered contact is
+/// held to its answer's Scope in place of its clearance.
+pub(crate) fn resolve_core_disclosure_with_once(
+    vault: &oneiron::Vault,
+    interlocutors: Option<&oneiron::InterlocutorSet>,
+    room: Option<bool>,
+    once: &BTreeMap<oneiron::EntityId, oneiron::federation::Scope>,
+) -> Result<Option<oneiron::DisclosureContext>, ApiError> {
     interlocutors
         .map(|set| {
-            if let Some(reader) = room {
-                oneiron::DisclosureContext::resolve_room(vault, set.clone(), reader)
-            } else {
-                oneiron::DisclosureContext::resolve(vault, set.clone())
-            }
+            oneiron::DisclosureContext::resolve_with_once(
+                vault,
+                set.clone(),
+                room.unwrap_or(false),
+                once,
+            )
         })
         .transpose()
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack disclosure resolution failed");
             core_engine_error("core context-pack disclosure resolution failed", error)
+        })
+}
+
+/// Spends the owner's `once` answers this assembly delivers (OF-365). A room
+/// read travels on `room:<room hex>` and a voice session on
+/// `voice:<voice_session_ref>`; a pack with neither has no channel, and no
+/// once answer applies to it.
+pub(crate) fn spend_core_once_disclosures(
+    vault: &oneiron::Vault,
+    interlocutors: Option<&oneiron::InterlocutorSet>,
+    room: Option<oneiron::EntityId>,
+    voice_session_ref: Option<&str>,
+) -> Result<BTreeMap<oneiron::EntityId, oneiron::federation::Scope>, ApiError> {
+    let Some(set) = interlocutors else {
+        return Ok(BTreeMap::new());
+    };
+    let channels = room
+        .map(|room| oneiron::consent::contact_disclosure_room_channel(&room))
+        .into_iter()
+        .chain(voice_session_ref.map(oneiron::consent::contact_disclosure_voice_channel))
+        .collect::<BTreeSet<_>>();
+    vault
+        .spend_once_contact_disclosures(set, &channels)
+        .map_err(|error| {
+            tracing::error!(error = %error, "core context-pack once disclosure failed");
+            core_engine_error("core context-pack once disclosure failed", error)
         })
 }
 

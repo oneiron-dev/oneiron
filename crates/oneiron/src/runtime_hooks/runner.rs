@@ -542,8 +542,8 @@ pub(super) struct Verdict {
 }
 
 /// A body that failed, trapped or ran past its budget is `failed`. An
-/// outcome that does not parse, is not a fact-hook kind, is not one the
-/// binding allows, or has the wrong shape is `refused`.
+/// outcome that does not parse, is not a kind of the binding's phase, is not
+/// one the binding allows, or has the wrong shape is `refused`.
 pub(super) fn judge(binding: &PackHookBinding, result: Result<HookBodyRun>) -> Verdict {
     let run = match result {
         Ok(run) => run,
@@ -588,8 +588,17 @@ fn accept(binding: &PackHookBinding, json: &str) -> std::result::Result<HookOutc
     let outcome: HookOutcome =
         serde_json::from_str(json).map_err(|_| "the outcome does not parse".to_owned())?;
     let kind = outcome.kind();
-    if !kind.applies_in(HookPhase::Fact) {
-        return Err(format!("{} is not a fact-hook outcome", kind_token(kind)));
+    let phase = binding.selector.phase;
+    if !kind.applies_in(phase) {
+        return Err(format!(
+            "{} is not a {} outcome",
+            kind_token(kind),
+            match phase {
+                HookPhase::Pre => "pre-hook",
+                HookPhase::Post => "post-hook",
+                HookPhase::Fact => "fact-hook",
+            }
+        ));
     }
     if !binding.selector.outcomes.contains(&kind) {
         return Err(format!("the binding does not allow {}", kind_token(kind)));
@@ -635,7 +644,7 @@ pub(super) fn input_json(
     serde_json::to_string(&input).map_err(|_| Error::InvariantViolation("hook input encode"))
 }
 
-fn block_id(key: &RunKey) -> Result<EntityId> {
+pub(super) fn block_id(key: &RunKey) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(b"oneiron.hook-block.v1", &[key.as_slice()])
 }
 

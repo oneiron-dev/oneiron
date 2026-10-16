@@ -18,8 +18,8 @@ use axum::routing::{get, post};
 use oneiron::skill_optimize::{
     GoalAxisReport, ProjectGoalRevisionProposal, SkillTradeoffAsk, SkillTradeoffPreferences,
     TradeoffChoice, measure_skill_edit_goal_axes, project_goal_revision_proposals,
-    set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project,
-    skill_tradeoff_asks_for, skill_tradeoff_preferences,
+    set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project, skill_tradeoff_asks_for,
+    skill_tradeoff_preferences,
 };
 use serde::{Deserialize, Serialize};
 

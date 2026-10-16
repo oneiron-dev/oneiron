@@ -201,7 +201,10 @@ fn result_body_files(
     cited: &mut BTreeSet<String>,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut out = BTreeMap::new();
-    let Some(bodies) = document.pointer("/run_results/bodies").and_then(Value::as_array) else {
+    let Some(bodies) = document
+        .pointer("/run_results/bodies")
+        .and_then(Value::as_array)
+    else {
         return Ok(out);
     };
     for body in bodies {
