@@ -67,6 +67,13 @@ pub(crate) use sweep_queue::{
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
     enqueue_withdrawn_generation_in_txn,
 };
+pub(crate) use sweep_queue::{
+    HardEraseRetryState, WITHDRAWN_GENERATION_SWEEP_PREFIX, WithdrawnGenerationSweepJob,
+    decode_withdrawn_generation_row, encode_withdrawn_generation_job_value,
+    raise_withdrawn_generation_fence_in_txn, withdrawn_generation_cutoffs_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;

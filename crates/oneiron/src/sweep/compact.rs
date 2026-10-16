@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use super::run::{
     BEFORE_COMPACT_WRITE, INJECT_RACE_BEFORE_COMPACT_WRITE, RACE_BENIGN_MARKER, RaceInjection,
 };
-use super::run::{HardEraseSweepRun, WindowSweepState};
+use super::run::{HardEraseSweepRun, WindowSweepState, WithdrawnSweep};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -118,6 +118,7 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
 pub(super) fn compact_all_windows(
     vault: &Vault,
     erased: &BTreeSet<EntityId>,
+    withdrawn: &mut WithdrawnSweep,
     run: &mut HardEraseSweepRun,
     _now: u64,
 ) -> Result<WindowSweepState> {
@@ -136,7 +137,8 @@ pub(super) fn compact_all_windows(
     for label in &labels {
         if let Some(hex) = label.strip_prefix("e:") {
             let id = EntityId::from_hex(hex)?;
-            match vault.compact_document_for_sweep(id, erased.contains(&id)) {
+            let erase = erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
+            match vault.compact_document_for_sweep(id, erase) {
                 Ok(false) => {
                     run.windows_deferred_live += 1;
                     if matches!(state, WindowSweepState::AllCompacted) {
@@ -167,7 +169,7 @@ pub(super) fn compact_all_windows(
         // stays closed while it compacts: an open waits, then reads the
         // compacted window, rather than registering the history dropped here.
         let Some(compacted) =
-            vault.while_window_closed(&key, || compact_window(vault, &key, erased))
+            vault.while_window_closed(&key, || compact_window_with(vault, &key, erased, withdrawn))
         else {
             tracing::warn!("sweep: window live or retained — deferred");
             run.windows_deferred_live += 1;
@@ -214,6 +216,7 @@ pub(super) fn compact_all_windows(
 pub(super) fn compact_all_windows(
     vault: &Vault,
     _erased: &BTreeSet<EntityId>,
+    _withdrawn: &mut WithdrawnSweep,
     _run: &mut HardEraseSweepRun,
     _now: u64,
 ) -> Result<WindowSweepState> {
@@ -238,16 +241,28 @@ pub(super) fn compact_all_windows(
     Ok(WindowSweepState::AllCompacted)
 }
 
-/// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub
-/// live-map residue for erased ids, export a shallow snapshot at the
-/// latest frontiers, and atomically replace the persistence triple, prune
-/// the subsumed `u:w:` rows, and re-assert `fr:w:`. Returns whether any
-/// persisted state existed.
-#[cfg(feature = "sync")]
+/// [`compact_window_with`] with no withdrawn generation to rewrite.
+#[cfg(all(feature = "sync", test))]
 fn compact_window(
     vault: &Vault,
     key: &crate::sync::types::WindowKey,
     erased: &BTreeSet<EntityId>,
+) -> Result<CompactOutcome> {
+    compact_window_with(vault, key, erased, &mut WithdrawnSweep::default())
+}
+
+/// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub
+/// live-map residue for erased ids, rewrite withdrawn generations' carriers
+/// to their keyframes, export a shallow snapshot at the latest frontiers,
+/// and atomically replace the persistence triple, prune the subsumed `u:w:`
+/// rows, re-assert `fr:w:` and, while a withdrawn generation is due, drop
+/// the window's queued sends. Returns whether any persisted state existed.
+#[cfg(feature = "sync")]
+fn compact_window_with(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    erased: &BTreeSet<EntityId>,
+    withdrawn: &mut WithdrawnSweep,
 ) -> Result<CompactOutcome> {
     use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, import_doc};
     use crate::sync::schema::create_window_doc;
@@ -283,6 +298,14 @@ fn compact_window(
     // across hex-casing aliases (fail closed). Tombstones map untouched
     // (permanent); receipt entities are receipt-ids, never erased ids.
     scrub_erased_ids_from_doc(vault, &doc, erased)?;
+
+    // OF-013: a withdrawn generation's live carrier becomes its keyframe
+    // envelope before the shallow export drops the history that held its
+    // words; a newer generation stays. A carrier with no keyframe to stand
+    // in for it stays too, and holds its artifact's obligation.
+    let found = crate::sync::window::replace_withdrawn_carriers(vault, &doc, &withdrawn.cutoffs)?;
+    withdrawn.held.extend(found.held);
+    let scrub_sends = !withdrawn.due.is_empty();
 
     // Shallow snapshot at the latest frontiers: live state byte-exact, op
     // history (the payload carrier) dropped, doc identity + VV preserved.
@@ -375,6 +398,13 @@ fn compact_window(
         // Wire/SLA pin: the swept window cannot serve pre-shallow deltas —
         // peers behind the shallow start must take a full window resync.
         WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window, &[1u8])?;
+
+        // OF-013: a send queued before a withdrawal may carry its words.
+        // Sends are opaque, so every one queued for the window goes but the
+        // delete-bearing; the resync marker above re-sends what that drops.
+        if scrub_sends {
+            crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, &window)?;
+        }
         Ok(())
     });
     match result {
@@ -385,6 +415,47 @@ fn compact_window(
         Err(_) if raced.get() => Ok(CompactOutcome::RacedDefer),
         Err(err) => Err(err),
     }
+}
+
+/// Whether entity document `id` goes with a due withdrawn generation: its
+/// row holds no newer generation, so every document carrier and queued edit
+/// frame of it is the withdrawn generation's. Beside a newer generation the
+/// document stays; a queued edit frame there cannot show which generation it
+/// edits, so the artifact is held until its outbox drains.
+#[cfg(feature = "sync")]
+fn drops_withdrawn_document(
+    vault: &Vault,
+    id: &EntityId,
+    withdrawn: &mut WithdrawnSweep,
+) -> Result<bool> {
+    use crate::ports::EntityStoreRead;
+
+    if !withdrawn.due.contains(id) {
+        return Ok(false);
+    }
+    let Some(&cutoff) = withdrawn.cutoffs.get(id) else {
+        return Ok(false);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let newer = vault
+        .store
+        .port_entity_raw(&rtxn, id)?
+        .as_deref()
+        .and_then(crate::batch::EntityMetadataHeader::parse)
+        .is_some_and(|row| row.learned_at > cutoff);
+    if !newer {
+        return Ok(true);
+    }
+    let frames = format!("{}:", id.to_hex());
+    if PENDING_EDIT_CARRIERS
+        .iter_raw_from(&vault.store, &rtxn, frames.as_bytes())?
+        .next()
+        .transpose()?
+        .is_some()
+    {
+        withdrawn.held.insert(*id);
+    }
+    Ok(false)
 }
 
 /// Test-only race injection — see [`INJECT_RACE_BEFORE_COMPACT_WRITE`].

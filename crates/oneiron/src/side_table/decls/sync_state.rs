@@ -345,6 +345,11 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// The newest withdrawn generation (u64be `learned_at`) of a derived artifact whose
+    /// historical sweep finished: sync ingest refuses a body of that generation or older that is
+    /// not its content-free keyframe, and every sweep keeps rewriting such a carrier. Outlives
+    /// the `hw:` row it replaces. Key: hex32 (entity id).
+    DELETION_WITHDRAWN_GENERATION_FENCE: SyncState b"wg:" Raw;
     /// A crossed `[limits]` row's question (OF-520) for one minute: the row's bound, the most it
     /// saw, and how many times it was crossed. Key: string (the row's key) ":" u64 (decimal,
     /// zero-padded to 20 digits; window start).

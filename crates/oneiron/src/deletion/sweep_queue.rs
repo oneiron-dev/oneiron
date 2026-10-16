@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
@@ -209,6 +212,116 @@ pub(crate) fn encode_hard_erase_sweep_key(seq: u64) -> [u8; 10] {
 pub(crate) fn decode_hard_erase_sweep_seq(key: &[u8]) -> Option<u64> {
     let seq = key.strip_prefix(HARD_ERASE_SWEEP_PREFIX)?;
     Some(u64::from_be_bytes(seq.try_into().ok()?))
+}
+
+/// The artifact and generation a `hw:{id16}{generation:8BE}` key names;
+/// `None` for any other shape.
+pub(crate) fn decode_withdrawn_generation_key(key: &[u8]) -> Option<(EntityId, u64)> {
+    let rest = key.strip_prefix(WITHDRAWN_GENERATION_SWEEP_PREFIX)?;
+    if rest.len() != 24 {
+        return None;
+    }
+    let id = EntityId::from_bytes(rest[..16].try_into().ok()?).ok()?;
+    Some((id, u64::from_be_bytes(rest[16..].try_into().ok()?)))
+}
+
+/// Strictly decodes one persisted `hw:` row: its key, then a value whose
+/// scope names the same artifact and generation. A row that fails is an
+/// obligation the sweep can neither execute nor discard; callers keep it and
+/// report it, as they do an undecodable `h:` row.
+pub(crate) fn decode_withdrawn_generation_row(
+    key: &[u8],
+    value: &[u8],
+) -> Result<(EntityId, WithdrawnGenerationSweepJob)> {
+    let (id, generation) = decode_withdrawn_generation_key(key)
+        .ok_or(Error::CorruptedIndex("withdrawn generation sweep key"))?;
+    let job: WithdrawnGenerationSweepJob = rmp_serde::from_slice(value)
+        .map_err(|_| Error::CorruptedIndex("withdrawn generation sweep job"))?;
+    if job.scope.artifact_id != id.to_hex() || job.scope.generation != generation {
+        return Err(Error::CorruptedIndex("withdrawn generation sweep job"));
+    }
+    Ok((id, job))
+}
+
+/// Re-encodes a `hw:` job after an in-place `retry_state` update, with the
+/// encoder of its first write.
+pub(crate) fn encode_withdrawn_generation_job_value(
+    job: &WithdrawnGenerationSweepJob,
+) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(job)
+        .map_err(|_| Error::InvariantViolation("withdrawn generation sweep job encode"))
+}
+
+/// The newest withdrawn generation of each artifact whose sweep finished
+/// (`wg:{hex32}`, u64 BE). It outlives the `hw:` row, so a late re-put of a
+/// withdrawn body is refused after the obligation is gone.
+const WITHDRAWN_GENERATION_FENCE: SideTable<HexId, u64, Raw> =
+    SideTable::new(&side_table::DELETION_WITHDRAWN_GENERATION_FENCE);
+
+/// Raises `artifact`'s withdrawn-generation fence to `generation`, in the
+/// transaction that deletes its `hw:` row. A fence already as high stays.
+pub(crate) fn raise_withdrawn_generation_fence_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    artifact: &EntityId,
+    generation: u64,
+) -> Result<()> {
+    let key = HexId(*artifact);
+    if WITHDRAWN_GENERATION_FENCE
+        .get(store, wtxn, &key)?
+        .is_some_and(|held| held >= generation)
+    {
+        return Ok(());
+    }
+    WITHDRAWN_GENERATION_FENCE.put(store, wtxn, &key, &generation)
+}
+
+/// The newest withdrawn generation of `artifact`, from its pending `hw:`
+/// rows and its fence; `None` when it has neither. A row under the
+/// artifact's prefix whose key does not decode fences every generation, so
+/// a reader fails closed.
+#[cfg(feature = "sync")]
+pub(crate) fn withdrawn_generation_cutoff_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    artifact: &EntityId,
+) -> Result<Option<u64>> {
+    let mut cutoff = WITHDRAWN_GENERATION_FENCE.get(store, txn, &HexId(*artifact))?;
+    let prefix = [WITHDRAWN_GENERATION_SWEEP_PREFIX, artifact.as_bytes()].concat();
+    for row in store.sync_queue.prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let generation = decode_withdrawn_generation_key(&key).map_or(u64::MAX, |(_, at)| at);
+        cutoff = Some(cutoff.map_or(generation, |held| held.max(generation)));
+    }
+    Ok(cutoff)
+}
+
+/// Every artifact's newest withdrawn generation, from the pending `hw:` rows
+/// and the fences. A `hw:` key that does not decode names no artifact; the
+/// sweep inventory reports it.
+pub(crate) fn withdrawn_generation_cutoffs_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<EntityId, u64>> {
+    let mut cutoffs = BTreeMap::new();
+    let mut raise = |id: EntityId, generation: u64| {
+        let held = cutoffs.entry(id).or_insert(generation);
+        *held = (*held).max(generation);
+    };
+    for row in WITHDRAWN_GENERATION_FENCE.iter_from(store, txn, &[])? {
+        let (HexId(id), generation) = row?;
+        raise(id, generation);
+    }
+    for row in store
+        .sync_queue
+        .prefix_iter(txn, WITHDRAWN_GENERATION_SWEEP_PREFIX)?
+    {
+        let (key, _) = row?;
+        if let Some((id, generation)) = decode_withdrawn_generation_key(&key) {
+            raise(id, generation);
+        }
+    }
+    Ok(cutoffs)
 }
 
 impl Vault {
