@@ -186,7 +186,7 @@ impl AudienceCache {
             if !self.covers_readable(vault, txn, covers, audience, depth)? {
                 return Ok(false);
             }
-            if !self.covers_readable(vault, txn, Ok(reaction_covers(&claim)), audience, depth)? {
+            if !self.covers_readable(vault, txn, reaction_covers(&claim), audience, depth)? {
                 return Ok(false);
             }
             if let Some(relationship) = claim.rel {
@@ -232,11 +232,18 @@ impl AudienceCache {
 /// A reaction (or its echo binding) is readable only together with the record
 /// it is about, so it can never broaden that record's audience; `None` for any
 /// other claim.
-fn reaction_covers(claim: &crate::ClaimBody) -> Option<Vec<EntityId>> {
-    crate::reaction::is_reaction_claim_predicate(&claim.predicate).then(|| match claim.subject {
-        crate::claim::ClaimSubject::Entity(subject) => vec![subject],
-        _ => Vec::new(),
-    })
+fn reaction_covers(claim: &crate::ClaimBody) -> Result<Option<Vec<EntityId>>> {
+    if claim.predicate == crate::reaction::PREDICATE_REACTION_OUTCOME {
+        return crate::reaction::outcome_sources(claim).map(Some);
+    }
+    Ok(
+        crate::reaction::is_reaction_claim_predicate(&claim.predicate).then(|| {
+            match claim.subject {
+                crate::claim::ClaimSubject::Entity(subject) => vec![subject],
+                _ => Vec::new(),
+            }
+        }),
+    )
 }
 
 /// The records a persisted `conversation.summary` claim covers, or `None` for

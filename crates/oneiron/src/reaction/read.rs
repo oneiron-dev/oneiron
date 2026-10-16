@@ -257,3 +257,39 @@ impl Vault {
             .collect())
     }
 }
+
+impl crate::claim::ScopedRead<'_> {
+    /// Interpreted landing/commitment evidence this reader may still see.
+    /// A revoked, changed or erased source is never an acknowledgement.
+    pub fn reaction_outcomes(&self, subject: EntityId) -> Result<Vec<super::ReactionOutcome>> {
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn()?;
+        if self.get_entities_parts_in_txn(&txn, &[subject])?[0].is_none() {
+            return Ok(Vec::new());
+        }
+        let mut outcomes = Vec::new();
+        for id in vault.claims_for_subject_in_txn(&txn, &subject)? {
+            if self.get_entities_parts_in_txn(&txn, &[id])?[0].is_none() {
+                continue;
+            }
+            let Some(body) = vault.get_claim_for_effect_in_txn(&txn, &id)? else {
+                continue;
+            };
+            if !super::outcomes::outcome_fact_admissible_in(&vault.store, &txn, id, &body)? {
+                continue;
+            }
+            let Some(outcome) = super::outcomes::decode_outcome(id, &body)? else {
+                continue;
+            };
+            if self
+                .get_entities_parts_in_txn(&txn, &outcome.decision.evidence)?
+                .iter()
+                .any(Option::is_none)
+            {
+                continue;
+            }
+            outcomes.push(outcome);
+        }
+        Ok(outcomes)
+    }
+}

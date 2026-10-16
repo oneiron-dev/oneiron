@@ -104,6 +104,12 @@ pub(super) fn enqueue_in_txn(
     let Some((connector, room_external_id)) = outbound_target_in(vault, txn, room)? else {
         return Ok(());
     };
+    if connector == "imessage_bridge"
+        && let Some(body) = vault.get_claim_in_txn(txn, &reaction)?
+        && let Some(value) = super::value::decode_reaction(&body)
+    {
+        super::channel_adapters::IMessageTapback::from_glyph(&value.glyph)?;
+    }
     let payload = rmp_serde::to_vec_named(&ReactionOutboundAttempt {
         reaction,
         connector,

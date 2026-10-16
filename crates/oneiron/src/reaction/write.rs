@@ -204,8 +204,9 @@ pub(super) fn retract_in_txn(
     row: &StoredReaction,
     now: u64,
 ) -> Result<()> {
-    vault.retract_claim_in_txn_as(txn, &row.id, now.max(row.value.occurred_at), row.writer())?;
-    Ok(())
+    let closed_at = now.max(row.value.occurred_at);
+    vault.retract_claim_in_txn_as(txn, &row.id, closed_at, row.writer())?;
+    super::outcomes::retract_source_outcomes_in(vault, txn, row.id, closed_at)
 }
 
 impl Vault {
@@ -227,6 +228,15 @@ impl Vault {
             }
             let room = target_room_in(self, txn, input.message)?;
             require_reactor_in(self, txn, room, input.by)?;
+            let value = ReactionValue {
+                glyph: super::channel_adapters::first_party_glyph_in(
+                    self,
+                    txn,
+                    room,
+                    &value.glyph,
+                )?,
+                ..value.clone()
+            };
             let now = require_current_occurrence(self, value.occurred_at)?;
             let fold = admission_in(self, txn)?;
             let mine: Vec<StoredReaction> = reactions_on_in(self, txn, &fold, input.message)?
@@ -277,7 +287,8 @@ impl Vault {
             let room = target_room_in(self, txn, message)?;
             require_reactor_in(self, txn, room, by)?;
             let fold = admission_in(self, txn)?;
-            let chain = chain_in(self, txn, &fold, message, by, glyph)?;
+            let glyph = super::channel_adapters::first_party_glyph_in(self, txn, room, glyph)?;
+            let chain = chain_in(self, txn, &fold, message, by, &glyph)?;
             let Some(live) = chain.iter().rev().find(|row| row.live()) else {
                 let last = chain
                     .last()
