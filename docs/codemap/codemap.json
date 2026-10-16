@@ -23689,7 +23689,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 10,
       "re-export": 1,
@@ -23718,8 +23718,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/registry/installed_pack.rs",
-     "purpose": "The shipped catalog is read from an installed, pinned first-party hub pack",
+     "purpose": "The shipped catalog is read from an installed first-party hub pack",
      "surface": {
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -34019,14 +34020,17 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ModelCatalogSync"
+     ],
      "path": "src/skill_hub/default_hub.rs",
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
-      "crate-vis": 4,
-      "fn": 6
+      "crate-vis": 3,
+      "fn": 10,
+      "struct": 1
      }
     },
     {
@@ -34082,7 +34086,7 @@
      "path": "src/skill_hub/git_fetch.rs",
      "purpose": "Generic pinned Git subtree reads",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -34204,7 +34208,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 7
      }
     },
@@ -34532,8 +34536,19 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 13,
+      "fn": 14,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/ref_sync.rs",
+     "purpose": "Per-ref sync policy (ARCH-0053 §7: sync_policy per ref, not per hub)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -43398,7 +43413,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43624,7 +43639,7 @@
    },
    "over_bar": 52,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2616,
+   "source_files": 2617,
    "test_files": 902
   },
   "oneiron-android": {
@@ -54218,7 +54233,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes.rs",
@@ -58830,7 +58845,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 13,
+   "over_bar": 14,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 374,
    "test_files": 182
