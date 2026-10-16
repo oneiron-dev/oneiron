@@ -776,7 +776,9 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
         .sync_state_put("u:w:2026-030:00000001", b"prefix-adjacent-update")
         .unwrap();
     let dt_key = format!("dt:{}", EntityId::now().to_hex());
-    vault.sync_state_put(&dt_key, &[2u8; 26]).unwrap();
+    vault
+        .with_write_txn(|txn| vault.store.sync_state.put(txn, &dt_key, &[2u8; 26]))
+        .unwrap();
     // sync_queue families (`q:{seq:8BE}` update row, `d:{seq:8BE}`
     // delete-bearing sidecar, `h:{seq:8BE}` hard-erase sweep job):
     let q_key = [b'q', b':', 0, 0, 0, 0, 0, 0, 0, 1];
