@@ -68,6 +68,9 @@ pub(super) async fn serve_with_config(
     config.keystore.install_on(&vault, &config.vault_path);
 
     let server_config = config.sync_server_config();
+    if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
+        tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
+    }
     match server_config.auth_secret.as_deref() {
         None if !server_config.allow_unauthenticated => {
             tracing::warn!(
@@ -262,6 +265,32 @@ fn refuse_unauthenticated_public_bind(
             "unauthenticated mode (--insecure-allow-unauthenticated) serves only a loopback host such as 127.0.0.1 or [::1], and {addr} is reachable from the network; bind loopback or set ONEIRON_AUTH_SECRET"
         );
     }
+    Ok(())
+}
+
+/// The root project the vault seeds at its first open takes the owner's first
+/// signature here, through the host's project.write slip (OF-497). A host
+/// with no secret has no issuer, and a relay signs nothing; either leaves the
+/// root unsigned. A root that is already signed is left alone.
+fn sign_root_project(vault: &oneiron::Vault, secret: Option<&str>) -> anyhow::Result<()> {
+    let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
+        return Ok(());
+    };
+    if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
+        return Ok(());
+    }
+    let root = vault.root_project()?;
+    let unsigned = vault.project_frontier(root)?.is_some_and(|frontier| {
+        frontier.disposition == oneiron::workspace_roster::ProjectDisposition::Unsigned
+    });
+    if !unsigned {
+        return Ok(());
+    }
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let owner = crate::owner::local_owner(vault)?;
+    vault.sign_owner_project(&owner, &vault.owner_project_signer(&issuer)?, root)?;
+    tracing::info!("the root project took the owner's first signature");
     Ok(())
 }
 
