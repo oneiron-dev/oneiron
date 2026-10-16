@@ -174,6 +174,14 @@ impl crate::Vault {
                 },
                 true,
                 Some(actor),
+            )?;
+            // An approved task proposal lands its TASK in this approval txn.
+            crate::task_verb::settle_task_proposal_in_txn(
+                self,
+                txn,
+                id,
+                Some(actor),
+                self.store.clock.now_recorded_at(),
             )
         })
     }
