@@ -158,8 +158,10 @@ impl WasmtimeComponentRuntime {
         let deadline = Instant::now()
             .checked_add(budget.wall_time)
             .ok_or(failure("invalid component deadline"))?;
+        let nested = self.fresh();
         let mut bridge = Bridge {
             host,
+            nested,
             adapter: if step.boundary.links_host_services() {
                 self.adapter.as_deref_mut()
             } else {
@@ -325,6 +327,10 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
 
 struct Bridge<'a> {
     host: &'a mut dyn JsCodeModeHost,
+    /// What a call that runs a step of its own runs it on (OF-353's
+    /// `self.skills.call`): this runtime's pinned component and budget, each
+    /// such step on a fresh sibling with a store of its own.
+    nested: WasmtimeComponentRuntime,
     adapter: Option<&'a mut (dyn SandboxBoundaryAdapter + Send + 'static)>,
     determinism: crate::code_run::CodeRunDeterminism,
     step_seq: u64,

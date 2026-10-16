@@ -272,6 +272,20 @@ pub trait JsCodeModeHost {
     /// is reserved for infrastructure failures with no guest-visible
     /// response at all.
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse>;
+
+    /// Dispatches one `self.*` call that runs a step of its own while the
+    /// caller's step waits on the reply: `self.skills.call` runs an
+    /// agent-callable skill (OF-353). `runtime` is a fresh sibling of the
+    /// runtime whose step made the call, its pinned component and budget
+    /// with a store of its own. A host that runs no nested step answers the
+    /// call as any other.
+    fn dispatch_self_nested(
+        &mut self,
+        call: SelfCall,
+        _runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchResponse> {
+        self.dispatch_self(call)
+    }
 }
 
 /// Runtime seam for the CODE-1 plain-JS guest component.

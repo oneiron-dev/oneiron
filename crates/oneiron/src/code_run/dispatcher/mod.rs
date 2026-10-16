@@ -25,6 +25,7 @@ use crate::off_record::OffRecordSession;
 use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
+pub(crate) use self::coordination::CallableSkillLease;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
@@ -40,6 +41,10 @@ pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 pub struct HostSelfDispatcher<'a> {
     pub(super) agent_parent: Option<crate::attempt_queue::AttemptId>,
     pub(super) agent_lease: Option<crate::agent_def::AgentAuthorLease>,
+    /// The run's own vault as the host holds it, lent to the callable skills
+    /// its program calls (OF-353): a foreign-tier skill's egress relay keeps
+    /// it past the call.
+    pub(super) skill_vault: Option<std::sync::Arc<Vault>>,
     pub(super) storage: ExecutorStorage<'a>,
     pub(super) actor: WriteActor,
     pub(super) run_ref: String,
@@ -168,6 +173,7 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(Self {
             agent_parent: None,
             agent_lease: None,
+            skill_vault: None,
             storage,
             actor,
             run_ref,
@@ -393,6 +399,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
             SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
             SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
+            SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),

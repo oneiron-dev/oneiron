@@ -48,6 +48,10 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("reason_ref", Value::from(call.reason_ref.as_str())),
             ("at", Value::from(call.at)),
         ]),
+        SelfCall::SkillsCall(call) => request_map(vec![
+            ("skill", entity_id_value(call.skill)),
+            ("args", Value::from(call.args.to_string())),
+        ]),
         SelfCall::AgentVerb(call) => request_map(vec![
             ("verb", Value::from(call.verb.as_str())),
             ("input", Value::from(call.input.to_string())),
@@ -278,6 +282,11 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("level", Value::from(result.level.as_str())),
             ("replay", Value::Boolean(result.replay)),
         ]),
+        SelfDispatchOutcome::SkillCall(result) => request_map(vec![
+            ("kind", Value::from("skill_call")),
+            ("skill", entity_id_value(result.skill)),
+            ("output", Value::from(result.output.to_string())),
+        ]),
         SelfDispatchOutcome::WakePolicyWritten(policy) => {
             request_map(vec![
                 ("kind", Value::from("wake_policy_written")),
@@ -323,6 +332,11 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 replay: bool_value(map_get(entries, "replay")?)?,
             },
         )),
+        "skill_call" => Ok(SelfDispatchOutcome::SkillCall(super::SelfSkillCallResult {
+            skill: entity_value(map_get(entries, "skill")?)?,
+            output: serde_json::from_str(str_value(map_get(entries, "output")?)?)
+                .map_err(|_| invalid_code_run_replay("invalid skill call output"))?,
+        })),
         "wake_policy_written" => {
             let policy: crate::dreamer_wake::DreamerWakePolicy =
                 serde_json::from_str(str_value(map_get(entries, "policy")?)?)
@@ -494,6 +508,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "tasks.ask" => Ok(SelfEffect::TasksAsk),
         "tasks.wait" => Ok(SelfEffect::TasksWait),
         "tasks.refuse" => Ok(SelfEffect::TasksRefuse),
+        "self.skills.call" => Ok(SelfEffect::SkillsCall),
         "self.memory.search" => Ok(SelfEffect::MemorySearch),
         "self.memory.write_fixture" => Ok(SelfEffect::MemoryWriteFixture),
         "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),

@@ -46,6 +46,7 @@ declare namespace self {
     diary(input: { content: string; kind?: string | null }): Promise<unknown>;
   };
   const skills: {
+    call(input: { args: unknown; skill: string }): Promise<unknown>;
     callables(input: object): Promise<unknown>;
     fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
     save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
