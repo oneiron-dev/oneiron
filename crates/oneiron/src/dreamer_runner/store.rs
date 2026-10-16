@@ -16,6 +16,7 @@ use super::codec::{
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
+    DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
     DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
     DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
     DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
@@ -386,6 +387,37 @@ impl<'a> DreamerRunnerStore<'a> {
                 parent_attempt,
             },
             wake_key.map(|key| format!("{DREAMER_NOTE_REVIEW_ATTEMPT_KIND}:{key}")),
+            run_id,
+            now,
+        )
+    }
+
+    /// Enqueues `resident`'s own dreaming (OF-490) as a Nightly child in the
+    /// wake's own commit: one per resident per wake key. The resident's
+    /// stamp binds at enqueue.
+    pub(crate) fn enqueue_resident_dream_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        resident: crate::EntityId,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_RESIDENT_DREAM_ATTEMPT_KIND.to_owned(),
+                input: crate::dreamer_consolidation::resident_dream_input(resident),
+                parent_attempt,
+            },
+            wake_key.map(|key| {
+                format!(
+                    "{DREAMER_RESIDENT_DREAM_ATTEMPT_KIND}:{}:{key}",
+                    resident.to_hex()
+                )
+            }),
             run_id,
             now,
         )
@@ -807,6 +839,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_RECIPE_WAKE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
+        || kind == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }
