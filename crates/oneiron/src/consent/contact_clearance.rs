@@ -15,11 +15,14 @@
 //! the consent bound are projections of it, never a second editable store;
 //! narrowing and revoking rewrite that same row.
 
+use std::collections::BTreeSet;
+
 use rmpv::Value;
 
 use super::AuthenticatedOwner;
 use super::adapters::disclosure_grant_from_disclosure_scope;
-use super::effect::EffectDigest;
+use super::doors::approve_once_authorization_in_txn;
+use super::effect::{ApproveOnceAuthorization, EffectDigest};
 use super::grant::CONSENT_CONTENT_KIND;
 use super::support::normalized_ref;
 use super::widen::WidenProposal;
@@ -28,7 +31,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::counterparty_contact::{CounterpartyContactStatus, decode_counterparty_contact_body};
 use crate::disclosure::{DisclosureScope, DisclosureScopeStatus, encode_disclosure_scope_body};
 use crate::entity_id::EntityId;
-use crate::error::GateError;
+use crate::error::{ErrorKind, GateError};
 use crate::federation::Scope;
 use crate::federation::scope_codec::{decode_scope_value, encode_scope_value};
 use crate::ports::EntityStoreRead;
@@ -362,6 +365,30 @@ pub struct DisclosureConfirmationReceipt {
 #[must_use]
 pub fn contact_clearance_ref(contact: &EntityId) -> String {
     format!("contact_clearance:{}", contact.to_hex())
+}
+
+/// The channel a text room's disclosure travels on: `room:<room hex>`. The
+/// offer that files a disclosure and the assembly that delivers it both name
+/// a room this way.
+#[must_use]
+pub fn contact_disclosure_room_channel(room: &EntityId) -> String {
+    format!("room:{}", room.to_hex())
+}
+
+/// The channel a voice session's disclosure travels on:
+/// `voice:<voice_session_ref>`.
+#[must_use]
+pub fn contact_disclosure_voice_channel(voice_session_ref: &str) -> String {
+    format!("voice:{voice_session_ref}")
+}
+
+/// One `once` answer an assembly may still deliver: the settled offer, for a
+/// live and active contact whose clearance is the one the offer was filed
+/// against, with its approve-once marker still available.
+pub(crate) struct OnceContactDisclosure {
+    pub(crate) proposal_ref: String,
+    pub(crate) proposal: ContactDisclosureProposal,
+    pub(crate) authorization: ApproveOnceAuthorization,
 }
 
 /// Domain-separated digest of a contact's clearance row; all zero for none.
@@ -826,6 +853,61 @@ impl Vault {
             };
             self.append_contact_clearance_receipt_in_txn(txn, None, &receipt)
         })
+    }
+
+    /// The `once` answers still deliverable to `contacts`, read in `txn`, in
+    /// offer-reference order. An answer is void once its contact is gone or
+    /// inactive, or once the owner narrowed, revoked or re-cleared the
+    /// contact after the offer was filed: the newer act wins, as at confirm.
+    /// A spent or missing marker is skipped, never an error. The offer's
+    /// expiry bounded only the answer; the single-use marker bounds the
+    /// delivery.
+    pub(crate) fn once_contact_disclosures_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        contacts: &BTreeSet<EntityId>,
+    ) -> Result<Vec<OnceContactDisclosure>> {
+        let mut deliverable = Vec::new();
+        for (proposal_ref, proposal) in self.settled_contact_disclosure_offers_in_txn(
+            txn,
+            ContactDisclosureOutcome::Once.as_str(),
+        )? {
+            let contact = &proposal.offer.contact_ref;
+            if !contacts.contains(contact) {
+                continue;
+            }
+            match require_active_contact_in_txn(&self.store, txn, contact) {
+                Ok(()) => {}
+                Err(Error::EntityNotFound | Error::InvalidEntityType(_) | Error::Gate(_)) => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+            let clearance =
+                match crate::disclosure::contact_clearance_in_txn(&self.store, txn, contact) {
+                    Ok(clearance) => clearance,
+                    Err(error) if error.kind() == ErrorKind::InvalidDisclosureScope => continue,
+                    Err(error) => return Err(error),
+                };
+            if contact_clearance_digest(clearance.as_ref())? != proposal.prior_clearance_digest {
+                continue;
+            }
+            let authorization = match approve_once_authorization_in_txn(
+                &self.store,
+                txn,
+                &proposal.once_digest(&proposal_ref)?,
+            ) {
+                Ok(Some(authorization)) => authorization,
+                Ok(None) | Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) => continue,
+                Err(error) => return Err(error),
+            };
+            deliverable.push(OnceContactDisclosure {
+                proposal_ref,
+                proposal,
+                authorization,
+            });
+        }
+        Ok(deliverable)
     }
 }
 

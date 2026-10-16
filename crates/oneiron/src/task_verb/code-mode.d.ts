@@ -167,6 +167,12 @@ declare const vault: {
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
+    setup: {
+      answer(input: { answer?: object | null; card_action?: object | null; pack: string; source?: string | null }): Promise<unknown>;
+      get(input: { pack: string; source?: string | null }): Promise<unknown>;
+      prepare(input: { pack: string; source?: string | null }): Promise<unknown>;
+      verify(input: { connection: string; pack: string; source?: string | null }): Promise<unknown>;
+    };
   };
   people: {
     get(input: { pr: string }): Promise<unknown>;
@@ -189,6 +195,7 @@ declare const vault: {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
   refs: {
+    links(input: { text?: string | null; turn_ref?: string | null }): Promise<unknown>;
     resolve(input: { reference: string }): Promise<unknown>;
   };
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
@@ -201,6 +208,7 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
+    participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
     reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;
     sharing(input: { room_ref: string }): Promise<unknown>;

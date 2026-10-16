@@ -44,6 +44,13 @@ rejects stale worker/target replies, wrong render submissions, and malformed
 PCM. The worker accepts only one complete utterance at a time (no fabricated
 incremental chunks).
 
+The worker is also a speech media rung: name it as a `voxcpm2` provider in
+`[models.media.speech]` (see `docs/ops/run-with-models.md`, "Voice on the
+media seats"). Each `ai.speech` call, and each sentence the cascade speaks on
+it, then runs on its own media permit and carries the identity's fenced
+source clip. The bank is checked before the clip is sent and again before the
+audio comes back.
+
 The CPU-only harness uses an injected fake model to prove request framing,
 ref forwarding, PCM conversion, and target metadata. It is **not** a GPU
 latency/quality or owner-ear verdict. Run: `uv run --with numpy python3 -m unittest

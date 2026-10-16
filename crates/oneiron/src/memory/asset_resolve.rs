@@ -212,7 +212,9 @@ impl ImageHandle {
             .map_err(|_| MemoryError::bad_request("an image handle is <asset>@<hash>"))?;
         let content = content.trim().to_ascii_lowercase();
         if content.len() > 64 || !content.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(MemoryError::bad_request("an image handle is <asset>@<hash>"));
+            return Err(MemoryError::bad_request(
+                "an image handle is <asset>@<hash>",
+            ));
         }
         Ok(Self { asset, content })
     }
@@ -493,8 +495,10 @@ impl Memory<'_> {
         let mut forms = Vec::with_capacity(asset_refs.len());
         for asset_ref in asset_refs {
             let asset = self.resolve_ref_in_lane(&lane, asset_ref)?;
-            let ScopedReadResult { value, receipt: read } =
-                asset_forms_in_lane(&lane, asset, false, &mut admits)?;
+            let ScopedReadResult {
+                value,
+                receipt: read,
+            } = asset_forms_in_lane(&lane, asset, false, &mut admits)?;
             if let Some(receipt) = &mut receipt {
                 receipt.restrict_with(&read);
             } else {
@@ -704,8 +708,7 @@ pub fn hydrated_asset(
     pick: Option<&ImagePick<'_>>,
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<HydratedAsset>> {
-    let ScopedReadResult { value, receipt } =
-        asset_forms_in_lane(lane, asset, true, admits)?;
+    let ScopedReadResult { value, receipt } = asset_forms_in_lane(lane, asset, true, admits)?;
     let value = match value {
         Some(forms) if forms.image.is_some() => forms.hydrated(lane, consumer, pick, admits)?,
         _ => HydratedAsset::Stored,
@@ -1087,7 +1090,9 @@ fn region_pixels(
                 || region.x >= decoded.width()
                 || region.y >= decoded.height()
             {
-                return Err(MemoryError::bad_request("the region lies outside the image"));
+                return Err(MemoryError::bad_request(
+                    "the region lies outside the image",
+                ));
             }
             decoded.crop_imm(
                 region.x,
@@ -1107,8 +1112,11 @@ fn region_pixels(
         view = view.resize(edge, edge, image::imageops::FilterType::Triangle);
     }
     let mut bytes = Vec::new();
-    view.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
-        .map_err(|_| MemoryError::bad_request("the region does not encode as PNG"))?;
+    view.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )
+    .map_err(|_| MemoryError::bad_request("the region does not encode as PNG"))?;
     Ok((
         ImageBytes {
             bytes,

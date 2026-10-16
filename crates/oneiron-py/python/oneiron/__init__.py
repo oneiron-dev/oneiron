@@ -456,6 +456,20 @@ class Oneiron:
             self._client = client
         def put(self, spec):
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+        @property
+        def setup(self) -> "Oneiron._VaultPacksSetupVerbs":
+            return Oneiron._VaultPacksSetupVerbs(self._client)
+    class _VaultPacksSetupVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def prepare(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_prepare(json.dumps(spec))))
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_get(json.dumps(spec))))
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_answer(json.dumps(spec))))
+        def verify(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_verify(json.dumps(spec))))
     class _VaultAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -574,6 +588,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_list(json.dumps({}))))
         def messages(self, room_ref, after=None, limit=None):
             return json.loads(_translate(lambda: self._client.vault_rooms_messages(json.dumps({"room_ref": room_ref, "after": after, "limit": limit}))))
+        def participants(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_participants(json.dumps(spec))))
         def render(self, room_ref):
             return json.loads(_translate(lambda: self._client.vault_rooms_render(json.dumps({"room_ref": room_ref}))))
         def find(self, room_ref, after=None, limit=None):
@@ -668,6 +684,8 @@ class Oneiron:
             self._client = client
         def resolve(self, spec):
             return json.loads(_translate(lambda: self._client.vault_refs_resolve(json.dumps(spec))))
+        def links(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_refs_links(json.dumps(spec))))
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
