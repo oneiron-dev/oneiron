@@ -5,6 +5,10 @@
 //! the AEAD and KEM suites, and the epoch. The plaintext repeats the owner and the
 //! policy revision. Those two, and the key's commitment, are compared after the AEAD
 //! and before the key is returned.
+//!
+//! The plaintext never holds the key whole: it holds `key ⊕ pad`, and the pad rides
+//! its own erasable row (`pads`), so deleting a world's pads leaves every wrap of it
+//! useless (fix 7).
 
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -13,6 +17,7 @@ use oneiron_crypto::{
 };
 use zeroize::Zeroizing;
 
+use super::pads::WorldKeyPad;
 use super::{WORLD_KEY_EPOCH, WorldKey, WorldKeyBinding, WrapRecipient, base_world, refused};
 use crate::error::Result;
 
@@ -21,13 +26,14 @@ const PAYLOAD_LEN: usize = oneiron_authority::authority::WORLD_KEY_PAYLOAD_LEN;
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 
-/// Seals `key` to `recipient`'s public key under `binding`. The binding must name
-/// this key, and never base reality.
-pub fn seal_world_key(
+/// Seals `key`, split by its `pad`, to `recipient`'s public key under `binding`. The
+/// binding must name this key, and never base reality.
+pub(crate) fn seal_world_key(
     binding: &WorldKeyBinding,
     recipient: WrapRecipient,
     public: &HybridPublicKey,
     key: &WorldKey,
+    pad: &WorldKeyPad,
 ) -> Result<Envelope> {
     if binding.key.world == base_world() {
         return Err(refused("base reality has no world key"));
@@ -37,7 +43,7 @@ pub fn seal_world_key(
     }
     let key_id = binding.key.envelope_key_id();
     let to = recipient.envelope_recipient();
-    let payload = world_key_payload(binding, key);
+    let payload = world_key_payload(binding, key, pad);
     let params = SealParams {
         suite: AEAD,
         purpose: Purpose::WorldDek,
@@ -58,23 +64,30 @@ pub fn seal_world_key(
     .map_err(|_| refused("sealing failed"))
 }
 
-/// The plaintext a wrap of `key` under `binding` seals.
-pub(super) fn world_key_payload(binding: &WorldKeyBinding, key: &WorldKey) -> Zeroizing<Vec<u8>> {
+/// The plaintext a wrap of `key` under `binding` seals: the key's half that is not
+/// its pad.
+pub(super) fn world_key_payload(
+    binding: &WorldKeyBinding,
+    key: &WorldKey,
+    pad: &WorldKeyPad,
+) -> Zeroizing<Vec<u8>> {
     let mut payload = Zeroizing::new(Vec::with_capacity(PAYLOAD_LEN));
     payload.extend_from_slice(PAYLOAD_LABEL);
     payload.extend_from_slice(binding.owner.as_bytes());
     payload.extend_from_slice(&binding.policy.0);
-    payload.extend_from_slice(key.expose());
+    payload.extend_from_slice(&pad.apply(key.expose())[..]);
     payload
 }
 
-/// Opens `envelope` with `recipient`'s secret, refusing any envelope not made for
-/// exactly `binding` and `recipient`, and any binding that names base reality.
-pub fn open_world_key(
+/// Opens `envelope` with `recipient`'s secret and rejoins the key with its `pad`,
+/// refusing any envelope not made for exactly `binding` and `recipient`, and any
+/// binding that names base reality.
+pub(crate) fn open_world_key(
     binding: &WorldKeyBinding,
     recipient: WrapRecipient,
     secret: &HybridSecretKey,
     envelope: &Envelope,
+    pad: &WorldKeyPad,
 ) -> Result<WorldKey> {
     if binding.key.world == base_world() {
         return Err(refused("base reality has no world key"));
@@ -102,11 +115,11 @@ pub fn open_world_key(
     if body[..16] != binding.owner.as_bytes()[..] || body[16..48] != binding.policy.0[..] {
         return Err(refused("the wrap names another owner or policy"));
     }
-    let mut bytes = Zeroizing::new([0u8; 32]);
-    bytes.copy_from_slice(&body[48..]);
+    let mut half = Zeroizing::new([0u8; 32]);
+    half.copy_from_slice(&body[48..]);
     let key = WorldKey {
         id: binding.key,
-        bytes,
+        bytes: pad.apply(&half),
     };
     if key.commitment() != binding.commitment {
         return Err(refused("the wrap opens to other key bytes"));

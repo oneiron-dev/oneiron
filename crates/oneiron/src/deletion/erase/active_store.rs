@@ -41,6 +41,13 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        // A purged world takes its keys with it (fix 7).
+        self.destroy_world_keys_for_delete_in_txn(
+            wtxn,
+            *id,
+            crate::world_keys::WorldKeyDestroyCause::LocalDelete,
+            request_id.copied(),
+        )?;
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
         // A purged message's turns stop matching its words: read them while

@@ -73,6 +73,16 @@ impl Vault {
     ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
         let decoded = decode_tombstone_value(raw_value);
         self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
+        // A peer deleted a world: its keys go here too, whether or not this
+        // replica holds the WORLD row (fix 7). An archive is never a delete.
+        if decoded.reason != Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
+            self.destroy_world_keys_for_delete_in_txn(
+                wtxn,
+                *id,
+                crate::world_keys::WorldKeyDestroyCause::ReplayedTombstone,
+                decoded.request_id,
+            )?;
+        }
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         // Receiver-only room MESSAGE content must be erased before the TURN
         // loses its PartOf edges, even when the host never held the child.

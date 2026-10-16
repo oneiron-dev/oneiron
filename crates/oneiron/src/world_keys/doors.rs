@@ -17,6 +17,7 @@ use super::{
     FIRST_GENERATION, PolicyRevision, WorldKey, WorldKeyBinding, WorldKeyId, WorldRecoveryState,
     WrapRecipient, machine_secret, open_world_key, recovery_state, refused, seal_world_key,
 };
+use super::pads::{WorldKeyPad, require_pad_in_txn};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, Destination, EffectiveRead,
     FoldedWorldKey, MAX_PARENTS, RecoveryRootId, WORLD_KEY_WRAPS_MAX, WorldKeyWrapsRecord,
@@ -283,6 +284,9 @@ impl Vault {
         let Some(current) = fold.current_world_key(world) else {
             let key = WorldKey::mint(world, FIRST_GENERATION)?;
             let id = *key.id();
+            // The pad lands with the key's first wraps, which are sealed against it.
+            let now = self.instant_in_txn(txn)?.secs();
+            self.put_pad_in_txn(txn, &id, &WorldKeyPad::mint()?, now)?;
             let records = match self.append_world_key_wraps_in_txn(
                 txn,
                 &fold,
@@ -307,11 +311,13 @@ impl Vault {
         if missing.is_empty() {
             return Ok(Ok(WorldKeyStatus::UpToDate(id)));
         }
+        let pad = require_pad_in_txn(&self.store, txn, &id)?;
         let key = open_counted(
             &fold,
             current,
             WrapRecipient::Machine(secret.machine),
             &secret.secret,
+            &pad,
         )
         .ok_or_else(|| refused("this machine holds no wrap of the world's current key"))?;
         let records = match self.append_world_key_wraps_in_txn(
@@ -385,11 +391,13 @@ impl Vault {
             }
             None => {}
         }
+        let pad = require_pad_in_txn(&self.store, &txn, &current.id)?;
         let key = open_counted(
             &fold,
             current,
             WrapRecipient::Machine(secret.machine),
             &secret.secret,
+            &pad,
         )
         .ok_or_else(|| refused("this machine holds no wrap of the world's current key"))?;
         let key = Arc::new(key);
@@ -645,6 +653,7 @@ impl Vault {
         seq: &mut SequenceCounter,
     ) -> Result<Vec<AuthorityEntryHash>> {
         let now = self.instant_in_txn(txn)?.secs();
+        let pad = require_pad_in_txn(&self.store, txn, key.id())?;
         let mut rows: Vec<(AuthorityLogEntry, TimeRange, u64)> = Vec::new();
         let mut hashes = Vec::new();
         let world = key.id().world;
@@ -653,7 +662,7 @@ impl Vault {
             let wraps = wraps
                 .into_iter()
                 .map(|(recipient, public)| {
-                    seal_world_key(binding, recipient, public, key)
+                    seal_world_key(binding, recipient, public, key, &pad)
                         .map(|envelope| (recipient, envelope.to_bytes()))
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -705,7 +714,7 @@ impl Vault {
         }
     }
 
-    fn world_key_ring(
+    pub(super) fn world_key_ring(
         &self,
     ) -> std::sync::MutexGuard<'_, std::collections::HashMap<WorldKeyId, Arc<WorldKey>>> {
         self.world_keys
@@ -793,12 +802,14 @@ pub(crate) fn recipients(
     out
 }
 
-/// Opens `key` from a counted wrap to `recipient`, trying each envelope.
+/// Opens `key` from a counted wrap to `recipient` with its `pad`, trying each
+/// envelope.
 pub(crate) fn open_counted(
     fold: &AuthorityFold,
     key: &FoldedWorldKey,
     recipient: WrapRecipient,
     secret: &HybridSecretKey,
+    pad: &WorldKeyPad,
 ) -> Option<WorldKey> {
     let vault_id = fold.vault_id?;
     key.wraps.get(&recipient)?.iter().find_map(|wrap| {
@@ -810,6 +821,6 @@ pub(crate) fn open_counted(
             policy: wrap.policy,
             commitment: key.commitment,
         };
-        open_world_key(&binding, recipient, secret, &envelope).ok()
+        open_world_key(&binding, recipient, secret, &envelope, pad).ok()
     })
 }

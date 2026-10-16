@@ -33,6 +33,7 @@ use super::{
     MachineSecret, RecoveryRootSeed, SequenceCounter, WorldKey, WorldKeyBinding, WorldKeyId,
     WrapRecipient, open_counted, open_world_key, recipients,
 };
+use super::pads::{WorldKeyPad, pad_in_txn};
 use crate::authority::{
     AuthorityFold, AuthorityView, Destination, EffectiveRead, EffectiveWorldPrivacy,
     MachineAdmitter, PinnedRoot, RecoveryRootId, WorldKeyWrapsRecord, invalid_authority,
@@ -219,9 +220,14 @@ impl Vault {
             } else if key.conflicted {
                 Reach::Conflicted
             } else {
-                open_counted(&old, key, to_me, &door.secret.secret)
-                    .or_else(|| open_own(&old, &own, key.id, Some(key.commitment), door.secret))
-                    .map_or(Reach::Unopenable, Reach::Opened)
+                match pad_in_txn(&self.store, txn, &key.id)? {
+                    Some(pad) => open_counted(&old, key, to_me, &door.secret.secret, &pad)
+                        .or_else(|| {
+                            open_own(&old, &own, key.id, Some(key.commitment), door.secret, &pad)
+                        })
+                        .map_or(Reach::Unopenable, Reach::Opened),
+                    None => Reach::Unopenable,
+                }
             };
             reached.insert(
                 key.id,
@@ -237,7 +243,8 @@ impl Vault {
                 continue;
             }
             let reach = if self.world_row_live_in_txn(txn, record.key.world)? {
-                open_own(&old, &own, record.key, None, door.secret)
+                pad_in_txn(&self.store, txn, &record.key)?
+                    .and_then(|pad| open_own(&old, &own, record.key, None, door.secret, &pad))
                     .map_or(Reach::Unopenable, Reach::Opened)
             } else {
                 Reach::NotLive
@@ -303,7 +310,8 @@ impl Vault {
                 } else if key.conflicted {
                     Reach::Conflicted
                 } else {
-                    open_counted(&mid, key, to_root, &recovery)
+                    pad_in_txn(&self.store, txn, &key.id)?
+                        .and_then(|pad| open_counted(&mid, key, to_root, &recovery, &pad))
                         .map_or(Reach::Unopenable, Reach::Opened)
                 };
                 start.reached.insert(
@@ -575,14 +583,16 @@ fn other_bytes(held: &crate::authority::FoldedWorldKey, key: &WorldKey, owner: E
     held.conflicted || held.commitment != key.commitment() || held.owner != owner
 }
 
-/// Opens `id` from a record this machine signed itself, checked against that
-/// record's commitment, and against `commitment` when the fold holds the key.
+/// Opens `id` with its `pad` from a record this machine signed itself, checked
+/// against that record's commitment, and against `commitment` when the fold holds
+/// the key.
 fn open_own(
     fold: &AuthorityFold,
     own: &[(crate::authority::AuthorityEntryHash, WorldKeyWrapsRecord)],
     id: WorldKeyId,
     commitment: Option<[u8; 32]>,
     secret: &MachineSecret,
+    pad: &WorldKeyPad,
 ) -> Option<WorldKey> {
     let vault_id = fold.vault_id?;
     let me = WrapRecipient::Machine(secret.machine);
@@ -601,6 +611,6 @@ fn open_own(
                 policy: record.policy,
                 commitment: record.commitment,
             };
-            open_world_key(&binding, me, &secret.secret, &envelope).ok()
+            open_world_key(&binding, me, &secret.secret, &envelope, pad).ok()
         })
 }
