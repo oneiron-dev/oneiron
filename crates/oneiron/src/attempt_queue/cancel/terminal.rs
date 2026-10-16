@@ -132,7 +132,10 @@ impl AttemptQueue<'_> {
         )?;
         self.delete_dedupe_entry_for_record(wtxn, &record)?;
 
+        // A landing that hands off is not the end of the work: its successor
+        // surfaces when it settles.
         let Some(successor) = successor else {
+            self.notify_settled_in_txn(wtxn, &record)?;
             return Ok(FinishLandingOutcome::Landed(record));
         };
 
@@ -246,6 +249,7 @@ impl AttemptQueue<'_> {
             input.authority.actor(),
         )?;
         self.delete_dedupe_entry_for_record(wtxn, &record)?;
+        self.notify_settled_in_txn(wtxn, &record)?;
         Ok(ForceCancelOutcome::Cancelled(record))
     }
 
