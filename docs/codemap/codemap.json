@@ -13381,7 +13381,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 63,
+      "fn": 64,
       "struct": 1
      }
     },
@@ -23160,7 +23160,7 @@
      "path": "src/learning/prior.rs",
      "purpose": "Priors: everything that is not a cell's own evidence enters with an origin and a weight in runs (ARCH-0003…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -23187,7 +23187,7 @@
      "path": "src/learning/read.rs",
      "purpose": "Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -24673,7 +24673,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 5,
-      "fn": 11,
+      "fn": 13,
       "re-export": 1,
       "struct": 4
      }
@@ -25316,9 +25316,9 @@
       "ShadowTagReport"
      ],
      "path": "src/llm/tagger.rs",
-     "purpose": "Host-injected retrieval tags and a write-free shadow comparison",
+     "purpose": "Host-injected retrieval tags, a write-free shadow comparison, and the deterministic surprise gate between…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 8,
       "trait": 1
      }
@@ -29421,7 +29421,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "PipelineBuilder"
@@ -29430,7 +29430,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15,
-      "fn": 42,
+      "fn": 43,
       "struct": 1
      }
     },
@@ -29451,7 +29451,7 @@
      "path": "src/pipeline/builder_capture.rs",
      "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5
      }
     },
@@ -34919,7 +34919,7 @@
      "path": "src/skill_attribution/judge_supersession.rs",
      "purpose": "Judge-revision provenance for routed receipts, and non-destructive displacement",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
      }
@@ -36433,7 +36433,7 @@
      "path": "src/skill_reliability/amended.rs",
      "purpose": "Amendment verdicts on an attempt's outcome row (ARCH-0056 §5): one record per attempt, and the later verdict…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -36486,7 +36486,7 @@
      "purpose": "The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 2
      }
     },
@@ -36495,7 +36495,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_reliability/mod.rs",
-     "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
+     "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
       "crate-vis": 5,
       "re-export": 7
@@ -36519,14 +36519,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/priors.rs",
+     "purpose": "Weighted starting points for skill cells",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_reliability/projector.rs",
-     "purpose": "Projecting the `skill.reliability` claim from the outcome ledger, including the imported base",
+     "purpose": "Project attributed skill outcomes into the shared learning.reliability cells",
      "surface": {
-      "const": 1,
-      "crate-vis": 4,
+      "const": 4,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -36542,17 +36552,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "ExecutorReliability"
+      "ExecutorReliability",
+      "SkillReliabilityQuery"
      ],
      "path": "src/skill_reliability/read.rs",
-     "purpose": "Reading reliability truth back: the resolved posterior, the selection score, and the confidence-cache rebuild",
+     "purpose": "Skill reliability reads use learning cells, never SkillRecord confidence",
      "surface": {
-      "crate-vis": 8,
-      "fn": 6,
-      "struct": 1
+      "crate-vis": 11,
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -39325,7 +39336,7 @@
      "surface": {
       "crate-vis": 15,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -42687,6 +42698,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomHosting",
+      "RoomSpeakingRole",
+      "RoomStanding"
+     ],
+     "path": "src/workspace_roster/rooms/hosting.rs",
+     "purpose": "Room hosting: the speaking duty, kept apart from the engine's upkeep",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -42725,7 +42753,7 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 6,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 6
      }
     },
@@ -45135,11 +45163,11 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…"
+     "purpose": "Bayesian skill retrieval over the shared learning.reliability projection"
     },
     "skill_scan": {
      "files": 2,
@@ -45331,7 +45359,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45352,9 +45380,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 67,
+   "over_bar": 68,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2720,
+   "source_files": 2722,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59659,7 +59687,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
