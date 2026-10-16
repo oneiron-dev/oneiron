@@ -122,7 +122,7 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         .iter()
         .map(|address| format!("ws://{address}/ws"))
         .collect::<Vec<_>>();
-    let endpoint = format!("http://{}/v1/core/facade/witness", addresses[0]);
+    let endpoint = format!("http://{}/v1/core/facade/vault.witness", addresses[0]);
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
     let root = vault.ensure_host_root_slip(&issuer)?;
     let credentials = (0..plan.agents)

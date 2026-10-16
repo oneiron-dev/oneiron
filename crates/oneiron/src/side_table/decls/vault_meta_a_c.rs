@@ -310,6 +310,9 @@ side_tables! {
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw;
+    /// The secret scan's hit in one raw-output body (its reason string), keyed by the same
+    /// content handle; absent for a body it found nothing in. Key: string.
+    CODE_RUN_RAW_OUTPUT_SECRET: VaultMeta b"code_run:raw_output:secret:v1:" Raw;
     /// The taint refs beside one raw-output row, keyed by the same content handle, in the same
     /// transaction. Key: string.
     CODE_RUN_RAW_OUTPUT_TAINT: VaultMeta b"code_run:raw_output:taint:v1:" Raw;
