@@ -144,13 +144,7 @@ impl Memory<'_> {
         input: &ConsultFanOutSpec,
         decisions: Option<&FanoutDecisions<'_>>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
-        self.fan_out_consults_impl(
-            input,
-            decisions,
-            false,
-            None,
-            ConsultFanOutScope::default(),
-        )
+        self.fan_out_consults_impl(input, decisions, false, None, ConsultFanOutScope::default())
     }
 
     fn fan_out_consults_impl(

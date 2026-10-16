@@ -166,8 +166,11 @@ fn send_pending_with_gate<T: OutboundTransport>(
             &prepared.payload,
             prepared.gate.provenance.actor_entity_ref,
         )?;
-        let required_grant_id =
-            super::admission::required_grant_id(vault, &wtxn, &prepared.authorization);
+        let invite = super::admission::calendar_admission_in_txn(vault, &wtxn, prepared)?;
+        let required_grant_id = invite
+            .as_ref()
+            .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
+            .or_else(|| super::admission::required_grant_id(&prepared.authorization));
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         let governance = gate::evaluate_external_effect_policy(
@@ -178,9 +181,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
             required_grant_id,
             match &prepared.authorization {
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-                PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => {
-                    None
-                }
+                PreparedAuthorization::None => None,
             },
             record
                 .admitted_approval

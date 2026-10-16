@@ -133,10 +133,7 @@ impl EngineNativeExecutor<'_> {
         // The run's position is its coverage rows, withdrawn summaries
         // included: erasing a summary never moves where the next one starts.
         let coverage = self.storage.code_run_compaction_coverage(run_id)?;
-        let newest = coverage
-            .iter()
-            .max_by_key(|row| row.epoch())
-            .copied();
+        let newest = coverage.iter().max_by_key(|row| row.epoch()).copied();
         let prior = newest.map(|row| (row.epoch(), row.last()));
         let start = prior.map_or(0, |(_, last)| last.saturating_add(1));
         if start > watermark {
