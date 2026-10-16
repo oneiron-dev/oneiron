@@ -55,4 +55,10 @@ pub(super) struct FrozenOutboundPayload<'a> {
     pub(super) requested_policy_risk: &'a str,
     pub(super) policy_risk: &'a str,
     pub(super) originating_session_ref: Option<&'a str>,
+    /// OF-272: the reply thread and the facet its pin chose, elided for a
+    /// send that names neither.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) reply_thread_ref: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) facet_ref: Option<String>,
 }
