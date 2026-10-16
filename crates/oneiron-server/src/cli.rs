@@ -11,7 +11,8 @@ mod hook_args;
 mod owner_args;
 mod wake_args;
 pub use hook_args::{
-    HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs,
+    HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
+    HookRecallArgs,
 };
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand, ImportBatchArgs,
