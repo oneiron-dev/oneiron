@@ -509,6 +509,11 @@ side_tables! {
     /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
     /// subject hex "/" branch hex or "-").
     ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
+    /// One participation fact (OF-529): who took part in a room or one of its threads, how and since
+    /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
+    /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
+    /// or task id, or an offer id's digest).
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;

@@ -2,6 +2,8 @@
 mod history;
 mod hosting;
 mod liveness;
+mod participants;
+mod participation;
 #[cfg(test)]
 mod tests;
 mod upkeep;
@@ -21,6 +23,14 @@ pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
 pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
+pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
+pub use participation::JoinCause;
+pub(super) use participation::record_bound_task_in_txn;
+pub(crate) use participation::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    record_participation_in_txn, require_join_covering_in_txn,
+};
+use participation::{Claimant, require_reader};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
@@ -307,7 +317,19 @@ impl Vault {
             return Err(invalid());
         }
         self.with_write_txn_grouped(|txn| {
-            require_member(self, txn, room, actor)?;
+            // A handle may name an agent with no seat: naming enrolls no one
+            // and grants nothing (OF-529).
+            let record = room_in(self, txn, room)?;
+            if !record.member_ids.contains(&actor.to_hex())
+                && !participation::addressable_agent_in_txn(
+                    self,
+                    txn,
+                    actor,
+                    self.store.clock.now_recorded_at(),
+                )?
+            {
+                return Err(invalid());
+            }
             HANDLES.put(&self.store, txn, &(room, handle.to_owned()), &actor)?;
             Ok(())
         })
@@ -326,10 +348,17 @@ impl Memory<'_> {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             return Ok(vec![(
                 room,
-                require_member(self.vault(), &txn, room, self.actor())?,
+                require_reader(self.vault(), &txn, room, self.actor())?,
             )]);
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        // OF-529: an agent also lists the rooms a Ready receipt admits it to.
+        let subject = participation::participant_in_txn(
+            self.vault(),
+            &txn,
+            self.actor(),
+            self.vault().store.clock.now_recorded_at(),
+        )?;
         let mut result = Vec::new();
         for row in self
             .vault()
@@ -340,7 +369,14 @@ impl Memory<'_> {
             let (key, _) = row?;
             let id = EntityId::from_bytes(key[1..].try_into().map_err(|_| invalid())?)?;
             if let Ok(room) = room_in(self.vault(), &txn, id)
-                && room.member_ids.contains(&self.actor().to_hex())
+                && participation::reads_room_in_txn(
+                    self.vault(),
+                    &txn,
+                    id,
+                    &room,
+                    self.actor(),
+                    subject,
+                )?
             {
                 result.push((id, room));
             }
@@ -360,37 +396,46 @@ impl Memory<'_> {
         turn: EntityId,
         now: u64,
     ) -> MemoryResult<RoomClaimOutcome> {
+        // OF-529: a person claims from its seat, as before; an agent on a
+        // Ready receipt for the turn's thread or the room. Checked before
+        // the room's scope is read, and again in the writer.
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let claimed = turn_in(self.vault(), &txn, turn)?;
+        if claimed.room_id != room.to_hex() {
+            return Err(MemoryError::from(invalid()));
+        }
+        Claimant::admit_in_txn(self.vault(), &txn, room, &claimed, self.actor())?;
+        drop(txn);
         if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
         // A claim names who holds the turn, so the turn must be one this
         // caller may read.
-        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        let claimed = turn_in(self.vault(), &txn, turn)?;
-        drop(txn);
-        if claimed.room_id != room.to_hex() || self.admitted_turns(vec![claimed])?.is_empty() {
+        if self.admitted_turns(vec![claimed])?.is_empty() {
             return Err(MemoryError::from(invalid()));
         }
         self.with_verified_actor_write_txn(|txn| {
-            require_member(self.vault(), txn, room, self.actor())?;
-            // Claiming a turn is speaking: engine upkeep holds no speaking
-            // role, and winning the turn appoints no host.
-            hosting::admit_room_speech_in(self.vault(), txn, room, self.actor())?;
             let addressed = turn_in(self.vault(), txn, turn)?;
             if addressed.room_id != room.to_hex() {
                 return Err(MemoryError::from(invalid()));
             }
-            if !addressed.addressed_agents.is_empty()
-                && !addressed.addressed_agents.contains(&self.actor().to_hex())
-            {
+            let claimant =
+                Claimant::admit_in_txn(self.vault(), txn, room, &addressed, self.actor())?;
+            // Claiming a turn is speaking: engine upkeep holds no speaking
+            // role, and winning the turn appoints no host.
+            claimant.admit_speech_in(self.vault(), txn)?;
+            // An agent holding the thread's open task counts as addressed.
+            let named = addressed.addressed_agents.contains(&self.actor().to_hex());
+            let task = claimant.held_task_in_txn(self.vault(), txn, &addressed)?;
+            if !addressed.addressed_agents.is_empty() && !named && task.is_none() {
                 return Ok(RoomClaimOutcome::NotAddressed);
             }
             if let Some(claim) = CLAIMS.get(&self.vault().store, txn, &turn)? {
-                return Ok(if claim.actor == self.actor().to_hex() {
-                    RoomClaimOutcome::Claimed(claim)
-                } else {
-                    RoomClaimOutcome::HeldBy(claim)
-                });
+                if claim.actor != self.actor().to_hex() {
+                    return Ok(RoomClaimOutcome::HeldBy(claim));
+                }
+                claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
+                return Ok(RoomClaimOutcome::Claimed(claim));
             }
             let receipt = RoomClaimReceipt {
                 room_id: room.to_hex(),
@@ -403,6 +448,7 @@ impl Memory<'_> {
                 at: now,
             };
             CLAIMS.put(&self.vault().store, txn, &turn, &receipt)?;
+            claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
             Ok(RoomClaimOutcome::Claimed(receipt))
         })
     }
@@ -410,12 +456,14 @@ impl Memory<'_> {
     /// the claim, membership, reply binding, and addressing before any message.
     pub fn rooms_speak(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         let room = EntityId::from_hex(&turn.conversation_ref)?;
+        // OF-529: an agent speaks on a Ready receipt, checked before the
+        // room's scope is read; a person from its seat, as before.
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        participation::require_speaker_in_txn(self.vault(), &txn, room, turn, self.actor())?;
+        drop(txn);
         if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
-        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
-        drop(txn);
         self.witness(turn)
     }
 }

@@ -277,6 +277,9 @@ impl OneironClient {
                 "vault.rooms.messages" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomPage,
                 >(client, verb, &input),
+                "vault.rooms.participants" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ParticipantsPage,
+                >(client, verb, &input),
                 "vault.rooms.render" => {
                     remote_agent_verb_output::<Vec<String>>(client, verb, &input)
                 }
@@ -1470,6 +1473,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.messages", value)
+    }
+    pub fn vault_rooms_participants(
+        &self,
+        input: &oneiron::workspace_roster::ParticipantsRequest,
+    ) -> Result<oneiron::workspace_roster::ParticipantsPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.participants", value)
     }
     pub fn vault_rooms_render(
         &self,

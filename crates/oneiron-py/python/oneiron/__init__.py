@@ -588,6 +588,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_list(json.dumps({}))))
         def messages(self, room_ref, after=None, limit=None):
             return json.loads(_translate(lambda: self._client.vault_rooms_messages(json.dumps({"room_ref": room_ref, "after": after, "limit": limit}))))
+        def participants(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_participants(json.dumps(spec))))
         def render(self, room_ref):
             return json.loads(_translate(lambda: self._client.vault_rooms_render(json.dumps({"room_ref": room_ref}))))
         def find(self, room_ref, after=None, limit=None):

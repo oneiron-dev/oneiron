@@ -856,6 +856,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_participants(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.participants", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_render(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.render", input)

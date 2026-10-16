@@ -127,7 +127,9 @@ impl Vault {
                 row.task_ids.push(task.to_hex());
                 rooms::TURNS.put(&self.store, txn, &thread, &row)?;
             }
-            Ok(())
+            // OF-529: an agent holding the task joins the thread now when a
+            // Ready receipt stands there, else at its first passing claim.
+            rooms::record_bound_task_in_txn(self, txn, room, &row, task)
         })
     }
 

@@ -1364,6 +1364,23 @@
       "section": false
     },
     {
+      "name": "vault.rooms.participants",
+      "input": "crate::workspace_roster::ParticipantsRequest",
+      "output": "crate::workspace_roster::ParticipantsPage",
+      "call": "memory.rooms_participants(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "page": {
+        "rows": "rows",
+        "cursor": "next_after"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.render",
       "input": "RoomRefRequest",
       "output": "Vec<String>",

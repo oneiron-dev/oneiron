@@ -798,6 +798,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_rooms_participants(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.participants")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.participants", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_rooms_render(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.rooms.render")?;
         let output = py
