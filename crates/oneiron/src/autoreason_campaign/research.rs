@@ -915,7 +915,7 @@ pub fn prune_branch(
             let reward = |n: &ExperimentNode| n.search.as_ref().map(SearchEvidence::reward);
             let winner = nodes
                 .get(by.as_bytes())
-                .filter(|winner| *by != attempt && !pruned_lineage(&nodes, by));
+                .filter(|_| *by != attempt && !pruned_lineage(&nodes, by));
             let beats = winner
                 .and_then(reward)
                 .zip(reward(node))
