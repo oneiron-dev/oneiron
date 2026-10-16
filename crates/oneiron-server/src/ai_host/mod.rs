@@ -35,6 +35,7 @@ mod policy;
 mod status;
 mod step;
 mod step_failure;
+mod stewardship;
 mod sync_wake;
 #[cfg(test)]
 pub(crate) mod test_support;
