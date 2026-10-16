@@ -42,6 +42,7 @@
 //! unrelated.
 
 pub mod attribution;
+pub mod compile;
 pub mod delta;
 pub mod escalation;
 pub mod graduation;
