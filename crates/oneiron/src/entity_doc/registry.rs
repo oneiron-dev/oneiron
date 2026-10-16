@@ -15,6 +15,27 @@ pub struct RegistryStatus {
     pub resident: usize,
 }
 
+/// The current head pointer and the versions used by live and retrieval reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityDocumentHead {
+    pub document: EntityId,
+    pub field: super::TextField,
+    pub frontier: Vec<u8>,
+    pub live: crate::vault::entity_revision::RevisionRef,
+    pub indexed: crate::vault::entity_revision::RevisionRef,
+}
+
+/// One coherent body/metadata view, with the head resolved in the same snapshot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntityDocumentView {
+    pub head: EntityDocumentHead,
+    pub frontier: Vec<u8>,
+    pub revision: crate::vault::entity_revision::RevisionRef,
+    pub text: String,
+    pub metadata: std::collections::BTreeMap<String, rmpv::Value>,
+    pub birth: super::Birth,
+}
+
 pub(crate) struct EntityDocRegistry {
     capacity: usize,
     entries: HashMap<EntityId, (String, u64, Arc<EntityDoc>)>,
@@ -89,6 +110,80 @@ impl Vault {
             capacity: registry.capacity,
             resident: registry.entries.len(),
         })
+    }
+
+    /// Resolves the document identity and both frontiers in one read snapshot.
+    pub fn entity_document_head(&self, entity: &EntityId) -> Result<EntityDocumentHead> {
+        self.entity_document(entity, crate::vault::entity_revision::ReadMode::Live)
+            .map(|view| view.head)
+    }
+
+    /// Reads live, indexed or pinned text and metadata without moving the head.
+    pub fn entity_document(
+        &self,
+        entity: &EntityId,
+        version: crate::vault::entity_revision::ReadMode,
+    ) -> Result<EntityDocumentView> {
+        let txn = self.store.env.read_txn()?;
+        let head = storage::head(&self.store, &txn, entity)?;
+        let live = storage::load(&self.store, &txn, &head)?;
+        let live_revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+            &self.store,
+            &txn,
+            entity,
+            crate::vault::entity_revision::ReadMode::Live,
+        )?
+        .ok_or(invalid("document revision is missing"))?;
+        let indexed = crate::vault::entity_revision::revision_for_mode_in_txn(
+            &self.store,
+            &txn,
+            entity,
+            crate::vault::entity_revision::ReadMode::Indexed,
+        )?
+        .ok_or(invalid("document indexed revision is missing"))?;
+        let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+            &self.store,
+            &txn,
+            entity,
+            version,
+        )?
+        .ok_or(invalid("document revision is missing"))?;
+        let selected = EntityDoc::from_loro(crate::vault::entity_revision::fork_revision(
+            &self.store,
+            &txn,
+            entity,
+            revision,
+        )?)?;
+        Ok(EntityDocumentView {
+            head: EntityDocumentHead {
+                document: EntityId::from_hex(&head.document)?,
+                field: head.field,
+                frontier: live.frontier(),
+                live: live_revision,
+                indexed,
+            },
+            frontier: selected.frontier(),
+            revision,
+            text: selected.text(),
+            metadata: selected.metadata()?,
+            birth: live.birth().clone(),
+        })
+    }
+
+    /// A typed record-body projection at the requested document version. Raw
+    /// ledger reads still return only immutable fields and the head pointer.
+    pub fn entity_document_body(
+        &self,
+        entity: &EntityId,
+        version: crate::vault::entity_revision::ReadMode,
+    ) -> Result<Vec<u8>> {
+        let txn = self.store.env.read_txn()?;
+        storage::head(&self.store, &txn, entity)?;
+        let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+            self, &txn, entity, version,
+        )?
+        .ok_or(crate::Error::EntityNotFound)?;
+        Ok(raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec())
     }
 
     /// Reads authoritative live text, lazily restoring a cold doc's snapshot

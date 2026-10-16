@@ -40,10 +40,12 @@ pub(crate) fn summary_meta_in_txn(
             &map_get_bytes(&meta, "purpose")
                 .ok_or(Error::CorruptedIndex("summary purpose metadata"))?,
         )?,
-        keep: String::from_utf8(
-            map_get_bytes(&meta, "keep").ok_or(Error::CorruptedIndex("summary keep metadata"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("summary keep is not UTF-8"))?,
+        keep: doc
+            .metadata()?
+            .get("keep")
+            .and_then(rmpv::Value::as_str)
+            .ok_or(Error::CorruptedIndex("summary keep metadata"))?
+            .to_owned(),
         derivation: storage::decode(
             &map_get_bytes(&meta, "derivation")
                 .ok_or(Error::CorruptedIndex("summary derivation metadata"))?,
@@ -83,7 +85,11 @@ pub(crate) fn birth_summary_in_txn(
         .port_entity_record(txn, &entity)?
         .ok_or(Error::EntityNotFound)?;
     let field = TextField::MapField("text".to_owned());
-    let (text, pointer) = storage::replace_text(&row.body, &field, &entity.to_hex())?;
+    let (text, record_metadata, pointer) =
+        storage::replace_text(&row.body, &field, &entity.to_hex())?;
+    let keep_value = rmpv::Value::from(metadata.keep.as_str());
+    super::metadata::validate_metadata("keep", &keep_value)?;
+    let keep = super::metadata::encode_value(&keep_value)?;
     let purpose = rmp_serde::to_vec_named(&metadata.purpose)
         .map_err(|_| super::invalid("summary purpose encoding"))?;
     let derivation = rmp_serde::to_vec_named(&metadata.derivation)
@@ -95,9 +101,11 @@ pub(crate) fn birth_summary_in_txn(
         actor,
         at,
         |doc| {
+            EntityDoc::replace_metadata(doc, &record_metadata)?;
+            EntityDoc::set_record_fields(doc, &record_metadata.keys().cloned().collect::<Vec<_>>())?;
             let meta = doc.get_map("meta");
             map_insert_bytes(&meta, "purpose", &purpose)?;
-            map_insert_bytes(&meta, "keep", metadata.keep.as_bytes())?;
+            map_insert_bytes(&meta, "keep", &keep)?;
             map_insert_bytes(&meta, "derivation", &derivation)
         },
         None,
@@ -152,9 +160,12 @@ impl Vault {
                     "summary editor memo frontier changed",
                 ));
             }
+            let keep_value = rmpv::Value::from(keep);
+            super::metadata::validate_metadata("keep", &keep_value)?;
+            let keep = super::metadata::encode_value(&keep_value)?;
             let before = doc.doc.oplog_vv();
             super::forks::bind_actor(self, txn, &doc, actor, at)?;
-            map_insert_bytes(&doc.doc.get_map("meta"), "keep", keep.as_bytes())?;
+            map_insert_bytes(&doc.doc.get_map("meta"), "keep", &keep)?;
             super::document::stamp(&doc.doc, actor, at, "summary_keep")?;
             storage::persist(self, txn, summary, &mut head, &doc, Some(&before))
         })

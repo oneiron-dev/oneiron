@@ -59,6 +59,7 @@ use crate::runtime::RuntimeRole;
 use axum::http::HeaderMap;
 
 pub(crate) mod ai;
+mod anonymous_chat;
 mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
@@ -445,6 +446,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
         // owner's own off-record routes sit out here for the same reason.
+        // Anonymous turns also keep no wire or idempotency receipt.
+        .merge(self::anonymous_chat::routes())
         .nest("/v1/core/off-record", self::off_record_rooms::routes())
         .nest("/v1/owner", self::owner_routes::off_record_routes())
         .with_state(server.clone())
