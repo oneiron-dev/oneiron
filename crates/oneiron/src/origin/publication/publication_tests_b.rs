@@ -621,14 +621,14 @@ mod tests {
     /// backfilled it.
     #[test]
     fn publication_admission_reads_one_cas_row_not_the_history() {
-        use crate::origin::scan_check::OriginScan;
+        use crate::scan_check::EngineScan;
         use crate::test_util::{
             clear_default_policy_manifest_for_legacy_tests, embedding_test_config,
         };
 
         let (vault_dir, vault) = test_vault();
         vault
-            .set_origin_scan_threshold(OriginScan::PublicationRows, 2)
+            .set_scan_threshold(EngineScan::PublicationRows, 2)
             .expect("lower the row");
         let (_repo_dir, root, base) = seeded_repo();
         let moves: Vec<GitOid> = (0..4)
@@ -664,10 +664,10 @@ mod tests {
         );
         assert!(
             vault
-                .origin_scan_checks()
+                .scan_checks()
                 .expect("checks")
                 .iter()
-                .all(|check| check.scan != OriginScan::PublicationRows.code()),
+                .all(|check| check.scan != EngineScan::PublicationRows.code()),
             "no admission read the publication history"
         );
 

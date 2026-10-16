@@ -176,6 +176,7 @@ impl Store {
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             machine_history_issuer: Mutex::new(None),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
+            pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             group_commit: crate::store::GroupCommit::default(),

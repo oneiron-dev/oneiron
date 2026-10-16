@@ -9,7 +9,7 @@ use crate::git_wire::{
     GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire,
     GitWireCommitOutcome, GitWireRepo, lock_repository,
 };
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::scan_check::{EngineScan, ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::OriginPublicationRow;
@@ -75,8 +75,7 @@ impl Vault {
     ) -> Result<()> {
         let count = {
             let rtxn = self.store.env.read_txn()?;
-            let mut count =
-                ScanCount::start(&self.store, &rtxn, OriginScan::PublicationRows, None)?;
+            let mut count = ScanCount::start(&self.store, &rtxn, EngineScan::PublicationRows, &[])?;
             for row in PUBLICATIONS.iter_from(&self.store, &rtxn, &[])? {
                 count.row();
                 let (_, row) = row?;
@@ -137,8 +136,8 @@ impl Vault {
             let mut count = ScanCount::start(
                 &self.store,
                 &rtxn,
-                OriginScan::VisibleRefRows,
-                Some(*repo_id),
+                EngineScan::VisibleRefRows,
+                repo_id.as_bytes(),
             )?;
             for row in VISIBLE_REF.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
                 count.row();
