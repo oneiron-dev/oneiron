@@ -9,7 +9,8 @@ use serde::Serialize;
 
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
-    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
+    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, RetryableLlmError,
+    SingleRouteBackend,
 };
 use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
@@ -75,7 +76,24 @@ impl From<RunDenied> for LlmError {
             | RunDenied::AllocationExhausted
             | RunDenied::AllocationRefused { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
             RunDenied::Dispatch { refused } => Self::BudgetDenied(refused.into()),
-            _ => Self::BudgetDenied(BudgetDenied::AdmissionDenied),
+            // A privacy hold stays one: never a budget refusal.
+            RunDenied::KeptOnDevice => Self::Retryable(RetryableLlmError::KeptOnDevice {
+                retry_after: None,
+                resets_at: Vec::new(),
+            }),
+            RunDenied::UndeclaredTeacher { .. }
+            | RunDenied::UnknownSelector { .. }
+            | RunDenied::OfferMismatch
+            | RunDenied::NoOffer { .. }
+            | RunDenied::LocalityMismatch
+            | RunDenied::RouteOverride { .. }
+            | RunDenied::BackendRefused
+            | RunDenied::KeyAtT1
+            | RunDenied::UndeclaredConnector { .. }
+            | RunDenied::UnitMismatch { .. }
+            | RunDenied::DeclarationEditRefused => {
+                Self::BudgetDenied(BudgetDenied::AdmissionDenied)
+            }
         }
     }
 }
