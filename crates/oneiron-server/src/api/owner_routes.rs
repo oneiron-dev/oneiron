@@ -69,6 +69,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/feedback/preview", post(preview_feedback))
         .route("/feedback/send", post(send_feedback))
         .route("/pack-drift", get(pack_drift_repairs))
+        .route(
+            "/model-catalog",
+            get(model_catalog).put(set_model_catalog),
+        )
+        .route("/model-catalog/sync", post(sync_model_catalog))
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
@@ -779,4 +784,82 @@ async fn pack_drift_repairs(
     Ok(Json(
         blocking(move || pack_drift::repairs(server.vault())).await?,
     ))
+}
+
+/// `GET /v1/owner/model-catalog`: the catalog ref's sync policy, the
+/// revisions it has seen and trusted, and the installed pack.
+async fn model_catalog(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<oneiron::skill_hub::ModelCatalogSync> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || Ok(server.vault().model_catalog_sync()?)).await?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetModelCatalog {
+    /// `pinned-commit`, `pinned-ref` or `content-hash-frozen`.
+    sync_policy: String,
+    /// The commit, the tag to follow, or the content hash to hold.
+    pin: String,
+}
+
+/// `PUT /v1/owner/model-catalog`: move the catalog ref's policy. Nothing is
+/// fetched until the next sync.
+async fn set_model_catalog(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SetModelCatalog>, JsonRejection>,
+) -> OwnerReply<oneiron::skill_hub::ModelCatalogSync> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let policy = oneiron::skill_hub::HubSyncPolicy::parse(&request.sync_policy)
+        .ok_or_else(|| ApiError::bad_request("unknown sync policy", Some("sync_policy")))?;
+    let state = blocking(move || {
+        Ok(server
+            .vault()
+            .set_model_catalog_sync(&owner, policy, request.pin)?)
+    })
+    .await?;
+    Ok(Json(state))
+}
+
+/// What one catalog sync did, and the catalog ref after it.
+#[derive(serde::Serialize)]
+struct ModelCatalogSynced {
+    /// `installed`, `candidate` or `blocked`.
+    outcome: &'static str,
+    /// Why a blocked pack did not install.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    catalog: oneiron::skill_hub::ModelCatalogSync,
+}
+
+/// `POST /v1/owner/model-catalog/sync`: fetch the catalog at its ref's policy
+/// and install it. An installed catalog's rows are admitted at once by
+/// `/v1/llm` calls that name them.
+async fn sync_model_catalog(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<ModelCatalogSynced> {
+    use oneiron::skill_hub::pack_catalog::PackInstallDisposition;
+    let owner = owner(&auth, &server)?;
+    let synced = blocking(move || {
+        let vault = server.vault();
+        let (outcome, reason) = match vault.sync_model_catalog(&owner)? {
+            PackInstallDisposition::Installed(_) => ("installed", None),
+            PackInstallDisposition::Candidate(_) => ("candidate", None),
+            PackInstallDisposition::Blocked { reason } => ("blocked", Some(reason)),
+        };
+        Ok(ModelCatalogSynced {
+            outcome,
+            reason,
+            catalog: vault.model_catalog_sync()?,
+        })
+    })
+    .await?;
+    Ok(Json(synced))
 }

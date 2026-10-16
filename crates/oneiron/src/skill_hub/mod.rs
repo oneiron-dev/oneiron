@@ -19,6 +19,7 @@ pub use import_receipt::{
 };
 mod package_codec;
 mod publisher;
+mod ref_sync;
 mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
@@ -36,10 +37,8 @@ pub use claim_refinement::{
 pub(crate) use claim_refinement::{
     claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
 };
-pub(crate) use default_hub::{
-    MODEL_PACK_HASH, MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub,
-};
-pub use default_hub::{default_skill_hub_commit, default_skill_hub_id};
+pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
+pub use default_hub::{ModelCatalogSync, default_skill_hub_commit, default_skill_hub_id};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
