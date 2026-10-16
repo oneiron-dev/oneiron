@@ -417,7 +417,8 @@ impl DecisionProvider for SystemOneRung {
             .admit()
             .map_err(|_| failed("refused by the budget"))?
             .lease;
-        if !call.deadline.decision_may_start() {
+        // A measurement admitted after the work time is spent never starts.
+        if call.deadline.decision_time_left().is_zero() {
             self.guard
                 .settle_reserved(&lease)
                 .map_err(|_| failed("settlement refused"))?;
