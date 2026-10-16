@@ -9634,7 +9634,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/agent_verb.rs",
-     "purpose": "Code mode's `self.memory.<verb>`: the run's write origin and the receipt a write keeps",
+     "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
       "crate-vis": 3
      }
@@ -9644,7 +9644,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/coordination.rs",
-     "purpose": "Code-mode composition: host-bound agents.spawn / tasks.ask / tasks.wait",
+     "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
       "crate-vis": 3,
       "fn": 3
@@ -39650,10 +39650,9 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
-      "BoardExpandRequest",
       "BoardRefreshRequest",
       "BoardSubscriptionRequest",
       "DescribeRequest",
@@ -39677,9 +39676,9 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "re-export": 1,
-      "struct": 18
+      "struct": 17
      }
     },
     {
@@ -39690,7 +39689,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 47
+      "fn": 46
      }
     },
     {
@@ -44783,7 +44782,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 63,
+   "over_bar": 64,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2686,
    "test_files": 903
@@ -46907,7 +46906,7 @@
       "WaitForOutput"
      ],
      "path": "src/lib.rs",
-     "purpose": "Browser verbs for code mode (`self.memory.browser.*`), and the CDP driver behind them (feature `driver`)",
+     "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
       "enum": 1,
       "fn": 4,
@@ -46972,7 +46971,7 @@
     }
    },
    "over_bar": 0,
-   "purpose": "Browser verbs for code mode (`self.memory.browser.*`), and the CDP driver behind them (feature `driver`)",
+   "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
    "source_files": 5,
    "test_files": 0
   },
@@ -55350,7 +55349,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
-     "purpose": "Code mode's `self.memory.<verb>`: the SDK verb table through the tool door",
+     "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
       "crate-vis": 3
      }
@@ -56820,7 +56819,7 @@
       "BrowserConfig"
      ],
      "path": "src/config/browser.rs",
-     "purpose": "`[browser]`: the guest a code run's `self.memory.browser.*` verbs drive",
+     "purpose": "`[browser]`: the guest a code run's `self.browser.*` verbs drive",
      "surface": {
       "crate-vis": 1,
       "fn": 1,
