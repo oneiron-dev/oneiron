@@ -36,8 +36,8 @@ pub fn base_agent_for_facet(facet: &str) -> BaseAgent {
 pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
     use super::super::{
         COACH_HEAL_ATTEMPT_KIND, COACH_RETRIEVAL_TUNE_FACET, DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE,
-        DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
-        DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+        DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+        DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, maintenance::coach,
     };
     match job_type {
         "micro" | "meso" | "macro" => Some("dreamer.consolidation"),
@@ -53,8 +53,13 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND => Some(DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
         DREAMER_VAULT_CLEANUP_ATTEMPT_KIND => Some(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND),
         DREAMER_WEAVE_RECIPE_ATTEMPT_KIND => Some(DREAMER_WEAVE_RECIPE_ATTEMPT_KIND),
+        DREAMER_RECIPE_WAKE_ATTEMPT_KIND => Some(DREAMER_RECIPE_WAKE_ATTEMPT_KIND),
         COACH_HEAL_ATTEMPT_KIND => Some(COACH_HEAL_ATTEMPT_KIND),
         COACH_RETRIEVAL_TUNE_FACET => Some(COACH_RETRIEVAL_TUNE_FACET),
+        coach::COACH_SKILL_DISTILL_FACET => Some(coach::COACH_SKILL_DISTILL_FACET),
+        coach::COACH_SKILL_DISCOVERY_FACET => Some(coach::COACH_SKILL_DISCOVERY_FACET),
+        coach::COACH_PERSON_THRESHOLD_FACET => Some(coach::COACH_PERSON_THRESHOLD_FACET),
+        coach::COACH_READ_HARDENING_FACET => Some(coach::COACH_READ_HARDENING_FACET),
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
         super::super::maintenance::representation::REPRESENTATION_FACET => {
