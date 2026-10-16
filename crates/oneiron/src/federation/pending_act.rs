@@ -706,7 +706,7 @@ impl Vault {
         let mut claimed = None;
         for row in self.store.vault_meta.prefix_iter(txn, ACT_PREFIX)? {
             let (k, raw) = row?;
-            let record: PendingAuthorityAct = decode(raw)?;
+            let record: PendingAuthorityAct = decode(&raw)?;
             if record.execution.as_ref().is_some_and(|execution| {
                 execution.request == request && execution.receipt.is_none()
             }) {

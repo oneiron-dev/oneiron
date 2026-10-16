@@ -74,6 +74,9 @@ side_tables! {
     /// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map), keyed by its
     /// content hash. Key: hash32.
     AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
+    /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
+    /// it. Key: string (signer suite ":" key hex).
+    AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
