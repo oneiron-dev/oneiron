@@ -21,7 +21,7 @@ pub const LFS_DEFAULT_OBJECT_CAP: u64 = 2 * 1024 * 1024 * 1024;
 /// The largest object the write door reads whole: a chunk edge splits no
 /// field, value or JSON member of it. Above it, each chunk is read alone and
 /// the stream seam reads what each edge splits.
-pub(super) const LFS_WHOLE_SCAN_MAX: u64 = 8 * 1024 * 1024;
+pub const LFS_WHOLE_SCAN_MAX: u64 = 8 * 1024 * 1024;
 
 /// Local hard-delete marker (`deletion::tombstone` owns the writer side; this is a read-only
 /// existence check bound to the SAME declaration, never decoding the value — presence-only,

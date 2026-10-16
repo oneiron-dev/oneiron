@@ -54,7 +54,7 @@ mod status_codec;
 #[cfg(test)]
 mod tests_auth;
 #[cfg(test)]
-mod tests_lifetime;
+pub(super) mod tests_lifetime;
 #[cfg(test)]
 mod tests_push;
 

@@ -11,6 +11,16 @@ use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
 
 pub(super) fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>) -> EntityId {
+    fixture_intent_with_pointers(vault, root, updates, Vec::new())
+}
+
+/// [`fixture_intent`] for a push whose door framed `lfs_pointers`.
+pub(super) fn fixture_intent_with_pointers(
+    vault: &Vault,
+    root: &Path,
+    updates: Vec<RefUpdate>,
+    lfs_pointers: Vec<LfsPushedPointer>,
+) -> EntityId {
     let stamp =
         DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
     vault
@@ -19,7 +29,7 @@ pub(super) fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>
     let door = DoorWindowReport {
         verdict: DoorWindowVerdict::Clean,
         ref_updates: updates,
-        lfs_pointers: Vec::new(),
+        lfs_pointers,
         quarantine_path: None,
     };
     vault
@@ -315,6 +325,16 @@ pub(super) fn served_repo(vault: &Vault) -> (tempfile::TempDir, PathBuf, GitOid,
 
 /// Serves one ref advertisement through the real `git http-backend`.
 pub(super) fn advertise(vault: &Arc<Vault>, service: &str) -> CapturingSink {
+    let (served, sink) = try_advertise(vault, service);
+    served.expect("serve the advertisement");
+    sink
+}
+
+/// [`advertise`], answering how the exchange ended beside what it sent.
+pub(super) fn try_advertise(
+    vault: &Arc<Vault>,
+    service: &str,
+) -> (Result<ServeReport>, CapturingSink) {
     let request = ServeRequest {
         method: "GET".to_owned(),
         path_info: "/demo.git/info/refs".to_owned(),
@@ -330,16 +350,15 @@ pub(super) fn advertise(vault: &Arc<Vault>, service: &str) -> CapturingSink {
     };
     let mut body = io::empty();
     let mut sink = CapturingSink::default();
-    serve(
+    let served = serve(
         vault,
         "demo",
         &request,
         DoorSeam::Noop,
         &mut body,
         &mut sink,
-    )
-    .expect("serve the advertisement");
-    sink
+    );
+    (served, sink)
 }
 
 /// The `(name, oid)` pairs one advertisement body carries.
@@ -580,4 +599,38 @@ fn serve_publication_test_connection(
         .write_all(response.as_bytes())
         .expect("response headers");
     stream.write_all(&captured.body).expect("response body");
+}
+
+/// A host's room for LFS reads that records the rows it is asked for and
+/// holds each until its answer drops; told to, it lets every wait run out.
+#[derive(Default)]
+pub(super) struct RecordingRoom {
+    asked: std::sync::Mutex<Vec<u64>>,
+    pub(super) held: Arc<std::sync::atomic::AtomicUsize>,
+    pub(super) waits_run_out: AtomicBool,
+}
+
+impl RecordingRoom {
+    pub(super) fn asked(&self) -> Vec<u64> {
+        self.asked.lock().expect("asked rows").clone()
+    }
+}
+
+struct RecordedHold(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for RecordedHold {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl crate::origin::lfs::LfsReadRoom for RecordingRoom {
+    fn hold(&self, row_bytes: u64) -> Option<Box<dyn std::any::Any + Send>> {
+        self.asked.lock().expect("asked rows").push(row_bytes);
+        if self.waits_run_out.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.held.fetch_add(1, Ordering::SeqCst);
+        Some(Box::new(RecordedHold(Arc::clone(&self.held))))
+    }
 }

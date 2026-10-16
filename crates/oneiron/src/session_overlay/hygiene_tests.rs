@@ -1,6 +1,8 @@
 //! Allocation-boundary teardown observer for session-owned buffers.
 //! Only an owner's explicitly registered initialized byte allocation is read,
-//! immediately before its deallocation, on the calling test thread.
+//! immediately before its deallocation, on the calling test thread. It also
+//! counts the bytes a test thread holds allocated, by size alone, while that
+//! thread asks it to ([`peak_allocated`]).
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
@@ -9,6 +11,18 @@ thread_local! {
     static SCRUBBED: Cell<Option<bool>> = const { Cell::new(None) };
     static REPLAY_OBSERVING: Cell<bool> = const { Cell::new(false) };
     static SHORT_ID_TARGET: Cell<Option<ShortIdScratch>> = const { Cell::new(None) };
+    /// Bytes this thread holds past what it held when counting began, and
+    /// the most it held; `None` when it is not counting.
+    static HELD: Cell<Option<(isize, isize)>> = const { Cell::new(None) };
+}
+
+fn count(bytes: isize) {
+    let _ = HELD.try_with(|held| {
+        if let Some((now, most)) = held.get() {
+            let now = now + bytes;
+            held.set(Some((now, most.max(now))));
+        }
+    });
 }
 
 /// The separately owned scratch allocation to observe at the short-id door.
@@ -26,11 +40,13 @@ struct ObservedAllocator;
 // before forwarding its deallocation. It does not scan by allocation size.
 unsafe impl GlobalAlloc for ObservedAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        count(layout.size().cast_signed());
         // SAFETY: forwarding the caller's layout unchanged.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        count(-layout.size().cast_signed());
         let _ = WATCH.try_with(|watch| {
             if let Some((expected, len)) = watch.get()
                 && expected == ptr as usize
@@ -76,6 +92,26 @@ impl Drop for ObservationGuard {
         let _ = REPLAY_OBSERVING.try_with(|slot| slot.set(false));
         let _ = SHORT_ID_TARGET.try_with(|slot| slot.set(None));
     }
+}
+
+/// Runs `action` and returns the most bytes it held allocated at once on this
+/// thread, past what the thread held before it.
+pub(crate) fn peak_allocated<T>(action: impl FnOnce() -> T) -> (T, usize) {
+    struct Counting;
+    impl Drop for Counting {
+        fn drop(&mut self) {
+            let _ = HELD.try_with(|held| held.set(None));
+        }
+    }
+    HELD.with(|held| {
+        assert!(held.get().is_none(), "nested allocation count");
+        held.set(Some((0, 0)));
+    });
+    let counting = Counting;
+    let out = action();
+    let most = HELD.with(|held| held.get().map_or(0, |(_, most)| most));
+    drop(counting);
+    (out, usize::try_from(most).unwrap_or(0))
 }
 
 /// Obtain an address only while `bytes` is still initialized and owned.

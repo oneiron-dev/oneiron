@@ -1,7 +1,8 @@
-//! `execute_code` admission (C10): a distinct run past the bound is refused
-//! with `code_run_saturated` while a duplicate still gets `code_run_busy`, and
-//! a run keeps its permit until its worker ends, whether or not its caller is
-//! still waiting for it.
+//! `execute_code` admission (C10, under the rate law of ARCH-0044 C5): a
+//! burst of runs on one credential all complete, each waiting its turn past
+//! the bound while a duplicate still gets `code_run_busy`; a run keeps its
+//! permit until its worker ends, whether or not its caller is still waiting
+//! for it; and a wait ends at its deadline with no run started.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Condvar, Mutex};
@@ -18,6 +19,7 @@ use crate::mcp::{
     McpCodeModeProvider, McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor,
     mcp_code_run_id,
 };
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// Holds every run's worker until the test opens it.
 #[derive(Default)]
@@ -145,29 +147,97 @@ fn run<'a>(
 async fn refused(call: std::pin::Pin<Box<dyn Future<Output = Outcome> + Send + '_>>) -> String {
     let outcome = tokio::time::timeout(Duration::from_secs(10), call)
         .await
-        .expect("a refusal never waits");
+        .expect("an answer within its deadline");
     outcome.expect_err("refused").error_code().to_owned()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn execute_code_runs_hold_their_permits_until_their_workers_end() {
-    let (_dir, server) = super::test_server();
-    let vault = Arc::clone(&server.vault);
-    let gate = Arc::new(Gate::default());
-    let (entered, mut workers) = mpsc::unbounded_channel();
+/// A host working on at most `total` runs at once, its runs' workers held
+/// at `gate`; the receiver hears each worker start.
+fn host(
+    gate: &Arc<Gate>,
+    total: usize,
+    wait: Duration,
+) -> (
+    McpEngineNativeCodeHost,
+    mpsc::UnboundedReceiver<()>,
+    Arc<LimitQuestions>,
+) {
+    let (entered, workers) = mpsc::unbounded_channel();
+    let questions = Arc::new(LimitQuestions::default());
     let host = McpEngineNativeCodeHost::new(
         Arc::new(HeldProvider {
             backend: McpFixtureCodeBackend,
             lease: BudgetLease::for_test("execute-code-admission"),
-            gate: Arc::clone(&gate),
+            gate: Arc::clone(gate),
             entered,
         }),
-        CodeRunLimits {
-            total: 2,
-            per_credential: 1,
-        },
+        CodeRunLimits { total, wait },
+        Arc::clone(&questions),
     );
-    let (first, second, third) = (actor("first"), actor("second"), actor("third"));
+    (host, workers, questions)
+}
+
+/// Rule five at the code runs row: `callers` runs on one credential past a
+/// bound of one all complete, and the row asks.
+pub(super) async fn cross_the_runs(callers: usize) -> crate::admission::Crossing {
+    let (_dir, server) = super::test_server();
+    let vault = Arc::clone(&server.vault);
+    let gate = Arc::new(Gate::default());
+    gate.open();
+    let (host, _workers, questions) = host(&gate, 1, Duration::from_secs(300));
+    let fleet = actor("fleet");
+    let run_refs: Vec<String> = (0..callers).map(|n| format!("cross-{n}")).collect();
+    let outcomes = futures_util::future::join_all(
+        run_refs
+            .iter()
+            .map(|run_ref| run(&host, &vault, &fleet, run_ref)),
+    )
+    .await;
+    crate::admission::Crossing {
+        refused: outcomes.iter().filter(|outcome| outcome.is_err()).count(),
+        asked: questions.latest(LimitRow::CodeRuns).is_some(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_two_hundred_runs_on_one_credential_all_complete() {
+    let (_dir, server) = super::test_server();
+    let vault = Arc::clone(&server.vault);
+    let gate = Arc::new(Gate::default());
+    gate.open();
+    let (host, _workers, questions) = host(&gate, 2, Duration::from_secs(300));
+    let fleet = actor("fleet");
+    let run_refs: Vec<String> = (0..200).map(|n| format!("burst-{n}")).collect();
+
+    let outcomes = tokio::time::timeout(
+        Duration::from_secs(600),
+        futures_util::future::join_all(
+            run_refs
+                .iter()
+                .map(|run_ref| run(&host, &vault, &fleet, run_ref)),
+        ),
+    )
+    .await
+    .expect("every run completes");
+    for (run_ref, outcome) in run_refs.iter().zip(outcomes) {
+        assert!(
+            outcome.is_ok(),
+            "{run_ref}: a queued run is served, never refused: {outcome:?}"
+        );
+    }
+    assert!(
+        questions.latest(LimitRow::CodeRuns).is_some(),
+        "the burst crossed the row, which asked"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_keeps_its_permit_until_its_worker_ends_and_the_next_waits_for_it() {
+    let (_dir, server) = super::test_server();
+    let vault = Arc::clone(&server.vault);
+    let gate = Arc::new(Gate::default());
+    let (host, mut workers, _) = host(&gate, 1, Duration::from_secs(300));
+    let (first, second) = (actor("first"), actor("second"));
 
     // The first credential's run reaches its worker; then its caller hangs up.
     let mut held = run(&host, &vault, &first, "run-a");
@@ -177,51 +247,51 @@ async fn execute_code_runs_hold_their_permits_until_their_workers_end() {
     }
     drop(held);
 
-    // Its worker still runs, so its single-flight and its permit both stand.
+    // Its worker still runs, so its single-flight and its permit both stand:
+    // a duplicate is busy, and another credential's run waits its turn.
     assert_eq!(
         refused(run(&host, &vault, &first, "run-a")).await,
         "code_run_busy"
     );
-    assert_eq!(
-        refused(run(&host, &vault, &first, "run-b")).await,
-        "code_run_saturated",
-        "one credential holds at most its share, and a caller hanging up frees none of it"
+    let mut next = run(&host, &vault, &second, "run-b");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut next)
+            .await
+            .is_err(),
+        "past the bound a run waits; it is never refused"
     );
 
-    // A second credential takes the last permit; a third finds none.
-    let mut other = run(&host, &vault, &second, "run-c");
+    // Once the held worker ends, its permit passes to the waiting run.
+    gate.open();
+    let outcome = tokio::time::timeout(Duration::from_secs(60), next)
+        .await
+        .expect("the waiting run gets its turn when the held worker ends");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_that_waits_past_its_deadline_ends_with_no_run_started() {
+    let (_dir, server) = super::test_server();
+    let vault = Arc::clone(&server.vault);
+    let gate = Arc::new(Gate::default());
+    let (host, mut workers, _) = host(&gate, 1, Duration::from_millis(300));
+    let (first, second) = (actor("first"), actor("second"));
+
+    let mut held = run(&host, &vault, &first, "run-a");
     tokio::select! {
-        _ = &mut other => panic!("a held run finished before its gate opened"),
+        _ = &mut held => panic!("a held run finished before its gate opened"),
         _ = workers.recv() => {}
     }
+    let started = std::time::Instant::now();
     assert_eq!(
-        refused(run(&host, &vault, &third, "run-d")).await,
-        "code_run_saturated",
-        "past the total, a new run is refused rather than queued"
+        refused(run(&host, &vault, &second, "run-b")).await,
+        "code_run_waited_out"
     );
-
-    // Once the workers end, their permits return and new runs start.
-    gate.open();
-    let _ = tokio::time::timeout(Duration::from_secs(60), other)
-        .await
-        .expect("a released run ends");
-    let admitted = tokio::time::timeout(Duration::from_secs(60), async {
-        loop {
-            match run(&host, &vault, &first, "run-b").await {
-                Err(McpCodeExecutionError::RunSaturated) => {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                outcome => break outcome,
-            }
-        }
-    })
-    .await
-    .expect("the first credential's permit returns when its worker ends");
     assert!(
-        !matches!(
-            admitted,
-            Err(McpCodeExecutionError::RunBusy | McpCodeExecutionError::RunSaturated)
-        ),
-        "{admitted:?}"
+        started.elapsed() >= Duration::from_millis(300),
+        "it waited its deadline rather than being refused at once"
     );
+    assert!(workers.try_recv().is_err(), "no worker started for it");
+    gate.open();
+    let _ = tokio::time::timeout(Duration::from_secs(60), held).await;
 }

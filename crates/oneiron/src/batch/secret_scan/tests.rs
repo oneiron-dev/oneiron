@@ -1,6 +1,52 @@
 use super::*;
 use crate::error::GateError;
 
+/// Review r11 (Sol R11-1, P1): the walk read each map key from a copy, so
+/// maps nested in their keys held a copy of everything inside at every
+/// level: 128 such levels around an array of nils held over a hundred copies
+/// of the array at once, past what an install's room counts a decoded byte
+/// at. A key is read in place now, and nesting in keys costs what nesting in
+/// values does; a credential deep in a key is still refused.
+#[test]
+fn maps_nested_in_their_keys_cost_what_maps_nested_in_their_values_do() {
+    use crate::session_overlay::hygiene_tests::peak_allocated;
+    const LEVELS: usize = 128;
+    const NILS: u32 = 64 * 1024;
+    let mut nils = vec![0xdd];
+    nils.extend_from_slice(&NILS.to_be_bytes());
+    nils.resize(5 + NILS as usize, 0xc0);
+    // {{{[nil, …]: nil}: nil} …: nil}
+    let mut in_keys = vec![0x81; LEVELS];
+    in_keys.extend_from_slice(&nils);
+    in_keys.extend(std::iter::repeat_n(0xc0, LEVELS));
+    // {nil: {nil: {… [nil, …]}}}
+    let mut in_values = [0x81, 0xc0].repeat(LEVELS);
+    in_values.extend_from_slice(&nils);
+    let (scanned, keys) = peak_allocated(|| scan_write_payload(&in_keys));
+    scanned.expect("no credential in the keys");
+    let (scanned, values) = peak_allocated(|| scan_write_payload(&in_values));
+    scanned.expect("no credential in the values");
+    assert!(
+        keys <= 2 * values,
+        "nested in keys held {keys} bytes at once; in values, {values}"
+    );
+
+    let mut key = rmpv::Value::Map(vec![(
+        rmpv::Value::from("password"),
+        rmpv::Value::Binary(b"private fixture".to_vec()),
+    )]);
+    for _ in 0..LEVELS {
+        key = rmpv::Value::Map(vec![(key, rmpv::Value::Nil)]);
+    }
+    let mut deep = Vec::new();
+    rmpv::encode::write_value(&mut deep, &key).expect("encode");
+    let error = scan_payload(&deep).expect_err("a credential deep in a key");
+    assert!(
+        matches!(error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
+        if reason_codes.contains(&"gate.secret_scan.sensitive_env"))
+    );
+}
+
 #[test]
 fn credential_fields_cannot_hide_behind_messagepack_binary_or_json_escapes() {
     let mut bytes = Vec::new();

@@ -85,6 +85,10 @@ impl CoreAuth {
                 proof.nonce.as_bytes(),
             )
             .map_err(|_| ApiError::unauthorized())?;
+        // A fresh proof, used here once: the connection it came on is no
+        // longer a stranger's. The read-only check above does not say so,
+        // since a replay passes it and is refused only here.
+        crate::http_listener::authenticated();
         Ok(auth)
     }
     pub(super) fn from_verified(

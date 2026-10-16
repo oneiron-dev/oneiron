@@ -349,7 +349,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
         lease: BudgetLease::for_test("mcp-oracle-execute-code"),
         witness: Arc::clone(&witness),
     });
-    let host = McpEngineNativeCodeHost::new(provider, CodeRunLimits::default());
+    let host = McpEngineNativeCodeHost::new(provider, CodeRunLimits::default(), Arc::default());
 
     let run_ref = "oracle-run";
     let run_id = mcp_code_run_id(run_ref, &resolved);

@@ -743,3 +743,36 @@ fn a_device_asks_again_only_for_a_window_it_follows() {
         assert_eq!(asked, asks, "{key}");
     }
 }
+
+/// Rule five at the window row, for `rate_law`: one socket asks for `callers` windows past a row
+/// of one; every one is served, and the row asks.
+pub(crate) async fn cross_the_windows(callers: usize) -> crate::admission::Crossing {
+    let home = Home::start(1).await;
+    let mut owner = home
+        .socket(
+            "window-row-crossing",
+            transport::encode_replacement_full_window_protocol_hello(),
+        )
+        .await;
+    let mut refused = 0;
+    for (served, (key, _)) in months(callers as u64).iter().enumerate() {
+        let heard = subscribe(&mut owner, key).await;
+        if heard.close.is_some() {
+            // A closed socket is refused every window it has yet to ask for.
+            refused += callers - served;
+            break;
+        }
+        if !heard.tags(key).contains(&window_sub_tags::VV_RESPONSE) {
+            refused += 1;
+        }
+    }
+    crate::admission::Crossing {
+        refused,
+        asked: home
+            .server
+            .wire_telemetry
+            .limit_questions()
+            .latest(crate::wire_telemetry::LimitRow::WindowsPerConnection)
+            .is_some(),
+    }
+}

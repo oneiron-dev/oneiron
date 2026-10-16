@@ -1,11 +1,14 @@
-//! The listener's admission, end to end over real sockets (C4): headers that
-//! never finish are closed at the deadline, a body that stops arriving gives
-//! its connection back while a slow one that keeps arriving is served, a
-//! socket past the bound is shed while admitted ones keep working, a
-//! WebSocket keeps its permit past the header deadline, and routes still see
-//! the socket peer.
+//! The listener's admission, end to end over real sockets (C4, and the rate
+//! law of ARCH-0044 C5): headers that never finish are closed at the
+//! deadline, a body that stops arriving gives its connection back while a
+//! slow one that keeps arriving is served, a socket past the descriptor floor
+//! waits its turn and is served once a connection closes, an off-device
+//! address's strangers past its share are shed while its authenticated
+//! connections never are, a WebSocket keeps its permit past the header
+//! deadline, and routes still see the socket peer.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
@@ -20,6 +23,8 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use super::{ConnectionLimits, serve};
+use crate::admission::Crossing;
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// Longer than every deadline these tests set, by far: reaching it means the
 /// server kept a socket the test expected it to close.
@@ -58,12 +63,21 @@ fn app() -> Router {
             "/length",
             post(|body: Bytes| async move { body.len().to_string() }),
         )
+        // Stands in for a route whose caller's credential the server accepts.
+        .route(
+            "/login",
+            get(|| async {
+                super::authenticated();
+                "welcome"
+            }),
+        )
 }
 
 struct Served {
     addr: SocketAddr,
     stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
+    questions: Arc<LimitQuestions>,
 }
 
 impl Drop for Served {
@@ -76,24 +90,33 @@ async fn start(addr: &str, limits: ConnectionLimits) -> Served {
     let listener = TcpListener::bind(addr).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(serve(listener, app(), limits, async {
-        let _ = stopped.await;
-    }));
+    let questions = Arc::new(LimitQuestions::default());
+    let task = tokio::spawn(serve(
+        listener,
+        app(),
+        limits,
+        Arc::clone(&questions),
+        async {
+            let _ = stopped.await;
+        },
+    ));
     Served {
         addr,
         stop: Some(stop),
         task,
+        questions,
     }
 }
 
-/// A loopback peer meets the total only, so these sockets never reach the
-/// per-peer share of one.
+/// A loopback peer meets the floor only, so these sockets never reach the
+/// unauthenticated share of one.
 fn limits(max_connections: usize, header_read_timeout: Duration) -> ConnectionLimits {
     ConnectionLimits {
         max_connections,
-        max_connections_per_peer: 1,
+        max_unauthenticated_per_peer: 1,
         header_read_timeout,
         body_idle_timeout: PATIENCE,
+        queue_wait: PATIENCE,
     }
 }
 
@@ -164,6 +187,37 @@ async fn served_again(addr: SocketAddr) -> TcpStream {
     })
     .await
     .expect("a connection is admitted once a permit returns")
+}
+
+/// Rule five at the descriptor floor: `callers` sockets past a floor of one,
+/// each asking for a slow answer, are all served, and the row asks.
+pub(crate) async fn cross_the_floor(callers: usize) -> Crossing {
+    let served = start("127.0.0.1:0", limits(1, PATIENCE)).await;
+    let calls: Vec<_> = (0..callers)
+        .map(|_| {
+            let addr = served.addr;
+            tokio::spawn(async move {
+                let mut stream = TcpStream::connect(addr).await.unwrap();
+                stream
+                    .write_all(b"GET /slow HTTP/1.1\r\nhost: listener\r\nconnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+                tokio::time::timeout(PATIENCE * 6, read_response(&mut stream))
+                    .await
+                    .map(|(status, _)| status)
+            })
+        })
+        .collect();
+    let mut refused = 0;
+    for call in calls {
+        if call.await.unwrap() != Ok(200) {
+            refused += 1;
+        }
+    }
+    Crossing {
+        refused,
+        asked: served.questions.latest(LimitRow::Connections).is_some(),
+    }
 }
 
 #[tokio::test]
@@ -238,7 +292,7 @@ async fn a_slow_body_that_keeps_arriving_is_served() {
 }
 
 #[tokio::test]
-async fn past_the_bound_new_sockets_are_shed_while_admitted_ones_finish() {
+async fn past_the_floor_a_new_socket_waits_its_turn_and_the_row_asks() {
     let served = start("127.0.0.1:0", limits(2, PATIENCE)).await;
 
     let mut first = TcpStream::connect(served.addr).await.unwrap();
@@ -248,55 +302,150 @@ async fn past_the_bound_new_sockets_are_shed_while_admitted_ones_finish() {
     second.write_all(REQUEST).await.unwrap();
     assert_eq!(read_response(&mut second).await.0, 200);
 
-    // Both keep-alive connections hold their permits; a third socket is
-    // refused before a byte of its request is read.
-    let mut shed = TcpStream::connect(served.addr).await.unwrap();
-    let answer = until_closed(&mut shed)
-        .await
-        .expect("a socket past the bound is closed at once");
-    assert!(answer.starts_with("HTTP/1.1 503"), "{answer:?}");
+    // Both keep-alive connections hold their permits. A third socket is
+    // neither served nor refused: it waits in the backlog.
+    let mut third = TcpStream::connect(served.addr).await.unwrap();
+    third.write_all(REQUEST).await.unwrap();
+    let mut byte = [0_u8; 1];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), third.read(&mut byte))
+            .await
+            .is_err(),
+        "past the floor a socket waits; it is never answered with a refusal"
+    );
+    let question = served
+        .questions
+        .latest(LimitRow::Connections)
+        .expect("crossing the floor asks whether everything is okay");
+    assert_eq!(question.bound, 2);
 
-    // An admitted connection keeps serving.
+    // An admitted connection keeps serving, and hanging up one lets the
+    // waiting socket in.
     first.write_all(REQUEST).await.unwrap();
     assert_eq!(read_response(&mut first).await.0, 200);
-
-    // Hanging up returns the permit.
     drop(second);
-    let _admitted = served_again(served.addr).await;
+    assert_eq!(read_response(&mut third).await.0, 200);
+}
+
+/// The address this host would send from to reach the outside: an
+/// off-device peer as far as the listener can tell. No packet is sent.
+fn off_device_address() -> Option<std::net::IpAddr> {
+    let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let local = probe
+        .connect("192.0.2.1:9")
+        .and_then(|()| probe.local_addr())
+        .ok()?
+        .ip();
+    assert!(!local.is_loopback() && !local.is_unspecified());
+    Some(local)
 }
 
 #[tokio::test]
-async fn one_off_device_peer_holds_only_its_share() {
-    // The address this host would send from to reach the outside: an
-    // off-device peer as far as the listener can tell. No packet is sent.
-    let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
-    let routed = probe
-        .connect("192.0.2.1:9")
-        .and_then(|()| probe.local_addr());
-    let Ok(local) = routed.map(|addr| addr.ip()) else {
+async fn an_address_sheds_strangers_past_its_share_but_never_its_authenticated_connections() {
+    const LOGIN: &[u8] = b"GET /login HTTP/1.1\r\nhost: listener\r\n\r\n";
+
+    let Some(local) = off_device_address() else {
         eprintln!("no routed interface on this host; the off-device share is unprovable here");
         return;
     };
-    assert!(!local.is_loopback() && !local.is_unspecified());
     let served = start(
         &SocketAddr::new(local, 0).to_string(),
         ConnectionLimits {
-            max_connections: 8,
-            max_connections_per_peer: 1,
+            max_connections: 64,
+            max_unauthenticated_per_peer: 2,
             header_read_timeout: PATIENCE,
             body_idle_timeout: PATIENCE,
+            queue_wait: PATIENCE,
         },
     )
     .await;
 
-    let mut held = TcpStream::connect(served.addr).await.unwrap();
-    held.write_all(REQUEST).await.unwrap();
-    assert_eq!(read_response(&mut held).await.0, 200);
-    let mut over = TcpStream::connect(served.addr).await.unwrap();
-    let answer = until_closed(&mut over)
+    // A fleet on one address: each connection authenticates on its first
+    // request and leaves the share, so ten of them hold none of it.
+    let mut fleet = Vec::new();
+    for _ in 0..10 {
+        let mut stream = TcpStream::connect(served.addr).await.unwrap();
+        stream.write_all(LOGIN).await.unwrap();
+        assert_eq!(
+            read_response(&mut stream).await,
+            (200, "welcome".to_owned()),
+            "an authenticated connection is never shed, however many its address holds"
+        );
+        fleet.push(stream);
+    }
+
+    // Strangers from the same address fill the share, and the next is shed.
+    let mut strangers = Vec::new();
+    for _ in 0..2 {
+        let mut stream = TcpStream::connect(served.addr).await.unwrap();
+        stream.write_all(REQUEST).await.unwrap();
+        assert_eq!(read_response(&mut stream).await.0, 200);
+        strangers.push(stream);
+    }
+    let mut flood = TcpStream::connect(served.addr).await.unwrap();
+    let answer = until_closed(&mut flood)
         .await
-        .expect("a peer past its share is closed at once");
+        .expect("a stranger past its address's share is closed at once");
     assert!(answer.starts_with("HTTP/1.1 503"), "{answer:?}");
+
+    // The fleet's connections keep serving all the while.
+    for stream in &mut fleet {
+        stream.write_all(REQUEST).await.unwrap();
+        assert_eq!(read_response(stream).await.0, 200);
+    }
+}
+
+/// Review r2 (Sol and Astra, P1): the default share (256) is larger than
+/// the floor a low open-file limit gives (128 at 256 descriptors), so one
+/// address's strangers could hold every socket the floor admits and stop
+/// the loop before any other caller could reach it.
+#[tokio::test]
+async fn strangers_from_one_address_never_fill_the_floor() {
+    let Some(local) = off_device_address() else {
+        eprintln!("no routed interface on this host; the off-device share is unprovable here");
+        return;
+    };
+    // Every interface: the strangers arrive from the routed address, the
+    // other caller from loopback.
+    let served = start(
+        "0.0.0.0:0",
+        ConnectionLimits {
+            max_connections: 4,
+            max_unauthenticated_per_peer: 256,
+            header_read_timeout: PATIENCE,
+            body_idle_timeout: PATIENCE,
+            queue_wait: PATIENCE,
+        },
+    )
+    .await;
+    let port = served.addr.port();
+
+    // Strangers take half the floor, and the next one is shed.
+    let mut strangers = Vec::new();
+    for _ in 0..2 {
+        let mut stream = TcpStream::connect((local, port)).await.unwrap();
+        stream.write_all(REQUEST).await.unwrap();
+        assert_eq!(read_response(&mut stream).await.0, 200);
+        strangers.push(stream);
+    }
+    let mut flood = TcpStream::connect((local, port)).await.unwrap();
+    let answer = until_closed(&mut flood)
+        .await
+        .expect("a stranger past half the floor is closed at once");
+    assert!(answer.starts_with("HTTP/1.1 503"), "{answer:?}");
+
+    // Another caller still finds room under the floor.
+    let mut caller = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+        .await
+        .unwrap();
+    caller.write_all(REQUEST).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(PATIENCE, read_response(&mut caller))
+            .await
+            .expect("the floor kept room for another caller")
+            .0,
+        200
+    );
 }
 
 #[tokio::test]
@@ -319,13 +468,19 @@ async fn a_websocket_outlives_the_header_deadline_and_keeps_its_permit() {
         .unwrap();
     assert_eq!(echoed.into_text().unwrap().as_str(), "still here");
 
-    // The upgraded socket still holds the only permit.
-    let mut shed = TcpStream::connect(served.addr).await.unwrap();
-    let answer = until_closed(&mut shed).await.expect("shed at once");
-    assert!(answer.starts_with("HTTP/1.1 503"), "{answer:?}");
+    // The upgraded socket still holds the only permit: the next one waits.
+    let mut next = TcpStream::connect(served.addr).await.unwrap();
+    next.write_all(REQUEST).await.unwrap();
+    let mut byte = [0_u8; 1];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), next.read(&mut byte))
+            .await
+            .is_err(),
+        "the WebSocket's permit is still held"
+    );
 
     drop(socket);
-    let _admitted = served_again(served.addr).await;
+    assert_eq!(read_response(&mut next).await.0, 200);
 }
 
 #[tokio::test]
@@ -353,4 +508,71 @@ async fn routes_see_the_socket_peer_and_shutdown_drains_requests_in_flight() {
         .expect("serve returns once its connections close")
         .unwrap();
     assert!(TcpStream::connect(served.addr).await.is_err());
+}
+
+/// Review r7 (Sol, P1): the read-only slip check let a connection leave the
+/// anonymous share before its request's proof was used, so a replayed
+/// proof, refused with 401, still took its socket out of the share, and one
+/// address could fill the floor with replays. A connection leaves the share
+/// only once a fresh proof is admitted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replayed_proof_leaves_its_connection_in_the_anonymous_share() {
+    let Some(local) = off_device_address() else {
+        eprintln!("no routed interface on this host; the off-device share is unprovable here");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let config = crate::config::SyncServerConfig {
+        auth_secret: Some("listener-trust-root".to_owned()),
+        ..Default::default()
+    };
+    let server = Arc::new(crate::server::SyncServer::new(vault, config).unwrap());
+    let listener = TcpListener::bind(SocketAddr::new(local, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(serve(
+        listener,
+        crate::build_app(Arc::clone(&server)),
+        ConnectionLimits {
+            max_connections: 64,
+            max_unauthenticated_per_peer: 1,
+            header_read_timeout: PATIENCE,
+            body_idle_timeout: PATIENCE,
+            queue_wait: PATIENCE,
+        },
+        Arc::new(LimitQuestions::default()),
+        std::future::pending(),
+    ));
+    // One signed request: its proof is sent twice.
+    let signed = crate::test_credentials::bind_request(
+        &server,
+        axum::http::Request::builder()
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("{}scope=core:read", crate::test_credentials::RECIPE_PREFIX),
+            )
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    );
+    let request = format!(
+        "GET /api/health HTTP/1.1\r\nhost: listener\r\nauthorization: {}\r\nx-oneiron-binding: {}\r\n\r\n",
+        signed.headers()["authorization"].to_str().unwrap(),
+        signed.headers()["x-oneiron-binding"].to_str().unwrap(),
+    );
+
+    // Its first use is admitted, and that connection leaves the share.
+    let mut fresh = TcpStream::connect(addr).await.unwrap();
+    fresh.write_all(request.as_bytes()).await.unwrap();
+    assert_eq!(read_response(&mut fresh).await.0, 200);
+    // Its replay is refused, and that connection stays a stranger's: it
+    // holds the address's one place, so the next stranger is shed.
+    let mut replay = TcpStream::connect(addr).await.unwrap();
+    replay.write_all(request.as_bytes()).await.unwrap();
+    assert_eq!(read_response(&mut replay).await.0, 401);
+    let mut next = TcpStream::connect(addr).await.unwrap();
+    let answer = until_closed(&mut next)
+        .await
+        .expect("a replay freed no place: the next stranger is closed at once");
+    assert!(answer.starts_with("HTTP/1.1 503"), "{answer:?}");
+    task.abort();
 }

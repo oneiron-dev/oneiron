@@ -20,7 +20,7 @@ mod note_socket_tests;
 mod residence_socket_tests;
 mod transport;
 #[cfg(test)]
-mod window_row_tests;
+pub(crate) mod window_row_tests;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;

@@ -608,7 +608,7 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
             // A key shaped like a credential goes with its member, as a JSON
             // object's does: a marker in its place could repeat a real key.
             let before = fields.len();
-            fields.retain(|(key, _)| !sanitize_messagepack(&mut key.clone(), null, door));
+            fields.retain(|(key, _)| !messagepack_has_secret(key, door));
             let dropped = fields.len() != before;
             fields.iter_mut().fold(dropped, |changed, (key, value)| {
                 let sensitive = key
@@ -622,6 +622,34 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
                 }
             })
         }
+        _ => false,
+    }
+}
+
+/// Whether [`sanitize_messagepack`] would find anything in `value`, read in
+/// place. A map key is read this way, never from a copy: a key may be a map
+/// whose own keys nest further, and a copy at each level would hold
+/// everything inside it once for every level above.
+fn messagepack_has_secret(value: &rmpv::Value, door: Door) -> bool {
+    use rmpv::Value;
+    match value {
+        Value::String(text) => detect_bytes(text.as_bytes(), door),
+        Value::Binary(bytes) | Value::Ext(_, bytes) => detect_bytes(bytes, door),
+        Value::Array(values) => {
+            byte_values(values.iter().map(Value::as_u64))
+                .is_some_and(|bytes| detect_bytes(&bytes, door))
+                || joined_messagepack(values, door)
+                || values
+                    .iter()
+                    .any(|value| messagepack_has_secret(value, door))
+        }
+        Value::Map(fields) => fields.iter().any(|(key, value)| {
+            messagepack_has_secret(key, door)
+                || key
+                    .as_str()
+                    .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door))
+                || messagepack_has_secret(value, door)
+        }),
         _ => false,
     }
 }

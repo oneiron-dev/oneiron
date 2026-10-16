@@ -153,7 +153,7 @@ fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGat
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
         | crate::mcp::McpCodeExecutionError::RunBusy
-        | crate::mcp::McpCodeExecutionError::RunSaturated => -32020,
+        | crate::mcp::McpCodeExecutionError::RunWaitedOut => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
     };

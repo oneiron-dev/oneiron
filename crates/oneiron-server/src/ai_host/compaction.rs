@@ -8,7 +8,7 @@
 //! never calls a model.
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use oneiron::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
@@ -32,6 +32,7 @@ use crate::admission::Admission;
 use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::mcp::McpQuickJsProvider;
 use crate::models::{ModelRuntime, RoleRefusal};
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// The registry key a run's memory profile names.
 const BACKEND_KEY: &str = "code-mode-compaction";
@@ -56,9 +57,12 @@ pub(super) struct LiveCompaction {
     policy: CompactionGatePolicy,
     hot_steps: u64,
     role: ModelRole,
-    /// Passes running at once, across every run. A pass outlives the call
-    /// that started it, so it holds a permit of its own, never the run's.
-    passes: Arc<Admission<()>>,
+    /// Passes running at once, across every run, queued by the credential
+    /// whose run started them. A pass outlives the call that started it, so
+    /// it holds a permit of its own, never the run's.
+    passes: Arc<Admission<String>>,
+    /// Where a pass waits for its turn: a task, never a thread of its own.
+    runtime: tokio::runtime::Handle,
 }
 
 impl CodeModeCompaction {
@@ -71,6 +75,8 @@ impl CodeModeCompaction {
         models: &ModelsConfig,
         prompt_package: &std::path::Path,
         guard: BudgetGuard,
+        questions: Arc<LimitQuestions>,
+        wait: Duration,
     ) -> Self {
         let settings = models.code_mode.compaction;
         if !settings.enabled {
@@ -147,11 +153,14 @@ impl CodeModeCompaction {
             hot_steps: settings.hot_steps,
             role,
             // At most one pass per run is in flight, so as many as the runs
-            // code mode admits.
+            // code mode works on at once.
             passes: Arc::new(Admission::new(
+                LimitRow::CompactionPasses,
+                questions,
                 models.code_mode.max_runs,
-                models.code_mode.max_runs,
+                wait,
             )),
+            runtime: tokio::runtime::Handle::current(),
         }))
     }
 
@@ -174,11 +183,14 @@ impl CodeModeCompaction {
         status: &StatusCell,
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
-        provider.with_compaction(Arc::new(move |byline| self.for_run(byline)))
+        provider.with_compaction(Arc::new(move |byline, credential: &str| {
+            self.for_run(byline, credential)
+        }))
     }
 
-    /// A fresh seat for one run, its summaries bylined `byline`.
-    pub(super) fn for_run(&self, byline: WriteActor) -> RunCompaction {
+    /// A fresh seat for one run, its summaries bylined `byline`, its passes
+    /// queued in `credential`'s turn.
+    pub(super) fn for_run(&self, byline: WriteActor, credential: &str) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
@@ -191,6 +203,8 @@ impl CodeModeCompaction {
                 live.hot_steps,
                 Arc::new(ThreadSpawn {
                     passes: Arc::clone(&live.passes),
+                    credential: credential.to_owned(),
+                    runtime: live.runtime.clone(),
                 }),
             ),
             Ok(None) => RunCompaction::off(CompactionOff::Disabled),
@@ -258,34 +272,44 @@ fn input_allowances(models: &ModelsConfig, runtime: &ModelRuntime) -> BTreeMap<M
     allowances
 }
 
-/// Each pass runs on its own thread; the run never waits for it. The thread
-/// takes a permit before it starts and holds it until it ends, whether or not
-/// the run that started it is still there; past the bound the pass is refused
-/// rather than queued.
+/// Each pass runs on its own thread; the run never waits for it. A pass
+/// takes its place in line when it is spawned and waits its credential's
+/// turn past the bound (round-robin across credentials, so one credential's
+/// backlog never holds another's pass back) as a task on the runtime: its
+/// thread starts only with the permit, which it holds until the pass ends,
+/// whether or not the run that started it is still there. So the bound is on
+/// threads too, not only on passes running.
 struct ThreadSpawn {
-    passes: Arc<Admission<()>>,
+    passes: Arc<Admission<String>>,
+    credential: String,
+    runtime: tokio::runtime::Handle,
 }
 
 impl CompactionSpawn for ThreadSpawn {
     fn spawn(&self, pass: Box<dyn FnOnce() + Send + 'static>) {
-        let Ok(permit) = self.passes.try_admit_unkeyed() else {
-            // The pass's sender drops with it, so the run reads a refused pass.
-            tracing::debug!(
-                reason = "compaction_saturated",
-                "a compaction pass was refused at its bound"
-            );
-            return;
-        };
-        if let Err(error) = std::thread::Builder::new()
-            .name("code-mode-compaction".to_owned())
-            .spawn(move || {
-                let _permit = permit;
-                pass();
-            })
-        {
-            // The pass's sender drops with it, so the run reads a refused pass.
-            tracing::error!(%error, "a compaction pass thread did not start");
-        }
+        let turn = self.passes.admit_in_line(self.credential.clone());
+        self.runtime.spawn(async move {
+            let Ok(permit) = turn.await else {
+                // The pass's sender drops with it, so the run reads a pass
+                // that never ran.
+                tracing::debug!(
+                    reason = "compaction_waited_out",
+                    "a compaction pass waited past its deadline for its turn"
+                );
+                return;
+            };
+            if let Err(error) = std::thread::Builder::new()
+                .name("code-mode-compaction".to_owned())
+                .spawn(move || {
+                    let _permit = permit;
+                    pass();
+                })
+            {
+                // The pass's sender drops with it, so the run reads a pass
+                // that never ran.
+                tracing::error!(kind = ?error.kind(), "a compaction pass thread did not start");
+            }
+        });
     }
 }
 
@@ -488,4 +512,4 @@ fn refused(suppression: CompactionSuppression, detail: String) -> CompactionRefu
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

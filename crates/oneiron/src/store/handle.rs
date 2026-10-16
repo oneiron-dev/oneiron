@@ -178,6 +178,14 @@ impl StoreCore {
     pub(in crate::store) fn gate_custody_archived(&self) -> bool {
         self.gate_custody_archived_at_open || self.env.is_sealed()
     }
+
+    /// The page size this store writes in: the creating host's, which LMDB
+    /// keeps with the file. A value too large for a leaf takes whole pages
+    /// of it.
+    pub(crate) fn page_size(&self) -> Result<u64> {
+        let txn = self.env.read_txn()?;
+        Ok(u64::from(self.raw.entities.stat(&txn)?.page_size))
+    }
 }
 
 /// Arc-shared substrate of an open vault (ARCH-0052 store split).

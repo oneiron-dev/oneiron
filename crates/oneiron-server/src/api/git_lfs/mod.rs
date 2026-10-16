@@ -36,7 +36,7 @@ mod support;
 mod wire;
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 pub(crate) use self::gate::lfs_routes;
 pub(crate) use self::handlers::{lfs_batch, lfs_download, lfs_upload, lfs_verify};

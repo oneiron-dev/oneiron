@@ -1,6 +1,7 @@
 //! LFS handler tests.
 
 use super::*;
+use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use axum::body::Body;
@@ -242,26 +243,30 @@ async fn lfs_batch_download_returns_actions_and_transfer_basic() {
 }
 
 #[tokio::test]
-async fn lfs_over_cap_upload_refuses_without_waiting_for_body_eof() {
+async fn an_upload_with_no_declared_size_is_ended_at_the_disk_floor_without_waiting_for_its_end() {
     use axum::body::Bytes;
     use futures_util::StreamExt;
     use std::time::Duration;
 
+    // A reserve no disk has: the floor is already reached.
     let config = SyncServerConfig {
-        max_lfs_object_bytes: 1024,
+        limits: crate::config::LimitsConfig {
+            disk_reserve_bytes: u64::MAX / 2,
+            ..Default::default()
+        },
         ..secret_config()
     };
     let (_dir, server) = test_server(config);
     let bytes = vec![b'x'; 2048];
     let oid = LfsOid::digest(&bytes);
-    // The first frame crosses the cap. The client never sends EOF or another
-    // frame, so the response must be driven by the worker's refusal alone.
+    // The client never sends EOF or another frame, so the response must be
+    // driven by the floor alone.
     let body = Body::from_stream(
         futures_util::stream::once(async move { Ok::<_, std::io::Error>(Bytes::from(bytes)) })
             .chain(futures_util::stream::pending()),
     );
-    let (status, _, response) = tokio::time::timeout(
-        Duration::from_secs(3),
+    let (status, _, _) = tokio::time::timeout(
+        Duration::from_secs(10),
         route(
             &server,
             request(
@@ -273,15 +278,8 @@ async fn lfs_over_cap_upload_refuses_without_waiting_for_body_eof() {
         ),
     )
     .await
-    .expect("over-cap upload must not wait for body EOF");
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let response = json_body(&response);
-    assert_eq!(response["error"]["code"], "BAD_REQUEST");
-    assert!(
-        response["error"]["message"]
-            .as_str()
-            .is_some_and(|s| s.contains("object cap"))
-    );
+    .expect("an upload at the floor does not wait for its body's end");
+    assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
     assert_eq!(server.vault.lfs_object(oid).expect("record read"), None);
 }
 
@@ -783,13 +781,10 @@ async fn a_chunk_reply_nobody_reads_gives_its_permit_back_at_the_idle_limit() {
             ),
         )
     };
-    let refused = || async {
-        let response = lfs_routes()
+    let next = || {
+        lfs_routes()
             .with_state(Arc::clone(&server))
             .oneshot(exchange(b"not a chunk request".to_vec()))
-            .await
-            .expect("route response");
-        response.status()
     };
 
     // Answered, and never read.
@@ -799,13 +794,18 @@ async fn a_chunk_reply_nobody_reads_gives_its_permit_back_at_the_idle_limit() {
         .await
         .expect("route response");
     assert_eq!(unread.status(), StatusCode::OK);
-    assert_eq!(
-        refused().await,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "a reply still being handed out holds its permit"
+    // A reply still being handed out holds its permit, so the next exchange
+    // waits for it, and gets it at the idle limit.
+    let started = std::time::Instant::now();
+    let freed = tokio::time::timeout(PATIENCE, next())
+        .await
+        .expect("the unread reply gives its permit back")
+        .expect("route response");
+    assert_eq!(freed.status(), StatusCode::FORBIDDEN);
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(250),
+        "it waited for the unread reply's permit"
     );
-    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, refused).await;
-    assert_eq!(freed, StatusCode::FORBIDDEN);
     drop(unread);
 
     // A reply that is read arrives whole.
@@ -915,51 +915,197 @@ async fn hold_upload(
     held
 }
 
-/// Retries `call` while it answers `busy`: a worker returns what it held when
-/// it ends, a moment after its client is gone.
-async fn once_freed<F>(busy: StatusCode, mut call: impl FnMut() -> F) -> StatusCode
-where
-    F: std::future::Future<Output = StatusCode>,
-{
-    tokio::time::timeout(PATIENCE, async {
-        loop {
-            match call().await {
-                status if status == busy => {
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                }
-                status => break status,
-            }
+/// Rule five at the LFS rows: `row` crossed by `callers` uploads on one
+/// credential (past a bound of one transfer, a quota of 16 bytes, or an
+/// object size of 16 bytes) all land, and the row asks.
+pub(crate) async fn cross_the_lfs_row(
+    row: crate::wire_telemetry::LimitRow,
+    callers: usize,
+) -> crate::admission::Crossing {
+    use crate::wire_telemetry::LimitRow;
+    let mut config = secret_config();
+    match row {
+        LimitRow::LfsTransfers => config.limits.lfs_transfers = 1,
+        LimitRow::LfsQuota => config.limits.lfs_quota_bytes = 16,
+        LimitRow::LfsObjectSize => config.max_lfs_object_bytes = 16,
+        other => panic!("{other:?} is not an LFS row"),
+    }
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let uploads: Vec<_> = (0..callers)
+        .map(|n| {
+            let server = Arc::clone(&server);
+            let token = token.clone();
+            tokio::spawn(async move {
+                let bytes = format!("an object past the {row:?} row, number {n}").into_bytes();
+                put(&server, &token, &bytes).await
+            })
+        })
+        .collect();
+    let mut refused = 0;
+    for upload in uploads {
+        if upload.await.unwrap() != StatusCode::OK {
+            refused += 1;
         }
-    })
-    .await
-    .expect("what a cancelled upload held comes back")
+    }
+    crate::admission::Crossing {
+        refused,
+        asked: asked(&server, row),
+    }
+}
+
+/// Whether `row` asked whether everything is okay on this server.
+fn asked(server: &Arc<SyncServer>, row: crate::wire_telemetry::LimitRow) -> bool {
+    server
+        .wire_telemetry
+        .limit_questions()
+        .latest(row)
+        .is_some()
 }
 
 #[tokio::test]
-async fn lfs_upload_declaring_more_than_the_default_cap_is_refused_before_a_byte_is_read() {
-    let (_dir, server) = test_server(secret_config());
-    let cap = SyncServerConfig::default().max_lfs_object_bytes;
-    let oid = LfsOid::digest(b"an object too large to take");
+async fn a_declaration_that_would_cross_the_disk_floor_is_refused_before_a_byte_is_read() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            disk_reserve_bytes: u64::MAX / 2,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let oid = LfsOid::digest(b"an object the disk has no room for");
     let never = Body::from_stream(futures_util::stream::pending::<
         Result<axum::body::Bytes, std::io::Error>,
     >());
-    let (status, _, body) = tokio::time::timeout(
+    let (status, _, _) = tokio::time::timeout(
         PATIENCE,
-        route(&server, sized_put(&oid, &writer_token(), cap + 1, never)),
+        route(&server, sized_put(&oid, &writer_token(), 1_024, never)),
     )
     .await
     .expect("refused on its declaration, without reading the body");
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(json_body(&body)["error"]["code"], "PAYLOAD_TOO_LARGE");
+    assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
     assert_eq!(server.vault.lfs_object(oid).expect("record read"), None);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn lfs_uploads_past_a_principals_share_are_refused_while_one_is_held() {
+#[tokio::test]
+async fn room_one_upload_has_claimed_on_the_disk_is_room_no_other_upload_can_take() {
+    // Room past the reserve for one declared upload's spool and stored copy,
+    // not for two. Each alone fits; the second must not count the first's
+    // room as free (two uploads that both pass a free-space look and then
+    // both write would take the disk below its reserve).
+    const DECLARED: u64 = 256 * 1024 * 1024;
+    let (_dir, server) = test_server(secret_config());
+    // Shown, so what other work on the machine writes meanwhile moves
+    // nothing.
+    server
+        .transfers
+        .disk
+        .show_free(server.config.limits.disk_reserve_bytes + 3 * DECLARED);
+    let token = writer_token();
+    let first = hold_upload(&server, &token, DECLARED).await;
+    assert!(
+        !first.is_finished(),
+        "one upload has room for its spool and its stored copy"
+    );
+
+    let oid = LfsOid::digest(b"a second upload the disk has room for only alone");
+    let never = Body::from_stream(futures_util::stream::pending::<
+        Result<axum::body::Bytes, std::io::Error>,
+    >());
+    let (status, _, _) = tokio::time::timeout(
+        PATIENCE,
+        route(&server, sized_put(&oid, &token, DECLARED, never)),
+    )
+    .await
+    .expect("refused on its declaration, without reading the body");
+    assert_eq!(
+        status,
+        StatusCode::INSUFFICIENT_STORAGE,
+        "the room the first upload claimed is not free for the second"
+    );
+    assert_eq!(
+        put(&server, &token, b"a small object beside the held one").await,
+        StatusCode::OK,
+        "work that fits beside the claim still lands"
+    );
+    first.abort();
+}
+
+#[tokio::test]
+async fn an_upload_past_the_object_size_row_lands_and_the_row_asks() {
+    let config = SyncServerConfig {
+        max_lfs_object_bytes: 1_024,
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let bytes = vec![b'x'; 4_096];
+    assert_eq!(
+        put(&server, &writer_token(), &bytes).await,
+        StatusCode::OK,
+        "the size row is a question, never a refusal"
+    );
+    assert!(asked(
+        &server,
+        crate::wire_telemetry::LimitRow::LfsObjectSize
+    ));
+    let stored = server
+        .vault
+        .lfs_object(LfsOid::digest(&bytes))
+        .expect("record read");
+    assert_eq!(stored.map(|object| object.size_bytes), Some(4_096));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_two_hundred_uploads_on_one_credential_all_complete() {
     let config = SyncServerConfig {
         limits: crate::config::LimitsConfig {
-            lfs_transfers: 2,
-            lfs_transfers_per_principal: 1,
+            lfs_transfers: 4,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let uploads: Vec<_> = (0..200_u32)
+        .map(|n| {
+            let server = Arc::clone(&server);
+            let token = token.clone();
+            tokio::spawn(async move {
+                let bytes = format!("burst object {n}").into_bytes();
+                (put(&server, &token, &bytes).await, bytes)
+            })
+        })
+        .collect();
+    for upload in uploads {
+        let (status, bytes) = tokio::time::timeout(std::time::Duration::from_secs(120), upload)
+            .await
+            .expect("every upload completes")
+            .unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a queued upload is served, never refused"
+        );
+        assert!(
+            server
+                .vault
+                .lfs_object(LfsOid::digest(&bytes))
+                .expect("record read")
+                .is_some()
+        );
+    }
+    assert!(asked(
+        &server,
+        crate::wire_telemetry::LimitRow::LfsTransfers
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn past_the_bound_an_upload_waits_its_turn_until_its_deadline() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_transfers: 1,
+            queue_wait_timeout_ms: 400,
             ..Default::default()
         },
         ..secret_config()
@@ -968,6 +1114,9 @@ async fn lfs_uploads_past_a_principals_share_are_refused_while_one_is_held() {
     let token = writer_token();
     let held = hold_upload(&server, &token, 4_096).await;
 
+    // Behind a held upload a second one waits, and its wait is a request
+    // timeout: it ends there, nothing started.
+    let started = std::time::Instant::now();
     let (status, headers, _) = route(
         &server,
         sized_put(
@@ -978,28 +1127,28 @@ async fn lfs_uploads_past_a_principals_share_are_refused_while_one_is_held() {
         ),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "refused, not queued"
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(400),
+        "it waited its deadline rather than being refused at once"
     );
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(headers["retry-after"], "1");
     assert_eq!(
-        put(&server, &writer_token(), b"another principal").await,
-        StatusCode::OK
+        server
+            .vault
+            .lfs_object(LfsOid::digest(b"second"))
+            .expect("record read"),
+        None
     );
 
+    // Once the held upload is gone, the next one is served.
     held.abort();
     let _ = held.await;
-    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, || {
-        put(&server, &token, b"second")
-    })
-    .await;
-    assert_eq!(freed, StatusCode::OK);
+    assert_eq!(put(&server, &token, b"second").await, StatusCode::OK);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn lfs_chunk_exchanges_are_refused_while_every_transfer_permit_is_held() {
+async fn a_chunk_exchange_waits_while_every_transfer_permit_is_held() {
     let config = SyncServerConfig {
         limits: crate::config::LimitsConfig {
             lfs_transfers: 1,
@@ -1015,35 +1164,692 @@ async fn lfs_chunk_exchanges_are_refused_while_every_transfer_permit_is_held() {
         crate::test_credentials::RECIPE_PREFIX,
         oneiron::EntityId::now().to_hex()
     );
-    let exchange = || async {
+    let exchange = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move {
+            let request = request(
+                "POST",
+                &format!("/git/{REPO}/info/lfs/chunks"),
+                Some(&token),
+                Body::from(b"not a chunk request".to_vec()),
+            );
+            route(&server, request).await.0
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !exchange.is_finished(),
+        "the exchange waits for a permit; it is not refused"
+    );
+
+    // Once the permit is back the exchange reaches its own checks.
+    held.abort();
+    let _ = held.await;
+    let status = tokio::time::timeout(PATIENCE, exchange)
+        .await
+        .expect("the exchange gets the permit back")
+        .unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// Review r5 (Sol R5-3, P1): a chunk exchange and a verify read their
+/// whole body before they took their place in line, so each request waiting
+/// past the transfer row held up to a frame of its body. Each now waits on
+/// its headers and reads its body at its turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_waiting_for_a_transfer_permit_has_read_none_of_its_body() {
+    use crate::wire_telemetry::LimitRow;
+    let chunk_reader = format!(
+        "{}scope=core:read;principal_ref={}",
+        crate::test_credentials::RECIPE_PREFIX,
+        oneiron::EntityId::now().to_hex()
+    );
+    let oid = LfsOid::digest(b"never stored").to_hex();
+    let verify = serde_json::to_vec(&json!({"oid": oid, "size": 12})).expect("verify body");
+    for (path, token, payload, answer) in [
+        (
+            format!("/git/{REPO}/info/lfs/chunks"),
+            chunk_reader,
+            b"not a chunk request".to_vec(),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            format!("{}/verify", object_uri(&oid)),
+            writer_token(),
+            verify,
+            StatusCode::OK,
+        ),
+    ] {
+        let config = SyncServerConfig {
+            limits: crate::config::LimitsConfig {
+                lfs_transfers: 1,
+                ..Default::default()
+            },
+            ..secret_config()
+        };
+        let (_dir, server) = test_server(config);
+        let held = hold_upload(&server, &writer_token(), 4_096).await;
+        // The body is sent only when this test says so.
+        let (send, sent) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let body = Body::from_stream(futures_util::stream::once(async move {
+            Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+        }));
+        let waiting = {
+            let server = Arc::clone(&server);
+            let request = request("POST", &path, Some(&token), body);
+            tokio::spawn(async move { route(&server, request).await.0 })
+        };
+        // Its wait crosses the transfer row: it is in line, none of its body
+        // read.
+        let deadline = std::time::Instant::now() + PATIENCE;
+        while !asked(&server, LimitRow::LfsTransfers) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{path}: the request waits its turn before its body arrives"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // At its turn it reads its body and answers.
+        held.abort();
+        let _ = held.await;
+        send.send(payload).expect("the request is still in line");
+        let status = tokio::time::timeout(PATIENCE, waiting)
+            .await
+            .expect("the request has its turn")
+            .expect("request task");
+        assert_eq!(status, answer, "{path}");
+    }
+}
+
+/// Room in memory for one chunk exchange and one upload's install, and the
+/// rows' defaults otherwise.
+fn one_room_config() -> SyncServerConfig {
+    SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_memory_bytes: 2 * crate::api::transfer::LFS_MEMORY_ROOM,
+            ..Default::default()
+        },
+        ..secret_config()
+    }
+}
+
+/// A chunk exchange of `want`, answered, whose reply nobody reads.
+async fn unread_exchange(
+    server: &Arc<SyncServer>,
+    token: &str,
+    want: Vec<u8>,
+) -> axum::response::Response {
+    let request = crate::test_credentials::bind_request(
+        server,
+        request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/chunks"),
+            Some(token),
+            Body::from(want),
+        ),
+    );
+    let response = lfs_routes()
+        .with_state(Arc::clone(server))
+        .oneshot(request)
+        .await
+        .expect("route response");
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+}
+
+/// Waits until `row` has asked whether everything is okay; `why` when it
+/// never does.
+async fn until_asked(server: &Arc<SyncServer>, row: crate::wire_telemetry::LimitRow, why: &str) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !asked(server, row) {
+        assert!(std::time::Instant::now() < deadline, "{why}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Review r8 (Sol R8-1, Astra R8-2, P1): a chunk exchange reads its request
+/// and builds its reply whole, and only the 2,048-transfer row bounded how
+/// many did, so callers who sent their frames or read their replies slowly
+/// could hold gigabytes of them. An exchange now takes room in
+/// `lfs_memory_bytes` before it reads a byte and keeps it until its reply is
+/// delivered; past the row the next exchange waits, its body unread, and the
+/// row asks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unread_chunk_reply_keeps_its_frame_room_and_the_next_exchange_waits_unread() {
+    let (_dir, server) = test_server(one_room_config());
+    // Many times the pieces a reply has in flight.
+    let bytes = varied_bytes(1_000_000);
+    let (want, token, _) = chunk_want(&server, &bytes);
+    let unread = unread_exchange(&server, &token, want).await;
+
+    // The body is sent only when this test says so, and it tells when it is
+    // first read.
+    let (send, sent) = tokio::sync::oneshot::channel::<Vec<u8>>();
+    let read = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let body = Body::from_stream(futures_util::stream::once({
+        let read = Arc::clone(&read);
+        async move {
+            read.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+        }
+    }));
+    let waiting = {
+        let server = Arc::clone(&server);
         let request = request(
             "POST",
             &format!("/git/{REPO}/info/lfs/chunks"),
             Some(&token),
-            Body::from(b"not a chunk request".to_vec()),
+            body,
         );
-        route(&server, request).await
+        tokio::spawn(async move { route(&server, request).await.0 })
     };
-    let (status, headers, _) = exchange().await;
-    assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "refused before its worker starts, not queued"
-    );
-    assert_eq!(headers["retry-after"], "1");
-
-    // Once the permit is back the exchange reaches its own checks again.
-    held.abort();
-    let _ = held.await;
-    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, || async {
-        exchange().await.0
-    })
+    // Each exchange here is larger than the half and asks as it runs alone,
+    // so the question is no witness of a wait: the line is.
+    until_waiting(
+        server.transfers.lfs_reads(),
+        1,
+        "the next exchange waits for room in memory",
+    )
     .await;
-    assert_eq!(freed, StatusCode::FORBIDDEN);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !waiting.is_finished() && !read.load(std::sync::atomic::Ordering::SeqCst),
+        "it waits, its body unread, while the unread reply holds the room"
+    );
+    assert!(
+        asked(&server, crate::wire_telemetry::LimitRow::LfsMemoryBytes),
+        "the row asks"
+    );
+
+    // Once the unread reply's reader goes, the next exchange reads its body
+    // and answers.
+    drop(unread);
+    send.send(b"not a chunk request".to_vec())
+        .expect("the exchange is still in line");
+    let status = tokio::time::timeout(PATIENCE, waiting)
+        .await
+        .expect("the exchange has its turn")
+        .expect("exchange task");
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// Rule five at the LFS memory row: past room for one exchange, which an
+/// unread reply holds, `callers` exchanges on one credential wait, then all
+/// answer once it is let go, and the row asks.
+pub(crate) async fn cross_the_frames(callers: usize) -> crate::admission::Crossing {
+    use crate::wire_telemetry::LimitRow;
+    let (_dir, server) = test_server(one_room_config());
+    let (want, token, _) = chunk_want(&server, &varied_bytes(1_000_000));
+    let unread = unread_exchange(&server, &token, want.clone()).await;
+    let calls: Vec<_> = (0..callers)
+        .map(|_| {
+            let server = Arc::clone(&server);
+            let request = request(
+                "POST",
+                &format!("/git/{REPO}/info/lfs/chunks"),
+                Some(&token),
+                Body::from(want.clone()),
+            );
+            tokio::spawn(async move { route(&server, request).await.0 })
+        })
+        .collect();
+    until_waiting(
+        server.transfers.lfs_reads(),
+        callers,
+        "the exchanges wait for room in memory",
+    )
+    .await;
+    drop(unread);
+    let mut refused = 0;
+    for call in calls {
+        if call.await.unwrap() != StatusCode::OK {
+            refused += 1;
+        }
+    }
+    crate::admission::Crossing {
+        refused,
+        asked: asked(&server, LimitRow::LfsMemoryBytes),
+    }
+}
+
+/// Review r9 (Sol R9-2, P1): an upload's install reads an object of up to
+/// 8 MiB whole (and, past it, an edge-split segment) for the credential
+/// scan, and only the 2,048-transfer row bounded how many did at once. Once
+/// its body is spooled an upload now takes room in `lfs_memory_bytes` and
+/// keeps it until it is stored; past the row it waits, and the row asks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spooled_upload_waits_for_room_in_memory_to_install() {
+    use crate::wire_telemetry::LimitRow;
+    let (_dir, server) = test_server(one_room_config());
+    // The installs' whole half, held as installs in progress would hold it.
+    let installs = server.transfers.lfs_installs();
+    let held = hold(&server, &installs, installs.total()).await;
+    let bytes = b"a small object its install reads whole".to_vec();
+    let waiting = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move { put(&server, &writer_token(), &bytes).await })
+    };
+    until_waiting(&installs, 1, "the spooled upload waits for room to install").await;
+    assert!(asked(&server, LimitRow::LfsMemoryBytes), "the row asks");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!waiting.is_finished(), "nothing is stored while it waits");
+
+    drop(held);
+    let status = tokio::time::timeout(PATIENCE, waiting)
+        .await
+        .expect("the upload has its turn")
+        .expect("upload task");
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// Holds `bytes` of `line`, as work in progress there would.
+async fn hold(server: &Arc<SyncServer>, line: &ByteLine, bytes: usize) -> HeldBytes {
+    line.reserve(bytes, PATIENCE, &server.transfers.questions)
+        .await
+        .expect("room on the line")
+}
+
+/// Waits until `waiting` pieces of work wait on `line`; `why` when they
+/// never do.
+async fn until_waiting(line: &ByteLine, waiting: usize, why: &str) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while line.waiting() < waiting {
+        assert!(std::time::Instant::now() < deadline, "{why}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Waits until nothing holds room on `line`; `why` when something still
+/// does.
+async fn until_released(line: &ByteLine, why: &str) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while line.held_bytes() > 0 {
+        assert!(std::time::Instant::now() < deadline, "{why}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// A GET of `oid`'s bytes.
+fn get_object(oid: LfsOid, token: &str) -> Request<Body> {
+    request(
+        "GET",
+        &object_uri(&oid.to_hex()),
+        Some(token),
+        Body::empty(),
+    )
+}
+
+/// A verify of `bytes` as stored.
+fn verify_object(bytes: &[u8], token: &str) -> Request<Body> {
+    let oid = LfsOid::digest(bytes).to_hex();
+    request(
+        "POST",
+        &format!("{}/verify", object_uri(&oid)),
+        Some(token),
+        Body::from(
+            serde_json::to_vec(&json!({"oid": oid, "size": bytes.len()})).expect("verify body"),
+        ),
+    )
+}
+
+/// Review r10 (Sol R10-2, Astra R10-1, P1): an install's credential scan
+/// decodes a structured object of up to 8 MiB into a tree of values, tens to
+/// hundreds of bytes each whatever each takes on the wire, and every install
+/// took the same fixed room, so concurrent installs of small objects could
+/// hold many times the row. An install now takes room by its object's size,
+/// at the most a decoded byte was measured to hold; past the half the rest
+/// wait their turn, then land.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_installs_hold_their_half_by_their_size_and_the_rest_wait_then_land() {
+    const UPLOADS: usize = 5;
+    const BYTES: usize = 8 * 1024 * 1024 - 1024;
+    // The most an install of an 8 MiB object was measured to hold, its scan
+    // decoding the costliest shape measured: 1,422 MiB, for one-element
+    // arrays nested 64 deep (job `measure-5`, on the fleet).
+    const MEASURED_PEAK: u64 = 1_423 * 1024 * 1024;
+    // By that measure, room in the half for two such installs at once.
+    let half = (2 * MEASURED_PEAK).max(crate::api::LFS_MEMORY_ROOM);
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_memory_bytes: 2 * half,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let installs = server.transfers.lfs_installs();
+    let held = hold(&server, &installs, installs.total()).await;
+    let bodies: Vec<Vec<u8>> = (0..UPLOADS)
+        .map(|n| {
+            let mut body = varied_bytes(BYTES);
+            body[0] = u8::try_from(n).expect("a byte");
+            body
+        })
+        .collect();
+    let token = writer_token();
+    let uploads: Vec<_> = bodies
+        .iter()
+        .map(|body| {
+            let server = Arc::clone(&server);
+            let token = token.clone();
+            let body = body.clone();
+            tokio::spawn(async move { put(&server, &token, &body).await })
+        })
+        .collect();
+    until_waiting(&installs, UPLOADS, "every spooled upload waits to install").await;
+
+    drop(held);
+    let waiting = installs.waiting();
+    assert!(
+        waiting >= UPLOADS - 2,
+        "no more install at once than the measure fits; {waiting} of {UPLOADS} wait"
+    );
+    let most = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let sampler = {
+        let installs = Arc::clone(&installs);
+        let most = Arc::clone(&most);
+        tokio::spawn(async move {
+            loop {
+                most.fetch_max(installs.held_bytes(), std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+    };
+    for upload in uploads {
+        let status = tokio::time::timeout(4 * PATIENCE, upload)
+            .await
+            .expect("every waiting install has its turn")
+            .expect("upload task");
+        assert_eq!(status, StatusCode::OK);
+    }
+    sampler.abort();
+    assert!(most.load(std::sync::atomic::Ordering::SeqCst) <= installs.total());
+    for body in &bodies {
+        assert!(
+            server
+                .vault
+                .lfs_object(LfsOid::digest(body))
+                .expect("record read")
+                .is_some(),
+            "every upload landed"
+        );
+    }
+}
+
+/// Review r10 (Engine ruling): an install larger than its half is never
+/// refused. It waits, holding its transfer permit, until it can run alone;
+/// meanwhile reads take their room on the other half and permits of their
+/// own, and keep flowing. Once the half drains it lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_install_larger_than_its_half_waits_alone_while_reads_flow_then_lands() {
+    let (_dir, server) = test_server(one_room_config());
+    let installs = server.transfers.lfs_installs();
+    let token = writer_token();
+    let small = b"an object read while the large one waits".to_vec();
+    assert_eq!(put(&server, &token, &small).await, StatusCode::OK);
+    let large = varied_bytes(8 * 1024 * 1024 - 1024);
+    assert!(
+        super::streaming::install_room(large.len() as u64) > installs.total() as u64,
+        "an install larger than the half"
+    );
+    // A byte of the half, held as a small install in progress would.
+    let held = hold(&server, &installs, 1).await;
+    let waiting = {
+        let server = Arc::clone(&server);
+        let token = token.clone();
+        let large = large.clone();
+        tokio::spawn(async move { put(&server, &token, &large).await })
+    };
+    until_waiting(&installs, 1, "the large install waits for the half").await;
+
+    let (status, _, body) = route(&server, get_object(LfsOid::digest(&small), &token)).await;
+    assert_eq!((status, body), (StatusCode::OK, small.clone()));
+    let (status, _, body) = route(&server, verify_object(&small, &token)).await;
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(true))
+    );
+    assert!(!waiting.is_finished(), "the large install still waits");
+    assert_eq!(installs.waiting(), 1);
+
+    drop(held);
+    let status = tokio::time::timeout(PATIENCE, waiting)
+        .await
+        .expect("the large install runs once the half drains")
+        .expect("upload task");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(installs.held_bytes(), 0, "it gave the whole half back");
+    let (status, _, body) = route(&server, get_object(LfsOid::digest(&large), &token)).await;
+    assert_eq!((status, body == large), (StatusCode::OK, true));
+}
+
+/// Every wait for room carries the queue deadline: a spooled upload whose
+/// install waits past it ends with nothing stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spooled_upload_that_waits_past_its_deadline_to_install_stores_nothing() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            queue_wait_timeout_ms: 400,
+            ..one_room_config().limits
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let installs = server.transfers.lfs_installs();
+    let held = hold(&server, &installs, installs.total()).await;
+    let bytes = b"an object whose install waits too long".to_vec();
+    let started = std::time::Instant::now();
+    let status = put(&server, &writer_token(), &bytes).await;
+    assert!(started.elapsed() >= std::time::Duration::from_millis(400));
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        server
+            .vault
+            .lfs_object(LfsOid::digest(&bytes))
+            .expect("record read"),
+        None
+    );
+    assert_eq!(installs.waiting(), 0, "it left the line");
+    drop(held);
+}
+
+/// Review r11 (Sol R11-2, P1): a verify took its room while its object was
+/// absent (no manifest to count), then, its body held back until an upload
+/// landed the object, read the whole new manifest outside any room. A verify
+/// sized on an absent object now reads no manifest at all: it answers that
+/// the object is not stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_verify_sized_while_its_object_was_absent_reads_no_manifest_that_lands_later() {
+    let (_dir, server) = test_server(secret_config());
+    let token = writer_token();
+    let bytes = varied_bytes(1_000_000);
+    let oid = LfsOid::digest(&bytes).to_hex();
+    let (send, sent) = tokio::sync::oneshot::channel::<Vec<u8>>();
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+    }));
+    let verify = {
+        let server = Arc::clone(&server);
+        let request = request(
+            "POST",
+            &format!("{}/verify", object_uri(&oid)),
+            Some(&token),
+            body,
+        );
+        tokio::spawn(async move { route(&server, request).await })
+    };
+    let reads = server.transfers.lfs_reads();
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while reads.held_bytes() == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the verify takes its room"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(put(&server, &token, &bytes).await, StatusCode::OK);
+    send.send(serde_json::to_vec(&json!({"oid": oid, "size": bytes.len()})).expect("body"))
+        .expect("the verify waits for its body");
+    let (status, _, body) = tokio::time::timeout(PATIENCE, verify)
+        .await
+        .expect("the verify answers")
+        .expect("verify task");
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(false)),
+        "it read no manifest it held no room for"
+    );
+    let (status, _, body) = route(&server, verify_object(&bytes, &token)).await;
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(true)),
+        "a verify sized on the stored object reads it"
+    );
+}
+
+/// A chunk exchange of `body`, declaring its length as a client's does.
+fn sized_exchange(token: &str, body: Vec<u8>) -> Request<Body> {
+    let mut exchange = request(
+        "POST",
+        &format!("/git/{REPO}/info/lfs/chunks"),
+        Some(token),
+        Body::from(body.clone()),
+    );
+    exchange
+        .headers_mut()
+        .insert(CONTENT_LENGTH, HeaderValue::from(body.len()));
+    exchange
+}
+
+/// Review r10 (Sol R10-2, P1): an exchange decodes its request's selector
+/// into a tree of values, tens to hundreds of bytes each however few each
+/// takes on the wire, before the selector's shape is checked, and every
+/// exchange took the same fixed room. An exchange now takes room for its
+/// decode by the length its request declares, before it reads a byte; one
+/// larger than the half waits until it can run alone, and the row asks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_exchange_takes_room_for_its_decode_by_the_length_it_declares() {
+    use crate::wire_telemetry::LimitRow;
+    // Room in the half for an exchange of a small request beside a byte held
+    // there, and not for one of a large request.
+    let half = crate::api::LFS_MEMORY_ROOM + 64 * 1024 * 1024;
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_memory_bytes: 2 * half,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let reads = server.transfers.lfs_reads();
+    let (want, token, _) = chunk_want(&server, &varied_bytes(100_000));
+    let held = hold(&server, reads, 1).await;
+    let (status, _, _) = route(&server, sized_exchange(&token, want)).await;
+    assert_eq!(status, StatusCode::OK, "a small request's exchange runs");
+
+    // An array of millions of nils, a value a byte, as large as a frame
+    // allows.
+    let nils = 7 * 1024 * 1024;
+    let mut selector = vec![0xdd];
+    selector.extend_from_slice(&u32::try_from(nils).expect("count").to_be_bytes());
+    selector.resize(5 + nils, 0xc0);
+    let large = {
+        let server = Arc::clone(&server);
+        let request = sized_exchange(&token, selector);
+        tokio::spawn(async move { route(&server, request).await.0 })
+    };
+    until_waiting(reads, 1, "the large request's exchange waits to run alone").await;
+    until_asked(&server, LimitRow::LfsMemoryBytes, "the row asks").await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!large.is_finished(), "it waits while a byte is held");
+
+    drop(held);
+    let status = tokio::time::timeout(PATIENCE, large)
+        .await
+        .expect("the large exchange runs once the half drains")
+        .expect("exchange task");
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    until_released(reads, "the exchange gave its room back").await;
+}
+
+/// Review r10 (Sol R10-3, Astra R10-2, P1): a download or a verify reads its
+/// object's whole manifest, copies it, and keeps its references until its
+/// last byte is sent, and neither took room in `lfs_memory_bytes`, so slow
+/// downloads of large objects could hold gigabytes of manifests. Each now
+/// takes room for its manifest on the reads' half before its transfer
+/// permit: past the half it waits holding no permit, and a download keeps
+/// its room until its stream ends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn downloads_and_verifies_wait_for_their_manifests_room_holding_no_permit() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_transfers: 1,
+            ..one_room_config().limits
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let bytes = varied_bytes(1_000_000);
+    let oid = LfsOid::digest(&bytes);
+    assert_eq!(put(&server, &token, &bytes).await, StatusCode::OK);
+    let reads = server.transfers.lfs_reads();
+    let held = hold(&server, reads, reads.total()).await;
+    let download = {
+        let server = Arc::clone(&server);
+        let request = get_object(oid, &token);
+        tokio::spawn(async move { route(&server, request).await })
+    };
+    let verify = {
+        let server = Arc::clone(&server);
+        let request = verify_object(&bytes, &token);
+        tokio::spawn(async move { route(&server, request).await })
+    };
+    until_waiting(reads, 2, "the download and the verify wait for room").await;
+    // With one transfer permit, an upload still lands: the reads in line
+    // hold none.
+    assert_eq!(
+        put(&server, &token, b"an upload beside the waiting reads").await,
+        StatusCode::OK
+    );
+    assert!(!download.is_finished() && !verify.is_finished());
+
+    drop(held);
+    let (status, _, body) = download.await.expect("download task");
+    assert_eq!((status, body == bytes), (StatusCode::OK, true));
+    let (status, _, body) = verify.await.expect("verify task");
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(true))
+    );
+
+    // A download nobody reads keeps its manifest's room until its stream
+    // ends.
+    until_released(reads, "the reads gave their room back").await;
+    let unread = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(crate::test_credentials::bind_request(
+            &server,
+            get_object(oid, &token),
+        ))
+        .await
+        .expect("route response");
+    assert_eq!(unread.status(), StatusCode::OK);
+    let room = crate::api::Transfers::read_room(&server.vault, oid)
+        .expect("room")
+        .expect("a stored object");
+    assert_eq!(reads.held_bytes() as u64, room);
+    let read = to_bytes(unread.into_body(), usize::MAX)
+        .await
+        .expect("download body");
+    assert_eq!(read, bytes);
+    until_released(reads, "the room goes with the stream").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn lfs_quota_counts_stored_objects_and_uploads_in_flight() {
+async fn an_upload_past_the_quota_lands_and_the_quota_row_asks() {
     let config = SyncServerConfig {
         limits: crate::config::LimitsConfig {
             lfs_quota_bytes: 3_000,
@@ -1053,28 +1859,18 @@ async fn lfs_quota_counts_stored_objects_and_uploads_in_flight() {
     };
     let (_dir, server) = test_server(config);
     let token = writer_token();
-    let first = vec![b'a'; 1_500];
 
-    // An upload in flight holds its declared size against the quota.
+    // An upload in flight holds its declared size against the quota, so the
+    // next one crosses it: it lands, and the row asks.
     let held = hold_upload(&server, &token, 2_000).await;
-    assert_eq!(
-        put(&server, &token, &first).await,
-        StatusCode::INSUFFICIENT_STORAGE
-    );
+    assert!(!asked(&server, crate::wire_telemetry::LimitRow::LfsQuota));
+    assert_eq!(put(&server, &token, &[b'a'; 1_500]).await, StatusCode::OK);
+    assert!(asked(&server, crate::wire_telemetry::LimitRow::LfsQuota));
     held.abort();
     let _ = held.await;
-    let freed = once_freed(StatusCode::INSUFFICIENT_STORAGE, || {
-        put(&server, &token, &first)
-    })
-    .await;
-    assert_eq!(freed, StatusCode::OK);
 
-    // A stored object counts in its own right.
-    assert_eq!(
-        put(&server, &token, &[b'b'; 2_000]).await,
-        StatusCode::INSUFFICIENT_STORAGE
-    );
-    assert_eq!(put(&server, &token, &[b'c'; 1_000]).await, StatusCode::OK);
+    // Stored objects count in their own right; past them uploads still land.
+    assert_eq!(put(&server, &token, &[b'b'; 2_000]).await, StatusCode::OK);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1096,9 +1892,171 @@ async fn a_stalled_lfs_upload_ends_at_the_idle_limit_and_frees_its_permit() {
         .expect("a body that stops arriving ends its upload")
         .unwrap();
     assert_ne!(status, StatusCode::OK);
-    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, || {
-        put(&server, &token, b"after the stall")
-    })
+    assert_eq!(
+        put(&server, &token, b"after the stall").await,
+        StatusCode::OK
+    );
+}
+
+/// Review r2 (Sol and Astra, P1): an upload with no declared size claimed no
+/// room until its end, so between two looks at the disk it wrote up to 8 MiB
+/// that no claim covered, and many such uploads at once took the disk
+/// through its reserve. Each look now claims the piece in hand and all the
+/// upload may write before its next look.
+#[tokio::test]
+async fn an_undeclared_upload_claims_what_it_may_write_before_its_next_look() {
+    let (_dir, server) = test_server(secret_config());
+    // Room past the reserve for 4 MiB: less than one look covers.
+    server
+        .transfers
+        .disk
+        .show_free(server.config.limits.disk_reserve_bytes + 4 * 1024 * 1024);
+    let bytes = vec![b'x'; 2_048];
+    let oid = LfsOid::digest(&bytes);
+    let (status, _, _) = tokio::time::timeout(
+        PATIENCE,
+        route(
+            &server,
+            request(
+                "PUT",
+                &object_uri(&oid.to_hex()),
+                Some(&writer_token()),
+                stalled_body(bytes),
+            ),
+        ),
+    )
+    .await
+    .expect("ended at its first look, without waiting for the rest of its body");
+    assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
+    assert_eq!(
+        put(&server, &writer_token(), b"a small declared object").await,
+        StatusCode::OK,
+        "an upload whose whole size fits still lands"
+    );
+}
+
+/// Review r2 (Astra, P1): an upload with no declared size reserved the size
+/// row against the quota and never more, so however far past the quota it
+/// went, the quota row never asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_undeclared_upload_past_the_quota_lands_and_the_quota_row_asks() {
+    let config = SyncServerConfig {
+        max_lfs_object_bytes: 512,
+        limits: crate::config::LimitsConfig {
+            lfs_quota_bytes: 1_024,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let bytes = vec![b'q'; 2_048];
+    let oid = LfsOid::digest(&bytes);
+    let (status, _, _) = route(
+        &server,
+        request(
+            "PUT",
+            &object_uri(&oid.to_hex()),
+            Some(&writer_token()),
+            Body::from(bytes),
+        ),
+    )
     .await;
-    assert_eq!(freed, StatusCode::OK);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "past the quota an upload still lands"
+    );
+    assert!(
+        asked(&server, crate::wire_telemetry::LimitRow::LfsQuota),
+        "and the quota row asks"
+    );
+}
+
+/// Review r3 (Astra, P1): transfer workers ran on the runtime's shared
+/// blocking pool (512 threads) while the transfer rows admit 2,048, so one
+/// credential's slow uploads could hold every pooled thread. The rest of the
+/// server's blocking work, and transfers already admitted, then waited in
+/// the pool's own line, with no deadline and no turns.
+#[test]
+fn slow_uploads_never_hold_the_threads_the_rest_of_the_server_needs() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let (_dir, server) = test_server(secret_config());
+        let token = writer_token();
+        let mut held = Vec::new();
+        for _ in 0..3 {
+            held.push(hold_upload(&server, &token, 4_096).await);
+        }
+        assert!(
+            tokio::time::timeout(PATIENCE, tokio::task::spawn_blocking(|| ()))
+                .await
+                .is_ok(),
+            "three stalled uploads leave the shared pool's two threads free"
+        );
+        assert!(
+            held.iter().all(|upload| !upload.is_finished()),
+            "each upload is still in flight, holding its worker"
+        );
+        for upload in held {
+            upload.abort();
+        }
+    });
+}
+
+/// Review r4 (Sol, P2): a stored copy claimed a quarter more than its bytes,
+/// which is nothing for a small object, though every object writes its
+/// spool's last block, a page for its last short chunk, a manifest and its
+/// rows whatever its size; many small uploads could take that room past
+/// their claims.
+#[tokio::test]
+async fn a_small_upload_claims_what_any_object_takes_on_the_disk() {
+    let (_dir, server) = test_server(secret_config());
+    server
+        .transfers
+        .disk
+        .show_free(server.config.limits.disk_reserve_bytes + 4 * 1024);
+    assert_eq!(
+        put(&server, &writer_token(), b"sixteen bytes!!!").await,
+        StatusCode::INSUFFICIENT_STORAGE,
+        "4 KiB past the reserve is no room for an object's own pages and rows"
+    );
+}
+
+/// Review r6 (Astra, P1): a stored copy claimed a quarter more than its
+/// bytes, which covers whole-page rounding only on 4 KiB pages. LMDB writes
+/// in the creating host's page (16 KiB on Apple silicon, up to 32 KiB), and a
+/// chunk of the 32 KiB minimum then takes two such pages, so uploads could
+/// write the reserve away within their claims. A stored copy now claims a
+/// page more for each chunk it may have, in the store's own page size.
+#[tokio::test]
+async fn a_store_writing_larger_pages_claims_a_page_more_for_each_chunk() {
+    let (_dir, server) = test_server(secret_config());
+    let reserve = server.config.limits.disk_reserve_bytes;
+    // A 1 MiB object: its spool, then a stored copy of up to 33 chunks.
+    let object: Vec<u8> = (0..1024 * 1024_u32)
+        .map(|at| (at.wrapping_mul(2_654_435_761) >> 24) as u8)
+        .collect();
+    // Room for the spool and a quarter more than the object, past the reserve.
+    server
+        .transfers
+        .disk
+        .show_free(reserve + 2 * 1024 * 1024 + 512 * 1024);
+
+    server.transfers.show_page(32 * 1024);
+    assert_eq!(
+        put(&server, &writer_token(), &object).await,
+        StatusCode::INSUFFICIENT_STORAGE,
+        "on 32 KiB pages its 33 chunks may take a page more each"
+    );
+    server.transfers.show_page(4 * 1024);
+    assert_eq!(
+        put(&server, &writer_token(), &object).await,
+        StatusCode::OK,
+        "on 4 KiB pages the same room holds it"
+    );
 }
