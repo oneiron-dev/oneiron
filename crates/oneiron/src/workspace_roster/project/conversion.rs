@@ -302,14 +302,14 @@ impl Vault {
                         owner.revalidate_in_txn(self, txn)?,
                         crate::EdgeActorClass::Human,
                     );
-                    let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                    let filed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
                     crate::workspace_roster::workplace_join::file_house_joins_in_txn(
                         self,
                         txn,
                         EntityId::from_hex(&project.home_room)?,
                         &project.roster,
                         caller,
-                        at,
+                        filed_at,
                     )?;
                 }
                 None => {
