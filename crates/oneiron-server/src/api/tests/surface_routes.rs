@@ -2348,3 +2348,266 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
         StatusCode::NOT_MODIFIED
     );
 }
+
+/// The response `app` gives `request`, read whole.
+async fn respond(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Bytes) {
+    let response = app.oneshot(request).await.expect("route response");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    (status, headers, body)
+}
+
+fn content_security_policy(headers: &HeaderMap) -> String {
+    headers
+        .get(CONTENT_SECURITY_POLICY)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Publishes the code bundle `site` (an index that loads `app.js`) and a
+/// public PDF blob, and returns the bundle's paths and the blob's.
+fn publish_site_and_report(server: &SyncServer) -> (Vec<String>, String) {
+    let repo = create_artifact_repo(b"<script src=\"app.js\"></script>\n");
+    let snapshot = ingest_artifact_snapshot(server, repo.path(), "site", 10);
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Published,
+            &snapshot.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("publish code artifact");
+    let blob_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_blob_artifact(
+            &blob_id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+        )
+        .expect("create blob artifact");
+    let uploader = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &uploader,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+            b"uploader",
+        )
+        .expect("create uploader");
+    let version = server
+        .vault
+        .append_blob_artifact_version(
+            &blob_id,
+            b"%PDF-1.7\nreport",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            oneiron::WriteActor::new(uploader, oneiron::EdgeActorClass::Human),
+            oneiron::TimeRange { start: 11, end: 11 },
+            11,
+        )
+        .expect("append blob version");
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &blob_id,
+            oneiron::ArtifactPointerChannel::Published,
+            version.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("publish blob");
+    let code = vec![
+        "/a/site/_s/c/published/".to_owned(),
+        "/a/site/_s/c/published/app.js".to_owned(),
+        format!(
+            "/a/site/_s/f/{}/index.html",
+            oneiron::artifact_hex(&snapshot.snapshot.fork_hash)
+        ),
+    ];
+    (
+        code,
+        format!("/a/{}/_s/c/published/report.pdf", blob_id.to_hex()),
+    )
+}
+
+/// Asserts the policy `app` gives each code path, on a 200 and on a 304,
+/// and that the blob stays an inline PDF with the passive policy.
+async fn assert_artifact_policies(
+    app: &Router,
+    code: &[String],
+    blob: &str,
+    code_policy: impl Fn(&str) -> bool,
+) {
+    for path in code {
+        let (status, headers, _) = respond(
+            app.clone(),
+            Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .expect("code artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        let policy = content_security_policy(&headers);
+        assert!(code_policy(&policy), "{path}: {policy}");
+        let (status, headers, _) = respond(
+            app.clone(),
+            Request::builder()
+                .uri(path)
+                .header(IF_NONE_MATCH, headers.get(ETAG).expect("code ETag").clone())
+                .body(Body::empty())
+                .expect("revalidation request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED, "{path}");
+        let policy = content_security_policy(&headers);
+        assert!(code_policy(&policy), "304 {path}: {policy}");
+    }
+    let (status, headers, body) = respond(
+        app.clone(),
+        Request::builder()
+            .uri(blob)
+            .body(Body::empty())
+            .expect("blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nreport");
+    assert_eq!(
+        headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/pdf")
+    );
+    assert!(headers.get(CONTENT_DISPOSITION).is_none());
+    assert_eq!(
+        content_security_policy(&headers),
+        ARTIFACT_CONTENT_SECURITY_POLICY
+    );
+}
+
+/// F02 (H103): a code bundle's documents run the bundle's own scripts, so
+/// their policy follows the origin that serves them. Beside an artifact-only
+/// listener (ordinary serve), the API's `/a/` sandboxes them into an opaque
+/// origin with no frames, popups or forms, and the listener keeps them on its
+/// own origin, still with no frames, popups, forms or workers. Where no such
+/// listener serves (managed serve), `/a/` is as it was. A passive blob keeps
+/// its inline presentation everywhere: a sandbox would stop the browser's PDF
+/// viewer.
+#[tokio::test]
+async fn code_artifact_documents_take_the_policy_of_the_origin_that_serves_them() {
+    use crate::managed::{ManagedState, WakeLedger, build_managed_app};
+    use oneiron_vault_contract::{DEK_LEN, TOKEN_LEN, read_credentials, write_credentials};
+
+    let directives = |policy: &str| -> Vec<String> {
+        policy
+            .split(';')
+            .map(|part| part.trim().to_owned())
+            .collect()
+    };
+    let no_escape = |policy: &str| {
+        let directives = directives(policy);
+        directives.contains(&"frame-src 'none'".to_owned())
+            && directives.contains(&"connect-src 'none'".to_owned())
+            && !policy.contains("allow-popups")
+            && !policy.contains("allow-top-navigation")
+            && !policy.contains("allow-forms")
+    };
+    let sandboxed = |policy: &str| {
+        directives(policy).contains(&"sandbox allow-scripts".to_owned()) && no_escape(policy)
+    };
+    let own_origin = |policy: &str| {
+        let directives = directives(policy);
+        directives.contains(&"sandbox allow-scripts allow-same-origin".to_owned())
+            && directives.contains(&"worker-src 'none'".to_owned())
+            && no_escape(policy)
+    };
+
+    let (_dir, server) = test_server();
+    let server = Arc::new(
+        Arc::into_inner(server)
+            .expect("sole server owner")
+            .with_artifact_listener(49152),
+    );
+    let (code, blob) = publish_site_and_report(&server);
+    assert_artifact_policies(&api_routes(server.clone()), &code, &blob, sandboxed).await;
+    assert_artifact_policies(&artifact_app(server), &code, &blob, own_origin).await;
+
+    let (dir, managed) = test_server();
+    let (code, blob) = publish_site_and_report(&managed);
+    let mut frame = Vec::new();
+    write_credentials(&mut frame, &[0x71; DEK_LEN], &[0x72; TOKEN_LEN]).expect("frame");
+    let credentials = read_credentials(&frame[..]).expect("credentials");
+    let ledger = WakeLedger::load(
+        managed.vault().clone(),
+        "managed-test".into(),
+        dir.path().join("supervisor.sock"),
+        &credentials,
+    )
+    .expect("wake ledger");
+    let state = Arc::new(ManagedState::new(
+        "managed-test".into(),
+        managed.clone(),
+        ledger,
+    ));
+    let app = build_managed_app(managed, state);
+    assert_artifact_policies(&app, &code, &blob, |policy| {
+        policy == ARTIFACT_CONTENT_SECURITY_POLICY
+    })
+    .await;
+}
+
+/// The artifact-only listener's origin holds `/a/` and nothing else: no API
+/// read, no discovery, no MCP, no sync socket. The API names its port.
+#[tokio::test]
+async fn the_artifact_listener_serves_no_api_route_and_health_names_its_port() {
+    let (_dir, server) = test_server();
+    let server = Arc::new(
+        Arc::into_inner(server)
+            .expect("sole server owner")
+            .with_artifact_listener(49152),
+    );
+    let entity = seeded_test_entity_id(0x0f02);
+    for (method, path) in [
+        ("GET", "/api/health".to_owned()),
+        ("GET", "/api/openapi.json".to_owned()),
+        ("GET", "/.well-known/oneiron".to_owned()),
+        ("GET", "/api/core/discover".to_owned()),
+        ("GET", format!("/api/entity/{}", entity.to_hex())),
+        ("GET", "/ws".to_owned()),
+        ("POST", "/mcp".to_owned()),
+        ("POST", "/v1/core/facade/receipts".to_owned()),
+    ] {
+        let (status, _, body) = respond(
+            artifact_app(server.clone()),
+            Request::builder()
+                .method(method)
+                .uri(&path)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+        assert!(body.is_empty(), "{method} {path} reached a route");
+    }
+
+    let (status, _, body) = respond(
+        api_routes(server),
+        Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .expect("health request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).expect("health JSON");
+    assert_eq!(body["artifact_port"], Value::from(49152));
+}
