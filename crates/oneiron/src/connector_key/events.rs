@@ -147,7 +147,9 @@ fn subscriptions(
             continue;
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if body.predicate != PREDICATE {
+        // A pack hook's binding shares the row kind (ARCH-0080 §7); it is not
+        // a connector-event subscription.
+        if body.predicate != PREDICATE || crate::skill_hub::pack_catalog::is_hook_binding(&body) {
             continue;
         }
         let row = decode_subscription(&body)?;
