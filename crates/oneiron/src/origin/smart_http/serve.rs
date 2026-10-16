@@ -380,10 +380,11 @@ fn serve_request(
         )));
     }
     #[cfg(test)]
-    if vault
-        .test_hooks()
-        .stop_push_before_landing
-        .swap(false, Ordering::SeqCst)
+    if request.is_receive_pack()
+        && vault
+            .test_hooks()
+            .stop_push_before_landing
+            .swap(false, Ordering::SeqCst)
     {
         return Err(serve_failed("stopped before the landing"));
     }
