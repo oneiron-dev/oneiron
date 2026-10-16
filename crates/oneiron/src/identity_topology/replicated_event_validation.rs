@@ -172,6 +172,14 @@ impl Vault {
                 {
                     return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
                 }
+                // A peer's op, signed or not, retires the owner no more than
+                // a local one does.
+                if let Some(rejection) = super::transition_table::owner_retirement(
+                    &op,
+                    &crate::vault::embedded_owner_actor_id()?,
+                ) {
+                    return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
+                }
             }
             // An undo inherits the participant validity of the event it
             // names; a resolution must instead satisfy the SAME door rule
