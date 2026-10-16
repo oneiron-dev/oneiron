@@ -80,6 +80,12 @@ pub struct PipelineBuilder<'a> {
     pub(super) corpus_scope: CorpusScope,
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
+    /// An `All`-world pack's non-base claim share, held while the pack's
+    /// rows are selected rather than after its cut (ARCH-0004).
+    pub(super) context_pack_world_share: Option<f32>,
+    /// A pack's disclosure clamp, applied before selection so a withheld row
+    /// takes no slot. The assembly's own sweep still runs after.
+    pub(super) disclosure_preselect: Option<crate::disclosure::DisclosureContext>,
     /// A context pack discovers skills and agents beside its memory results.
     /// Off for a caller that reads only the memory results.
     pub(super) capability_lanes: bool,
@@ -149,6 +155,8 @@ impl<'a> PipelineBuilder<'a> {
             corpus_scope: CorpusScope::All,
             made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
+            context_pack_world_share: None,
+            disclosure_preselect: None,
             capability_lanes: true,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,

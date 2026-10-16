@@ -2,9 +2,10 @@
 
 Canon: `/oneiron/eval/oneiron-arch-0042-beam-evaluation-harness-v1/`.
 
-The sibling performance bench has a [statistical-validity follow-up plan](performance-bench-statistical-plan.md)
-for independent repeats, per-axis intervals, and run-order effects. It is not
-implemented in the current `oneiron-bench perf` runner.
+The sibling performance bench has a statistical-validity plan for independent
+repeats, per-axis intervals, and run-order effects. It lives in canon at
+`/oneiron/eval/oneiron-arch-0042-beam-evaluation-harness-v1/#performance-bench`.
+The current `oneiron-bench perf` runner does not implement it.
 
 `cargo run -p oneiron-bench -- beam` lists the commands. There are two lanes:
 

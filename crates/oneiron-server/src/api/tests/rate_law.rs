@@ -5,6 +5,7 @@
 
 use crate::admission::Crossing;
 use crate::wire_telemetry::LimitRow;
+use oneiron::limit_ask::EngineLimit;
 
 /// Callers per row: enough to cross a bound of one several times over.
 const CALLERS: usize = 8;
@@ -43,10 +44,16 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::WindowsPerConnection => {
             crate::handler::window_row_tests::cross_the_windows(CALLERS).await
         }
+        LimitRow::DecisionReads => {
+            crate::api::llm::decision_read::tests::cross_the_decision_reads(CALLERS).await
+        }
         LimitRow::BookingWindows => {
             tokio::task::spawn_blocking(|| crate::api::booking::cross_the_booking_windows(CALLERS))
                 .await
                 .unwrap()
+        }
+        LimitRow::Engine(EngineLimit::KeyedFilterJsonBytes) => {
+            crate::api::facade::tests::cross_the_keyed_filters(CALLERS).await
         }
     }
 }

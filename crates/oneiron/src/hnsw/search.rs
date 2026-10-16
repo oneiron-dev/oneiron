@@ -22,7 +22,9 @@ use super::storage::{
     load_neighbors, load_neighbors_lenient, load_required_vector, load_vector_into, read_count,
     read_entry_point,
 };
-use super::types::{BeamOptions, ExpandedLists, GraphSource, HeapEntry, neighbor_list_hash};
+use super::types::{
+    Admission, BeamOptions, ExpandedLists, GraphSource, HeapEntry, neighbor_list_hash,
+};
 
 /// Vector search over the NSW graph.
 ///
@@ -42,6 +44,11 @@ use super::types::{BeamOptions, ExpandedLists, GraphSource, HeapEntry, neighbor_
 /// beam and can never be rescored back in. Recall is beam-bounded and
 /// rises with `ef_search`; a beam covering the whole reachable corpus
 /// recovers brute-force parity.
+///
+/// `admission` is the reader's: a node it refuses takes no place among the
+/// matches, so rows the reader cannot have never crowd one it can out of
+/// the beam. The walk still passes through refused nodes, and the result
+/// is short when the beam finds fewer admitted ones.
 pub(crate) fn hnsw_search(
     store: &impl ManifestDbs,
     config: &VaultConfig,
@@ -49,6 +56,7 @@ pub(crate) fn hnsw_search(
     query_vector: &[f32],
     limit: usize,
     skip_rescore: bool,
+    admission: Option<&Admission<'_>>,
 ) -> Result<Vec<ScoredEntity>> {
     // Defense-in-depth: callers (pipeline vector channel, vault search)
     // validate too.
@@ -113,6 +121,7 @@ pub(crate) fn hnsw_search(
                 score_dims: score_dims_for(config),
             },
             graph,
+            admission,
         ),
         config.dimensions,
         &mut 0,
@@ -230,7 +239,7 @@ pub(super) fn beam_search(
         txn,
         query_vector,
         entry_point,
-        (options, GraphSource::Persisted),
+        (options, GraphSource::Persisted, None),
         dimensions,
         ops,
     )
@@ -252,7 +261,7 @@ pub(super) fn beam_search_logged(
         txn,
         query_vector,
         entry_point,
-        (options, GraphSource::PersistedLogged(log)),
+        (options, GraphSource::PersistedLogged(log), None),
         dimensions,
         ops,
     )
@@ -263,7 +272,7 @@ fn beam_search_graph(
     txn: &RoTxn<'_>,
     query_vector: &[f32],
     entry_point: EntityId,
-    (options, graph): (BeamOptions, GraphSource<'_>),
+    (options, graph, admission): (BeamOptions, GraphSource<'_>, Option<&Admission<'_>>),
     dimensions: usize,
     ops: &mut u64,
 ) -> Result<Vec<HeapEntry>> {
@@ -319,7 +328,7 @@ fn beam_search_graph(
         || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &entry_point)?.is_some()
     {
         results.push(entry);
-        if check_existence && is_match(store, txn, &entry_point, walks)? {
+        if check_existence && is_match(store, txn, &entry_point, walks, admission)? {
             visible.push(entry);
         }
     }
@@ -380,7 +389,7 @@ fn beam_search_graph(
             if check_existence
                 && (visible.len() < ef
                     || distance < visible.peek().map_or(f32::INFINITY, |entry| entry.distance))
-                && is_match(store, txn, &neighbor_id, walks)?
+                && is_match(store, txn, &neighbor_id, walks, admission)?
             {
                 visible.push(candidate);
                 if visible.len() > ef {
@@ -412,12 +421,22 @@ fn beam_search_graph(
 /// Whether a node the walk scored can be a match: not archived, not a row
 /// the reading room hides, and, while `walks` are pending, not one marked
 /// stale or a dependent walk withdraws before its batch removes the vector
-/// (the walk passes through each, see [`load_vector_into`]).
-fn is_match(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId, walks: bool) -> Result<bool> {
+/// (the walk passes through each, see [`load_vector_into`]); and one the
+/// reader's `admission` admits.
+fn is_match(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    walks: bool,
+    admission: Option<&Admission<'_>>,
+) -> Result<bool> {
     let hidden = store.vectors().hides(id.as_bytes())
         || crate::vault_cleanup::is_archived_in_txn(store, txn, id)?
         || (walks && crate::ports::stale_in_txn(store, txn, id)?);
-    Ok(!hidden)
+    if hidden {
+        return Ok(false);
+    }
+    admission.map_or(Ok(true), |admits| admits(txn, id))
 }
 
 #[allow(clippy::too_many_arguments)]

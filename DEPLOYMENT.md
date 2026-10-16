@@ -108,9 +108,10 @@ connection floor and each address's unauthenticated share. Managed serve
 (`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
 `/a/` is unchanged until the supervisor routes an artifact origin.
 
-`[limits]` bounds the work a caller can start. Every bound is finite, and a
-zero is a config error. The count rows sit far above fleet scale (each is at
-least ten times the 200 agents a fleet plans for, many of them on one
+`[limits]` bounds the work a caller can start. Every bound is finite. A zero is
+a config error on every row except `disk_reserve_bytes`, where zero puts the
+floor at the disk's last byte. The count rows sit far above fleet scale (each
+is at least ten times the 200 agents a fleet plans for, many of them on one
 credential and one address). Past a row, work waits its turn in a fair queue,
 round-robin across credentials and in arrival order within one, and the row
 asks whether everything is okay: a typed `inspect_limit_crossing` question
@@ -129,6 +130,7 @@ lfs_transfers = 2048              # LFS uploads, downloads and verifies at once;
 lfs_memory_bytes = 2147483648     # bytes LFS transfers hold in memory: half reads, half installs (default: an eighth of memory)
 embedder_requests = 2048          # requests `embedder serve` holds at once; past it they queue
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
+decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
@@ -137,6 +139,7 @@ git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
+keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

@@ -199,10 +199,14 @@ pub struct DecisionReceipt {
     /// has no row; a missing reading never stands for P(yes) = 0.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paired: Vec<PairedReading>,
+    /// One row per measurement that read the person question ("ask a person?"), kept
+    /// whether or not it routed the decision. A missing reading has no row, as above.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub person: Vec<PairedReading>,
 }
 
-/// The paired "does this need more thinking?" reading, bound by the engine to the
-/// provider that measured it with its answer.
+/// A yes/no reading taken with the answer ("does this need more thinking?" or "ask a
+/// person?"), bound by the engine to the provider that measured it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PairedReading {
@@ -230,6 +234,23 @@ impl PairedReading {
                     row.probability,
                 )
         })
+    }
+
+    /// A receipt's paired and person rows: each list valid, and no provider's person row
+    /// reading the question its paired row read.
+    pub(crate) fn readings_valid(
+        paired: &[Self],
+        person: &[Self],
+        answered: EntityId,
+        providers: &[ProviderPin],
+    ) -> bool {
+        Self::rows_valid(paired, answered, providers)
+            && Self::rows_valid(person, answered, providers)
+            && person.iter().all(|asked| {
+                paired
+                    .iter()
+                    .all(|row| row.provider != asked.provider || row.question != asked.question)
+            })
     }
 }
 
@@ -268,6 +289,29 @@ pub struct TypedDecision {
     pub human_ask: Option<HumanAskReason>,
 }
 
+/// A person answered differently from the model's prior: the Coach's tuning input for
+/// the person threshold row and the bands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonChangedAnswer {
+    #[serde(with = "super::codec::entity")]
+    pub question: EntityId,
+    pub question_version: u32,
+    #[serde(with = "super::codec::entity")]
+    pub principal: EntityId,
+    pub reason: HumanAskReason,
+    pub prior: DecisionAnswer,
+    pub prior_probability: Option<f64>,
+    /// The model and revision that read the prior.
+    pub prior_provider: ProviderPin,
+    /// The prior read's "needs more thinking?" and "ask a person?" readings, when it took
+    /// them, each with its question and version.
+    pub prior_paired: Option<PairedReading>,
+    pub prior_person: Option<PairedReading>,
+    pub person: DecisionAnswer,
+    pub queue_pin: ProviderPin,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HumanAskReason {
@@ -275,6 +319,8 @@ pub enum HumanAskReason {
     Uncertain,
     ProviderUnavailable,
     OwnerSelected,
+    /// The read's P(ask a person) reached the owner's threshold row.
+    NeedsPerson,
 }
 
 pub(super) fn invalid(message: &str) -> Error {
