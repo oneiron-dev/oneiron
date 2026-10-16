@@ -18,6 +18,13 @@ use crate::config::FeedbackInboxConfig;
 /// A server with its open inbox on, behind a host secret: no request here
 /// holds a key.
 fn inbox_server(notes_per_sender: u32) -> (tempfile::TempDir, Arc<SyncServer>) {
+    inbox_server_with(notes_per_sender, crate::config::LimitsConfig::default())
+}
+
+fn inbox_server_with(
+    notes_per_sender: u32,
+    limits: crate::config::LimitsConfig,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
     test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         feedback_inbox: FeedbackInboxConfig {
@@ -25,6 +32,7 @@ fn inbox_server(notes_per_sender: u32) -> (tempfile::TempDir, Arc<SyncServer>) {
             notes_per_sender,
             ..FeedbackInboxConfig::default()
         },
+        limits,
         ..Default::default()
     })
 }
@@ -181,6 +189,15 @@ async fn past_the_flood_cap_an_anonymous_sender_is_shed_typed() {
         let retry: u64 = headers["retry-after"].to_str().unwrap().parse().unwrap();
         assert!((1..=3_600).contains(&retry), "{retry}");
     }
+    // A shed sender is refused before its body is read or decoded.
+    let (status, _, reply) = keyless(
+        &server,
+        "203.0.113.9",
+        post("application/msgpack"),
+        "not a bundle",
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{reply}");
     assert_eq!(notes(&server).len(), 2);
 
     for peer in ["2001:db8::1", "2001:db8::2"] {
@@ -193,6 +210,39 @@ async fn past_the_flood_cap_an_anonymous_sender_is_shed_typed() {
     let (status, _, _) = keyless(&server, "198.51.100.7", link("text=me+too"), "").await;
     assert_eq!(status, StatusCode::ACCEPTED);
     assert_eq!(notes(&server).len(), 5);
+}
+
+/// Bug repro (Sol on #1526): the `[limits]` row bounds the whole query a
+/// link sends, ignored fields too, and a POST body; past it the note is
+/// refused, typed, and nothing lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_note_past_the_limits_row_lands_nothing() {
+    let (_dir, server) = inbox_server_with(
+        20,
+        crate::config::LimitsConfig {
+            feedback_inbox_bytes: 1_024,
+            ..Default::default()
+        },
+    );
+    let padding = "a".repeat(60 * 1_024);
+    for (request, body) in [
+        (link(&format!("text=hi&category={padding}")), String::new()),
+        (
+            link(&format!("text=hi&utm_source={padding}")),
+            String::new(),
+        ),
+        (post("text/plain"), "b".repeat(2_048)),
+    ] {
+        let (status, _, reply) = keyless(&server, "203.0.113.9", request, &body).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{reply}");
+        assert_eq!(
+            reply["details"]["state"], "feedback_inbox_too_large",
+            "{reply}"
+        );
+    }
+    assert!(notes(&server).is_empty());
+    let (status, _, _) = keyless(&server, "203.0.113.9", link("text=short"), "").await;
+    assert_eq!(status, StatusCode::ACCEPTED);
 }
 
 /// Done-means (OF-420 kept): a vault's own send lands in another server's

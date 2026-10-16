@@ -4,9 +4,9 @@
 //! form or JSON (`{"text": …}`) body, or carries the v1 bundle a vault's
 //! `collector` send delivers. Mounted only while `[feedback.inbox]` is on.
 //!
-//! The flood cap is the one refusal; besides it, only the machine's floors
-//! (the `[limits]` body row and the disk reserve) and an empty or unreadable
-//! note are refused. The reply says only that the note landed, so nothing of
+//! The flood cap is the one refusal, asked before anything of a request is
+//! read; besides it, only the machine's floors (the `[limits]` body row and
+//! the disk reserve) and an empty or unreadable note are refused. The reply says only that the note landed, so nothing of
 //! the vault is reachable from here; the notes are read back through the
 //! owner's routes.
 
@@ -18,9 +18,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::body::Bytes;
-use axum::extract::rejection::QueryRejection;
 use axum::extract::{DefaultBodyLimit, FromRequest, Query, Request, State};
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Form, Json, Router};
@@ -103,17 +102,23 @@ async fn take_link(
     State(server): State<Arc<SyncServer>>,
     ClientAddress(sender): ClientAddress,
     method: Method,
-    query: Result<Query<NoteFields>, QueryRejection>,
+    uri: Uri,
 ) -> Response {
     // A link checker's HEAD lands nothing; the GET it is checking does.
     if method == Method::HEAD {
         return StatusCode::NO_CONTENT.into_response();
     }
-    let fields = match query {
-        Ok(Query(fields)) => fields,
-        Err(_) => return Unlanded::Unreadable.response(),
-    };
-    land(server, sender, fields_note(FeedbackInboxVia::Link, fields)).await
+    if let Some(shed) = shed(&server, sender) {
+        return shed;
+    }
+    // The query as sent is bounded before any of it is decoded.
+    if uri.query().map_or(0, str::len) > body_row(&server) {
+        return Unlanded::TooLarge.response();
+    }
+    let note = Query::<NoteFields>::try_from_uri(&uri)
+        .map_err(|_| Unlanded::Unreadable)
+        .and_then(|Query(fields)| fields_note(FeedbackInboxVia::Link, fields));
+    land(server, note).await
 }
 
 async fn take_post(
@@ -121,6 +126,9 @@ async fn take_post(
     ClientAddress(sender): ClientAddress,
     request: Request,
 ) -> Response {
+    if let Some(shed) = shed(&server, sender) {
+        return shed;
+    }
     let content_type = request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -148,7 +156,20 @@ async fn take_post(
             Err(rejection) => Err(Unlanded::rejected(rejection.status())),
         },
     };
-    land(server, sender, note).await
+    land(server, note).await
+}
+
+/// The flood cap, asked before anything of a request is read: every
+/// attempt it lets through counts, an empty or unreadable one too, and a
+/// shed sender costs no decoding.
+fn shed(server: &SyncServer, sender: Option<std::net::IpAddr>) -> Option<Response> {
+    let shed = server.feedback_flood.admit(sender, Instant::now()).err()?;
+    Some(refusal(
+        StatusCode::TOO_MANY_REQUESTS,
+        "feedback_inbox_flood",
+        "the inbox takes no more notes from this sender this hour",
+        Some(shed.retry_after.as_secs()),
+    ))
 }
 
 fn fields_note(via: FeedbackInboxVia, fields: NoteFields) -> Result<Note, Unlanded> {
@@ -175,11 +196,7 @@ fn text_note(
     })
 }
 
-async fn land(
-    server: Arc<SyncServer>,
-    sender: Option<std::net::IpAddr>,
-    note: Result<Note, Unlanded>,
-) -> Response {
+async fn land(server: Arc<SyncServer>, note: Result<Note, Unlanded>) -> Response {
     let note = match note {
         Ok(note) => note,
         Err(unlanded) => return unlanded.response(),
@@ -198,7 +215,11 @@ async fn land(
     if size > body_row(&server) {
         return Unlanded::TooLarge.response();
     }
-    if !server.transfers.disk.has_room_for(size as u64) {
+    // Room for the stored row (the note, a bundle's second copy of its
+    // note, the row's framing), held until the write commits.
+    let claim = server.transfers.disk.claim();
+    let room = (size as u64).saturating_mul(2).saturating_add(4_096);
+    if !server.transfers.disk.hold(&claim, room) {
         return refusal(
             StatusCode::INSUFFICIENT_STORAGE,
             "feedback_inbox_disk_floor",
@@ -206,21 +227,16 @@ async fn land(
             None,
         );
     }
-    if let Err(shed) = server.feedback_flood.admit(sender, Instant::now()) {
-        return refusal(
-            StatusCode::TOO_MANY_REQUESTS,
-            "feedback_inbox_flood",
-            "the inbox takes no more notes from this sender this hour",
-            Some(shed.retry_after.as_secs()),
-        );
-    }
-    let stored = tokio::task::spawn_blocking(move || match note {
-        Note::Text {
-            via,
-            text,
-            category,
-        } => server.vault().take_feedback_note(via, text, category),
-        Note::Bundle(bytes) => server.vault().take_feedback_bundle(&bytes),
+    let stored = tokio::task::spawn_blocking(move || {
+        let _held = claim;
+        match note {
+            Note::Text {
+                via,
+                text,
+                category,
+            } => server.vault().take_feedback_note(via, text, category),
+            Note::Bundle(bytes) => server.vault().take_feedback_bundle(&bytes),
+        }
     })
     .await;
     match stored {

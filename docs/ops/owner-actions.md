@@ -512,7 +512,8 @@ feedback_inbox_bytes = 131072   # the most one note may carry
 Then `GET /v1/feedback?text=…` (optionally `&category=bug`, `papercut`, `confusion` or
 `feature-wish`) lands one note, and so does `POST /v1/feedback` with a plain-text, form or JSON
 (`{"text": …}`) body, or the MessagePack bundle another vault's `collector` send delivers. The
-reply is `202 {"received": true}` and nothing else. Past either count a sender gets `429` with
+reply is `202 {"received": true}` and nothing else. Every attempt the cap lets through counts, an empty or unreadable one too.
+Past either count a sender gets `429` with
 `retry-after` and `details.state = "feedback_inbox_flood"`; an IPv6 sender is counted by its
 /64. Behind a reverse proxy, list it in `trusted_proxies` so the proxy's `X-Forwarded-For` names
 the sender; otherwise every caller is counted by its own connection. A longer note gets `413`,
