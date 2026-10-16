@@ -269,8 +269,16 @@ side_tables! {
     SKILL_HUB_SOURCE_RETIRED: VaultMeta b"skill_hub/source-retired/v1\0" Raw;
     /// Portable goal-axis identity of a skill under optimization. Key: id16.
     SKILL_OPTIMIZE_GOAL: VaultMeta b"skill_optimize/goal/v1\0" Raw;
+    /// A proposal's live goal-axis report, bound to its bodies, evidence and plan (MessagePack
+    /// named map). Key: id16 (proposal).
+    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v1\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
+    /// A skill goal's join to a project's goal record (MessagePack named map). Key: id16 (goal).
+    SKILL_OPTIMIZE_PROJECT_GOAL: VaultMeta b"skill_optimize/project_goal/v1\0" Raw;
+    /// A learned preference proposed for a project's goal record (MessagePack named map). Key:
+    /// id16 (project) + id16 (row).
+    SKILL_OPTIMIZE_PROJECT_GOAL_PROPOSAL: VaultMeta b"skill_optimize/project_goal_proposal/v1\0" Raw;
     /// One pending skill-edit tradeoff ask (MessagePack named map: pending proposal, question, bound
     /// Jev verdict). Key: id16 (proposal).
     SKILL_OPTIMIZE_TRADEOFF_ASK: VaultMeta b"skill_optimize/tradeoff_ask/v1\0" Raw;
