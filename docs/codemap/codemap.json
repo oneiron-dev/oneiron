@@ -38606,6 +38606,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
+      "crate-vis": 1,
       "re-export": 5
      }
     },
@@ -38632,10 +38633,10 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 6,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -38649,6 +38650,20 @@
      "purpose": "Paged, revision-bound current-window metadata enrolment",
      "surface": {
       "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedRelay"
+     ],
+     "path": "src/sync/client/residence/sealed.rs",
+     "purpose": "Sealed copies of private-world windows through the home (OF-534 G7, DEC-0005 fix 8)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -38725,7 +38740,7 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "re-export": 2,
       "struct": 3
      }
@@ -38737,7 +38752,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -39331,7 +39346,7 @@
       "const": 2,
       "crate-vis": 5,
       "fn": 12,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 2
      }
     },
@@ -39380,6 +39395,20 @@
      "surface": {
       "crate-vis": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedShelfEntry"
+     ],
+     "path": "src/sync/residence/sealed.rs",
+     "purpose": "Home custody of private-world windows the home may not read (OF-534 G7, DEC-0005 world privacy fix 8)",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -46125,7 +46154,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 137,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46295,7 +46324,7 @@
    },
    "over_bar": 72,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2781,
+   "source_files": 2783,
    "test_files": 903
   },
   "oneiron-android": {
