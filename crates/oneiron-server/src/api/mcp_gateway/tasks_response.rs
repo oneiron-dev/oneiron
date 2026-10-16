@@ -660,6 +660,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
+        "vault.rooms.reply_strips" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.claim" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -710,7 +711,28 @@ fn mcp_agent_verb_input(
         "ai.video.cancel" => a.spec.clone().ok_or_else(invalid),
         "connector.list" => a.spec.clone().ok_or_else(invalid),
         "connector.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.commit" => a.spec.clone().ok_or_else(invalid),
+        "vault.remember" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.retract" => a.spec.clone().ok_or_else(invalid),
+        "vault.forget" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.history" => a.spec.clone().ok_or_else(invalid),
+        "vault.delete" => a.spec.clone().ok_or_else(invalid),
+        "vault.writes.pending" => a.spec.clone().ok_or_else(invalid),
+        "vault.hydrate" => a.spec.clone().ok_or_else(invalid),
+        "vault.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.search.bm25" => a.spec.clone().ok_or_else(invalid),
+        "vault.neighbors" => a.spec.clone().ok_or_else(invalid),
+        "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.habits.checkin" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.admit" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.append" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.read" => a.spec.clone().ok_or_else(invalid),
         "connector.outbound.schedule" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.edit" => a.spec.clone().ok_or_else(invalid),
         _ => Err(invalid()),
     }
 }
@@ -907,6 +929,9 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("turn_ref".to_owned(), value.clone());
             }
         }
+        "vault.rooms.reply_strips" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.rooms.claim" => {
             if let Some(value) = input.get("room_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
@@ -990,7 +1015,70 @@ pub(crate) fn mcp_agent_verb_arguments(
         "connector.status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.commit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.remember" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.retract" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.forget" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.delete" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.writes.pending" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.hydrate" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.search.bm25" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.neighbors" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.structural.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.habits.checkin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.admit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.append" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "connector.outbound.schedule" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.from_entity" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.edit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         _ => return Err(invalid()),
@@ -1559,6 +1647,20 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.rooms.reply_strips" => {
+            let input: oneiron::conversation_dag::ReplyStripsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_reply_strips(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.groups.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("groups");
+            mcp_agent_verb_output(output, source)
+        }
         "vault.rooms.claim" => {
             let input: oneiron::task_verb::sdk::RoomClaimRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -1799,10 +1901,178 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.commit" => {
+            let input: oneiron::task_verb::sdk::CommitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_commit(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.remember" => {
+            let input: oneiron::memory::ClaimInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_remember(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.retract" => {
+            let input: oneiron::task_verb::sdk::ClaimRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_retract(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.forget" => {
+            let input: oneiron::task_verb::sdk::ForgetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_forget(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.list" => {
+            let input: oneiron::memory::ClaimListFilter =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.history" => {
+            let input: oneiron::task_verb::sdk::ClaimRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_history(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.delete" => {
+            let input: oneiron::task_verb::sdk::SafeDeleteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_delete(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.writes.pending" => {
+            let input: oneiron::task_verb::sdk::ReceiptsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_writes_pending(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.hydrate" => {
+            let input: oneiron::task_verb::sdk::HydrateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_hydrate(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.get" => {
+            let input: oneiron::task_verb::sdk::EntityRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_get(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.search.bm25" => {
+            let input: oneiron::task_verb::sdk::QueryBm25Request =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_search_bm25(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.neighbors" => {
+            let input: oneiron::task_verb::sdk::NeighborsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_neighbors(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.structural.put" => {
+            let input: oneiron::memory::StructuralPutInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_structural_put(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.habits.checkin" => {
+            let input: oneiron::memory::HabitCheckinInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_habits_checkin(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.admit" => {
+            let input: oneiron::memory::AdmitImportedClaimInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_admit(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.put" => {
+            let input: oneiron::memory::BlobArtifactInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_put(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.append" => {
+            let input: oneiron::task_verb::sdk::AppendBlobVersionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_append(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.read" => {
+            let input: oneiron::task_verb::sdk::ReadBlobVersionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "connector.outbound.schedule" => {
             let input: oneiron::task_verb::sdk::OutboundScheduleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::connector_outbound_schedule(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.create" => {
+            let input: oneiron::task_verb::sdk::CreateNoteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.from_entity" => {
+            let input: oneiron::task_verb::sdk::CreateNoteFromEntityRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_from_entity(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.edit" => {
+            let input: oneiron::task_verb::sdk::EditNoteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_edit(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
