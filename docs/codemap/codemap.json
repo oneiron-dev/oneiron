@@ -45791,7 +45791,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VoiceIdentity",
@@ -45799,6 +45799,9 @@
       "VoiceRefOrigin",
       "VoiceRefPack",
       "VoiceRegisterClip",
+      "VoiceRenderConsent",
+      "VoiceRenderDecision",
+      "VoiceRenderGrant",
       "VoiceTargetClone",
       "VoiceTargetRecord"
      ],
@@ -45807,8 +45810,8 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 8,
-      "struct": 6
+      "fn": 10,
+      "struct": 9
      }
     },
     {
@@ -49533,7 +49536,7 @@
     "voice_identity": {
      "files": 11,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching"
     },
@@ -49580,7 +49583,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 110,
+   "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2993,
    "test_files": 903
@@ -53451,6 +53454,74 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AssetMedia",
+      "AssetOrigin",
+      "Call",
+      "ContractError",
+      "CreatedSlide",
+      "DeckAsset",
+      "DeckCreateArgs",
+      "DeckCreated",
+      "DeckNames",
+      "DeckPlaceholder",
+      "DeckRead",
+      "DeckReadArgs",
+      "DeckShape",
+      "DeckSlide",
+      "DeckTransactionArgs",
+      "Description",
+      "DocumentLocationArgs",
+      "DocxLimits",
+      "DocxProjectArgs",
+      "DocxReadArgs",
+      "DocxReviseArgs",
+      "DocxValidateArgs",
+      "Done",
+      "Editability",
+      "ErrorCode",
+      "InputInfo",
+      "KeptBriefArgs",
+      "Op",
+      "OpInfo",
+      "Output",
+      "OutputInfo",
+      "OutputSpec",
+      "PackageLimits",
+      "Ports",
+      "RecalcClockArgs",
+      "RecalcPort",
+      "Recalculated",
+      "Reply",
+      "ShapeKind",
+      "UnverifiedUnit",
+      "XlsxProjectArgs",
+      "XlsxReadArgs",
+      "XlsxRecalcArgs"
+     ],
+     "path": "src/contract/mod.rs",
+     "purpose": "The document engine's contract (ARCH-0075 section 2, \"an organ crate with a hosted API\"): one versioned…",
+     "surface": {
+      "const": 6,
+      "enum": 7,
+      "fn": 11,
+      "struct": 35,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/contract/run.rs",
+     "purpose": "The handlers behind [`super::execute`]: each op maps its args onto one native door and the door's refusals…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -54113,7 +54184,7 @@
      "surface": {
       "enum": 1,
       "fn": 8,
-      "mod": 13,
+      "mod": 14,
       "re-export": 5
      }
     },
@@ -54444,6 +54515,13 @@
     }
    ],
    "modules": {
+    "contract": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The document engine's contract (ARCH-0075 section 2, \"an organ crate with a hosted API\"): one versioned…"
+    },
     "deck": {
      "files": 10,
      "impl_vault": false,
@@ -54536,9 +54614,9 @@
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
     }
    },
-   "over_bar": 5,
+   "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 57,
+   "source_files": 59,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -67286,6 +67364,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/contract_port.rs",
+     "purpose": "The document contract's recalculation port (ARCH-0075 section 2): a host serving `oneiron_docedit::contract`…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -67432,6 +67518,13 @@
      "layout": "file",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…"
     },
+    "contract_port": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The document contract's recalculation port (ARCH-0075 section 2): a host serving `oneiron_docedit::contract`…"
+    },
     "engine": {
      "files": 1,
      "impl_vault": false,
@@ -67491,7 +67584,7 @@
    },
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 1
   }
  }
