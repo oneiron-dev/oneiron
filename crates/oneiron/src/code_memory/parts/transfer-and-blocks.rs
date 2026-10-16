@@ -326,7 +326,6 @@ pub(crate) fn blocks_path_exists(
             &current,
             EdgeKind::Blocks,
             None,
-            "blocks readiness walk",
         )?;
         for peer in peers {
             if traversed_steps >= MAX_EDGE_QUERY_RESULTS {
