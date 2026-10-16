@@ -96,7 +96,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_pack/resolve.rs` | src | m | 15 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
 | `src/api/context_pack/response.rs` | src | m | 30 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
 | `src/api/conversation_dag/mod.rs` | src | m | 16 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
-| `src/api/conversation_dag/types.rs` | src | m | 32 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
+| `src/api/conversation_dag/types.rs` | src | m | 33 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
 | `src/api/conversation_members.rs` | src | s | 5 crate-vis | — | Room membership routes |
 | `src/api/conversation_transcript.rs` | src | s | 4 crate-vis | — | `GET /v1/core/conversations/{conversation_id}/transcript`: one conversation's turns and their messages in… |
 | `src/api/conversation_transcript/tests.rs` | test | s | — | — | A loopback page reads an imported coding session from the vault alone, with the dev-mode credential a local… |
@@ -118,7 +118,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/facade.rs` | src | m | 7 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
-| `src/api/facade/agent_verbs.rs` | src | L | 1 crate-vis | — | — |
+| `src/api/facade/agent_verbs.rs` | src | XL | 1 crate-vis | — | — |
 | `src/api/facade/host_doors.rs` | src | m | 9 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
@@ -280,7 +280,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli.rs` | src | L | 19 struct · 8 enum · 3 fn · 4 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +19 | — |
 | `src/cli/deployment_args.rs` | src | s | 1 struct | HostRelayArgs | Host-only deployment commands; neither opens a local vault |
 | `src/cli/hook_args.rs` | src | s | 5 struct · 3 enum · 1 fn | HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs | `oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and… |
-| `src/cli/owner_args.rs` | src | m | 19 struct · 6 enum | BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand, ImportBatchArgs, ImportCommand, ImportDecisionArgs +17 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
+| `src/cli/owner_args.rs` | src | m | 20 struct · 6 enum | BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand, ImportArchiveArgs, ImportBatchArgs, ImportCommand +18 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/wake_args.rs` | src | s | 1 struct · 1 enum | WakeArgs, WakeCommand | Host-side wake inbox commands |
 | `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 11 re-export · 4 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | L | 1 fn · 22 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
