@@ -41,6 +41,11 @@ pub enum AgentVerb {
     VaultRoomsTrunk,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultRoomsHost,
+    VaultRoomsSharing,
+    VaultCompanionsSharingGet,
+    VaultWorkspaceWorkCompanionGet,
+    VaultWorkspaceWorkCompanionSet,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -93,6 +98,11 @@ impl AgentVerb {
         Self::VaultRoomsTrunk,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultRoomsHost,
+        Self::VaultRoomsSharing,
+        Self::VaultCompanionsSharingGet,
+        Self::VaultWorkspaceWorkCompanionGet,
+        Self::VaultWorkspaceWorkCompanionSet,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -148,6 +158,11 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => "vault.rooms.trunk",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultRoomsHost => "vault.rooms.host",
+            Self::VaultRoomsSharing => "vault.rooms.sharing",
+            Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
+            Self::VaultWorkspaceWorkCompanionGet => "vault.workspace.work_companion.get",
+            Self::VaultWorkspaceWorkCompanionSet => "vault.workspace.work_companion.set",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -199,6 +214,11 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsHost
+                | Self::VaultRoomsSharing
+                | Self::VaultCompanionsSharingGet
+                | Self::VaultWorkspaceWorkCompanionGet
+                | Self::VaultWorkspaceWorkCompanionSet
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -258,6 +278,11 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsHost
+                | Self::VaultRoomsSharing
+                | Self::VaultCompanionsSharingGet
+                | Self::VaultWorkspaceWorkCompanionGet
+                | Self::VaultWorkspaceWorkCompanionSet
         )
     }
     pub const fn is_section(self) -> bool {
@@ -337,6 +362,11 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsHost
+                | Self::VaultRoomsSharing
+                | Self::VaultCompanionsSharingGet
+                | Self::VaultWorkspaceWorkCompanionGet
+                | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -371,6 +401,7 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
@@ -425,6 +456,11 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsSharing => &["room_ref"],
+            Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultWorkspaceWorkCompanionGet => &["spec"],
+            Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -478,6 +514,11 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsSharing => &["room_ref"],
+            Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultWorkspaceWorkCompanionGet => &["spec"],
+            Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],

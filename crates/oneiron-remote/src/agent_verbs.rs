@@ -151,6 +151,25 @@ impl OneironClient {
                     "vault.rooms.speak" => remote_agent_verb_output::<
                         oneiron::memory::WitnessReceipt,
                     >(client, verb, &input),
+                    "vault.rooms.host" => remote_agent_verb_output::<
+                        oneiron::workspace_roster::RoomStanding,
+                    >(client, verb, &input),
+                    "vault.rooms.sharing" => remote_agent_verb_output::<
+                        oneiron::workspace_roster::RoomSharingView,
+                    >(client, verb, &input),
+                    "vault.companions.sharing.get" => remote_agent_verb_output::<
+                        oneiron::workspace_roster::CompanionSharingView,
+                    >(client, verb, &input),
+                    "vault.workspace.work_companion.get" => {
+                        remote_agent_verb_output::<oneiron::workspace_roster::WorkCompanionPolicy>(
+                            client, verb, &input,
+                        )
+                    }
+                    "vault.workspace.work_companion.set" => {
+                        remote_agent_verb_output::<oneiron::workspace_roster::WorkCompanionPolicy>(
+                            client, verb, &input,
+                        )
+                    }
                     _ => Err(crate::error::bad_request(
                         "unknown SDK agent verb",
                         &["Use a verb from the SDK catalog."],
@@ -701,5 +720,65 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.speak", value)
+    }
+    pub fn vault_rooms_host(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomHostRequest,
+    ) -> Result<oneiron::workspace_roster::RoomStanding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.host", value)
+    }
+    pub fn vault_rooms_sharing(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomRefRequest,
+    ) -> Result<oneiron::workspace_roster::RoomSharingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.sharing", value)
+    }
+    pub fn vault_companions_sharing_get(
+        &self,
+        input: &oneiron::task_verb::sdk::CompanionSharingRequest,
+    ) -> Result<oneiron::workspace_roster::CompanionSharingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.companions.sharing.get", value)
+    }
+    pub fn vault_workspace_work_companion_get(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkspaceRefRequest,
+    ) -> Result<oneiron::workspace_roster::WorkCompanionPolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workspace.work_companion.get", value)
+    }
+    pub fn vault_workspace_work_companion_set(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkCompanionSetRequest,
+    ) -> Result<oneiron::workspace_roster::WorkCompanionPolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workspace.work_companion.set", value)
     }
 }
