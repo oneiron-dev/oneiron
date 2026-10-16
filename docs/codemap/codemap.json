@@ -20204,6 +20204,7 @@
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
       "const": 15,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 21,
       "struct": 7
@@ -20305,6 +20306,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/intake/report.rs",
+     "purpose": "T2 for universal reports, sharing the bundle intake's cosine normalization",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/feedback/intake/tests.rs",
@@ -20319,7 +20330,59 @@
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReportDisclosure",
+      "ReportIssue",
+      "ReportKind",
+      "ReportReceipt",
+      "ReportRequest",
+      "ReportReview",
+      "ReportStatus"
+     ],
+     "path": "src/feedback/report.rs",
+     "purpose": "OF-537: free, actor-bound reports about a durable subject, never a task kind",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 3,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReportDisclosureChoice",
+      "ReportRoute",
+      "ReportRoutedPayload",
+      "ReportSignature"
+     ],
+     "path": "src/feedback/report/routing.rs",
+     "purpose": "Maker routing and disclosure",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/store.rs",
+     "purpose": "Durable issue identity, entity-local review, and the arrival index",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3
      }
     },
     {
@@ -26938,6 +27001,16 @@
      "purpose": "Scope-honesty world names come only from actor-admitted claim rows",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/report.rs",
+     "purpose": "A report files evidence, not authority",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -41739,7 +41812,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 79
+      "fn": 80
      }
     },
     {
@@ -46418,7 +46491,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 10,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46621,7 +46694,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 122,
+     "files": 123,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47260,7 +47333,7 @@
    },
    "over_bar": 78,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2846,
+   "source_files": 2851,
    "test_files": 903
   },
   "oneiron-android": {
@@ -50408,7 +50481,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 48
+      "const": 49
      }
     },
     {
@@ -54769,7 +54842,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 61
+      "fn": 62
      }
     },
     {
@@ -55618,7 +55691,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 62
+      "fn": 63
      }
     },
     {
@@ -58658,6 +58731,16 @@
      "purpose": "Reactive local-first read contract (ONE-1437 — the on-device half of OF-241)",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/report.rs",
+     "purpose": "OF-537 report execution and owner triage",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -63346,7 +63429,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 228,
+     "files": 229,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63600,7 +63683,7 @@
    },
    "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 428,
+   "source_files": 429,
    "test_files": 182
   },
   "oneiron-spawn": {
