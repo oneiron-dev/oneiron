@@ -159,7 +159,7 @@ impl SlideReviewProvider for Provider {
 }
 fn review(input: &[u8], count: usize, run_ref: &str) -> SlideReviewRun {
     let local = Provider::new(DecisionRung::Local);
-    let jev = Provider::new(DecisionRung::SystemOne);
+    let system_one = Provider::new(DecisionRung::SystemOne);
     review_slides(
         input,
         Some(1),
@@ -178,7 +178,7 @@ fn review(input: &[u8], count: usize, run_ref: &str) -> SlideReviewRun {
             policy: &DecisionBandPolicy::default(),
             reversibility: Reversibility::ReversibleRead,
             labels: &labels(),
-            providers: &[&local, &jev],
+            providers: &[&local, &system_one],
             run_ref,
             at: 1_700_000_000_123,
         },
@@ -194,7 +194,7 @@ fn malformed_response_and_duplicate_unit_never_yield_a_proposal() {
         calls: RefCell::new(Vec::new()),
         malformed: true,
     };
-    let jev = Provider::new(DecisionRung::SystemOne);
+    let system_one = Provider::new(DecisionRung::SystemOne);
     let call = |units: Vec<_>| {
         review_slides(
             &input,
@@ -214,7 +214,7 @@ fn malformed_response_and_duplicate_unit_never_yield_a_proposal() {
                 policy: &DecisionBandPolicy::default(),
                 reversibility: Reversibility::ReversibleRead,
                 labels: &labels(),
-                providers: &[&local, &jev],
+                providers: &[&local, &system_one],
                 run_ref: "malformed",
                 at: 1_700_000_000_123,
             },
@@ -515,7 +515,7 @@ impl SlideReviewProvider for ShortProvider {
 #[test]
 fn wrong_batch_cardinality_fails_closed() {
     let input = deck(2);
-    let jev = Provider::new(DecisionRung::SystemOne);
+    let system_one = Provider::new(DecisionRung::SystemOne);
     assert!(
         review_slides(
             &input,
@@ -535,7 +535,7 @@ fn wrong_batch_cardinality_fails_closed() {
                 policy: &DecisionBandPolicy::default(),
                 reversibility: Reversibility::ReversibleRead,
                 labels: &labels(),
-                providers: &[&ShortProvider, &jev],
+                providers: &[&ShortProvider, &system_one],
                 run_ref: "short-output",
                 at: 1_700_000_000_123,
             }
