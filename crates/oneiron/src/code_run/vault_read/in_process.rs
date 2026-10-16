@@ -7,7 +7,7 @@ use crate::context_pack::{
 };
 use crate::pipeline::ScoredEntity;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::vault::Vault;
 
@@ -256,13 +256,14 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .read(&[PointRead::short(&short_id, content_hash)], None)
             .map_err(|error| engine_failure(method, &error))?
             .single();
+        let mut narrowing = hydrated.receipt;
         self.project_hydrate(
             method,
             short_id,
             content_hash,
             view,
             hydrated.value,
-            &hydrated.receipt,
+            &mut narrowing,
         )
     }
 
@@ -273,7 +274,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         content_hash: u8,
         view: View,
         hydrated: Option<ReadRow>,
-        narrowing: &crate::claim::ScopedReadReceipt,
+        narrowing: &mut crate::claim::ScopedReadReceipt,
     ) -> VaultReadResult<CoreHydrateResponse> {
         // A missing row and a clamp-denied claim are the SAME answer here. The
         // adapter never probes the naked vault to tell them apart.
@@ -301,7 +302,22 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 item: None,
             });
         };
-        let item = entity_record_from_parts(&id, entity_type, learned_at, None, &body, view);
+        // A generated image is served the form a reader that declared no
+        // image input reads (OF-329): its ASSET_TEXT, read through this lane.
+        let mut served = None;
+        if entity_type == ENTITY_TYPE_ASSET {
+            let asset = crate::memory::hydrated_asset(&self.scoped_read, id, &mut |_| true)
+                .map_err(|error| engine_failure(method, &error))?;
+            narrowing.restrict_with(&asset.receipt);
+            if let crate::memory::HydratedAsset::Text { body, asset_text } = asset.value {
+                if let Some(producers) = self.producers {
+                    producers.list([asset_text]);
+                }
+                served = Some(body);
+            }
+        }
+        let body = served.as_deref().unwrap_or(&body);
+        let item = entity_record_from_parts(&id, entity_type, learned_at, None, body, view);
         Ok(CoreHydrateResponse {
             narrowing: narrowing.clone(),
             status: CoreHydrateStatus::Live,
@@ -344,7 +360,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .scoped_read
             .read(&refs, None)
             .map_err(|error| engine_failure(METHOD, &error))?;
-        let narrowing = hydrated.receipt;
+        let mut narrowing = hydrated.receipt;
         let mut values = hydrated.value.into_iter();
         let mut results = Vec::with_capacity(request.refs.len());
         for (reference, parsed) in request.refs.iter().zip(parsed) {
@@ -356,14 +372,15 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 });
                 continue;
             };
-            // The batch receipt covers every item in the same authority txn.
+            // The batch receipt covers every item in the same authority txn,
+            // and each text an item's asset is served.
             let result = self.project_hydrate(
                 METHOD,
                 short_id,
                 content_hash,
                 view,
                 values.next().flatten(),
-                &narrowing,
+                &mut narrowing,
             );
             results.push(batch_item_from_result(reference.clone(), result)?);
         }
