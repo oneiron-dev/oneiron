@@ -143,6 +143,31 @@ impl Package {
         Ok(id)
     }
 
+    /// Remove `source`'s relationship `id`. Its target stays in the archive,
+    /// unreachable: a cache the opening application rebuilds when it is
+    /// missing (a workbook's calculation chain) goes this way.
+    pub fn unrelate(&mut self, source: &str, id: &str) -> Result<()> {
+        let rels = rels_name(source);
+        let bytes = self
+            .part(&rels)?
+            .ok_or(Error::Edit("relationship part missing"))?;
+        let tree = XmlTree::parse(&bytes, self.limits.xml)
+            .map_err(|_| Error::Edit("relationship part unreadable"))?;
+        tree.root(PACKAGE_RELATIONSHIPS, "Relationships")
+            .map_err(|_| Error::Edit("relationship part unreadable"))?;
+        let span = tree
+            .children(0)
+            .find(|(_, node)| {
+                node.is(PACKAGE_RELATIONSHIPS, "Relationship") && node.attr("Id") == Some(id)
+            })
+            .ok_or(Error::Edit("no such relationship"))?
+            .1
+            .span
+            .clone();
+        let value = [&bytes[..span.start], &bytes[span.end..]].concat();
+        self.transact(|package| package.write_metadata(&rels, value))
+    }
+
     /// Add the relationship part of `source`, which has none, as written: a
     /// cloned part keeps its relationship ids, which [`Package::relate`]
     /// would mint afresh.

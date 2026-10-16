@@ -23,6 +23,7 @@ pub mod native_patch;
 pub mod ooxml;
 pub mod retained_opc;
 pub mod xlfn;
+pub mod xlsx_body;
 
 pub use stemma::api::{Document, validate};
 pub use stemma::docx::ArchiveLimits;

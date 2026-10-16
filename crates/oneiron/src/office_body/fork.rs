@@ -30,6 +30,9 @@ pub enum ConflictKind {
     CompetingMove,
     /// Both sides edited the same text or cells; the text CRDT interleaves them.
     BothEdited,
+    /// Both sides set the same workbook cell or name differently; the later
+    /// write would silently replace the other.
+    BothSet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
