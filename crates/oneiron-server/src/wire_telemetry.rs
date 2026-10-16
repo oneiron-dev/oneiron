@@ -103,10 +103,13 @@ pub enum LimitRow {
     ResidenceIndexPages,
     /// Bytes one residence index projection holds.
     ResidenceIndexBytes,
+    /// Booking requests per minute under the owner's slot-list, hold and book
+    /// rules: an authenticated caller past one waits for it to open.
+    BookingWindows,
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -126,6 +129,7 @@ impl LimitRow {
         Self::RetainedMemoryBytes,
         Self::ResidenceIndexPages,
         Self::ResidenceIndexBytes,
+        Self::BookingWindows,
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
@@ -151,6 +155,7 @@ impl LimitRow {
             Self::RetainedMemoryBytes => "limits.retained_memory_bytes",
             Self::ResidenceIndexPages => "residence_operation_budgets.max_index_pages",
             Self::ResidenceIndexBytes => "residence_operation_budgets.index_cache_bytes",
+            Self::BookingWindows => "booking.anti_abuse:per_minute",
         }
     }
 }

@@ -142,6 +142,10 @@ pub struct SyncServer {
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
+    /// With the override set, the runtime instant it holds from: the booking
+    /// clock then moves with the runtime's (paused) time.
+    #[cfg(test)]
+    pub(crate) booking_test_clock_from: Option<tokio::time::Instant>,
 }
 
 /// Sets the vault's live rows from `[limits]` and points their crossings at
@@ -330,6 +334,8 @@ impl SyncServer {
             artifact_port: None,
             #[cfg(test)]
             booking_test_now_secs: None,
+            #[cfg(test)]
+            booking_test_clock_from: None,
         })
     }
 

@@ -432,8 +432,14 @@ pub(super) fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<
         if matches!(outcome, IdentityOpOutcome::Applied { .. }) {
             merged += sources.len();
         }
+        // The survivor now reads its shells' opt-outs through, so the
+        // party's contact rows are folded again in the same write.
         vault.try_with_write_txn_grouped(|wtxn| {
-            put_party_index_in_txn(vault, wtxn, &party_key, *survivor)
+            put_party_index_in_txn(vault, wtxn, &party_key, *survivor)?;
+            crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
+                vault, wtxn, &party_key, None, now,
+            )?;
+            Ok::<_, CommError>(())
         })?;
     }
     Ok(merged)

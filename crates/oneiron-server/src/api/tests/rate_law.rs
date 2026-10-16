@@ -63,6 +63,11 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::ResidenceIndexPages | LimitRow::ResidenceIndexBytes => {
             crate::livequery::rule5_tests::cross_the_index(row, CALLERS).await
         }
+        LimitRow::BookingWindows => {
+            tokio::task::spawn_blocking(|| crate::api::booking::cross_the_booking_windows(CALLERS))
+                .await
+                .unwrap()
+        }
     }
 }
 
