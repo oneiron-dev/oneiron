@@ -160,7 +160,7 @@ fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
                 .as_slice()
                 .try_into()
                 .map_err(|_| invalid_consolidation("person about input is not an id"))?;
-            Ok(EntityId::from_bytes(bytes))
+            EntityId::from_bytes(bytes)
         }
         _ => Err(invalid_consolidation("person about input names no person")),
     }
