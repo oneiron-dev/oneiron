@@ -38,6 +38,8 @@ pub mod org_routing;
 mod peer;
 /// Private live previews on a session-owned origin.
 pub mod preview;
+mod relay;
+pub use relay::{IROH_RELAY_REVISION, RelayConfig, run_relay};
 mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
@@ -47,6 +49,8 @@ mod vault_gates;
 mod vm_guest;
 #[cfg(target_os = "linux")]
 mod vm_host;
+#[cfg(target_os = "linux")]
+mod vm_schedule;
 #[cfg(target_os = "linux")]
 pub use self::vm_host::{SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun, run_vault_vm};
 
