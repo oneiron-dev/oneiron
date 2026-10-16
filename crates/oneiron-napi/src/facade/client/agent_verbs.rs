@@ -281,6 +281,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_packs_setup_prepare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.prepare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_setup_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_setup_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_setup_verify(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.verify", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_propose(
         &self,
         input: serde_json::Value,

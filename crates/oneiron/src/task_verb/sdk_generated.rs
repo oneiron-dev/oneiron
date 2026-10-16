@@ -120,6 +120,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.packs.setup.prepare",
+                crate::code_run::vault_read::request_schema::<PackSetupRequest>(),
+            ),
+            (
+                "vault.packs.setup.get",
+                crate::code_run::vault_read::request_schema::<PackSetupRequest>(),
+            ),
+            (
+                "vault.packs.setup.answer",
+                crate::code_run::vault_read::request_schema::<PackSetupAnswerRequest>(),
+            ),
+            (
+                "vault.packs.setup.verify",
+                crate::code_run::vault_read::request_schema::<PackSetupVerifyRequest>(),
+            ),
+            (
                 "vault.lenses.propose",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
             ),
@@ -781,6 +797,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.verify" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1482,6 +1526,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.packs.setup.prepare" => {
+            let _input: PackSetupRequest = decode(value.clone())?;
+        }
+        "vault.packs.setup.get" => {
+            let _input: PackSetupRequest = decode(value.clone())?;
+        }
+        "vault.packs.setup.answer" => {
+            let _input: PackSetupAnswerRequest = decode(value.clone())?;
+        }
+        "vault.packs.setup.verify" => {
+            let _input: PackSetupVerifyRequest = decode(value.clone())?;
+        }
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
         }
@@ -1815,6 +1871,10 @@ pub fn invoke(
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
+        "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
+        "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
+        "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
@@ -2211,6 +2271,30 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_packs_setup_prepare(
+    memory: &Memory<'_>,
+    input: PackSetupRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)
+}
+pub fn vault_packs_setup_get(
+    memory: &Memory<'_>,
+    input: PackSetupRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::pack_setup_embedded(memory, input)
+}
+pub fn vault_packs_setup_answer(
+    memory: &Memory<'_>,
+    input: PackSetupAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)
+}
+pub fn vault_packs_setup_verify(
+    memory: &Memory<'_>,
+    input: PackSetupVerifyRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)
 }
 pub fn vault_lenses_propose(
     memory: &Memory<'_>,

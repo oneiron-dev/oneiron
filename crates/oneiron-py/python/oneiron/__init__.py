@@ -433,6 +433,20 @@ class Oneiron:
             self._client = client
         def put(self, spec):
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+        @property
+        def setup(self) -> "Oneiron._VaultPacksSetupVerbs":
+            return Oneiron._VaultPacksSetupVerbs(self._client)
+    class _VaultPacksSetupVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def prepare(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_prepare(json.dumps(spec))))
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_get(json.dumps(spec))))
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_answer(json.dumps(spec))))
+        def verify(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_setup_verify(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

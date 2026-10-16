@@ -51,6 +51,10 @@ vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultPacksSetupPrepare(input: unknown): unknown
+vaultPacksSetupGet(input: unknown): unknown
+vaultPacksSetupAnswer(input: unknown): unknown
+vaultPacksSetupVerify(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown

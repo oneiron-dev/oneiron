@@ -28,6 +28,10 @@ pub enum AgentVerb {
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultPacksPut,
+    VaultPacksSetupPrepare,
+    VaultPacksSetupGet,
+    VaultPacksSetupAnswer,
+    VaultPacksSetupVerify,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -149,6 +153,10 @@ impl AgentVerb {
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultPacksPut,
+        Self::VaultPacksSetupPrepare,
+        Self::VaultPacksSetupGet,
+        Self::VaultPacksSetupAnswer,
+        Self::VaultPacksSetupVerify,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -273,6 +281,10 @@ impl AgentVerb {
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
+            Self::VaultPacksSetupGet => "vault.packs.setup.get",
+            Self::VaultPacksSetupAnswer => "vault.packs.setup.answer",
+            Self::VaultPacksSetupVerify => "vault.packs.setup.verify",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -393,6 +405,10 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupGet
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -521,6 +537,10 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupGet
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -685,6 +705,10 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupGet
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -788,6 +812,9 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -879,6 +906,10 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksSetupPrepare => &["spec"],
+            Self::VaultPacksSetupGet => &["spec"],
+            Self::VaultPacksSetupAnswer => &["spec"],
+            Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1001,6 +1032,10 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksSetupPrepare => &["spec"],
+            Self::VaultPacksSetupGet => &["spec"],
+            Self::VaultPacksSetupAnswer => &["spec"],
+            Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],

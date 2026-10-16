@@ -615,6 +615,54 @@
       "section": false
     },
     {
+      "name": "vault.packs.setup.prepare",
+      "input": "PackSetupRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.get",
+      "input": "PackSetupRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.answer",
+      "input": "PackSetupAnswerRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.verify",
+      "input": "PackSetupVerifyRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.lenses.propose",
       "input": "crate::lens::LensProposeRequest",
       "output": "crate::receipt::LensProposalReceipt",

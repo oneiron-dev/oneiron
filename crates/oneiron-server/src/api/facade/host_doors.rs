@@ -27,6 +27,9 @@ use oneiron::{
 
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::receipt::LensActivationReceipt;
+use oneiron::task_verb::sdk::{
+    PackSetupAnswerRequest, PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
+};
 
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -505,4 +508,71 @@ pub(crate) async fn vault_lenses_deactivate(
     tokio::task::spawn_blocking(move || server.vault().deactivate_lens(&owner, input))
         .await
         .map_err(|_| internal("vault.lenses.deactivate"))?
+}
+
+/// `vault.packs.setup.prepare`: the owner opens, or resumes, a pack's guided
+/// setup (OF-378), under the proof `/v1/owner` takes from the request.
+/// Opening grants nothing.
+pub(crate) async fn vault_packs_setup_prepare(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackSetupRequest,
+) -> MemoryResult<PackSetupReceipt> {
+    let owner = lens_owner(auth, server, "vault.packs.setup.prepare")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::prepare_pack_setup_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.setup.prepare"))?
+}
+
+/// `vault.packs.setup.get`: a pack's guided setup as it stands, under the
+/// same proof.
+pub(crate) async fn vault_packs_setup_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackSetupRequest,
+) -> MemoryResult<PackSetupReceipt> {
+    let owner = lens_owner(auth, server, "vault.packs.setup.get")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::pack_setup_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.setup.get"))?
+}
+
+/// `vault.packs.setup.answer`: one answer or card action, under the same
+/// proof. The verb never answers `allow` (the owner's review stays at
+/// `/v1/owner/packs/setup/answer`), and a store action answers with the
+/// owner secrets door; a credential value never passes here.
+pub(crate) async fn vault_packs_setup_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackSetupAnswerRequest,
+) -> MemoryResult<PackSetupReceipt> {
+    let owner = lens_owner(auth, server, "vault.packs.setup.answer")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::answer_pack_setup_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.setup.answer"))?
+}
+
+/// `vault.packs.setup.verify`: checks one connection with the engine's fixed
+/// read-only provider call for its declared check, under the same proof.
+pub(crate) async fn vault_packs_setup_verify(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackSetupVerifyRequest,
+) -> MemoryResult<PackSetupReceipt> {
+    let owner = lens_owner(auth, server, "vault.packs.setup.verify")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::verify_pack_setup_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.setup.verify"))?
 }
