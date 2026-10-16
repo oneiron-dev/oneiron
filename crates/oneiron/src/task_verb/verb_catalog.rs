@@ -8,6 +8,10 @@ pub enum AgentVerb {
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
+    VaultPeopleList,
+    VaultPeopleGet,
+    SelfMessage,
+    SelfGrantsAsk,
     SelfMemoryDiaryQuery,
     Cancel,
     Steer,
@@ -29,6 +33,8 @@ pub enum AgentVerb {
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultPacksPut,
+    VaultAuthorityAudit,
+    VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
     VaultSharedProposeRemoveOwner,
@@ -152,6 +158,10 @@ impl AgentVerb {
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
+        Self::VaultPeopleList,
+        Self::VaultPeopleGet,
+        Self::SelfMessage,
+        Self::SelfGrantsAsk,
         Self::SelfMemoryDiaryQuery,
         Self::Cancel,
         Self::Steer,
@@ -173,6 +183,8 @@ impl AgentVerb {
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultPacksPut,
+        Self::VaultAuthorityAudit,
+        Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
         Self::VaultSharedProposeRemoveOwner,
@@ -299,6 +311,10 @@ impl AgentVerb {
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
+            Self::VaultPeopleList => "vault.people.list",
+            Self::VaultPeopleGet => "vault.people.get",
+            Self::SelfMessage => "self.message",
+            Self::SelfGrantsAsk => "self.grants.ask",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
@@ -320,6 +336,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
             Self::VaultSharedProposeRemoveOwner => "vault.shared.propose_remove_owner",
@@ -444,6 +462,10 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::VaultPeopleList
+                | Self::VaultPeopleGet
+                | Self::SelfMessage
+                | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -465,6 +487,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -595,6 +619,10 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::VaultPeopleList
+                | Self::VaultPeopleGet
+                | Self::SelfMessage
+                | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -616,6 +644,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -785,6 +815,10 @@ impl AgentVerb {
             Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::VaultPeopleList
+                | Self::VaultPeopleGet
+                | Self::SelfMessage
+                | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::VaultWitness
@@ -802,6 +836,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -918,6 +954,8 @@ impl AgentVerb {
             self,
             Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfMessage
+                | Self::SelfGrantsAsk
                 | Self::Cancel
                 | Self::Steer
                 | Self::TasksCreate
@@ -1011,6 +1049,10 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::VaultPeopleList => &["spec"],
+            Self::VaultPeopleGet => &["spec"],
+            Self::SelfMessage => &["spec"],
+            Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
@@ -1032,6 +1074,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],
@@ -1156,6 +1200,10 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::VaultPeopleList => &["spec"],
+            Self::VaultPeopleGet => &["spec"],
+            Self::SelfMessage => &["spec"],
+            Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
@@ -1177,6 +1225,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],
