@@ -1,8 +1,11 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
-use super::store::{ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path};
+use super::store::{
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, StreamedOutputs, recoverable_output_path,
+};
 use super::types::{
-    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
+    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeStream,
+    SelfDispatchResponse,
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorCallSite,
@@ -28,6 +31,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
     recoverable: Vec<(u64, CodeRunRawOutput, OutputRef)>,
+    /// The step's result as the guest streams it, written into the run's
+    /// body store frame by frame.
+    streamed: StreamedOutputs,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
@@ -60,6 +66,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             legibility,
             storage: None,
             recoverable: Vec::new(),
+            streamed: StreamedOutputs::default(),
             bridge_calls: Vec::new(),
             durable_wait: None,
             hard_failure: None,
@@ -113,6 +120,11 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         Ok(())
     }
 
+    /// The step's streamed result, for the executor to publish.
+    pub(super) fn take_streamed(&mut self) -> StreamedOutputs {
+        std::mem::take(&mut self.streamed)
+    }
+
     fn budget(&self) -> Option<BudgetLegibilityEnvelope> {
         self.legibility.as_ref().map(ExecutorLegibility::envelope)
     }
@@ -129,6 +141,14 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 }
 
 impl JsCodeModeHost for RecordingJsHost<'_, '_> {
+    fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        self.streamed.write(storage, stream, frame)?;
+        Ok(true)
+    }
+
     fn read_recoverable_output(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor recoverable output storage unavailable".into(),
@@ -317,6 +337,9 @@ fn records_failed_effect(effect: SelfEffect) -> bool {
 }
 
 pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
+    // The step's streamed result: console lines, the answer and its files.
+    "oneiron.output.text",
+    "oneiron.output.bytes",
     "vault.agents.put",
     // `self.memory`: the verb table, the memory rows the run answers included.
     "self.verbs.names",

@@ -56,6 +56,16 @@ world guest {
     import clock-now-unix-ms: func() -> u64;
     // @js oneiron.random.bytes
     import random-bytes: func(length: u32) -> result<list<u8>, string>;
+    // The step's result, streamed as it is written: bootstrap's own wiring
+    // behind console.log, finish and writeOutput, so no result is ever held
+    // whole in the guest. A text frame goes to "console" or "finish"; `start`
+    // marks a value's first frame, so a second finish replaces the first. A
+    // byte frame appends to its /mnt/outputs file. Each frame fits one
+    // message; the reply is the frame's byte count as stored.
+    // @js oneiron.output.text @abi
+    import output-text: func(target: string, start: bool, frame: string) -> result<u64, string>;
+    // @js oneiron.output.bytes @abi
+    import output-bytes: func(path: string, frame: list<u8>) -> result<u64, string>;
 
     // First-party-only imports. Foreign components must not import these;
     // their writes are exported as proposals and never linked as host effects.

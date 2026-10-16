@@ -1,10 +1,11 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
-use super::types::{EngineExecutorResult, JsCodeModeStepOutcome};
+use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
 use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage};
 use crate::compaction::output::OutputRef;
 use crate::entity_id::EntityId;
+use crate::store::BodySink;
 use crate::{Error, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -26,28 +27,120 @@ pub(super) fn record_output(
     path: String,
     raw: &[u8],
 ) -> EngineExecutorResult<()> {
+    let mut sink = storage.code_run_output_sink()?;
+    sink.write(raw)?;
+    publish_output(storage, record, path, sink).map(drop)
+}
+
+/// Publishes the body `sink` wrote as the run's output at `path`, and
+/// returns its manifest. The body streamed into its store as it was
+/// measured: past the inline bound it is a file beside data.mdb, whole on
+/// disk before its row and this manifest are published.
+pub(super) fn publish_output(
+    storage: &ExecutorStorage<'_>,
+    record: &mut CodeRunReplayRecord,
+    path: String,
+    sink: BodySink,
+) -> EngineExecutorResult<CodeRunRawOutput> {
     if record.outputs.iter().any(|output| output.path == path) {
         return Err(Error::InvalidClaimBody("duplicate executor output path").into());
     }
-    // The body streams into its store as it is measured: past the inline
-    // bound it is a file beside data.mdb, whole on disk before its row and
-    // this manifest are published.
-    let mut sink = storage.code_run_output_sink()?;
-    sink.write(raw)?;
     let output = storage.publish_code_run_output(path, sink, true)?;
-    record.outputs.push(output);
-    Ok(())
+    record.outputs.push(output.clone());
+    Ok(output)
+}
+
+/// A step's streamed result as its host took it: one body sink per target,
+/// written as each frame arrives, so no part of it is held whole.
+#[derive(Default)]
+pub(super) struct StreamedOutputs {
+    console: Option<BodySink>,
+    finish: Option<BodySink>,
+    files: Vec<(String, BodySink)>,
+}
+
+/// A step's bodies, ready to publish: its observation and its files, in the
+/// order the step first wrote them.
+pub(super) struct StepBodies {
+    pub(super) observation: BodySink,
+    pub(super) files: Vec<(String, BodySink)>,
+}
+
+impl StreamedOutputs {
+    /// Appends one frame to its target's body. A finish frame that starts
+    /// an answer drops the answer before it.
+    pub(super) fn write(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
+        stream: JsCodeModeStream<'_>,
+        frame: &[u8],
+    ) -> Result<()> {
+        let sink = match stream {
+            JsCodeModeStream::Console => &mut self.console,
+            JsCodeModeStream::Finish { start } => {
+                if start {
+                    self.finish = None;
+                }
+                &mut self.finish
+            }
+            JsCodeModeStream::File(path) => {
+                let at = match self.files.iter().position(|(held, _)| held == path) {
+                    Some(at) => at,
+                    None => {
+                        self.files
+                            .push((path.to_owned(), storage.code_run_output_sink()?));
+                        self.files.len() - 1
+                    }
+                };
+                return self.files[at].1.write(frame);
+            }
+        };
+        if sink.is_none() {
+            *sink = Some(storage.code_run_output_sink()?);
+        }
+        match sink {
+            Some(sink) => sink.write(frame),
+            None => Err(Error::InvariantViolation("streamed result sink missing")),
+        }
+    }
+
+    /// The step's bodies: the answer of a finished step, else its console
+    /// lines, and its files, with whatever a runtime returned in its
+    /// outcome instead of streaming it.
+    pub(super) fn into_step_bodies(
+        self,
+        storage: &ExecutorStorage<'_>,
+        outcome: &JsCodeModeStepOutcome,
+    ) -> Result<StepBodies> {
+        let observation = if outcome.done {
+            self.finish
+        } else {
+            self.console
+        };
+        let mut observation = match observation {
+            Some(sink) => sink,
+            None => storage.code_run_output_sink()?,
+        };
+        observation.write(outcome.observation.as_bytes())?;
+        let mut files = self.files;
+        for output in &outcome.outputs {
+            let mut sink = storage.code_run_output_sink()?;
+            sink.write(&output.bytes)?;
+            files.push((output.path.clone(), sink));
+        }
+        Ok(StepBodies { observation, files })
+    }
 }
 
 pub(super) fn validate_runtime_outputs(
     record: &CodeRunReplayRecord,
     seq: u64,
-    outcome: &JsCodeModeStepOutcome,
+    files: &[(String, BodySink)],
 ) -> EngineExecutorResult<Vec<String>> {
     let mut output_paths = BTreeSet::new();
-    let mut paths = Vec::with_capacity(outcome.outputs.len());
-    for (index, output) in outcome.outputs.iter().enumerate() {
-        let path = runtime_output_path(seq, index, &output.path);
+    let mut paths = Vec::with_capacity(files.len());
+    for (index, (file, _)) in files.iter().enumerate() {
+        let path = runtime_output_path(seq, index, file);
         if record.outputs.iter().any(|existing| existing.path == path)
             || !output_paths.insert(path.clone())
         {

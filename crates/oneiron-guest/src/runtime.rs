@@ -1,4 +1,4 @@
-//! Canonical typed Component Model execution with four read-only imports.
+//! Canonical typed Component Model execution with six non-write imports.
 
 use crate::{
     Error, Result,
@@ -108,8 +108,9 @@ fn run<T: Read + Write + 'static>(
         return Err(Error::Runtime("source size"));
     }
     // The pinned QuickJS component consumes over 12 million fuel just for its
-    // first-party readiness probe. Match the bounded code-mode runtime's
-    // 100-million ceiling so the foreign interpreter can actually start.
+    // first-party readiness probe; a 100-million ceiling lets the foreign
+    // interpreter start. This lane keeps no streamed result, so it needs none
+    // of the code-mode runtime's larger allowance for one.
     store
         .set_fuel(100_000_000)
         .map_err(|_| Error::Runtime("fuel setup"))?;
@@ -269,6 +270,20 @@ fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> was
             let millis = u64::try_from(now.as_millis())
                 .map_err(|_| wasmtime::Error::msg("clock overflow"))?;
             Ok((millis,))
+        },
+    )?;
+    // The step's streamed result. This lane keeps no step result, as it
+    // keeps none of the returned one: frames are taken and dropped.
+    linker.root().func_wrap(
+        "output-text",
+        |_: StoreContextMut<'_, State<T>>, (_, _, frame): (String, bool, String)| {
+            Ok((Ok::<u64, String>(frame.len() as u64),))
+        },
+    )?;
+    linker.root().func_wrap(
+        "output-bytes",
+        |_: StoreContextMut<'_, State<T>>, (_, frame): (String, Vec<u8>)| {
+            Ok((Ok::<u64, String>(frame.len() as u64),))
         },
     )?;
     linker.root().func_wrap(

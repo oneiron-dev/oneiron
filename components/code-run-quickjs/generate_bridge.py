@@ -75,7 +75,24 @@ def emit(ty):
     elif ty.startswith("list<"):
         inner = ty[5:-1]
         emit(inner)
-        decode = ['JSValue size = JS_GetPropertyStr(ctx, v, "length");',
+        # Bytes in a typed array copy whole: a streamed output frame is up
+        # to a message long, too long to read one element at a time.
+        decode = [] if inner != "u8" else [
+            'size_t view_offset, view_bytes, view_element;',
+            'JSValue buffer = JS_GetTypedArrayBuffer(ctx, v, &view_offset, &view_bytes, &view_element);',
+            'if (JS_IsException(buffer)) JS_FreeValue(ctx, JS_GetException(ctx));',
+            'else {',
+            ' size_t whole; uint8_t *data = JS_GetArrayBuffer(ctx, &whole, buffer);',
+            ' JS_FreeValue(ctx, buffer);',
+            ' if (view_element == 1) {',
+            '  if (!data || view_bytes > MESSAGE_LIMIT || view_offset > whole || view_bytes > whole - view_offset) return bad_value(ctx);',
+            '  out->ptr = malloc(view_bytes ? view_bytes : 1);',
+            '  if (!out->ptr) return bad_value(ctx);',
+            '  memcpy(out->ptr, data + view_offset, view_bytes); out->len = view_bytes;',
+            '  return true;',
+            ' }',
+            '}']
+        decode += ['JSValue size = JS_GetPropertyStr(ctx, v, "length");',
                   'uint32_t length;',
                   'if (JS_ToUint32(ctx, &length, size) < 0) { JS_FreeValue(ctx, size); return false; }',
                   'JS_FreeValue(ctx, size);',

@@ -177,6 +177,11 @@ pub enum SandboxImportClass {
     ReadOnly,
     CredentialHandle,
     Determinism,
+    /// The step's own streamed result: console lines, the finish answer and
+    /// `/mnt/outputs` files, written as they are produced. It is the result
+    /// the host records for the step, as it recorded the returned one, never
+    /// a vault write.
+    Output,
     DurableWait,
     /// The blocked-report receipt. The memory writes it once stood beside
     /// (claim, supersede, edge) are verb-table rows the run answers itself.
@@ -258,6 +263,12 @@ const CLOCK_NOW_UNIX_MS_IMPORT: SandboxLinkedImport =
 const RANDOM_BYTES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.random.bytes", SandboxImportClass::Determinism);
 
+const OUTPUT_TEXT_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.output.text", SandboxImportClass::Output);
+
+const OUTPUT_BYTES_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.output.bytes", SandboxImportClass::Output);
+
 const VAULT_AGENTS_PUT_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("vault.agents.put", SandboxImportClass::AgentAuthoring);
 
@@ -290,6 +301,8 @@ const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     CREDENTIAL_CALL_IMPORT,
     CLOCK_NOW_UNIX_MS_IMPORT,
     RANDOM_BYTES_IMPORT,
+    OUTPUT_TEXT_IMPORT,
+    OUTPUT_BYTES_IMPORT,
 ];
 
 const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
@@ -297,6 +310,8 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     CREDENTIAL_CALL_IMPORT,
     CLOCK_NOW_UNIX_MS_IMPORT,
     RANDOM_BYTES_IMPORT,
+    OUTPUT_TEXT_IMPORT,
+    OUTPUT_BYTES_IMPORT,
     VAULT_AGENTS_PUT_IMPORT,
     SELF_JSON_VALIDATE_IMPORT,
     SELF_VERBS_NAMES_IMPORT,

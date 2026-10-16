@@ -4,6 +4,8 @@
     ("credential-call", "sandbox.credential.call"),
     ("clock-now-unix-ms", "oneiron.clock.now_unix_ms"),
     ("random-bytes", "oneiron.random.bytes"),
+    ("output-text", "oneiron.output.text"),
+    ("output-bytes", "oneiron.output.bytes"),
     ("agents-put", "vault.agents.put"),
     ("json-validate", "self.json.validate"),
     ("verb-names", "self.verbs.names"),
