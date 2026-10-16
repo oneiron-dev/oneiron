@@ -359,6 +359,38 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
     }
 }
 
+/// Refuse operations read at `base` that write a cell or name `head` has
+/// changed since: one of the two writes would be silently lost.
+pub(super) fn admit_at(base: &LoroDoc, head: &LoroDoc, ops: &[XlsxBodyOp]) -> Result<()> {
+    let (base, head) = (read(base)?, read(head)?);
+    for op in ops {
+        let moved = match op {
+            XlsxBodyOp::SetValue { sheet, cell, .. }
+            | XlsxBodyOp::SetFormula { sheet, cell, .. }
+            | XlsxBodyOp::SetStyle { sheet, cell, .. }
+            | XlsxBodyOp::Clear { sheet, cell } => {
+                let (col, row) = parse_a1(cell).ok_or_else(|| invalid("not a cell address"))?;
+                let find = |body: &XlsxBody| {
+                    body.sheets
+                        .iter()
+                        .find(|held| held.name == *sheet)
+                        .and_then(|held| held.cells.get(&(row, col)))
+                        .cloned()
+                };
+                !same_cell(find(&base).as_ref(), find(&head).as_ref())
+            }
+            XlsxBodyOp::SetName { name, sheet, .. } | XlsxBodyOp::DeleteName { name, sheet } => {
+                let key = name_key(name, sheet.as_deref());
+                base.names.get(&key) != head.names.get(&key)
+            }
+        };
+        if moved {
+            return Err(invalid("a cell or name changed since the base; read it again"));
+        }
+    }
+    Ok(())
+}
+
 /// The changes that turn the imported `base` into `current`: each cell whose
 /// content or format differs, then each defined name.
 pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxChange>> {
