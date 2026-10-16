@@ -8,6 +8,10 @@ use zeroize::Zeroizing;
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::InProcessHost;
+#[cfg(not(target_arch = "wasm32"))]
+mod embedded;
+#[cfg(not(target_arch = "wasm32"))]
+pub use embedded::{AppHost, EmbeddedHost};
 #[cfg(unix)]
 mod desktop;
 #[cfg(unix)]
