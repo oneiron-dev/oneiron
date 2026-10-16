@@ -209,6 +209,7 @@ pub mod sdk;
 mod sdk_connector;
 mod sdk_host;
 mod sdk_self;
+pub mod verb_hook_boundary;
 
 #[cfg(test)]
 mod ask_outcome_tests;

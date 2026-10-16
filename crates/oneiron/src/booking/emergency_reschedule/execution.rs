@@ -184,6 +184,7 @@ pub(super) fn dispatch_item_effect(
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             },
         )));
     }

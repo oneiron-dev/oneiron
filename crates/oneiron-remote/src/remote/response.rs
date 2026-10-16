@@ -30,6 +30,9 @@ struct ApiErrorBody {
     /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
     #[serde(flatten)]
     wrong_root: Option<oneiron::memory::MemoryWrongRoot>,
+    /// A verb hook's stop: skipped, pending on an ask, or hidden.
+    #[serde(default)]
+    hook: Option<oneiron::runtime_hooks::VerbHookStop>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -168,6 +171,7 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         read_receipt: None,
         policy_denial: None,
         wrong_root: envelope.error.wrong_root.map(Box::new),
+        hook: envelope.error.hook.map(Box::new),
     })
 }
 
