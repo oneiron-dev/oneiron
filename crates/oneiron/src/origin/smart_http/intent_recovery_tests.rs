@@ -1,10 +1,12 @@
 //! Crash/recovery contract: pre-outcome crash, declined effects, partial resume,
-//! supersede, delete-only, no-hook advertisement, LFS-gated publication.
+//! supersede, delete-only, no-hook advertisement, LFS-gated publication, and
+//! a recovery whose LFS check waited out.
 
 use super::tests::{
-    LANDING_LEARNED_AT, advertise, advertised_refs, commit_file, fixture_attribution,
-    fixture_intent, git, hooks_dir, landing_time, pointer_file, pushed_outcome, ref_update,
-    seeded_repo, served_repo, temp_vault,
+    LANDING_LEARNED_AT, RecordingRoom, advertise, advertised_refs, commit_file,
+    fixture_attribution, fixture_intent, fixture_intent_with_pointers, git, hooks_dir,
+    landing_time, pointer_file, pushed_outcome, ref_update, seeded_repo, served_repo, temp_vault,
+    try_advertise,
 };
 use super::*;
 use crate::config::VaultConfig;
@@ -378,5 +380,91 @@ fn receive_pack_publication_cannot_omit_lfs_or_add_unobserved_objects() {
             .record
             .status,
         OriginPublicationStatus::Published
+    );
+}
+
+/// Review r12 narrow (Astra R12n-2, P1): recovery that waited past the
+/// host's room to check an LFS object swallowed the error, went on to wait
+/// as long again for the next pending ref, and let the exchange answer as if
+/// it had recovered, hiding refs whose objects are whole. It now stops at
+/// the first such wait and says so; the refs stay Pending, and recovery
+/// publishes them once room comes.
+#[test]
+fn recovery_stops_at_an_lfs_check_that_waited_out_and_leaves_its_refs_pending() {
+    let (_vault_dir, vault) = temp_vault();
+    let bytes = b"an asset two recovered branches carry".to_vec();
+    let oid = LfsOid::digest(&bytes);
+    let size = u64::try_from(bytes.len()).expect("size");
+    vault
+        .put_lfs_object(oid, &bytes, landing_time(), LANDING_LEARNED_AT)
+        .expect("asset");
+    let (_source, repo_dir, _first, _second) = served_repo(&vault);
+    let work = tempfile::tempdir().expect("work tree");
+    let served = repo_dir.to_str().expect("utf-8 repo path");
+    git(work.path(), &["clone", "--quiet", "--", served, "."]);
+    let tip = commit_file(work.path(), "assets/logo.bin", &pointer_file(oid, size));
+    let branches = ["refs/heads/one", "refs/heads/two"];
+    for branch in branches {
+        let target = format!("HEAD:{branch}");
+        git(work.path(), &["push", "--quiet", "origin", &target]);
+    }
+    fixture_intent_with_pointers(
+        &vault,
+        &repo_dir,
+        branches
+            .iter()
+            .map(|branch| ref_update(branch, None, Some(&tip)))
+            .collect(),
+        vec![LfsPushedPointer {
+            path: "assets/logo.bin".to_owned(),
+            oid,
+            size_bytes: size,
+        }],
+    );
+    let room = Arc::new(RecordingRoom::default());
+    room.waits_run_out.store(true, Ordering::SeqCst);
+    vault.set_lfs_read_room(Arc::clone(&room) as Arc<dyn crate::origin::lfs::LfsReadRoom>);
+
+    let (served, _) = try_advertise(&vault, "git-upload-pack");
+    assert!(
+        matches!(
+            served,
+            Err(Error::Code(crate::error::CodeError::LfsReadRoomWaitedOut))
+        ),
+        "the advertisement says its recovery waited out: {served:?}"
+    );
+    assert_eq!(
+        room.asked().len(),
+        1,
+        "recovery stopped at the first wait that ran out"
+    );
+    let statuses = |vault: &Vault| {
+        vault.receive_pack_intents(&repo_dir).expect("journal")[0]
+            .1
+            .refs
+            .iter()
+            .map(|entry| entry.status)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        statuses(&vault),
+        vec![ReceivePackRefStatus::Pending; 2],
+        "the wait decided nothing"
+    );
+
+    room.waits_run_out.store(false, Ordering::SeqCst);
+    let refs = advertised_refs(&advertise(&vault, "git-upload-pack").body);
+    for branch in branches {
+        assert!(
+            refs.iter().any(|(name, _)| name == branch),
+            "{branch} is published once room comes"
+        );
+    }
+    assert!(
+        vault
+            .receive_pack_intents(&repo_dir)
+            .expect("journal")
+            .is_empty(),
+        "both refs settled, so no intent is left pending"
     );
 }
