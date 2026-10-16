@@ -144,6 +144,7 @@ fn run<T: Read + Write + 'static>(
         return Err(Error::Protocol("credential transport failed"));
     }
     let output = output.map_err(|_| Error::Runtime("component returned error"))?;
+    let result_json = output.result_json.clone();
     let proposals = proposals(output, &input.files)?;
     let mut writes = Snapshot::new();
     for proposal in &proposals {
@@ -168,6 +169,7 @@ fn run<T: Read + Write + 'static>(
             store.data_mut().session.write(&path, &bytes)?;
         }
     }
+    store.data_mut().session.result(&result_json)?;
     Ok(())
 }
 

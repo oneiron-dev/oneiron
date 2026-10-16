@@ -139,9 +139,6 @@ pub use handoff_equivocation::{
 };
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
-pub use recover_many::{
-    VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
-};
 pub use ingest_observation::*;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{
@@ -156,6 +153,9 @@ pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
+pub use recover_many::{
+    VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
+};
 pub use slip::*;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPrincipal, format_pairing_link,
