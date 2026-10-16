@@ -277,6 +277,11 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
+        // A legal use limit keeps the bytes as storage only: no ordinary
+        // reader sees the row, the owner included.
+        if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, id)?.is_some() {
+            return Ok(false);
+        }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if filter.deny_all
