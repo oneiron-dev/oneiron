@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2575 | 866 | 42 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 24 | 1 | 0 |
-| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 108 | 18 | 0 |
+| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 14 | 5 | 0 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 54 | 1 | 1 |
@@ -274,7 +274,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | impl Vault | purpose |
 |---|---|---|---|---|---|
-| `beam` | dir | 39 | m | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
+| `beam` | dir | 41 | m | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `eval` | file+dir | 3 | m | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `fleet` | dir | 8 | m | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
 | `interface_bench` | dir | 9 | m | — | Campaign #5 interface bench task generation and smoke harness |
