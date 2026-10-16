@@ -378,7 +378,7 @@ impl AsyncRead for IrohDuplex {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().recv).poll_read(cx, buf)
+        AsyncRead::poll_read(Pin::new(&mut self.get_mut().recv), cx, buf)
     }
 }
 impl AsyncWrite for IrohDuplex {
@@ -387,13 +387,13 @@ impl AsyncWrite for IrohDuplex {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.get_mut().send).poll_write(cx, buf)
+        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().send), cx, buf)
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().send).poll_flush(cx)
+        AsyncWrite::poll_flush(Pin::new(&mut self.get_mut().send), cx)
     }
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.get_mut().send).poll_shutdown(cx)
+        AsyncWrite::poll_shutdown(Pin::new(&mut self.get_mut().send), cx)
     }
 }
 #[derive(Debug)]
