@@ -16,7 +16,7 @@ fn agent_key(n: usize) -> SigningKey {
     SigningKey::from_bytes(&seed)
 }
 
-fn confirm_op(n: usize) -> AuthorityOp {
+pub(super) fn confirm_op(n: usize) -> AuthorityOp {
     let mut confirm_id = [0xC0; 32];
     confirm_id[..8].copy_from_slice(&(n as u64).to_be_bytes());
     let mut nonce = [0xC0; 16];
@@ -31,7 +31,7 @@ fn confirm_op(n: usize) -> AuthorityOp {
 }
 
 /// `owner`'s row `op` under `parents`, cosigned by `cosigner`.
-fn owner_row(
+pub(super) fn owner_row(
     vault_id: AuthorityVaultId,
     owner: &SigningKey,
     seq: u64,

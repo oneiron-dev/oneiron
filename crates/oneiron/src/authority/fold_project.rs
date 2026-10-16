@@ -72,11 +72,12 @@ impl RowStates for AllStates<'_> {
     }
 }
 
+/// The folded authority, and the merge once its restrictive facts apply.
 pub(super) fn project_once(
     settled: Settled<'_>,
     rows: &dyn RowStates,
     context: FoldContext<'_>,
-) -> AuthorityFold {
+) -> (AuthorityFold, Option<FoldState>) {
     let Settled {
         mut merged,
         valid_entries,
@@ -146,7 +147,7 @@ pub(super) fn project_once(
     let accepted_roster_marks = merged.as_ref().map_or_else(BTreeSet::new, |state| {
         rows.accepted_roster_marks(state, &valid_entries)
     });
-    AuthorityFold {
+    let fold = AuthorityFold {
         append_heads: BTreeSet::new(),
         anchor_heads: BTreeMap::new(),
         scope_heads: BTreeMap::new(),
@@ -219,5 +220,6 @@ pub(super) fn project_once(
             .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
         counted_ancestor_pairs,
         issues,
-    }
+    };
+    (fold, merged)
 }

@@ -76,6 +76,9 @@ pub(super) struct FoldLocalInputs<'a> {
     /// This install's pin, on a fold of its own vault's log. It moves trust
     /// only, never which entries are valid; a peer's log folds with none.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// Where the strict fold leaves what a resumed fold starts from; never
+    /// handed to a probe.
+    pub(super) capture: Option<&'a super::fold_resume::FoldCapture>,
 }
 
 impl FoldLocalInputs<'_> {
@@ -87,6 +90,7 @@ impl FoldLocalInputs<'_> {
         machine_standing: None,
         handoff_candidates: None,
         pin: None,
+        capture: None,
     };
 }
 
@@ -111,7 +115,9 @@ pub(super) fn fold_authority_log_inner(
             consent_arm,
             local,
         );
+        let mut rounds = 0_usize;
         loop {
+            rounds += 1;
             let handoffs: BTreeSet<_> = candidates.keys().copied().collect();
             let allowed = verified_handoff_ancestors(entries, &handoffs);
             // Each candidate's line settles as it probed, under no local
@@ -134,6 +140,7 @@ pub(super) fn fold_authority_log_inner(
                     machine_standing: local.machine_standing,
                     handoff_candidates: Some(&handoffs),
                     pin: local.pin,
+                    capture: local.capture,
                 },
             );
             // A handoff in conflict keeps its standing here: its fence stays
@@ -143,6 +150,11 @@ pub(super) fn fold_authority_log_inner(
                     || result.closed_handoffs.contains(candidate)
             });
             if candidates.len() == handoffs.len() {
+                if let Some(capture) = local.capture
+                    && rounds > 1
+                {
+                    capture.spoil();
+                }
                 return result;
             }
         }
@@ -219,6 +231,7 @@ fn verified_handoff_candidates(
                 observations: observations.as_ref(),
                 retire_device_ops: false,
                 pre_handoff_entries: None,
+                capture: None,
                 ..local
             },
         );
@@ -329,7 +342,9 @@ pub(super) fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
     handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
+    capture: Option<&super::fold_resume::FoldCapture>,
 ) -> AuthorityFold {
+    let original_floors = context.sequence_floors;
     let (by_hash, mut issues) = judged_entries(entries);
     let Some((entry_ancestors, counted_ancestor_pairs)) =
         entry_ancestor_index(&by_hash, context.memory_floor_bytes)
@@ -443,7 +458,15 @@ pub(super) fn fold_authority_log_once(
         });
     }
 
-    super::fold_project::project_once(
+    let kept = capture.map(|_| {
+        (
+            merged.clone(),
+            valid_entries.clone(),
+            retired_keys.clone(),
+            issues.clone(),
+        )
+    });
+    let (fold, final_merged) = super::fold_project::project_once(
         super::fold_project::Settled {
             merged,
             valid_entries,
@@ -460,7 +483,28 @@ pub(super) fn fold_authority_log_once(
             states: &states,
         },
         context,
-    )
+    );
+    if let (Some(capture), Some((Some(merged), valid_entries, retired_keys, issues))) =
+        (capture, kept)
+    {
+        capture.record(super::fold_resume::OnceParts {
+            by_hash: &by_hash,
+            states: &states,
+            entry_ancestors: &entry_ancestors,
+            original_floors,
+            merged,
+            valid_entries,
+            revoke_facts,
+            retired_keys,
+            closed_handoffs: retirements.handoffs(),
+            unsettled: retirements.unsettled(),
+            counted_ancestor_pairs,
+            issues,
+            final_merged: final_merged.as_ref(),
+            fold: &fold,
+        });
+    }
+    fold
 }
 
 /// The confirmations that lose a collision among the rows `present` keeps,

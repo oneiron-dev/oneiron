@@ -25,6 +25,7 @@ mod federation_confirm;
 mod federation_lifecycle;
 mod federation_merge;
 mod fold_budget;
+mod fold_resume;
 mod fold_scale;
 mod fold_schedule;
 mod foundations;
