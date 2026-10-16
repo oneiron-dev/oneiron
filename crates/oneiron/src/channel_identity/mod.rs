@@ -53,7 +53,8 @@ pub use address::{
 };
 pub use custody::{
     Custody, DelegatedGrant, DelegatedGrantScope, InboundDisposition, delegated_custody_effector,
-    delegated_custody_scopes, delegated_custody_subject_scope,
+    delegated_custody_granted_scope, delegated_custody_scopes, delegated_custody_scopes_for_grant,
+    delegated_custody_subject_scope,
 };
 pub use lifecycle::{DelegatedLifecycle, SelfHeldLifecycle};
 
