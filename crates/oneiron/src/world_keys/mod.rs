@@ -18,6 +18,7 @@
 
 mod doors;
 mod machine;
+mod pads;
 mod reassert;
 mod repin;
 mod root;
@@ -41,7 +42,9 @@ pub use self::root_issue::PreparedRoot;
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::WorldKeySession;
 pub use self::state::{WorldRecoveryState, recovery_state};
-pub use self::wrap::{open_world_key, seal_world_key};
+pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
+pub(crate) use self::pads::{destroy_world_keys_in_txn, validate_pad_put_in_txn};
+pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;
 pub use oneiron_authority::authority::{
     FIRST_GENERATION, PolicyRevision, WORLD_KEY_EPOCH, WorldKeyId, WrapRecipient,
