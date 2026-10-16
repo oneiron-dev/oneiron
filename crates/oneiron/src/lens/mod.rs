@@ -51,7 +51,8 @@ mod sdk;
 pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};
 mod record_ref;
 pub use record_ref::{
-    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordRef,
+    LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_REF_LABEL_MAX_CHARS,
+    RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordLinks, RecordLinksRequest, RecordRef,
     RecordRefPreview, ResolveRecordRefRequest,
 };
 mod self_ui;
