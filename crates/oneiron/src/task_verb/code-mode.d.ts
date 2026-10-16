@@ -21,6 +21,7 @@ declare const connector: {
 };
 declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
+declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
     click(input: { ref: string }): Promise<unknown>;
@@ -43,6 +44,11 @@ declare namespace self {
   const folds: (input: object) => Promise<unknown>;
   const memory: {
     diary(input: { content: string; kind?: string | null }): Promise<unknown>;
+  };
+  const skills: {
+    callables(input: object): Promise<unknown>;
+    fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
+    save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
   };
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
@@ -71,6 +77,17 @@ declare const vault: {
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
     upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   };
+  companions: {
+    sharing: {
+      get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
+    };
+  };
+  conversations: {
+    turn: {
+      continue(input: { turn_id: string }): Promise<unknown>;
+      retry(input: { turn_id: string }): Promise<unknown>;
+    };
+  };
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
@@ -91,14 +108,22 @@ declare const vault: {
     claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
     find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     get(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
+    host(input: { room_ref: string; session_ref?: string | null }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
     reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;
+    sharing(input: { room_ref: string }): Promise<unknown>;
     speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
     trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
   };
   search(input: { limit?: number | null; query: string }): Promise<unknown>;
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
+  workspace: {
+    work_companion: {
+      get(input: { workspace_ref: string }): Promise<unknown>;
+      set(input: { policy: "choose" | "suggest" | "require"; workspace_ref: string }): Promise<unknown>;
+    };
+  };
 };
 declare function wait(input: { handle: object; step_key: string }): Promise<unknown>;

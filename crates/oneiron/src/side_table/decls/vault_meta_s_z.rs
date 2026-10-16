@@ -57,6 +57,8 @@ side_tables! {
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
+    /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
+    SELF_HEAL_ATTEMPT_SEAL: VaultMeta b"self_heal:seal:v1:" Named;
     /// (diagnostic event id).
     SELF_HEAL_SIGNED_EVENT: VaultMeta b"self_heal:signed:v2:event:" Raw;
     /// A host-signed scheduled detector run receipt, keyed by its content digest. Key: bytes32
@@ -77,8 +79,8 @@ side_tables! {
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
     SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw;
-    /// Single-open-session pointer: id of the currently open SESSION entity, if any. Key: ().
-    SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open" Raw;
+    /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
+    SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason), keyed by
     /// SESSION entity id. Key: id16.
     SESSION_LIFECYCLE_RECORD: VaultMeta b"session_lifecycle:v0:record:" Named;
@@ -106,6 +108,8 @@ side_tables! {
     DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
     /// Owner-set continuous sieve policy. Key: ().
     DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
+    /// Owner-set relationship-stewardship rules. Key: ().
+    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson;
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
@@ -157,6 +161,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
+    /// the exact content hash it scored). Key: id16 (skill entity).
+    SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
     /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
     /// receipt length + receipt string + id16.
     SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
@@ -320,6 +327,14 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// One Coach training offer snapshot for a seat (OF-577), written once. Key: id16 (offer).
+    SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named;
+    /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
+    /// id16 (offer).
+    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
+    /// (check).
+    SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
     /// The amendment verdict replacing one attempt's outcome row (MessagePack map: amendment
     /// receipt, `skill_defect` share, event time). Key: the outcome row's full stored key, table
     /// prefix included.
@@ -431,6 +446,12 @@ side_tables! {
     TEXT_BM25_FIELD_SCHEMA_HASH: VaultMeta b"text_bm25_field_schema_hash" Raw;
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw;
+    /// Current owner-approved training checkpoint per model role. Key: serialized role string.
+    TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named;
+    /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
+    TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named;
+    /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
+    TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named;
     /// One open, answered or superseded "may I reach your trusted contact?" ask, raised by a
     /// `RouteToHelp` the person's dial or the row's tier says to ask about first. Key: id16(ask).
     TRUSTED_CONTACT_ASK: VaultMeta b"trusted_contact.ask.v1:" Named;

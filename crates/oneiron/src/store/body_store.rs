@@ -32,7 +32,7 @@ use crate::{Error, Result};
 const BODIES_DIR: &str = "bodies";
 const SPILL_ROOT: &str = "off-record-bodies";
 const TEMP_PREFIX: &str = ".tmp-";
-const LINE_INDEX_SUFFIX: &str = ".lines";
+pub(crate) const LINE_INDEX_SUFFIX: &str = ".lines";
 
 /// Bytes per block of a body's sparse line index.
 const LINE_INDEX_BLOCK_BYTES: u64 = 64 * 1024;
@@ -51,7 +51,7 @@ pub(crate) fn body_file_name(digest: &[u8; 32]) -> String {
 
 /// One directory of body files, held open by descriptor.
 pub(crate) struct BodyDir {
-    dir: File,
+    pub(crate) dir: File,
 }
 
 impl BodyDir {
@@ -470,6 +470,15 @@ impl BodySink {
         self.inline = Vec::new();
         self.spill = Some((file, temp));
         Ok(())
+    }
+
+    /// The digest of the bytes written so far, the body's own once it is
+    /// finished: a body's name can depend on it before it is published.
+    pub(crate) fn digest(&self) -> Result<[u8; 32]> {
+        self.meter
+            .as_ref()
+            .map(|meter| *meter.hasher.finalize().as_bytes())
+            .ok_or(Error::InvariantViolation("result body sink finished twice"))
     }
 
     /// Finishes the body: a spilled one is published under its digest.

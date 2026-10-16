@@ -28,6 +28,10 @@ pub(super) async fn serve_with_config(
     mut config: ServeConfig,
     config_file: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
+        "a relay host never opens a vault; use `oneiron host relay --config <room.json>`"
+    );
     use oneiron_vault_contract::host::Host;
     use oneiron_vault_contract::host_adapters::{ActivatedListener, AwakePolicy, DesktopHost};
 
@@ -68,6 +72,9 @@ pub(super) async fn serve_with_config(
     config.keystore.install_on(&vault, &config.vault_path);
 
     let server_config = config.sync_server_config();
+    if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
+        tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
+    }
     match server_config.auth_secret.as_deref() {
         None if !server_config.allow_unauthenticated => {
             tracing::warn!(
@@ -100,11 +107,28 @@ pub(super) async fn serve_with_config(
     //
     // On a blocking thread because the endpoint probe is a blocking HTTP call,
     // which must not run on a runtime worker.
+    // The batch lane's rented GPU pods (ARCH-0019 §5), when `[gpu]` names
+    // them: the pool polls their health while serve runs, and the endpoint
+    // embedder sends its document batches through a lease on one. A vault
+    // bound to an account has each pod's answer sealed to that account.
+    let gpu = config
+        .gpu
+        .clone()
+        .map(crate::runtime::GpuPool::new)
+        .transpose()?;
+    let gpu_poller = gpu
+        .as_ref()
+        .map(crate::runtime::GpuPool::spawn_health_poller);
+    let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok()));
     let embedder_config = config.embedder.clone();
     let embedder = crate::logging::off_runtime("embedder slot task", move || {
         // The server's sink before a host chooses one: the log.
         let receipts = Arc::new(crate::models::ServerReceipts::default());
-        crate::embedder::build_slot(embedder_config.as_ref(), receipts)
+        let slot = crate::embedder::build_slot(embedder_config.as_ref(), receipts)?;
+        if let (Some(slot), Some((pool, scope))) = (&slot, gpu_route) {
+            crate::embedder::route_batches_through(slot, pool, scope)?;
+        }
+        anyhow::Ok(slot)
     })
     .await??;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
@@ -172,16 +196,34 @@ pub(super) async fn serve_with_config(
         Some(Box::new((pass, awake.hold())) as Box<dyn Send>)
     }));
     let mut workers = sync_server.spawn_slot_workers();
+    workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
+    // Open sockets may never close by themselves, so the drain is bounded.
+    let (stopping, mut stopped) = tokio::sync::watch::channel(false);
+    // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    if config.hooks {
+        workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
+    }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
+    let mesh_vault = Arc::clone(&sync_server.vault);
     let app = build_app(sync_server).layer(cors_layer);
+    // The paired-machine mesh listener (OF-535): off unless the host names
+    // its bind address.
+    let mesh = crate::handler::mesh::start(
+        mesh_vault,
+        &crate::handler::mesh::MeshConfig::from_env()?,
+        &app,
+        config.limits.connections().header_read_timeout,
+    )
+    .await?;
     host.ready()?;
     // Ready and bound: a client on this host can find it now. The file goes
     // when this returns, a clean stop or a late startup error alike.
@@ -190,8 +232,6 @@ pub(super) async fn serve_with_config(
         super::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
     #[cfg(not(unix))]
     let _ = config_file;
-    // Open sockets may never close by themselves, so the drain is bounded.
-    let (stopping, mut stopped) = tokio::sync::watch::channel(false);
     let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
         let _ = stopped.wait_for(|stop| *stop).await;
     };
@@ -225,6 +265,9 @@ pub(super) async fn serve_with_config(
             tracing::warn!("connections still open after the drain grace; stopping anyway");
         }
     }
+    if let Some(mesh) = mesh {
+        mesh.stop().await;
+    }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
     // A receipt write already admitted ends before the process does.
@@ -242,6 +285,34 @@ pub(super) async fn serve_with_config(
     }
 
     Ok(())
+}
+
+/// Builds the hook sandbox off the runtime (it compiles and probes the
+/// component) and starts the fact-hook runner. A sandbox that fails to load
+/// starts no runner.
+#[cfg(feature = "code-sandbox-wasmtime")]
+async fn spawn_fact_hooks(
+    server: &Arc<SyncServer>,
+    stop: tokio::sync::watch::Receiver<bool>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    use oneiron::runtime_hooks::{FactHookRunner, sandbox};
+    let built = crate::logging::off_runtime("hook sandbox", || {
+        let (bytes, pin) = sandbox::hook_component_bytes();
+        sandbox::HookSandbox::from_component(bytes, pin).map_err(anyhow::Error::from)
+    })
+    .await
+    .and_then(|built| built);
+    match built {
+        Ok(sandbox) => Some(FactHookRunner::spawn(
+            Arc::clone(server.vault()),
+            Arc::new(sandbox),
+            stop,
+        )),
+        Err(error) => {
+            tracing::warn!(%error, "hook sandbox did not load; fact hooks are off");
+            None
+        }
+    }
 }
 
 /// With no `auth_secret`, `--insecure-allow-unauthenticated` lets a request
@@ -265,9 +336,35 @@ fn refuse_unauthenticated_public_bind(
     Ok(())
 }
 
+/// The root project the vault seeds at its first open takes the owner's first
+/// signature here, through the host's project.write slip (OF-497). A host
+/// with no secret has no issuer, and a relay signs nothing; either leaves the
+/// root unsigned. A root that is already signed is left alone.
+fn sign_root_project(vault: &oneiron::Vault, secret: Option<&str>) -> anyhow::Result<()> {
+    let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
+        return Ok(());
+    };
+    if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
+        return Ok(());
+    }
+    let root = vault.root_project()?;
+    let unsigned = vault.project_frontier(root)?.is_some_and(|frontier| {
+        frontier.disposition == oneiron::workspace_roster::ProjectDisposition::Unsigned
+    });
+    if !unsigned {
+        return Ok(());
+    }
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let owner = crate::owner::local_owner(vault)?;
+    vault.sign_owner_project(&owner, &vault.owner_project_signer(&issuer)?, root)?;
+    tracing::info!("the root project took the owner's first signature");
+    Ok(())
+}
+
 /// Ctrl-C, or SIGTERM where there is one: the stop an operator or a service
 /// manager sends.
-async fn stop_requested() {
+pub(crate) async fn stop_requested() {
     let interrupt = async {
         if tokio::signal::ctrl_c().await.is_err() {
             std::future::pending::<()>().await;

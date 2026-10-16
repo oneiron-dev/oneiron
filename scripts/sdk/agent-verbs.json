@@ -1,6 +1,20 @@
 {
   "verbs": [
     {
+      "name": "report",
+      "input": "crate::feedback::ReportRequest",
+      "output": "crate::feedback::ReportReceipt",
+      "call": "memory.report(input)?",
+      "scope": "Read",
+      "mcp_scope": "filtered",
+      "section": false,
+      "admission": {
+        "validate": "input.validate().map_err(MemoryError::from)?;",
+        "lane_record_scope": true
+      },
+      "server_door": "report_off_runtime"
+    },
+    {
       "name": "self.focus.refresh",
       "input": "BoardRefreshRequest",
       "output": "crate::board_verb::BoardVerbOutput",
@@ -145,7 +159,7 @@
       "name": "tasks.create",
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
-      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
+      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::msgpack_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
       "scope": "Write",
       "proposes": true,
       "mcp_fields": {
@@ -935,6 +949,129 @@
         "spec": "$",
         "room_ref": "=conversation_ref"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turn.continue",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_continue(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turn.retry",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_retry(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.host",
+      "input": "RoomHostRequest",
+      "output": "crate::workspace_roster::RoomStanding",
+      "call": "memory.rooms_host(crate::EntityId::from_hex(&input.room_ref)?, input.session_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.sharing",
+      "input": "RoomRefRequest",
+      "output": "crate::workspace_roster::RoomSharingView",
+      "call": "memory.rooms_sharing(crate::EntityId::from_hex(&input.room_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "room_ref": "room_ref"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.companions.sharing.get",
+      "input": "CompanionSharingRequest",
+      "output": "crate::workspace_roster::CompanionSharingView",
+      "call": "memory.companion_sharing_get(&crate::workspace_roster::CompanionSharingTarget { companion: crate::EntityId::from_hex(&input.companion_ref)?, contact: crate::EntityId::from_hex(&input.contact_ref)? })?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.workspace.work_companion.get",
+      "input": "WorkspaceRefRequest",
+      "output": "crate::workspace_roster::WorkCompanionPolicy",
+      "call": "memory.workspace_work_companion_get(&input.workspace_ref)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.workspace.work_companion.set",
+      "input": "WorkCompanionSetRequest",
+      "output": "crate::workspace_roster::WorkCompanionPolicy",
+      "call": "memory.workspace_work_companion_set(&input.workspace_ref, input.policy)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.save",
+      "input": "crate::skill::helper::SkillSaveRequest",
+      "output": "crate::memory::SkillAuthoringReceipt",
+      "call": "{ let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?; memory.skill_save_with_source(id, &record, files, input.expected_version.as_deref(), crate::unix_seconds_now())? }",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.fork",
+      "input": "crate::skill::helper::SkillForkRequest",
+      "output": "crate::memory::SkillAuthoringReceipt",
+      "call": "{ let (parent, id) = crate::skill::helper::fork_target(&input)?; memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())? }",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "self.skills.callables",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::skill::helper::CallableCardView>",
+      "call": "memory.skill_callables()?",
+      "scope": "Read",
+      "mcp_fields": {},
       "mcp_scope": "unrestricted",
       "section": false
     },

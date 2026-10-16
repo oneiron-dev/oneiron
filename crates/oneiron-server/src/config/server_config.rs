@@ -292,6 +292,10 @@ pub struct ServeConfig {
     /// The `[browser]` section, absent until the config file names it.
     /// Absent means code runs have no browser.
     pub browser: Option<super::BrowserConfig>,
+    /// The `[gpu]` section: the batch lane's rented pods, absent until the
+    /// config file names it. Absent means every batch runs where its slot's
+    /// provider runs.
+    pub gpu: Option<crate::runtime::GpuPoolConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -300,6 +304,8 @@ pub struct ServeConfig {
     /// posture; relay and self-host keep no host reference at all. Never key
     /// material, and redacted in this struct's `Debug`.
     pub hosted_kms_key_ref: Option<String>,
+    /// Whether serve starts the fact-hook runner; `--no-hooks` turns it off.
+    pub hooks: bool,
 }
 
 impl Default for ServeConfig {
@@ -352,12 +358,14 @@ impl Default for ServeConfig {
             import: super::ImportConfig::default(),
             models: None,
             browser: None,
+            gpu: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
             failure_signal_export: false,
             failure_signal_training: false,
             hosted_kms_key_ref: None,
+            hooks: true,
         }
     }
 }
@@ -418,11 +426,13 @@ impl fmt::Debug for ServeConfig {
             .field("import", &self.import)
             .field("models", &self.models)
             .field("browser", &self.browser)
+            .field("gpu", &self.gpu)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
+            .field("hooks", &self.hooks)
             .finish()
     }
 }

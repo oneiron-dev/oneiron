@@ -208,6 +208,13 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "report")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("report", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_memory_diary(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.memory.diary")?;
         let output = py
@@ -534,6 +541,100 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.rooms.speak")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.rooms.speak", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_conversations_turn_continue(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.conversations.turn.continue")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.conversations.turn.continue", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_conversations_turn_retry(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.conversations.turn.retry")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.conversations.turn.retry", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_host(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.host")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.host", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_sharing(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.sharing")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.sharing", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_companions_sharing_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.companions.sharing.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.companions.sharing.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_workspace_work_companion_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.workspace.work_companion.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.workspace.work_companion.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_workspace_work_companion_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.workspace.work_companion.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.workspace.work_companion.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_skills_save(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.skills.save")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.skills.save", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_skills_fork(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.skills.fork")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.skills.fork", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_skills_callables(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.skills.callables")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.skills.callables", input))
             .map_err(raise)?;
         encode(&output)
     }

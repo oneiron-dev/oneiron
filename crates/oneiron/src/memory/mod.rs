@@ -55,6 +55,7 @@ mod owner_door;
 mod read_lane;
 mod reads;
 mod recall;
+mod report;
 mod room_turn;
 mod structural;
 mod subscriptions;
@@ -126,7 +127,7 @@ pub use recall::{
 };
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;
-pub(crate) use skill_authoring::skill_author_proof_is_live_in_txn;
+pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
@@ -137,12 +138,14 @@ pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
 pub use witness::{
-    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageStreamError,
-    MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamPump,
-    MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence, StreamCancelReason,
-    StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
+    MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
+    MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
-pub(crate) use witness::{MessageStreamRuntime, message_stream_finality_in_txn};
+pub(crate) use witness::{
+    MessageStreamRuntime, message_completion_in_txn, message_stream_finality_in_txn,
+};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
