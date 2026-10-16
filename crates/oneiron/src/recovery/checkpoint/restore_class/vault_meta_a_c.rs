@@ -39,6 +39,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::AUTHORITY_CHECKPOINT_HEAD, LIVE),
     (&t::AUTHORITY_CHECKPOINT_ROW, LIVE),
     (&t::AUTHORITY_HANDOFF_ALARM, LIVE),
+    (&t::AUTORESEARCH_AUTHORING, CONTENT),
+    (&t::AUTORESEARCH_AUTHORING_RUN, CONTENT),
     (&t::AUTORESEARCH_BASIS, LIVE),
     (&t::AUTORESEARCH_BINDING, CONTENT),
     (&t::AUTORESEARCH_NODE, CONTENT),
@@ -102,6 +104,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::CHECKOUT_LEASE, LIVE),
     (&t::CHECKOUT_SETTLEMENT, LIVE),
     (&t::CHECKOUT_TOMBSTONE, LIVE),
+    // A restore never rolls the checkpoint chain back.
+    (&t::CHECKPOINT_CHAIN_HEAD, LIVE),
     (&t::CHANNEL_IDENTITY_ASSIGNMENT, LIVE),
     (&t::CHANNEL_IDENTITY_ASSIGNMENT_ERASED, LIVE),
     (&t::CLAIM_DEFERRED, CONTENT),
