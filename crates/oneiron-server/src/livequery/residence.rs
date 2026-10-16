@@ -553,7 +553,7 @@ fn search(
             selected.get_map("entities").get(&id.to_hex()),
             Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))
         ) {
-            hits.push(json!({"entityId": id.to_hex(), "score": score}));
+            hits.push(json!({"entityId": id.to_hex(), "score": score, "window": window.as_str()}));
             rows.push(id);
             if hits.len() == input.limit {
                 break;
