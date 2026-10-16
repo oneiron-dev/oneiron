@@ -232,7 +232,8 @@ impl Vault {
         let Some(worlds) = touched_worlds_in(self, &txn, &attempt, source_turns)? else {
             return withheld(W::PrivateWorld);
         };
-        if !all_public(&self.authority_view_readonly_in_txn(&txn)?, &worlds) {
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if !all_public(&fold, &worlds) {
             return withheld(W::PrivateWorld);
         }
         let mut sources = Vec::with_capacity(source_turns.len());
@@ -306,7 +307,8 @@ impl Vault {
         let Some(worlds) = touched_worlds_in(self, &txn, &attempt, &[])? else {
             return withheld(W::PrivateWorld);
         };
-        if !all_public(&self.authority_view_readonly_in_txn(&txn)?, &worlds) {
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if !all_public(&fold, &worlds) {
             return withheld(W::PrivateWorld);
         }
         drop(txn);
