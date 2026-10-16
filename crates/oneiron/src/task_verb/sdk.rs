@@ -147,7 +147,7 @@ pub struct RoomEntry {
     pub id: String,
     pub room: crate::workspace_roster::ProjectRoom,
 }
-/// `recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
+/// `vault.recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
 ///
 /// Every field but `query` is optional and defaults to the contract's default,
 /// so an omitting client and a spelling-everything client reach the same
@@ -179,7 +179,7 @@ pub struct RecallRequest {
 
 pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
 
-/// `receipts`'s one input.
+/// `vault.receipts`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptsRequest {
     #[serde(default)]

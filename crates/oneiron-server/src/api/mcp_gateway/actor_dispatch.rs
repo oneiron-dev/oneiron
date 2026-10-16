@@ -152,7 +152,7 @@ enum McpCallEffect {
 }
 
 impl McpCallEffect {
-    /// A generated verb's effect. `claim_upsert` proposes a new claim, or a
+    /// A generated verb's effect. `vault.claims.upsert` proposes a new claim, or a
     /// replacement that supersedes its head only once approved; one that names
     /// its `id` rewrites that claim in place, so the old value leaves at once.
     /// A booking page publication acts at once too, with or without an `id`:
