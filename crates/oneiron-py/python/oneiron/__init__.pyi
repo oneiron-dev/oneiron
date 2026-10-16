@@ -215,7 +215,14 @@ class OneironError(RuntimeError):
     code: str
     message: str
     suggestions: tuple[str, ...]
-    def __init__(self, code: str, message: str, suggestions: list[str]) -> None: ...
+    wrong_root: dict[str, str] | None
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        suggestions: list[str],
+        wrong_root: dict[str, str] | None = None,
+    ) -> None: ...
 
 class Oneiron:
     tasks: TasksVerbs

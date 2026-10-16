@@ -364,7 +364,8 @@ fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
 
 #[test]
 fn refused_workbooks_reach_the_host_recalc_untouched() {
-    let deep_chain = format!("<f>{}</f>", ["1"; 40].join("+"));
+    // Longer than the 8,192 characters Excel saves.
+    let deep_chain = format!("<f>{}</f>", ["1"; 10_000].join("+"));
     let cases = [
         // What only the host knows: the environment, the file's path, the
         // active cell.

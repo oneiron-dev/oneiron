@@ -66,6 +66,194 @@ pub struct CanonicalEntityDocument {
     pub text: String,
     pub birth_actor: [u8; 16],
     pub birth_at: u64,
+    /// The document's causal state, by value. Absent for a document with no
+    /// fork, pin, receipt or purge: that one is its current value alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<CanonicalEntityDocumentHistory>,
+}
+
+impl CanonicalEntityDocument {
+    /// The bytes this row holds: its ids, text and causal history.
+    pub(super) fn held(&self) -> usize {
+        self.entity_id.len()
+            + self.document_id.len()
+            + self.field.as_ref().map_or(0, String::len)
+            + self.text.len()
+            + self.history.as_ref().map_or(0, |history| {
+                let versions = history
+                    .versions
+                    .iter()
+                    .map(|version| 16 + 4 * version.parents.len() + version.middle.len());
+                let pins = history.pins.iter().map(|pin| 96 + pin.quote.len());
+                let forks = history
+                    .forks
+                    .iter()
+                    .map(|fork| 96 + fork.output.as_ref().map_or(0, String::len));
+                versions.sum::<usize>()
+                    + pins.sum::<usize>()
+                    + forks.sum::<usize>()
+                    + 96 * (history.receipts.len() + history.purges.len())
+            })
+    }
+}
+
+/// The causal state of a generic EntityDoc, CRDT-independent: the retained
+/// versions its citations, receipts, forks and purges name, never Loro
+/// frontiers, cursors or exports. A restore replays the versions into fresh
+/// history and binds every row to its replayed version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalEntityDocumentHistory {
+    /// Retained versions in canonical causal order. Every version precedes
+    /// the last, which is the live head.
+    pub versions: Vec<CanonicalDocumentVersion>,
+    /// An owner purge dropped the history before version 0: none is carried,
+    /// and the restored document refuses every older version.
+    pub shallow: bool,
+    pub pins: Vec<CanonicalDocumentPin>,
+    pub receipts: Vec<CanonicalDocumentReceipt>,
+    pub forks: Vec<CanonicalDocumentFork>,
+    pub purges: Vec<CanonicalDocumentPurge>,
+}
+
+/// One retained version: the earlier versions it directly follows, and its
+/// text as one splice of its first parent's text (of the empty text for a
+/// version with no parent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalDocumentVersion {
+    pub parents: Vec<u32>,
+    /// Characters kept from the start of the first parent's text.
+    pub prefix: u32,
+    /// Characters kept from its end.
+    pub suffix: u32,
+    pub middle: String,
+}
+
+/// An immutable citation pin: the quoted span of one version, in characters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalDocumentPin {
+    pub citation: [u8; 16],
+    pub document: [u8; 16],
+    pub actor: [u8; 16],
+    pub version: u32,
+    pub start: u32,
+    pub end: u32,
+    pub quote: String,
+    pub hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CanonicalSettleVerb {
+    Merge,
+    Switch,
+    Reject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CanonicalForkStatus {
+    Pending,
+    Merged,
+    Switched,
+    Rejected,
+}
+
+/// A settlement or direct-update receipt between two versions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalDocumentReceipt {
+    pub receipt: [u8; 16],
+    pub proposal: [u8; 16],
+    pub fork: [u8; 16],
+    pub actor: [u8; 16],
+    pub verb: CanonicalSettleVerb,
+    pub at: u64,
+    pub before: u32,
+    pub after: u32,
+}
+
+/// A fork and its place in its proposal bundle, which the snapshot carries
+/// whole or refuses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalDocumentFork {
+    pub fork: [u8; 16],
+    pub proposal: [u8; 16],
+    pub parent_document: [u8; 16],
+    pub actor: [u8; 16],
+    pub opened_at: u64,
+    pub rewrite: bool,
+    pub status: CanonicalForkStatus,
+    /// None only for a settled fork whose base a purge dropped.
+    pub base: Option<u32>,
+    /// The retained output text of a pending fork.
+    pub output: Option<String>,
+    pub proposal_index: u16,
+    pub proposal_len: u16,
+    pub proposal_settled: bool,
+}
+
+/// Durable proof of one owner purge, bound to the versions it named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalDocumentPurge {
+    pub receipt: [u8; 16],
+    pub document: [u8; 16],
+    pub actor: [u8; 16],
+    pub requested: u32,
+    pub applied: u32,
+    pub at: u64,
+    pub live_text_hash: [u8; 32],
+}
+
+impl CanonicalEntityDocumentHistory {
+    /// Every version's full text, rebuilt from its splice, in version order.
+    pub fn texts(&self) -> Result<Vec<String>> {
+        let mut texts: Vec<String> = Vec::with_capacity(self.versions.len());
+        for (index, version) in self.versions.iter().enumerate() {
+            let base: Vec<char> = match version.parents.first() {
+                None => Vec::new(),
+                Some(&parent) => {
+                    let parent = parent as usize;
+                    if parent >= index {
+                        return Err(invalid("entity document version parent"));
+                    }
+                    texts[parent].chars().collect()
+                }
+            };
+            let prefix = version.prefix as usize;
+            let suffix = version.suffix as usize;
+            if prefix.checked_add(suffix).is_none_or(|kept| kept > base.len()) {
+                return Err(invalid("entity document version splice"));
+            }
+            let mut text: String = base[..prefix].iter().collect();
+            text.push_str(&version.middle);
+            text.extend(&base[base.len() - suffix..]);
+            texts.push(text);
+        }
+        Ok(texts)
+    }
+
+    /// The splice that turns `parent` into `text`: the longest common prefix,
+    /// then the longest common suffix of what remains.
+    pub fn splice(parent: &str, text: &str) -> Result<CanonicalDocumentVersion> {
+        let old: Vec<char> = parent.chars().collect();
+        let new: Vec<char> = text.chars().collect();
+        let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+        let suffix = old[prefix..]
+            .iter()
+            .rev()
+            .zip(new[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        Ok(CanonicalDocumentVersion {
+            parents: Vec::new(),
+            prefix: u32::try_from(prefix).map_err(|_| invalid("entity document version size"))?,
+            suffix: u32::try_from(suffix).map_err(|_| invalid("entity document version size"))?,
+            middle: new[prefix..new.len() - suffix].iter().collect(),
+        })
+    }
 }
 
 /// World proof retained when a soft-deleted CLAIM has only its header left.
@@ -553,12 +741,7 @@ pub(crate) fn capture_canonical_window_within(
             .is_some_and(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
             && let Some(row) = crate::entity_doc::capture_canonical(vault, &txn, entity.id)?
         {
-            budget.take(
-                row.entity_id.len()
-                    + row.document_id.len()
-                    + row.field.as_ref().map_or(0, String::len)
-                    + row.text.len(),
-            )?;
+            budget.take(row.held())?;
             snapshot.entity_documents.push(row);
         }
     }

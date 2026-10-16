@@ -1438,6 +1438,12 @@ fn cached<'x>(xml: &'x str, cell: &str) -> &'x str {
             .map_or(value.len(), |end| start + end)]
 }
 
+fn number(xml: &str, cell: &str) -> f64 {
+    cached(xml, cell)
+        .parse()
+        .unwrap_or_else(|_| panic!("{cell} number in {xml}"))
+}
+
 #[test]
 fn cell_filename_and_address_name_the_callers_location() {
     // Excel for Windows 16.0.20430 (ops/excel-hostinfo-probe-20261008.md):
@@ -1982,38 +1988,174 @@ fn absent_inline_string_is_blank_but_explicit_empty_text_is_not() {
 
 #[test]
 fn unsafe_formula_depth_refuses_before_recursive_evaluation_on_both_doors() {
-    use oneiron_xlsx_formula::engine::{RecalcEngine, StagedValue};
+    use oneiron_xlsx_formula::engine::{CellValue as CalcValue, RecalcEngine, StagedValue};
     use std::collections::BTreeMap;
-    let fixture_formula = include_str!("fixtures/fuse-chain-formula.txt").trim();
+    // Past what Excel's 8,192 characters hold, a formula is refused on both
+    // doors before its recursive AST is built.
     let long_chain = std::iter::repeat_n("1", 10_000)
         .collect::<Vec<_>>()
         .join("+");
+    let input = fixture(
+        "",
+        &format!(r#"<c r="A1"><f>{long_chain}</f><v>999</v></c>"#),
+        false,
+    );
+    assert!(matches!(
+        recalc(&input),
+        Err(FormulaError::UnsupportedWorkbook(_))
+    ));
+    assert!(matches!(
+        FormualizerEngine::new().evaluate(&BTreeMap::new(), &long_chain, "A1", None),
+        Err(FormulaError::UnsupportedWorkbook(_))
+    ));
+    let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(long_chain))]);
+    assert!(matches!(
+        FormualizerEngine::new().evaluate(&setup, "B1", "A1", None),
+        Err(FormulaError::UnsupportedWorkbook(_))
+    ));
+    // Shorter ones, which overflowed a 2 MiB stack in debug builds (a real
+    // FUSE input of 201 chained additions, 40 chained terms, 40 nested ABS),
+    // evaluate on both doors from a thread with that much stack.
+    let fixture_formula = include_str!("fixtures/fuse-chain-formula.txt")
+        .trim()
+        .to_owned();
     let deep_chain = std::iter::repeat_n("1", 40).collect::<Vec<_>>().join("+");
     let nested = format!("{}1{}", "ABS(".repeat(40), ")".repeat(40));
-    for formula in [
-        fixture_formula,
-        long_chain.as_str(),
-        deep_chain.as_str(),
-        nested.as_str(),
-    ] {
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            for (formula, value) in [(fixture_formula, 0.0), (deep_chain, 40.0), (nested, 1.0)] {
+                let input = fixture(
+                    "",
+                    &format!(r#"<c r="A1"><f>{formula}</f><v>999</v></c>"#),
+                    false,
+                );
+                let report = recalc(&input).expect("native");
+                assert_eq!(number(&part_text(&report.bytes, OUTPUT), "A1"), value);
+                let direct = FormualizerEngine::new()
+                    .evaluate(&BTreeMap::new(), &formula, "A1", None)
+                    .expect("evaluates");
+                assert_eq!(direct.value, CalcValue::Number(value));
+                let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(formula.clone()))]);
+                let staged = FormualizerEngine::new()
+                    .evaluate(&setup, "B1", "A1", None)
+                    .expect("evaluates");
+                assert_eq!(staged.value, CalcValue::Number(value));
+            }
+        })
+        .expect("caller thread")
+        .join()
+        .expect("no overflow");
+}
+
+#[test]
+fn what_the_writer_refuses_out_of_band_the_formula_door_refuses_too() {
+    use oneiron_xlsx_formula::engine::{RecalcEngine, StagedValue};
+    use std::collections::BTreeMap;
+    // Excel for Windows 16.0.20430: IFERROR(LEN(H6&UNICHAR(128512)),42) over
+    // H6 = REPT("a",32766) is 32766 (job probe-w2-parse-7, SC05), and
+    // ROWS(INDIRECT("F1:F1")#)+1 in F1 is 2 (job probe-w2-parse-4, OC07).
+    // The engine notes each out of band (a caught #N/IMPL!, a #CIRC!) and the
+    // writer refuses the workbook; the formula door returned 42 and #CIRC!.
+    let refused = |result: oneiron_xlsx_formula::Result<()>| {
+        matches!(result, Err(FormulaError::UnsupportedWorkbook(_)))
+    };
+    let split = "IFERROR(LEN(H6&_xlfn.UNICHAR(128512)),42)";
+    let rept = r#"REPT("a",32766)"#;
+    let cycle = r#"ROWS(_xlfn.ANCHORARRAY(INDIRECT("F1:F1")))+1"#;
+    let input = fixture(
+        "",
+        &format!(
+            r#"<c r="F1"><f>{}</f><v>32766</v></c><c r="H6"><f>{rept}</f></c>"#,
+            split.replace('&', "&amp;")
+        ),
+        false,
+    );
+    assert!(refused(recalc(&input).map(|_| ())));
+    let input = fixture(
+        "",
+        &format!(r#"<c r="F1"><f>{cycle}</f><v>2</v></c>"#),
+        false,
+    );
+    assert!(refused(recalc(&input).map(|_| ())));
+    let setup = BTreeMap::from([("H6".into(), StagedValue::Formula(rept.into()))]);
+    let engine = FormualizerEngine::new;
+    assert!(refused(
+        engine().evaluate(&setup, split, "F1", None).map(|_| ())
+    ));
+    let nothing = BTreeMap::new();
+    assert!(refused(
+        engine().evaluate(&nothing, cycle, "F1", None).map(|_| ())
+    ));
+}
+
+#[test]
+fn long_formulas_recalculate_natively() {
+    // A real FUSE input of 201 chained additions overflowed a worker's 2 MiB
+    // stack in debug builds; the writer evaluates on a stack for the longest
+    // formula Excel saves now, so it recalculates natively from a thread with
+    // that much stack (its blank cells sum to 0).
+    let input = fixture(
+        "",
+        &format!(
+            r#"<c r="A1"><f>{}</f><v>999</v></c>"#,
+            include_str!("fixtures/fuse-chain-formula.txt").trim()
+        ),
+        false,
+    );
+    let report = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || recalc(&input))
+        .expect("caller thread")
+        .join()
+        .expect("no overflow")
+        .expect("the FUSE chain recalculates natively");
+    assert_eq!(number(&part_text(&report.bytes, OUTPUT), "A1"), 0.0);
+    // A defined name and a LAMBDA body of 2,000 chained terms, which the
+    // engine evaluates as trees, took time cubic in their length (a review's
+    // workbook of three chained names of 3,500 terms ran for 45 minutes).
+    let chain = vec!["Input!$A$1"; 2000].join("+");
+    let body = vec!["_xlpm.x"; 2000].join("+");
+    let input = with_names(
+        &fixture(
+            r#"<c r="A1"><v>1</v></c>"#,
+            &format!(
+                r#"<c r="A1"><f>Chain</f><v>0</v></c><c r="B1"><f>_xlfn.LAMBDA(_xlpm.x,{body})(Input!A1)</f><v>0</v></c>"#
+            ),
+            false,
+        ),
+        &format!(r#"<definedName name="Chain">{chain}</definedName>"#),
+    );
+    let xml = part_text(
+        &recalc(&input)
+            .expect("a long name and LAMBDA body recalculate natively")
+            .bytes,
+        OUTPUT,
+    );
+    assert_eq!(number(&xml, "A1"), 2000.0);
+    assert_eq!(number(&xml, "B1"), 2000.0);
+    // A join keeps Excel's first 32,767 characters: 128 copies of a
+    // 256-character cell are 32,767 long in Excel for Windows 16.0.20430
+    // (probe CL18 of ops/excel-parse-probe-20261008.md in the fork's repo;
+    // the review's workbook cached 32,768), and 2,048 copies of a
+    // 32,767-character cell, which built a 67,106,816-character text in
+    // 58 s, are too.
+    for (copies, length) in [(128, 256), (2048, 32767)] {
+        let chain = vec!["B1"; copies].join("&amp;");
         let input = fixture(
             "",
-            &format!(r#"<c r="A1"><f>{formula}</f><v>999</v></c>"#),
+            &format!(
+                r#"<c r="A1"><f>LEN({chain})</f><v>0</v></c><c r="B1" t="str"><f>REPT("a",{length})</f><v></v></c>"#
+            ),
             false,
         );
-        assert!(matches!(
-            recalc(&input),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
-        assert!(matches!(
-            FormualizerEngine::new().evaluate(&BTreeMap::new(), formula, "A1", None),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
-        let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(formula.into()))]);
-        assert!(matches!(
-            FormualizerEngine::new().evaluate(&setup, "B1", "A1", None),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
+        let xml = part_text(
+            &recalc(&input)
+                .expect("a long join recalculates natively")
+                .bytes,
+            OUTPUT,
+        );
+        assert_eq!(number(&xml, "A1"), 32767.0, "{copies} copies");
     }
 }
 
@@ -2029,4 +2171,59 @@ fn concatenation_preserves_error_values_for_iferror_in_retained_xlsx() {
     assert_eq!(xml.matches("<v>missing</v>").count(), 2);
     assert!(xml.contains("<v>#N/A</v>"));
     assert_eq!(result.formula_count, 3);
+}
+
+#[test]
+fn deleted_references_and_spill_references_recalculate_natively() {
+    // The names SpreadsheetBench 14207 keeps for a deleted column, and the
+    // spill references (`A1#`, stored `_xlfn.ANCHORARRAY(A1)`) 49667's names
+    // hold over a closed linked workbook, with Excel for Windows 16.0.20430's
+    // values (ops/excel-parse-probe-20261008.md): the name over a deleted
+    // range is #REF!, a spill reference into a closed workbook #REF!, and one
+    // to a formula's own cell that cell (`=1+1` sums to 2).
+    let bytes = linked_workbook(
+        RATES,
+        r#"<c r="A1"><f>ISERROR(Gone)</f><v>0</v></c><c r="B1"><f>ERROR.TYPE(All)</f><v>0</v></c><c r="C1"><f>SUM(_xlfn.ANCHORARRAY(D1))</f><v>0</v></c><c r="D1"><f>1+1</f><v>0</v></c><c r="E1"><f>COUNTA(Gone)</f><v>0</v></c>"#,
+    );
+    let input = edit_part(&bytes, "xl/workbook.xml", |xml| {
+        xml.replace(
+            "</externalReferences>",
+            r#"</externalReferences><definedNames><definedName name="Gone">Result!#REF!:INDEX(Result!#REF!,COUNTA(Result!#REF!))</definedName><definedName name="All">_xlfn.ANCHORARRAY([1]Rates!$A$1)</definedName></definedNames>"#,
+        )
+    });
+    let report = recalc(&input).expect("deleted and spill references recalculate natively");
+    let xml = part_text(&report.bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "1");
+    assert_eq!(number(&xml, "B1"), 4.0);
+    assert_eq!(number(&xml, "C1"), 2.0);
+    assert_eq!(number(&xml, "E1"), 1.0);
+}
+
+#[test]
+fn spill_references_read_the_spilled_range() {
+    // `_xlfn.ANCHORARRAY(A1)` is A1's spill: SEQUENCE(2,2) sums to 10 over
+    // two rows, as `SUM(A1#)` and `ROWS(A1#)` in Excel for Windows 16.0.20430
+    // (probes S01-S04 of ops/excel-parse-probe-20261008.md).
+    let members = r#"<c r="B1"><v>9</v></c></row><row r="2"><c r="A2"><v>9</v></c><c r="B2"><v>9</v></c><c r="C2"><f>SUM(_xlfn.ANCHORARRAY(A1))</f><v>0</v></c><c r="D2"><f>ROWS(_xlfn.ANCHORARRAY(A1))</f><v>0</v></c>"#;
+    let report = recalc(&dynamic_array("A1:B2", members)).expect("native spill references");
+    let xml = part_text(&report.bytes, OUTPUT);
+    assert_eq!(number(&xml, "C2"), 10.0);
+    assert_eq!(number(&xml, "D2"), 2.0);
+}
+
+#[test]
+fn a_spill_reference_to_its_own_cell_falls_back() {
+    // A review's workbook: ROWS(A1#)+1 in A1, cached 77, kept 77 as a
+    // circular formula. Excel for Windows 16.0.20430 calculates it to 2 and
+    // SEQUENCE(ROWS(A1#)+1) to a circular 0 (probes SR01 and SR05 of
+    // ops/excel-parse-probe-20261008.md), so the workbook falls back.
+    let input = fixture(
+        "",
+        r#"<c r="A1"><f>ROWS(_xlfn.ANCHORARRAY(A1))+1</f><v>77</v></c>"#,
+        false,
+    );
+    assert_eq!(
+        fallback(&input),
+        "a circular reference through a spill reference (workbook)"
+    );
 }

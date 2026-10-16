@@ -350,5 +350,6 @@ pub(crate) fn run_in_txn(
     for row in &snapshot.entity_documents {
         crate::entity_doc::restore_canonical(vault, txn, row)?;
     }
+    crate::entity_doc::restore_canonical_proposals(vault, txn, &snapshot.entity_documents)?;
     Ok(())
 }
