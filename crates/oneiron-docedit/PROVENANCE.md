@@ -27,3 +27,10 @@ pure `api::Document` facade; the wrapper does not expose a session store.
 Upstream packages are not separately published by this workspace.
 ONE-2701 ported the fork's quick-xml readers (`src/word_xml.rs`, `src/normalize.rs`, three test
 files) from 0.37 to the workspace's `=0.42.0` pin, clearing RUSTSEC-2026-0194 and -0195.
+The comment-occurrence change (2026-10-16) touches `src/edit/verbs/comments.rs`, `src/edit/mod.rs`,
+`src/edit_v4.rs`, `src/edit_v4/catalog.rs`, `src/runtime.rs` and `src/api.rs`. `comment_create` takes an
+optional 1-based `occurrence` that anchors the n-th copy of a repeated quote, counted over the
+paragraph's visible text the way `set_format` counts its targets. An out-of-range copy is refused. Without
+`occurrence` the first-copy anchor is unchanged. A quote that matches more than one copy now yields a
+typed `EditNote` with the copy count and the anchored copy, which `apply_with_notes` returns (the
+value-only `apply` drops it).

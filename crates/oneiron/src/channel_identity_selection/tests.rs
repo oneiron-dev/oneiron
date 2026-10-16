@@ -59,6 +59,7 @@ fn person(vault: &Vault, seed: u8) -> crate::EntityId {
     id
 }
 
+/// The vault's own owner's proof: an owner-locked rule is the owner's (H149).
 fn owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
     crate::test_util::embedded_owner_proof(vault)
 }
@@ -524,6 +525,48 @@ fn a_caller_asserted_human_class_cannot_write_as_the_owner() {
     assert!(
         ChannelIdentitySelectionWriter::from_authenticated_write(&forged).is_err(),
         "a caller-asserted Human class minted the owner's writer"
+    );
+}
+
+/// H149: a native owner proof shows a live person, not whose vault this is.
+/// A person of this vault who is not its owner writes no owner-locked law.
+#[test]
+fn a_person_who_is_not_the_owner_cannot_write_as_the_owner() {
+    let (_dir, vault) = open_vault();
+    let proof = vault
+        .authenticate_owner(
+            person(&vault, 0x6C),
+            "principal:stranger",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("a live person authenticates");
+    let retire = ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
+        agent_amendable: false,
+        enabled: false,
+        ..authored_rule(
+            "builtin.work_deal",
+            RelationshipContext::WorkDeal,
+            SelectionRuleScope::VaultDefault,
+            ChannelIdentityFace::DelegatedOwnerAccount,
+        )
+    });
+    assert!(
+        vault
+            .update_channel_identity_selection_rules(
+                0,
+                &ChannelIdentitySelectionWriter::owner(&proof),
+                retire,
+            )
+            .is_err(),
+        "a person who is not this vault's owner amended its law as the owner"
+    );
+    assert_eq!(
+        vault
+            .stored_channel_identity_selection_rules()
+            .expect("stored law"),
+        None,
+        "nothing was written"
     );
 }
 
