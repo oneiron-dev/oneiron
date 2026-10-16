@@ -337,6 +337,13 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "sync_world_default");
         hash_bool(hasher, default_all);
     }
+    if !resolution.persona_core_prefixes.is_empty() {
+        hash_str(hasher, "persona_core_prefixes");
+        hash_len(hasher, resolution.persona_core_prefixes.len());
+        for prefix in &resolution.persona_core_prefixes {
+            hash_str(hasher, prefix);
+        }
+    }
     if let Some(worlds) = &resolution.sync_world_ceiling {
         hash_str(hasher, "sync_world_ceiling");
         hash_len(hasher, worlds.len());

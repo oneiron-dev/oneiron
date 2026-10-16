@@ -1,8 +1,9 @@
 //! Terminal-pact per-world stale stamping (FED-04).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
 
-use crate::authority::FederationPactStatus;
+use crate::authority::{AuthorityFold, FederationPactStatus};
 use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower, is_foreign_world_id_range};
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
@@ -235,6 +236,68 @@ pub(super) fn register_foreign_world_for_pact(
     })
 }
 
+thread_local! {
+    /// Set on the writing thread when a write stages an AUTHORITY_LOG row
+    /// (H213). Write closures run on their caller's thread, so the
+    /// transaction's owner reads it back and sweeps once it commits.
+    static SWEEP_DUE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Notes that the current thread's transaction staged an AUTHORITY_LOG row.
+/// Every put notes one, local or replicated, terminal-shaped or not: a late
+/// ancestor can make a terminal row already stored take effect in the fold.
+pub(crate) fn note_authority_row() {
+    SWEEP_DUE.with(|due| due.set(true));
+}
+
+/// One transaction owner's watch for an AUTHORITY_LOG row (H213): begun
+/// before the transaction, finished after its commit. Watches nest: an inner
+/// owner on the same thread (another vault's writer) hands the outer note back
+/// intact.
+pub(crate) struct StaleSweepWatch<'v> {
+    vault: &'v Vault,
+    outer: bool,
+}
+
+impl<'v> StaleSweepWatch<'v> {
+    pub(crate) fn begin(vault: &'v Vault) -> Self {
+        Self {
+            vault,
+            outer: SWEEP_DUE.with(|due| due.replace(false)),
+        }
+    }
+
+    /// Runs the stale-stamp sweep when the committed transaction staged an
+    /// authority row, whichever door stored it, or when this vault still owes
+    /// one. A failed sweep leaves it owed, so the next commit by any writer
+    /// tries again.
+    pub(crate) fn finish(self) -> Result<()> {
+        let noted = SWEEP_DUE.with(|due| due.replace(false));
+        let owed = &self.vault.store.federation_stale_sweep_owed;
+        if (owed.swap(false, Ordering::AcqRel) || noted)
+            && let Err(error) = apply_federation_stale_stamps(self.vault)
+        {
+            owed.store(true, Ordering::Release);
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for StaleSweepWatch<'_> {
+    /// A watch dropped unfinished with a note pending (a discarded
+    /// transaction, or an error after the commit and before its sweep) leaves
+    /// the sweep owed. A spare sweep stamps only what the fold justifies.
+    fn drop(&mut self) {
+        if SWEEP_DUE.with(|due| due.replace(self.outer)) {
+            self.vault
+                .store
+                .federation_stale_sweep_owed
+                .store(true, Ordering::Release);
+        }
+    }
+}
+
 /// Stamps every world registered to a pact that the fold reports terminal.
 ///
 /// ONE authority fold per sweep: the fold is the authority on which pacts went
@@ -245,20 +308,13 @@ pub(super) fn register_foreign_world_for_pact(
 /// how many NEW stamps were written, so a second sweep over unchanged state
 /// returns 0.
 pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
-    let fold = vault.authority_fold()?;
-    let terminal: Vec<([u8; 32], FederationStaleReason, u64)> = fold
-        .federation_pacts
-        .iter()
-        .filter_map(|(pact_id, state)| {
-            let reason = FederationStaleReason::from_pact_status(state.status)?;
-            // Disconnect/Dissolve keep the epoch, Promote bumps it; either way
-            // `terminal_epoch` is the epoch the pact DIED at. The fallback is
-            // structurally unreachable (every terminal transition sets it) and
-            // resolves to the same epoch rather than to a panic.
-            let epoch = state.terminal_epoch.unwrap_or(state.pact_epoch);
-            Some((*pact_id, reason, epoch))
-        })
-        .collect();
+    // No registered world, nothing to stamp: the fold is skipped. Every
+    // authority commit sweeps (H213), so without registrations a sweep costs
+    // one prefix probe.
+    if !any_world_registered(&vault.store, &vault.store.env.read_txn()?)? {
+        return Ok(0);
+    }
+    let terminal = terminal_pacts(&vault.authority_fold()?);
     if terminal.is_empty() {
         return Ok(0);
     }
@@ -269,13 +325,7 @@ pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
     vault.with_write_txn_grouped(|wtxn| {
         let mut stamped = 0usize;
         for (pact_id, reason, disconnect_epoch) in &terminal {
-            let prefix = federation_world_prefix(pact_id);
-            let worlds = FEDERATION_WORLD
-                .scan_from(&vault.store, wtxn, prefix.as_bytes())?
-                .into_iter()
-                .map(|(key, _marker)| registered_world_from_key(&key, &prefix))
-                .collect::<Result<Vec<_>>>()?;
-            for world in worlds {
+            for world in registered_worlds(&vault.store, wtxn, pact_id)? {
                 let key = ForeignWorldKey(world);
                 // FIRST STAMP WINS. An existing row is never compared or
                 // overwritten — not even by a strictly later terminal epoch.
@@ -299,6 +349,47 @@ pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
     })
 }
 
+/// Whether any world is registered to any pact. Without one, no stamp is ever
+/// due.
+fn any_world_registered(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(FEDERATION_WORLD
+        .iter_raw_from(store, txn, &[])?
+        .next()
+        .transpose()?
+        .is_some())
+}
+
+/// Each pact the fold reports terminal, with why it ended and the epoch it
+/// ended at.
+fn terminal_pacts(fold: &AuthorityFold) -> Vec<([u8; 32], FederationStaleReason, u64)> {
+    fold.federation_pacts
+        .iter()
+        .filter_map(|(pact_id, state)| {
+            let reason = FederationStaleReason::from_pact_status(state.status)?;
+            // Disconnect/Dissolve keep the epoch, Promote bumps it; either way
+            // `terminal_epoch` is the epoch the pact DIED at. The fallback is
+            // structurally unreachable (every terminal transition sets it) and
+            // resolves to the same epoch rather than to a panic.
+            let epoch = state.terminal_epoch.unwrap_or(state.pact_epoch);
+            Some((*pact_id, reason, epoch))
+        })
+        .collect()
+}
+
+/// The worlds registered to one pact.
+fn registered_worlds(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    pact_id: &[u8; 32],
+) -> Result<Vec<EntityId>> {
+    let prefix = federation_world_prefix(pact_id);
+    FEDERATION_WORLD
+        .scan_from(store, txn, prefix.as_bytes())?
+        .into_iter()
+        .map(|(key, _marker)| registered_world_from_key(&key, &prefix))
+        .collect()
+}
+
 /// Reads one world's stale stamp, if it carries one.
 pub fn foreign_world_stale_stamp(
     vault: &Vault,
@@ -308,7 +399,9 @@ pub fn foreign_world_stale_stamp(
     FEDERATION_STALE.get(&vault.store, &rtxn, &ForeignWorldKey(world))
 }
 
-/// Every stale-stamped world, for ONE read of the retrieval path.
+/// Every world that reads as stale, for ONE read of the retrieval path: its
+/// stored stamp, or one derived from this snapshot's fold until the sweep
+/// stores it.
 ///
 /// Callers load this once per retrieval run and probe the map per candidate;
 /// re-scanning per claim would turn a prefix scan into an inner loop.
@@ -333,10 +426,32 @@ pub(crate) fn stale_stamped_worlds(
             err
         }
     })?;
-    Ok(rows
+    let mut stale: BTreeMap<EntityId, WorldStaleStamp> = rows
         .into_iter()
         .map(|(ForeignWorldKey(world), stamp)| (world, stamp))
-        .collect())
+        .collect();
+    // H213: a terminal pact's worlds read as stale in the snapshot its
+    // terminal entry commits in. The sweep stamps them in a later transaction,
+    // or not until a retry when it fails, so until then the entry is derived
+    // from this snapshot's own fold. A stored stamp wins and nothing derived
+    // here is written; a derived entry carries no stamp time (0).
+    if any_world_registered(store, rtxn)? {
+        let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+            store,
+            store.privacy_posture,
+            rtxn,
+        )?;
+        for (pact_id, reason, disconnect_epoch) in terminal_pacts(&fold) {
+            for world in registered_worlds(store, rtxn, &pact_id)? {
+                stale.entry(world).or_insert(WorldStaleStamp {
+                    reason,
+                    disconnect_epoch,
+                    stamped_at_secs: 0,
+                });
+            }
+        }
+    }
+    Ok(stale)
 }
 
 /// `fedstale:{world_id_hex}` — one stamp per world, never per pact.

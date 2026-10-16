@@ -37,7 +37,7 @@ use crate::store::GateDecisionId;
 /// the vault it opened; a sibling test running in the same binary opened a
 /// different vault and cannot see it.
 type GraphAskPreflightHook = (EntityId, Box<dyn FnOnce() + Send>);
-type BeforeDreamerPersonMintHook = Box<dyn FnOnce(&crate::Vault) + Send>;
+type VaultHook = Box<dyn FnOnce(&crate::Vault) + Send>;
 
 #[derive(Default)]
 pub(crate) struct TestHooks {
@@ -60,7 +60,7 @@ pub(crate) struct TestHooks {
     after_tagging_claim_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One-shot Dreamer boundary after a fallback passed read-side policy but
     /// before the PERSON writer opens its transaction.
-    before_dreamer_person_mint: Mutex<Option<BeforeDreamerPersonMintHook>>,
+    before_dreamer_person_mint: Mutex<Option<VaultHook>>,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One-shot: the next retrieval cancels its deadline once its text stage
@@ -77,6 +77,9 @@ pub(crate) struct TestHooks {
     /// it makes outside its write transaction has run and before it asks for
     /// the writer.
     pub(crate) before_run_speech_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot boundary in a resident's inference-defaults replace, once the
+    /// dispatcher's ceiling check has run and before the setter's writer.
+    pub(crate) before_resident_defaults_writer: Mutex<Option<VaultHook>>,
     /// One-shot boundary in a save of a stretch's talk, once its plans are
     /// cut and the snapshot dropped, still holding the session state, before
     /// it asks for the writer.

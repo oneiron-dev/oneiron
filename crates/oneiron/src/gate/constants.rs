@@ -243,6 +243,11 @@ pub(super) const POLICY_CONNECTOR_CLASS_PRECEDENCE_KEY: &str = "connector_class_
 /// Trusted policy rows for cross-vault ask limits, surface and retry cadence.
 pub(super) const POLICY_ASK_POLICY_KEY: &str = "ask_policy";
 
+/// Optional host-declared predicate prefixes whose Dreamer writes are isolated
+/// as persona-core, beside the engine's built-in table (H393). Trusted packs
+/// only; declarations union, so a pack can add protection, never remove it.
+pub(crate) const POLICY_PERSONA_CORE_PREFIXES_KEY: &str = "persona_core_prefixes";
+
 /// Optional trusted manifest ceiling for device world-window subscriptions.
 pub(crate) const POLICY_SYNC_WORLD_CEILING_KEY: &str = "sync_world_ceiling";
 pub(crate) const POLICY_SYNC_WORLD_DEFAULT_KEY: &str = "sync_world_default";

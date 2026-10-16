@@ -33,8 +33,8 @@ impl Vault {
         Ok(mounted)
     }
 
-    /// Re-read the installation and skill lifecycle BEFORE every render. A
-    /// hidden lens never invokes its host renderer, even if it mounted earlier.
+    /// Re-read the installation and skill state BEFORE every render. A hidden
+    /// lens never invokes its host renderer, even if it mounted earlier.
     /// The host provides code, not an engine-defined screen or lens DSL.
     pub fn render_mounted_lens<T>(
         &self,
@@ -74,8 +74,10 @@ impl Vault {
                 "entity is not a type-7 SKILL",
             )));
         }
-        Ok(crate::skill::decode_skill_record(&body)?
-            .lifecycle_status
-            .loads_as_canon())
+        // H355: the skill must still LOAD (Active and approved), the same
+        // invariant the load door applies; a rejected skill keeps no lens.
+        Ok(crate::skill::skill_loadable(
+            &crate::skill::decode_skill_record(&body)?,
+        ))
     }
 }

@@ -355,6 +355,63 @@ fn authorized_agent_edits_inference_rows_and_next_call_uses_them() -> Result<()>
     );
     Ok(())
 }
+
+/// H147 (review r1): the setter judges the agent's ceiling in the transaction
+/// that writes the rows. A narrowing that commits after the dispatcher's own
+/// check holds the replacement instead of landing behind it.
+#[test]
+fn a_ceiling_narrowed_after_the_check_holds_the_inference_rows() -> Result<()> {
+    use crate::llm::{CallPurpose, ModelTierRef};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let agent = entity(0x77);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"agent",
+    )?;
+    let actor = WriteActor::new(agent, EdgeActorClass::Agent);
+    crate::code_run::tests::install_exact_actor_ceiling(&vault, agent, "auto")?;
+    let replace = |tier: &str| -> Result<SelfDispatchOutcome> {
+        let mut table = vault.purpose_default_table()?;
+        table
+            .purposes
+            .get_mut(&CallPurpose::Consolidation)
+            .unwrap()
+            .tier = ModelTierRef(tier.into());
+        crate::code_run::GatedActorWrite::new(&vault, actor, tier)?.dispatch(
+            SelfCall::InferenceDefaultsReplace(serde_json::to_string(&table).unwrap()),
+        )
+    };
+    let tier = || -> Result<String> {
+        Ok(
+            vault.purpose_default_table()?.purposes[&CallPurpose::Consolidation]
+                .tier
+                .as_str()
+                .to_owned(),
+        )
+    };
+
+    replace("resident-first")?;
+    assert_eq!(tier()?, "resident-first", "control: an Auto agent edits");
+
+    *vault
+        .test_hooks()
+        .before_resident_defaults_writer
+        .lock()
+        .expect("resident defaults hook") = Some(Box::new(move |vault: &Vault| {
+        crate::code_run::tests::install_exact_actor_ceiling(vault, agent, "proposed")
+            .expect("narrow the agent after its check");
+    }));
+    assert!(matches!(
+        replace("resident-second"),
+        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. }))
+            if reason_codes == ["gate.pending.actor_ceiling"]
+    ));
+    assert_eq!(tier()?, "resident-first", "the narrowing holds the rows");
+    Ok(())
+}
 struct PolicyReceiptExecutor;
 impl crate::dreamer_wake::DreamerAttemptExecutor for PolicyReceiptExecutor {
     async fn execute(

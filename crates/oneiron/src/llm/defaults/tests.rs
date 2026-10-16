@@ -125,7 +125,7 @@ fn resident_rows_roundtrip_and_change_resolution() {
     let mut wider = nonlocal.clone();
     wider.extraction_max_locality = ModelLocality::ThirdParty;
     assert!(matches!(
-        vault.set_resident_purpose_default_table(&wider),
+        vault.set_resident_purpose_default_table(&wider, |_| Ok(())),
         Err(Error::InvalidConfig(_))
     ));
 }
@@ -186,7 +186,7 @@ fn voice_precedence_is_editable_but_override_cannot_widen_vault() {
     let mut resident = stored;
     resident.voice_precedence = VoicePrecedence::NestedNarrowing;
     assert!(matches!(
-        vault.set_resident_purpose_default_table(&resident),
+        vault.set_resident_purpose_default_table(&resident, |_| Ok(())),
         Err(Error::InvalidConfig(_))
     ));
 }

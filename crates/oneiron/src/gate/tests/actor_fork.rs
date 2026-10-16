@@ -483,6 +483,53 @@ fn fork_clamp_reads_parent_row() -> Result<()> {
     Ok(())
 }
 
+/// H147, inherited half: a fork's bound is its parent ROW as it stands. A
+/// parent retracted or rejected after the fork was made lends it nothing past
+/// Proposed, read live at the fork's next write.
+#[test]
+fn a_withdrawn_parent_definition_lends_its_forks_no_ceiling() -> Result<()> {
+    let withdrawals: [fn(&mut AgentDefinition); 2] = [
+        |def| def.lifecycle_status = ClaimLifecycleStatus::Retracted,
+        |def| def.approval_status = ClaimApprovalStatus::Rejected,
+    ];
+    for withdraw in withdrawals {
+        let (_tmp, vault) = temp_vault();
+        put_agent_def_row(
+            &vault,
+            &pinned_actor_id(0xA4),
+            "sys.herald",
+            AgentCeiling::Auto,
+            None,
+        )?;
+        let fork = test_id(0x74);
+        put_agent_def_row(
+            &vault,
+            &fork,
+            "fork.of.herald",
+            AgentCeiling::Auto,
+            Some("sys.herald"),
+        )?;
+        assert_eq!(
+            resolved_ceiling(&vault, fork)?,
+            Some(PolicyApprovalCeiling::Auto)
+        );
+        let mut parent = agent_def_fixture("sys.herald", AgentCeiling::Auto);
+        withdraw(&mut parent);
+        put_raw_entity_row(
+            &vault,
+            &pinned_actor_id(0xA4),
+            ENTITY_TYPE_AGENT_DEF,
+            &encode_agent_definition(&parent)?,
+        )?;
+        assert_eq!(
+            resolved_ceiling(&vault, fork)?,
+            Some(PolicyApprovalCeiling::Proposed),
+            "a withdrawn parent's ceiling must not reach its fork"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn fork_clamp_fails_closed_without_parent_row() -> Result<()> {
     let (_tmp, vault) = temp_vault();

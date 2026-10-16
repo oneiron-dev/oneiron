@@ -1,5 +1,6 @@
-use crate::agent_def::decode_agent_definition;
+use crate::agent_def::{AgentDefinition, decode_agent_definition};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::ports::EntityStoreRead;
@@ -26,7 +27,9 @@ pub(crate) fn first_party_connector_actor_ref() -> String {
 ///   row's), whose bound no other row there lifts → `Some(Proposed)`;
 /// * decoded definition → its ceiling restricted by the fork parent ROW's
 ///   stored ceiling, fail-closed (an unresolvable parent row clamps to
-///   Proposed);
+///   Proposed); a definition that is no longer Active, approved and enabled
+///   holds its actor at Proposed (H147: dispatch admitted it once, but a
+///   running job answers to the row as it stands now);
 /// * unreadable/undecodable body → `Some(Proposed)` with a `tracing::warn!`
 ///   naming the actor entity id — the fail-closed re-clamp of a believed-Auto
 ///   agent must not be silent.
@@ -139,6 +142,11 @@ fn agent_bearing_for_entity(
         return agent_id_held(store, txn, entity_ref).unwrap_or(AgentBearing::NonAgent);
     }
     match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+        // H147: switched off, retracted or rejected after dispatch, the
+        // definition grants its running job nothing past Proposed.
+        Ok(def) if !(definition_in_force(&def) && def.enabled) => {
+            AgentBearing::Bound(PolicyApprovalCeiling::Proposed)
+        }
         Ok(def) => {
             let mut ceiling = PolicyApprovalCeiling::from_agent_ceiling(def.ceiling);
             if let Some(parent_ref) = &def.forked_from {
@@ -166,7 +174,8 @@ fn agent_bearing_for_entity(
 /// compiled preset table). Every arm that cannot READ a parent ceiling —
 /// unreadable store, missing row, unparsable header, non-type-17, undecodable
 /// body — warns and clamps to `Proposed`, so an unresolvable lineage can never
-/// leave a fork wider than its parent.
+/// leave a fork wider than its parent. A retracted or rejected parent lends
+/// no ceiling either (H147).
 fn parent_row_ceiling(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -209,7 +218,10 @@ fn parent_row_ceiling(
         return PolicyApprovalCeiling::Proposed;
     }
     match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
-        Ok(parent) => PolicyApprovalCeiling::from_agent_ceiling(parent.ceiling),
+        Ok(parent) if definition_in_force(&parent) => {
+            PolicyApprovalCeiling::from_agent_ceiling(parent.ceiling)
+        }
+        Ok(_) => PolicyApprovalCeiling::Proposed,
         Err(error) => {
             tracing::warn!(
                 parent_entity_id = %parent_id.to_hex(),
@@ -219,6 +231,17 @@ fn parent_row_ceiling(
             PolicyApprovalCeiling::Proposed
         }
     }
+}
+
+/// Whether a definition is in force: Active and approved (Auto or Approved),
+/// the states dispatch admits. Retraction or rejection withdraws its ceiling
+/// from its own actor and from every fork that inherits its bound.
+fn definition_in_force(def: &AgentDefinition) -> bool {
+    def.lifecycle_status == ClaimLifecycleStatus::Active
+        && matches!(
+            def.approval_status,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
 }
 
 /// The actor classes the gate recognizes as NON-agent effect principals.

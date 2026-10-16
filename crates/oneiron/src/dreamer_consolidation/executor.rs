@@ -12,7 +12,7 @@ use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
 use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
-use super::failure_rules::{self, FailureRules, Stage};
+use super::failure_rules::{self, Stage};
 use super::gap::{ReflectionGap, ReflectionGapKind};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
@@ -175,6 +175,10 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
+        // H398: the rules in force NOW judge the reply, not the copy bound to
+        // the request; a claim retracted while the call ran takes its rules
+        // with it.
+        let rules = failure_rules::load(ctx.vault)?;
         // Both resident policies restrict a fallback: the step-level failure
         // class must permit consolidation AND the Dreamer stage rule must
         // accept the deterministic response. Neither is a Gate bypass.
@@ -240,7 +244,6 @@ impl ConsolidationExecutor<'_> {
             resources,
             ctx,
             attempt_id_for_steps(attempt_id, run_id_ref),
-            rules.as_ref(),
             charges,
         )
         .await
@@ -258,7 +261,6 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
-        rules: Option<&FailureRules>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
         let assembled =
@@ -333,7 +335,9 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
-            if let Some(rules) = rules {
+            // Each conflict call binds, and is judged by, the rules in force
+            // at that moment (H398).
+            if let Some(rules) = failure_rules::load(ctx.vault)? {
                 rules.bind(Stage::Conflict, &mut request);
             }
             let mut request = ctx
@@ -392,6 +396,7 @@ impl ConsolidationExecutor<'_> {
             if ctx.deadline.expired() {
                 return Ok(PartitionRun::Checkpoint);
             }
+            let rules = failure_rules::load(ctx.vault)?;
             let resolution =
                 if rules.is_some_and(|rules| !rules.accepts(Stage::Conflict, &response)) {
                     MergeResolution::Escalate

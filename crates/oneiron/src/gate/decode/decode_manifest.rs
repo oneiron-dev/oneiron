@@ -31,14 +31,15 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_PROJECT_COLLABORATION_KEY,
-    POLICY_PROJECT_CONVERSION_KEY, POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY,
-    POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
-    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHARED_ACT_POLICIES_KEY,
-    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY,
-    POLICY_TEACHER_PROBE_KEY, POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_PERSONA_CORE_PREFIXES_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
+    POLICY_PROJECT_COLLABORATION_KEY, POLICY_PROJECT_CONVERSION_KEY,
+    POLICY_RETIRED_COMM_OPT_OUT_POSTURE_KEY, POLICY_RETIRED_PROPOSAL_CHECK_THRESHOLD_KEY,
+    POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
+    POLICY_SHARED_ACT_POLICIES_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
+    POLICY_SKILL_EDIT_GOAL_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_SYNC_WORLD_CEILING_KEY, POLICY_SYNC_WORLD_DEFAULT_KEY, POLICY_TEACHER_PROBE_KEY,
+    POLICY_WAIT_POLICY_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::fanout_policy::{
@@ -181,6 +182,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(in crate::gate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(in crate::gate) sync_world_default: Option<bool>,
+    pub(in crate::gate) persona_core_prefixes: std::collections::BTreeSet<String>,
     pub(in crate::gate) consult_fanout_approval_threshold: Option<u32>,
     pub(in crate::gate) consult_fanout_controls: Option<FanoutControls>,
     pub(in crate::gate) consult_fanout_precedence: Option<FanoutPrecedence>,
@@ -317,6 +319,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::skill_optimize::policy::MANIFEST_KEY
                 | POLICY_SYNC_WORLD_CEILING_KEY
                 | POLICY_SYNC_WORLD_DEFAULT_KEY
+                | POLICY_PERSONA_CORE_PREFIXES_KEY
         ) {
             return None;
         }
@@ -850,6 +853,23 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(_) => return None,
     };
 
+    let persona_core_prefixes = match single_map_value(&entries, POLICY_PERSONA_CORE_PREFIXES_KEY) {
+        MapValue::Missing => std::collections::BTreeSet::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(prefixes)) => {
+            let mut declared = std::collections::BTreeSet::new();
+            for value in prefixes {
+                let prefix = value.as_str()?;
+                if !crate::claim::is_predicate_prefix(prefix) || !declared.insert(prefix.to_owned())
+                {
+                    return None;
+                }
+            }
+            declared
+        }
+        MapValue::Present(_) => return None,
+    };
+
     let sync_world_default = match single_map_value(&entries, POLICY_SYNC_WORLD_DEFAULT_KEY) {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -970,6 +990,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         credential_lifetimes,
         sync_world_ceiling,
         sync_world_default,
+        persona_core_prefixes,
         consult_fanout_approval_threshold,
         consult_fanout_controls,
         consult_fanout_precedence,

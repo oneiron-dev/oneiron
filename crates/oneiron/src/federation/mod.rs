@@ -78,6 +78,7 @@ pub use self::stale::{
     decode_world_stale_stamp, encode_world_stale_stamp, foreign_world_stale_stamp,
     world_stale_marker,
 };
+pub(crate) use self::stale::{StaleSweepWatch, note_authority_row};
 
 pub(crate) use self::grant::{
     FEDERATION_GRANT_FIELDS_FULL, FEDERATION_GRANT_FIELDS_MINIMAL,

@@ -725,6 +725,86 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
     Ok(())
 }
 
+/// One revocation of a dispatched agent's own definition.
+#[derive(Clone, Copy, Debug)]
+enum Revocation {
+    Retract,
+    Reject,
+    Disable,
+}
+
+/// H147: an agent dispatched while Active, Approved and enabled loses its
+/// ceiling the moment its definition is retracted, rejected or disabled. The
+/// running job's next write is held to Proposed, live, under a manifest that
+/// grants agent-class Auto; before the revocation the same write is not held.
+#[test]
+fn a_revoked_agent_definition_holds_the_running_jobs_writes_to_proposed() -> Result<()> {
+    for revocation in [Revocation::Retract, Revocation::Reject, Revocation::Disable] {
+        let (_dir, vault) = open_vault();
+        put_policy_manifest(&vault, 0x0E, vec![actor_ceiling_row("agent", "auto")])?;
+        let agent_id = test_id(0x50);
+        let mut definition = custom_agent("1");
+        definition.ceiling = AgentCeiling::Auto;
+        vault.put_agent_definition(&agent_id, &definition, t(1), 1)?;
+
+        let dispatcher = AgentDispatcher::new(&vault);
+        let AgentDispatchOutcome::Dispatched(status) =
+            dispatch_custom(&dispatcher, agent_id, None, 10)?
+        else {
+            panic!("expected fresh dispatch");
+        };
+        let actor = agent_dispatch_actor(&status.input).expect("agent actor");
+        let subject = test_id(0x51);
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"subject")?;
+        let write = |claim_id: EntityId, at: u64| -> Result<bool> {
+            let envelope = WriteEnvelope::new(
+                actor,
+                crate::claim::ClaimSource::UserStated,
+                WriteProvenance::new(Value::from("dispatched agent run"))?,
+                crate::claim::ClaimApprovalStatus::Proposed,
+            );
+            vault
+                .batch()
+                .claim_candidate(
+                    &claim_id,
+                    ClaimCandidate::new(
+                        "profile.name",
+                        ClaimSubject::Entity(subject),
+                        Value::from("Ada"),
+                        1.0,
+                    ),
+                    &envelope,
+                    t(at),
+                    at,
+                )
+                .commit()?;
+            let pending = vault
+                .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim_id))?;
+            Ok(pending.is_some_and(|row| row.reason_codes == ["gate.pending.actor_ceiling"]))
+        };
+        assert!(
+            !write(test_id(0x52), 3)?,
+            "control: the live, approved, enabled definition grants Auto"
+        );
+
+        let mut revoked = definition.clone();
+        revoked.version = "2".to_owned();
+        match revocation {
+            Revocation::Retract => revoked.lifecycle_status = ClaimLifecycleStatus::Retracted,
+            Revocation::Reject => {
+                revoked.approval_status = crate::claim::ClaimApprovalStatus::Rejected;
+            }
+            Revocation::Disable => revoked.enabled = false,
+        }
+        vault.update_agent_definition(&agent_id, &revoked, t(4), 4)?;
+        assert!(
+            write(test_id(0x53), 5)?,
+            "{revocation:?}: the running job's next write must be held to Proposed"
+        );
+    }
+    Ok(())
+}
+
 // Security hardening F4: milestone attribution is BOUND to the dispatched
 // attempt — the admission door stamps subject + agent attribution from the attempt's
 // own payload (caller-supplied values are overridden), and the durable index

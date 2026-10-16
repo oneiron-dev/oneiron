@@ -14,7 +14,9 @@ use super::peripheral::{
     local_write_actor_entity_ref, validate_write_envelope, write_envelope_actor_ref,
 };
 use super::recorded::RecordedClaimGateDecision;
-use crate::claim::{ClaimApprovalStatus, claim_sensitivity_band, dreamer_isolation_class};
+use crate::claim::{
+    ClaimApprovalStatus, DreamerIsolationClass, claim_sensitivity_band, dreamer_isolation_class,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
@@ -116,6 +118,24 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         // Every caller of the record seam writes a persisted candidate.
         false,
     )
+}
+
+/// The isolation class of a Dreamer candidate's predicate: a prefix a trusted
+/// pack declares persona-core (`persona_core_prefixes`, H393) first, so the
+/// host names its own protected namespace and the engine names none; else the
+/// built-in tables.
+fn isolation_class(
+    policy: &PolicyManifestResolution,
+    predicate: &str,
+) -> Option<DreamerIsolationClass> {
+    if policy
+        .persona_core_prefixes
+        .iter()
+        .any(|prefix| predicate.starts_with(prefix.as_str()))
+    {
+        return Some(DreamerIsolationClass::PersonaCore);
+    }
+    dreamer_isolation_class(predicate)
 }
 
 // The inner executor carries the outer record seam's axis tuple plus the
@@ -259,7 +279,7 @@ fn check_claim_policy_for_write_with_record_inner(
         // satisfy: a persona-core write has no confirm-attached Auto path.
         if dreamer_candidate
             && decision.outcome() != GateOutcome::Deny
-            && let Some(isolation_class) = dreamer_isolation_class(&body.predicate)
+            && let Some(isolation_class) = isolation_class(policy, &body.predicate)
         {
             decision = dreamer_isolation_decision(store, &*wtxn, body, isolation_class);
         }
