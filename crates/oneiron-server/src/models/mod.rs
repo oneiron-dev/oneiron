@@ -38,6 +38,7 @@ mod driven;
 #[cfg(test)]
 mod fallback_tests;
 mod forward;
+mod hosted_speech;
 mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
@@ -58,6 +59,7 @@ mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
+mod voice;
 mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
@@ -507,8 +509,11 @@ fn build_provider(
             ))
         }
         // The tagger slot's worker is the consumer of this kind; it never
-        // answers generate calls, so no LLM backend is built for it.
-        ProviderKind::Oneironer => return Ok(None),
+        // answers generate calls, so no LLM backend is built for it. A
+        // speech provider's only client is its media rung's.
+        ProviderKind::Oneironer | ProviderKind::Cartesia | ProviderKind::Elevenlabs => {
+            return Ok(None);
+        }
     };
     Ok(Some(backend))
 }

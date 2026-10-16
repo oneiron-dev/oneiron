@@ -31,6 +31,7 @@ report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+selfMemoryDiaryQuery(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
@@ -51,6 +52,19 @@ vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultSharedProposeDelete(input: unknown): unknown
+vaultSharedProposeTransfer(input: unknown): unknown
+vaultSharedProposeRemoveOwner(input: unknown): unknown
+vaultSharedExecute(input: unknown): unknown
+vaultSharedReceipt(input: unknown): unknown
+vaultSharedOutcomes(input: unknown): unknown
+vaultSharedDeletion(input: unknown): unknown
+vaultMembersAdd(input: unknown): unknown
+vaultMembersChange(input: unknown): unknown
+vaultMembersRemove(input: unknown): unknown
+vaultMembersLeave(input: unknown): unknown
+vaultAuthorityHandoffAlarms(input: unknown): unknown
+vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
@@ -63,6 +77,7 @@ vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
 vaultArtifactsWaits(requestJson: string): string
 vaultArtifactsReleaseWait(requestJson: string): string
+vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string
@@ -83,6 +98,13 @@ vaultRoomsTrunk(input: unknown): unknown
 vaultRoomsReplyStrips(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
+vaultProjectsPropose(input: unknown): unknown
+vaultProjectsProposals(input: unknown): unknown
+vaultProjectsDismissCard(input: unknown): unknown
+vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsGoalIntake(input: unknown): unknown
+vaultRoomsJoin(input: unknown): unknown
+vaultRoomsConsent(input: unknown): unknown
 vaultProjectsGoalRevisions(input: unknown): unknown
 vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
@@ -117,6 +139,7 @@ vaultDelete(input: unknown): unknown
 vaultWritesPending(input: unknown): unknown
 vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
+vaultRefsResolve(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown

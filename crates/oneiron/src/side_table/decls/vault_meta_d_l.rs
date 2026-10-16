@@ -417,9 +417,6 @@ side_tables! {
     /// the single byte 1. No hold defers that retirement or lands while it stands. Key: id16
     /// (claim).
     GATE_DECISION_PARTITION_ERASE_PENDING: VaultMeta b"gate_decision:partition_erase_pending:v1:" Raw;
-    /// Legal hold on one exterior-key partition of the gate decision ledger; the value is the
-    /// single byte 1. Key: 0 (claim-free partition) or 1 + id16 (claim).
-    GATE_DECISION_PARTITION_HOLD: VaultMeta b"gate_decision:partition_hold:v1:" Raw;
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
@@ -617,6 +614,35 @@ side_tables! {
     /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
     /// (setting key).
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
+    /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
+    /// deletion receipt completes (OF-470 C4). Key: id16 (record).
+    LEGAL_HOLD_ERASE_LINK: VaultMeta b"legal_hold:erase_link:v1:" Named;
+    /// The owner-visible legal-hold log: ids, times and reason codes only (OF-470 C3). Key: id16
+    /// (hold) + u64be (sequence).
+    LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
+    /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
+    /// no checkpoint image carries it. Key: id16 (record).
+    LEGAL_HOLD_HOST_ERASE_LINK: VaultMeta b"legal_hold:host:erase_link:v1:" Named;
+    /// The host-only legal-hold log (OF-470 C2). Runtime-tier: no checkpoint image carries it.
+    /// Key: id16 (hold) + u64be (sequence).
+    LEGAL_HOLD_HOST_EVENT: VaultMeta b"legal_hold:host:event:v1:" Named;
+    /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
+    /// checkpoint image carries it. Key: id16 (hold).
+    LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
+    /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
+    /// zero bytes for the claim-free gate partition) + id16 (hold).
+    LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
+    /// An owner-confirmed erase a host order keeps waiting; it names no hold. Key: id16 (record).
+    LEGAL_HOLD_PENDING_ERASE: VaultMeta b"legal_hold:pending_erase:v1:" Named;
+    /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16
+    /// (hold).
+    LEGAL_HOLD_ROW: VaultMeta b"legal_hold:row:v1:" Named;
+    /// What a standing customer hold holds; the value is empty. Key: held key (1 + id16, or 17
+    /// zero bytes for the claim-free gate partition) + id16 (hold).
+    LEGAL_HOLD_TARGET: VaultMeta b"legal_hold:target:v1:" Raw;
+    /// A record kept after a refused privacy erasure, serving only that legal reason (OF-470 C6).
+    /// Key: id16 (record).
+    LEGAL_HOLD_USE_LIMIT: VaultMeta b"legal_hold:use_limit:v1:" Named;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
     /// One proposed pack lens: its frozen compiled tree, the pack/skill slot and pack content

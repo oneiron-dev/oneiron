@@ -24,6 +24,8 @@ use crate::consent::{
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::derived_domains;
 use crate::error::{Error, Result};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
@@ -342,7 +344,18 @@ impl Vault {
                         at,
                         &body,
                     )
-                    .edge(id, EdgeKind::AuthoredBy, &owner_actor, 1.0),
+                    .edge(id, EdgeKind::AuthoredBy, &owner_actor, 1.0)
+                    .made_by(
+                        id,
+                        RowBirth::written(
+                            actor,
+                            MadeByClass::Stated,
+                            "note.import",
+                            &[],
+                            &[],
+                            at,
+                        ),
+                    ),
             )?;
             content.update_note(*id, |txn| {
                 let doc = super::document_store::load(self, txn, *id)?;
