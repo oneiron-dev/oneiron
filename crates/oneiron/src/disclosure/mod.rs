@@ -11,6 +11,7 @@
 //! assembly); this module owns mode/tier/Scope classification, storage, and
 //! the agent-visible assembly block.
 
+mod attendee_ask;
 mod disclosable_set;
 mod room_party;
 mod scope_codec;
@@ -19,6 +20,10 @@ mod vault_agent;
 mod vault_context;
 
 pub(crate) use self::disclosable_set::discloses_raw;
+pub use self::attendee_ask::{
+    ATTENDEE_UNKNOWN_OPTION, AttendeeIdentityChoice, AttendeeIdentityResolution,
+    UnknownAttendeeAsk, attendee_ask_ref,
+};
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 pub use self::room_party::RoomParty;
 pub(crate) use self::room_party::{is_vault_owner, room_party_in};
@@ -30,6 +35,7 @@ pub use self::scope_codec::{
 pub use self::tier_classification::{
     DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_TIER_A_ENTITY_TYPES,
     DISCLOSURE_TIER_A_PREDICATE_PREFIXES, DisclosureMode, DisclosureTier,
+    PREDICATE_DISCLOSURE_ATTENDEE_ASK, PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
     PREDICATE_DISCLOSURE_SCOPE, PREDICATE_DISCLOSURE_TIER, PREDICATE_DISCLOSURE_TOPIC,
     is_disclosure_claim_predicate,
 };
