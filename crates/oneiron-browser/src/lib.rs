@@ -9,6 +9,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[cfg(feature = "driver")]
 mod cdp;
@@ -49,6 +50,30 @@ pub struct Observation {
     pub rows: Vec<Row>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed: Vec<String>,
+    /// The receipt of the effect that produced this observation, naming the
+    /// page it acted on. A plain `observe` carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<EffectReceipt>,
+}
+
+/// One effect's receipt: what acted, on which page, under which press, and
+/// the screenshot taken as its evidence when one could be captured.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EffectReceipt {
+    pub seq: u64,
+    pub verb: String,
+    pub url: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_class: Option<String>,
+    /// The press the effect ran under: `per_send`, `per_batch` or `none`.
+    pub press: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -150,9 +175,41 @@ pub struct ExpectOutput {
     pub row: Option<Row>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+/// Why a screenshot may be taken. There is no screenshot by default: a step
+/// reads the outline, and a screenshot needs one of these named triggers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenshotTrigger {
+    /// The outline is too thin to act on.
+    OutlineThin,
+    /// The step's postcondition has no predicate to check.
+    NoPostcondition,
+    /// The decider returned NONE or reobserve for the second time.
+    DeciderReobserve,
+    /// The page (or desktop) has no accessibility tree.
+    NoAccessibilityTree,
+    /// The per-effect receipt screenshot. The host takes this one itself.
+    EffectReceipt,
+}
+
+impl ScreenshotTrigger {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OutlineThin => "outline_thin",
+            Self::NoPostcondition => "no_postcondition",
+            Self::DeciderReobserve => "decider_reobserve",
+            Self::NoAccessibilityTree => "no_accessibility_tree",
+            Self::EffectReceipt => "effect_receipt",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ScreenshotInput {}
+pub struct ScreenshotInput {
+    pub trigger: ScreenshotTrigger,
+}
 
 /// A screenshot the session holds. It is never captioned: `image` names the
 /// bytes for a later image read, and nothing else describes them.
@@ -163,6 +220,201 @@ pub struct ScreenshotOutput {
     pub width: u32,
     pub height: u32,
     pub bytes: u64,
+    pub trigger: ScreenshotTrigger,
+    pub url: String,
+    pub title: String,
+}
+
+/// Reads back a held image by its ref: the immutable original, described.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ViewInput {
+    pub image: String,
+}
+
+/// A crop of a held image: the rectangle at (`x`, `y`), `width` by `height`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CropInput {
+    pub image: String,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A zoom of a held image: the rectangle at (`x`, `y`) scaled up. Without
+/// `scale`, the region is scaled to the viewport width, at most fourfold.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ZoomInput {
+    pub image: String,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub scale: Option<f32>,
+}
+
+/// A held image, or one derived from it by crop or zoom. `source` is the ref
+/// it was derived from; a view names itself.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImageOutput {
+    pub image: String,
+    pub media_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
+    pub source: String,
+}
+
+/// The effect classes a browser control can fall in. A vault grant names one
+/// of these to set its press.
+pub const EFFECT_SEND: &str = "browser.send";
+pub const EFFECT_PAY: &str = "browser.pay";
+pub const EFFECT_ACCOUNT: &str = "browser.account";
+pub const EFFECT_PUBLISH: &str = "browser.publish";
+pub const EFFECT_DESTRUCTIVE: &str = "browser.destructive";
+pub const EFFECT_CLASSES: &[&str] = &[
+    EFFECT_SEND,
+    EFFECT_PAY,
+    EFFECT_ACCOUNT,
+    EFFECT_PUBLISH,
+    EFFECT_DESTRUCTIVE,
+];
+
+/// How much press one effect class needs, as the vault's grant sets it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PressMode {
+    /// A person's press for every send. The floor without a grant.
+    #[default]
+    PerSend,
+    /// One press covered a reviewed batch; sends run until it is spent.
+    PerBatch,
+    /// The standing grant covers the class; no press.
+    None,
+}
+
+impl PressMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PerSend => "per_send",
+            Self::PerBatch => "per_batch",
+            Self::None => "none",
+        }
+    }
+}
+
+/// The press each effect class runs under for one session, resolved by the
+/// host from the vault's standing grants. Unnamed classes need a press per
+/// send. A payment stays with a natural person whatever this says.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SendPolicy {
+    pub modes: BTreeMap<String, PressMode>,
+    /// Sends still covered by a reviewed batch's press, per class.
+    pub batch: BTreeMap<String, u32>,
+}
+
+impl SendPolicy {
+    #[must_use]
+    pub fn mode_for(&self, class: &str) -> PressMode {
+        self.modes.get(class).copied().unwrap_or_default()
+    }
+
+    /// Classes no grant moves off a person's press: the agent fills the
+    /// cart, the person clicks pay inside the virtual browser.
+    #[must_use]
+    pub fn person_only(class: &str) -> bool {
+        class == EFFECT_PAY
+    }
+}
+
+/// One step of a batched subgoal program. A mid planner writes one batch per
+/// subgoal; each step still crosses its own gated door.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "step", rename_all = "snake_case")]
+pub enum BatchStep {
+    Open {
+        url: String,
+    },
+    Click {
+        #[serde(rename = "ref")]
+        target: String,
+    },
+    Type {
+        #[serde(rename = "ref")]
+        target: String,
+        text: String,
+        #[serde(default)]
+        clear: bool,
+    },
+    Select {
+        #[serde(rename = "ref")]
+        target: String,
+        option: String,
+    },
+    WaitFor {
+        #[serde(default)]
+        role: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        timeout_ms: Option<u32>,
+    },
+    Expect {
+        #[serde(default, rename = "ref")]
+        target: Option<String>,
+        #[serde(default)]
+        role: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        value: Option<String>,
+        #[serde(default)]
+        absent: bool,
+    },
+    Screenshot {
+        trigger: ScreenshotTrigger,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BatchInput {
+    /// What this batch is for, recorded on its receipts' run.
+    #[serde(default)]
+    pub subgoal: Option<String>,
+    pub steps: Vec<BatchStep>,
+}
+
+/// How a batched subgoal program ended. The big model is the fallback only:
+/// it takes over on `NEEDS_AGENT`, and a person presses on `NEEDS_YOU`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubgoalStatus {
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "NEEDS_AGENT")]
+    NeedsAgent,
+    #[serde(rename = "NEEDS_YOU")]
+    NeedsYou,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BatchOutput {
+    pub status: SubgoalStatus,
+    pub completed: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_step: Option<usize>,
+    /// The stable refusal code of the step that stopped the batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<Observation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub receipts: Vec<EffectReceipt>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -186,6 +438,8 @@ pub enum BrowserError {
     NoOption(String),
     #[error("{0} needs a person's press: the action would send, pay, submit or sign in")]
     NeedsPress(String),
+    #[error("this session holds no image {0}")]
+    NoImage(String),
     #[error("only http and https pages open: {0}")]
     Url(String),
     #[error("navigation failed: {0}")]
@@ -195,6 +449,9 @@ pub enum BrowserError {
     #[error("browser protocol: {0}")]
     Protocol(String),
 }
+
+/// Steps one batched subgoal program may hold.
+pub const BATCH_MAX_STEPS: usize = 64;
 
 /// The verbs a browser serves. The CDP driver implements it for a Chromium
 /// guest; a desktop driver (cua-driver-rs) can implement it later.
@@ -208,6 +465,116 @@ pub trait BrowserDriver: Send {
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError>;
     fn expect(&mut self, input: ExpectInput) -> Result<ExpectOutput, BrowserError>;
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError>;
+    fn view(&mut self, input: ViewInput) -> Result<ImageOutput, BrowserError>;
+    fn crop(&mut self, input: CropInput) -> Result<ImageOutput, BrowserError>;
+    fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError>;
+
+    /// Runs one batched program for a subgoal, step by step through this
+    /// driver's own verbs, so a host wrapper's door still gates each effect.
+    /// The batch stops at the first refused, timed-out or unmet step.
+    fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
+        if input.steps.is_empty() || input.steps.len() > BATCH_MAX_STEPS {
+            return Err(BrowserError::Input(format!(
+                "a batch holds 1 to {BATCH_MAX_STEPS} steps"
+            )));
+        }
+        let mut output = BatchOutput {
+            status: SubgoalStatus::Done,
+            completed: 0,
+            failed_step: None,
+            error: None,
+            observation: None,
+            receipts: Vec::new(),
+        };
+        for (index, step) in input.steps.into_iter().enumerate() {
+            let outcome: Result<Option<Observation>, BrowserError> = match step {
+                BatchStep::Open { url } => self.open(OpenInput { url }).map(Some),
+                BatchStep::Click { target } => self.click(ClickInput { target }).map(Some),
+                BatchStep::Type {
+                    target,
+                    text,
+                    clear,
+                } => self
+                    .type_text(TypeInput {
+                        target,
+                        text,
+                        clear,
+                    })
+                    .map(Some),
+                BatchStep::Select { target, option } => {
+                    self.select(SelectInput { target, option }).map(Some)
+                }
+                BatchStep::WaitFor {
+                    role,
+                    name,
+                    timeout_ms,
+                } => self
+                    .wait_for(WaitForInput {
+                        role,
+                        name,
+                        timeout_ms,
+                    })
+                    .and_then(|waited| {
+                        if waited.timed_out {
+                            Err(BrowserError::Timeout("a batch wait_for step".to_owned()))
+                        } else {
+                            Ok(None)
+                        }
+                    }),
+                BatchStep::Expect {
+                    target,
+                    role,
+                    name,
+                    value,
+                    absent,
+                } => self
+                    .expect(ExpectInput {
+                        target,
+                        role,
+                        name,
+                        value,
+                        absent,
+                    })
+                    .and_then(|expected| {
+                        if expected.met {
+                            Ok(None)
+                        } else {
+                            Err(BrowserError::Input("expect_unmet".to_owned()))
+                        }
+                    }),
+                BatchStep::Screenshot { trigger } => {
+                    self.screenshot(ScreenshotInput { trigger }).map(|_| None)
+                }
+            };
+            match outcome {
+                Ok(observation) => {
+                    output.completed += 1;
+                    if let Some(observation) = observation {
+                        if let Some(receipt) = &observation.receipt {
+                            output.receipts.push(receipt.clone());
+                        }
+                        output.observation = Some(observation);
+                    }
+                }
+                Err(error) => {
+                    output.status = if matches!(error, BrowserError::NeedsPress(_)) {
+                        SubgoalStatus::NeedsYou
+                    } else {
+                        SubgoalStatus::NeedsAgent
+                    };
+                    output.failed_step = Some(index);
+                    output.error = Some(match &error {
+                        BrowserError::Input(detail) if detail == "expect_unmet" => {
+                            "browser_expect_unmet".to_owned()
+                        }
+                        _ => error.code().to_owned(),
+                    });
+                    return Ok(output);
+                }
+            }
+        }
+        Ok(output)
+    }
 }
 
 impl BrowserError {
@@ -225,6 +592,7 @@ impl BrowserError {
             Self::Covered(_) => "browser_covered",
             Self::NoOption(_) => "browser_no_option",
             Self::NeedsPress(_) => "needs_press",
+            Self::NoImage(_) => "browser_no_image",
             Self::Url(_) => "browser_url_refused",
             Self::Navigation(_) => "browser_navigation_failed",
             Self::Timeout(_) => "browser_timeout",
