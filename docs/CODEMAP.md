@@ -53,7 +53,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 0 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 12 | 1 | 0 |
-| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 13 | 1 | 2 |
+| [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 14 | 1 | 2 |
 
 ## oneiron
 
@@ -662,10 +662,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `calc` | file | 1 | s | Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock |
 | `clock` | file | 1 | s | What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset… |
-| `context` | file | 1 | s | Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names… |
+| `context` | file | 1 | m | Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names… |
 | `engine` | file | 1 | m | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `error` | file | 1 | s | Typed failures for the formula crate |
 | `links` | file | 1 | L | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |
+| `location` | file | 1 | s | Where the workbook one recalculation reads was opened from: the folder and file name CELL("filename")… |
 | `measure` | file | 1 | m | Step-19 corpus runner: honest per-case results over the pinned 834 cases |
 | `routing` | file | 1 | s | External links on the precision fallback's route |
 | `workbook` | file | 1 | L | Recalculate a local XLSX through the fork's retained cache writer |

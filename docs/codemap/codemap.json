@@ -17212,7 +17212,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -59151,13 +59151,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context.rs",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -59198,7 +59198,7 @@
      "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
      "surface": {
       "mod": 6,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -59209,6 +59209,19 @@
      "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocumentLocation"
+     ],
+     "path": "src/location.rs",
+     "purpose": "Where the workbook one recalculation reads was opened from: the folder and file name CELL(\"filename\")…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -59290,7 +59303,7 @@
     "context": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…"
     },
@@ -59314,6 +59327,13 @@
      "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…"
+    },
+    "location": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Where the workbook one recalculation reads was opened from: the folder and file name CELL(\"filename\")…"
     },
     "measure": {
      "files": 1,
@@ -59346,7 +59366,7 @@
    },
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 13,
+   "source_files": 14,
    "test_files": 1
   }
  }
