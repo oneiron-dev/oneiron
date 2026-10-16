@@ -64,6 +64,19 @@ for row in ROWS:
     pointers = row['refs']
     if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*|[a-z_][a-z0-9_]*))+', p) for p in pointers):
         raise ValueError(f'{row["name"]}: refs are distinct JSON pointers of field names and `*`')
+# OF-063 prose links (Engine ruling 10-17): `prose_links` lists a row's text
+# slots, read for `[label](oneiron://<ref>)` links before the engine call
+# (`prose_links_check`). A pointer may end at an opaque value (each of its
+# strings is read) and `*[key=value]` takes only the array items whose `key`
+# is the string `value`, which declares them AI-written. An AI-written link
+# that does not resolve for its writer is receipted, never refused.
+for row in ROWS:
+    if 'prose_links' not in row: continue
+    if row.get('context', 'memory') != 'memory' or row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade'):
+        raise ValueError(f'{row["name"]}: only a plain memory row reads its prose links in its engine fn')
+    pointers = row['prose_links']
+    if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*(\[[a-z_][a-z0-9_]*=[a-z0-9_]+\])?|[a-z_][a-z0-9_]*))+', p) for p in pointers):
+        raise ValueError(f'{row["name"]}: prose_links are distinct JSON pointers of field names, `*` and `*[key=value]`')
 def mcp_rows():
     'The rows the MCP doors serve as tools: every row but a browser row.'
     return [row for row in ROWS if row.get('mcp') != 'none']
@@ -654,6 +667,12 @@ def record_refs_check(row):
     pointers = ', '.join(json.dumps(pointer) for pointer in row['refs'])
     return f'crate::gate::record_references::admit_row_references(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
 
+def prose_links_check(row):
+    'OF-063 prose links: the receipt-only link check a row with `prose_links` runs before its engine call.'
+    if 'prose_links' not in row: return ''
+    pointers = ', '.join(json.dumps(pointer) for pointer in row['prose_links'])
+    return f'crate::gate::record_references::admit_prose_links(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
+
 def default_const(row, arg):
     'The engine constant that carries one binding default the manifest states.'
     return f"{row['name'].replace('.', '_')}_{arg['name']}_default".upper()
@@ -715,6 +734,7 @@ def outputs():
         call = r['call']
         result = call[:-1] if call.endswith('?') else f'Ok({call})'
         result = record_refs_check(r) + result
+        result = prose_links_check(r) + result
         if r.get('context') == 'browser':
             core += f"pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
         elif r.get('context') == 'board':
