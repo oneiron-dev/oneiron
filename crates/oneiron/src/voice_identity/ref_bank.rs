@@ -547,6 +547,28 @@ impl Vault {
                 .is_ok_and(|(_, current)| &current == fence),
         )
     }
+
+    /// One source clip of `voice_id` for a target that renders from the
+    /// bank's refs on each call and keeps no clone, with the fence it
+    /// renders under: `register`'s clip, or the identity's first source clip
+    /// when none is named. Generated refs never stand in for the identity
+    /// here. The caller checks the fence again (`voice_ref_fence_current_now`)
+    /// before the clip leaves and before its audio is played.
+    pub fn fenced_voice_reference(
+        &self,
+        voice_id: &str,
+        target: &str,
+        register: Option<&str>,
+    ) -> Result<(VoiceRegisterClip, VoiceRefFence)> {
+        let txn = self.store.env.read_txn()?;
+        let (clone, fence) = fenced_clone(&self.store, &txn, voice_id, target, false)?;
+        let clip = clone
+            .clips
+            .into_iter()
+            .find(|clip| register.is_none_or(|register| clip.register == register))
+            .ok_or_else(|| invalid("register is not banked"))?;
+        Ok((clip, fence))
+    }
 }
 
 fn fenced_clone(

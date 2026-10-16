@@ -5150,7 +5150,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -45122,9 +45122,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "BankBound",
       "BankVoiceBinding",
       "MediaAsrAdapter",
       "MediaTtsAdapter",
@@ -45140,8 +45141,8 @@
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
       "const": 2,
-      "enum": 3,
-      "fn": 10,
+      "enum": 4,
+      "fn": 11,
       "struct": 6,
       "trait": 1
      }
@@ -45444,7 +45445,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "mod": 1,
       "re-export": 1,
       "struct": 6,
@@ -45541,7 +45542,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 6
      }
     },
@@ -49231,7 +49232,7 @@
     "voice_cascade": {
      "files": 31,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
@@ -49285,7 +49286,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 101,
+   "over_bar": 102,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2971,
    "test_files": 903
@@ -59511,7 +59512,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/blob_artifacts.rs",
@@ -62672,7 +62673,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -64413,7 +64414,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -64450,7 +64451,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 11,
+      "fn": 12,
       "struct": 3
      }
     },
@@ -64646,6 +64647,16 @@
      "purpose": "The voice cascade's routes on the media seats (OF-410)",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/voxcpm2_speech.rs",
+     "purpose": "The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -66217,7 +66228,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66336,9 +66347,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 23,
+   "over_bar": 24,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 463,
+   "source_files": 464,
    "test_files": 182
   },
   "oneiron-spawn": {
