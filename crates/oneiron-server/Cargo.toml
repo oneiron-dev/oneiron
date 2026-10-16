@@ -52,6 +52,9 @@ oneiron-container = { path = "../oneiron-container" }
 oneiron-browser = { path = "../oneiron-browser", features = ["driver"] }
 # This install's this-device-only key slots (world privacy P6b).
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
+# The seal task (OF-415): the seal organ behind the organ host, and the
+# file-backed seal key.
+oneiron-organ-host = { path = "../oneiron-organ-host" }
 # The Dreamer's starter motor: the server owns the wake supervisor and the
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
