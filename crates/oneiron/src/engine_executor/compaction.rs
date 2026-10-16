@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Instant;
 
-use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
+use crate::code_run::{CodeRunBridgeCall, CodeRunHistoryTurn};
 use crate::compaction::{
     CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
@@ -53,6 +53,9 @@ struct LiveSeat {
     /// Set for the rest of one `run` call when its pass ended without a swap.
     held: Option<CompactionSuppression>,
     last_feed: Option<(Instant, u64)>,
+    /// The run's rows live in an off-record room's overlay, where its epochs
+    /// land too.
+    overlay: bool,
 }
 
 enum PassOutcome {
@@ -130,6 +133,7 @@ impl RunCompaction {
                 flight: None,
                 held: None,
                 last_feed: None,
+                overlay: false,
             })),
             report,
         }
@@ -149,11 +153,30 @@ impl RunCompaction {
         }
     }
 
-    /// A new `run` call is a new turn: a turn-scoped hold ends. A run with
-    /// no durable record (an off-record room's overlay) does not compact:
-    /// its overlay compaction is not built.
+    /// Binds the seat to the room a session-bound run writes along `target`,
+    /// the route it captured at entry. An off-record room's run compacts into
+    /// the room's overlay (agent-runtime-v1 §d7). An anonymous room keeps
+    /// nothing to land a summary in, and a room already on record at entry
+    /// writes through its saver, which no epoch mint reaches: both stay raw.
+    pub(super) fn bind_room(&mut self, target: crate::session_overlay::RouteTarget) {
+        use crate::session_overlay::RouteTarget;
+        match target {
+            RouteTarget::Overlay => {
+                if let Seat::Live(seat) = &mut self.seat {
+                    seat.overlay = true;
+                }
+            }
+            RouteTarget::Discard | RouteTarget::Base => {
+                *self = Self::off(CompactionOff::OffRecordRun);
+            }
+        }
+    }
+
+    /// A new `run` call is a new turn: a turn-scoped hold ends. A run off
+    /// canonical storage compacts only when [`Self::bind_room`] bound it to
+    /// an off-record room's overlay.
     pub(super) fn begin_turn(&mut self, on_record: bool) {
-        if !on_record {
+        if !on_record && !matches!(&self.seat, Seat::Live(seat) if seat.overlay) {
             *self = Self::off(CompactionOff::OffRecordRun);
             return;
         }
@@ -368,30 +391,30 @@ pub(super) fn window_message(
     }
 }
 
-/// Every record whose words can reach a sealed window: each entity a run's
-/// calls returned so far, and `host`, the records the host itself put into
-/// the run's words (its speech, the epochs its requests rendered). A
-/// superset of what any step could have printed, because the guest keeps
-/// state across steps and no step boundary is stored with its calls. An id
-/// that never existed is no source. A deleted record's shell stays a source,
-/// so a summary written after the deletion is born withdrawn; a purged one
-/// leaves nothing to derive from, so the window is refused.
+/// Every record whose words can reach a sealed window: each entity `calls`
+/// returned (the run's calls since its newest epoch, which stands for the
+/// rest), and `host`, the records the host itself put into the run's words
+/// (its speech, the epoch its requests rendered). A superset of what any
+/// step could have printed, because the guest keeps state across steps and
+/// no step boundary is stored with its calls. An id that never existed is no
+/// source. A deleted record's shell stays a source, so a summary written
+/// after the deletion is born withdrawn; a purged one leaves nothing to
+/// derive from, so the window is refused.
 pub(super) fn served_sources(
-    vault: &crate::Vault,
-    record: &CodeRunReplayRecord,
+    dbs: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    calls: &[CodeRunBridgeCall],
     host: impl IntoIterator<Item = EntityId>,
 ) -> crate::Result<Vec<EntityId>> {
     let mut found: std::collections::BTreeSet<EntityId> = host.into_iter().collect();
-    for call in &record.bridge_calls {
+    for call in calls {
         collect_ids(&call.outcome, &mut found);
     }
-    let rtxn = vault.store.env.read_txn()?;
     let mut sources = Vec::new();
     for id in found {
-        if crate::ports::EntityStoreRead::port_entity_record(&vault.store, &rtxn, &id)?.is_some() {
+        if crate::ports::EntityStoreRead::port_entity_record(dbs, rtxn, &id)?.is_some() {
             sources.push(id);
-        } else if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &rtxn, &id)?
-            .deleted
+        } else if crate::ports::TombstoneStoreRead::port_deletion_state(dbs, rtxn, &id)?.deleted
         {
             return Err(crate::Error::InvariantViolation(
                 "a record the run was served has been purged",
@@ -499,15 +522,16 @@ pub(super) fn window_pins(window: &[crate::compaction::CompactionWindowMessage])
     pins
 }
 
-/// The bridge positions this run spoke at: each call that emitted a bubble.
+/// The bridge positions `calls` spoke at: each call that emitted a bubble.
 /// A position no call spoke at names none of the run's records, whatever
 /// sits at its id. The trailing fallback speaks only once the run completes,
 /// after its last window. A blocked report's receipt is in its call's outcome.
-pub(super) fn speech_orders(record: &CodeRunReplayRecord) -> impl Iterator<Item = u32> + '_ {
-    record
-        .bridge_calls
+pub(super) fn speech_orders(
+    calls: &[CodeRunBridgeCall],
+) -> impl Iterator<Item = u32> + '_ {
+    calls
         .iter()
-        .filter_map(crate::code_run::CodeRunBridgeCall::emitted_speech_order)
+        .filter_map(CodeRunBridgeCall::emitted_speech_order)
 }
 
 /// Frame marks a summary may not forge: the record marks and this frame.

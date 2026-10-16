@@ -140,6 +140,8 @@ pub(super) fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
         RetrievalSignal::Temporal => Signal::Temporal,
         RetrievalSignal::Ppr => Signal::Ppr,
         RetrievalSignal::Hyde => Signal::Hyde,
+        // A media space is a vector channel at the pack's signal grain.
+        RetrievalSignal::MediaVector => Signal::Vector,
         RetrievalSignal::HydeRetry => {
             unreachable!("HyDE retry trace markers are not context-pack retrieval channels")
         }
@@ -234,6 +236,7 @@ pub(super) fn skipped_by_profile_pack() -> ContextPack {
         retrieval_quality,
         results: Vec::new(),
         neighbors: Vec::new(),
+        instruction_files: Vec::new(),
         stats,
     }
 }

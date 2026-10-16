@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use oneiron::ModelId;
 use oneiron::llm::SingleRouteBackend;
+use oneiron::llm::media::AiOperation;
 use oneiron::llm::run_admission::{KeyCustody, OfferBinding, OfferRoute, Payer};
 
 use crate::config::models::{ProviderConfig, ProviderKind};
@@ -60,6 +61,24 @@ pub(super) fn provider_offer(
         custody,
         rates: Vec::new(),
     })
+}
+
+/// The offer `[models.media]` binds for `model` on `provider` for one media
+/// operation: the provider's offer, at a route that names the operation's
+/// protocol, so a chat permit never starts an image call at the same
+/// origin, nor the reverse.
+pub(super) fn media_offer(
+    provider: &ProviderConfig,
+    model: ModelId,
+    operation: AiOperation,
+) -> anyhow::Result<OfferBinding> {
+    let mut binding = provider_offer(provider, model, false)?;
+    binding.route = OfferRoute::new(
+        format!("{}-{}", binding.route.adapter(), operation.as_str()),
+        binding.route.origin().to_owned(),
+    )
+    .map_err(|error| anyhow::anyhow!("media route: {error}"))?;
+    Ok(binding)
 }
 
 /// The wire adapter a provider kind speaks, as its route names it.

@@ -69,10 +69,54 @@ pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which label one changed hunk of an attribution takes (one region for an outcome with no
+/// edit). Keyed by lane and hunk position.
+pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
+    name: "skill_attribution.hunk",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// A campaign arm's taste over a blind input: a `[0, 1]` score and an audit-only usefulness
+/// reading. Keyed by field.
+pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
+    name: "autoreason_campaign.taste",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Which eligible model a new seat pins, then which of that model's efforts it runs at.
+/// Keyed by `model`, or by `effort` and the chosen model.
+pub const SEAT_PICK: QuestionFamily = QuestionFamily {
+    name: "llm.seat_pick",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How well one model's description fits a routed task: a `[0, 1]` score, zero unfit.
+/// Keyed by model.
+pub const DESCRIPTION_FIT: QuestionFamily = QuestionFamily {
+    name: "llm.description_fit",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does a claim-write candidate pass its auto check (allow or hold)?
+pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
+    name: "llm.auto_check",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
     CRITIC_REVIEW,
     FANOUT_ASK,
     SKILL_OPTIMIZE_JUDGMENT,
+    ATTRIBUTION_HUNK,
+    CAMPAIGN_TASTE,
+    SEAT_PICK,
+    DESCRIPTION_FIT,
+    AUTO_CHECK,
 ];

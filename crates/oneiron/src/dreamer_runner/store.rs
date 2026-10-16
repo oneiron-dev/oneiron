@@ -763,6 +763,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
+        || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }
 
 /// The refusal-facing name of a wake trigger.

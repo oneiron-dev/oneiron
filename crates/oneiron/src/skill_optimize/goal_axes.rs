@@ -1,9 +1,11 @@
-//! Goal-axis measurements for the future goal-record admission door.
+//! Goal-axis measurements for the goal-record admission door.
 //!
 //! This does not grant an optimizer edit. The human-owned goal record and its
 //! budget lease are separate doors; a report cannot replace their decision.
 
 use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -21,7 +23,7 @@ pub struct GoalAxisPlan {
     pub pulls_per_axis: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AxisScores {
     pub before: f64,
     pub after: f64,
@@ -39,7 +41,7 @@ pub enum AxisArm {
     Candidate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ConfidenceInterval {
     pub lower: f64,
     pub upper: f64,
@@ -67,14 +69,15 @@ pub trait GoalAxisBandit {
     ) -> Result<ConfidenceInterval>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OnlineAxisOutcome {
     CandidateBetter,
     IncumbentBetter,
     Inconclusive,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OnlineAxisMeasurement {
     pub axis: String,
     pub before_pulls: u32,
@@ -86,7 +89,7 @@ pub struct OnlineAxisMeasurement {
     pub outcome: OnlineAxisOutcome,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoalAxisReport {
     pub held_out_receipts: Vec<String>,
     pub offline: Vec<(String, AxisScores)>,
@@ -206,8 +209,10 @@ fn replay_case<'a>(
 /// occur. The bandit observes a caller-funded, capped slice per online axis;
 /// overlapping intervals are inconclusive, never promoted as an improvement.
 ///
-/// No axis from this report alone authorizes admission: the goal-record owner,
-/// preference and floor rules are not yet supplied by this seam.
+/// No axis from this report alone authorizes admission. The gate's door for
+/// it is `measure_skill_edit_goal_axes`, which binds the report to the bodies,
+/// evidence and plan, and lets a project goal's vector take its primary axes
+/// from it; floors, preferences and the responsible role still rule there.
 ///
 /// # Errors
 ///

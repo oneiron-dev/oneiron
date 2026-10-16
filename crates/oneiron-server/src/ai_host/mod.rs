@@ -30,6 +30,7 @@ mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
+mod harness;
 mod policy;
 mod status;
 mod step;
@@ -234,6 +235,12 @@ impl AiHandle {
     #[must_use]
     pub fn models_status(&self) -> &ModelsStatus {
         self.runtime.status()
+    }
+
+    /// The models this server serves, for the `ai.*` verbs.
+    #[must_use]
+    pub(crate) fn model_runtime(&self) -> &ModelRuntime {
+        &self.runtime
     }
 
     /// Tells the Dreamer's session policy what the app saw. A no-op without

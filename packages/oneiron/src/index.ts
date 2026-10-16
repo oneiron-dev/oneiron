@@ -1,8 +1,11 @@
 /**
  * `oneiron` — memory for agents.
  *
- * Four calls are the whole quickstart: witness a turn, claim a fact, recall
- * it, read the receipts. `Oneiron.open()` gives you an embedded vault bound to
+ * Four calls are the whole quickstart: witness a turn (`vault.witness`),
+ * claim a fact (`vault.claims.upsert`), recall it (`vault.recall`), read the
+ * receipts (`vault.receipts`). Every verb sits at its SDK path: the shared
+ * home under `vault`, tasks under `tasks`, and the bare verbs (`describe`,
+ * `can`, `ask`, `wait`, `peek`, `cancel`) on the handle itself. `Oneiron.open()` gives you an embedded vault bound to
  * a local owner actor; `Oneiron.connect(url, key)` gives you the same handle
  * against a running `oneiron-server`, where `key` is the credential
  * `Oneiron.pair(link)` returned once. The two differ by one line.
@@ -15,8 +18,7 @@
 
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient } from "./native.js"
-import { agentVerbs } from "./agent-verbs.js"
-import type { TaskCancelReceipt, TaskDescription, TaskCanAskRequest, TaskAskPreflight, TaskAskHandle, TaskAskPersonEvidence } from "./agent-verbs.js"
+import type { CalibrationPair, TaskAskAnswer, TaskAskDefault, TaskAskHandle, TaskAskPersonEvidence, TaskAskPreflight, TaskAskQuestion, TaskAskReceipt, TaskAskShort, TaskAskSpec, TaskAskWait, TaskAskWho, TaskAskWord, TaskCancelReceipt, TaskCanAskRequest, TaskDescription } from "./agent-verbs.js"
 
 import { itemFromWire, keyedJson } from "./key-value.js"
 import type { WireItem } from "./key-value.js"
@@ -42,8 +44,6 @@ import type {
 /** A handle on one Oneiron memory, embedded or remote. */
 export class Oneiron {
   readonly #client: NativeClient
-  readonly tasks: ReturnType<typeof agentVerbs>["tasks"]
-  readonly rooms: ReturnType<typeof agentVerbs>["rooms"]
 
   /**
    * Internal. `open` and `connect` are the only public constructors; direct
@@ -52,12 +52,6 @@ export class Oneiron {
    */
   private constructor(client: NativeClient) {
     this.#client = client
-    const verbs = agentVerbs((method, input) => this.#call(() => {
-      const call = this.#client[method as keyof NativeClient] as (input: unknown) => unknown
-      return call.call(this.#client, input)
-    }))
-    this.tasks = verbs.tasks
-    this.rooms = verbs.rooms
   }
 
   /**
@@ -137,16 +131,25 @@ export class Oneiron {
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
   /** Describes one task's card, or the whole TASKS section when no task is named. */
   describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
-  /**
+  readonly tasks = {
+    create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.tasksCreate(input) as unknown),
+    update: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.tasksUpdate(input) as unknown),
+    answer: (handle: TaskAskHandle, word: TaskAskWord): TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as TaskAskAnswer),
+    outcomes: (handle: TaskAskHandle): CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as CalibrationPair[]),
+  }
+  readonly vault = {
+    /**
    * Witnesses one conversational turn.
    *
    * Omitting `occurredAt` stamps the current wall clock, in Unix seconds, at
    * the call boundary.
    */
-  witness(turn: WitnessTurn): WitnessReceipt { return this.#call(() => this.#client.witness(turn)) }
-  /** Upserts one claim. The consent gate, not this call, decides approval. */
-  claimUpsert(claim: ClaimInput): CommitReceipt { return this.#call(() => this.#client.claimUpsert(claim)) }
-  /**
+    witness: (turn: WitnessTurn): WitnessReceipt => this.#call(() => this.#client.vaultWitness(turn)),
+    claims: {
+      /** Upserts one claim. The consent gate, not this call, decides approval. */
+      upsert: (claim: ClaimInput): CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(claim)),
+    },
+    /**
    * Recalls a memory pack.
    *
    * `effort: "high"`, `"xhigh"`, or `"max"` needs a lease this package never
@@ -156,25 +159,40 @@ export class Oneiron {
    * effort under a hard deadline (`deadlineMs`, or the vault's call-mode
    * deadline), answering with the best results ready, marked `partial`.
    */
-  recall(query: string, opts: RecallOptions = {}): MemoryPack { return this.#call(() => this.#client.recall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs)) }
-  /** Exports the live vault as toon (default), md, json, yaml, or txt. */
-  export(format?: string): MemoryExport { return this.#call(() => this.#client.export({format: format}) as MemoryExport) }
-  /** Governance receipts, newest first. */
-  receipts(limit: number = 100): FacadeReceipt[] { return this.#call(() => this.#client.receipts(limit)) }
-  /** Exact actor-owned worldless key lookup, never recall. */
-  keyValueGet(request: KeyValueAddress): KeyValueItem | null { return this.#call(() => {  const result = JSON.parse(this.#client.keyValueGet(keyedJson(request))) as WireItem | null; return result === null ? null : itemFromWire(result) }) }
-  /** Synchronous gated write. Review-required writes fail without changing the key. */
-  keyValuePut(request: KeyValuePut): KeyValuePutReceipt { return this.#call(() => { const { requestId, ...rest } = request; const result = JSON.parse(this.#client.keyValuePut(keyedJson({ ...rest, request_id: requestId }))) as {item: WireItem; replayed: boolean; receipt_ref: string}; return {item: itemFromWire(result.item), replayed: result.replayed, receiptRef: result.receipt_ref} }) }
-  /** Retracts only the caller's current key; preserves claim history. */
-  keyValueDelete(request: KeyValueAddress): KeyValueDeleteReceipt { return this.#call(() => {  const result = JSON.parse(this.#client.keyValueDelete(keyedJson(request))) as {existed: boolean; receipt_refs: string[]}; return {existed: result.existed, receiptRefs: result.receipt_refs} }) }
-  /** Exact prefix search, ordered lexically and paginated after filtering. */
-  keyValueSearch(request: KeyValueSearch): KeyValueItem[] { return this.#call(() => { const { namespacePrefix = [], ...rest } = request; const result = JSON.parse(this.#client.keyValueSearch(keyedJson({ ...rest, namespace_prefix: namespacePrefix }))) as WireItem[]; return result.map(item => itemFromWire(item)) }) }
-  /** Exact segment namespace enumeration. Empty namespaces are not retained. */
-  keyValueNamespaces(request: KeyValueNamespaces): string[][] { return this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.keyValueNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }) }
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs)),
+    /** Exports the live vault as toon (default), md, json, yaml, or txt. */
+    export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
+    /** Governance receipts, newest first. */
+    receipts: (limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)),
+    kv: {
+      /** Exact actor-owned worldless key lookup, never recall. */
+      get: (request: KeyValueAddress): KeyValueItem | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultKvGet(keyedJson(request))) as WireItem | null; return result === null ? null : itemFromWire(result) }),
+      /** Synchronous gated write. Review-required writes fail without changing the key. */
+      put: (request: KeyValuePut): KeyValuePutReceipt => this.#call(() => { const { requestId, ...rest } = request; const result = JSON.parse(this.#client.vaultKvPut(keyedJson({ ...rest, request_id: requestId }))) as {item: WireItem; replayed: boolean; receipt_ref: string}; return {item: itemFromWire(result.item), replayed: result.replayed, receiptRef: result.receipt_ref} }),
+      /** Retracts only the caller's current key; preserves claim history. */
+      delete: (request: KeyValueAddress): KeyValueDeleteReceipt => this.#call(() => {  const result = JSON.parse(this.#client.vaultKvDelete(keyedJson(request))) as {existed: boolean; receipt_refs: string[]}; return {existed: result.existed, receiptRefs: result.receipt_refs} }),
+      /** Exact prefix search, ordered lexically and paginated after filtering. */
+      search: (request: KeyValueSearch): KeyValueItem[] => this.#call(() => { const { namespacePrefix = [], ...rest } = request; const result = JSON.parse(this.#client.vaultKvSearch(keyedJson({ ...rest, namespace_prefix: namespacePrefix }))) as WireItem[]; return result.map(item => itemFromWire(item)) }),
+      /** Exact segment namespace enumeration. Empty namespaces are not retained. */
+      namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
+    },
+    rooms: {
+      list: (): unknown[] => this.#call(() => this.#client.vaultRoomsList({}) as unknown[]),
+      messages: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
+      render: (roomRef: string): string[] => this.#call(() => this.#client.vaultRoomsRender({room_ref: roomRef}) as string[]),
+      find: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsFind({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
+      get: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsGet({room_ref: roomRef, turn_ref: turnRef}) as unknown),
+      trunk: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsTrunk({room_ref: roomRef, turn_ref: turnRef}) as unknown),
+      claim: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as unknown),
+      speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
+    },
+  }
   /** Read-only ask routing or attributed partial answers. */
   can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
   /** Read-only ask routing or attributed partial answers. */
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
+  ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt { return this.#call(() => { const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; return this.#client.ask(input) as TaskAskReceipt }) }
+  wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as TaskAskWait) }
 
 // END GENERATED FACADE VERBS
 
