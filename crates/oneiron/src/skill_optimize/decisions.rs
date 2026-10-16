@@ -248,18 +248,33 @@ impl dyn HeldOutReplayNotes + '_ {
             .collect()
     }
 
-    /// Whether one live run met a goal axis: `criterion` names the axis, and
-    /// for a project goal its measure and bound, beside the run's replay under
-    /// the arm's instructions. Only a decided yes is a success; an abstained or
+    /// Whether `receipt`'s live run met a goal axis under `arm`, one arm of a
+    /// live slice of `skill`'s goal: `criterion` names the axis, and for a
+    /// project goal its measure and bound, beside the run's replay under the
+    /// arm's instructions. Only a decided yes is a success; an abstained or
     /// escalated finding fails the pull rather than counting either way.
     /// # Errors
     /// An abstained or escalated finding, or the host's replay and journal errors.
-    pub fn live_axis_met(&self, case: &HeldOutReplayCase<'_>, criterion: &Value) -> Result<bool> {
+    pub fn live_axis_met(
+        &self,
+        skill: EntityId,
+        arm: &crate::skill::SkillRecord,
+        receipt: &str,
+        criterion: &Value,
+    ) -> Result<bool> {
+        let receipts = [receipt.to_owned()];
+        let case = HeldOutReplayCase {
+            skill,
+            skill_id: &arm.skill_id,
+            version: &arm.version,
+            instructions: &arm.desc,
+            held_out_receipts: &receipts,
+        };
         let decision = ask(
             self,
             "live_axis",
-            &[case.skill],
-            &json!({"case": case_state(self, case)?, "axis": criterion}),
+            &[skill],
+            &json!({"case": case_state(self, &case)?, "axis": criterion}),
             AnswerContract::Noul,
         )?;
         match decision.answer {

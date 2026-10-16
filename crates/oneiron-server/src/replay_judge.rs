@@ -30,6 +30,7 @@ use oneiron::skill_optimize::{
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     SkillOptimizeDecisions, SkillReplayPair, register_held_out_replay_scorer, skill_edit_goal,
 };
+use oneiron::skill::SkillRecord;
 use oneiron::skill_reliability::SkillReliabilityPosterior;
 use oneiron::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -531,13 +532,11 @@ pub fn registered() -> Option<&'static ServeReplayJudge> {
 }
 
 /// One arm of a live slice: the skill version its runs loaded, and the
-/// instructions an axis question reads beside each of them.
+/// record whose instructions an axis question reads beside each of them.
 struct Arm {
     loaded: String,
     skill: EntityId,
-    skill_id: String,
-    version: String,
-    instructions: String,
+    record: SkillRecord,
 }
 
 /// Live arm attribution for one open optimizer proposal: the incumbent arm
@@ -614,16 +613,12 @@ impl<'a> ServeAxisBandit<'a> {
             incumbent: Arm {
                 loaded: format!("{}@{}", current.skill_id, current.version),
                 skill: target,
-                skill_id: current.skill_id,
-                version: current.version,
-                instructions: current.desc,
+                record: current,
             },
             candidate: Arm {
                 loaded: format!("{}@{}", staged.skill_id, staged.version),
                 skill: *proposal,
-                skill_id: staged.skill_id,
-                version: staged.version,
-                instructions: staged.desc,
+                record: staged,
             },
             criteria,
             taken: Mutex::new(BTreeSet::new()),
@@ -632,15 +627,12 @@ impl<'a> ServeAxisBandit<'a> {
 
     /// Whether `receipt`'s run met `criterion` under `arm`'s instructions.
     fn met(&self, arm: &Arm, receipt: &str, criterion: &Value) -> Result<bool> {
-        let receipts = [receipt.to_owned()];
-        let case = HeldOutReplayCase {
-            skill: self.target,
-            skill_id: &arm.skill_id,
-            version: &arm.version,
-            instructions: &arm.instructions,
-            held_out_receipts: &receipts,
-        };
-        (self.judge as &dyn HeldOutReplayNotes).live_axis_met(&case, criterion)
+        (self.judge as &dyn HeldOutReplayNotes).live_axis_met(
+            self.target,
+            &arm.record,
+            receipt,
+            criterion,
+        )
     }
 }
 
