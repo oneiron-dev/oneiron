@@ -5,6 +5,7 @@ mod curator;
 mod evaluation;
 mod proposals;
 pub mod representation;
+mod retrieval_policy;
 #[cfg(test)]
 mod tests;
 use super::{
@@ -123,12 +124,7 @@ pub(crate) fn execute(
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            // ARCH-0037 #tune-retrieval: the update at sleep. Too few gated
-            // rewards is a quiet night, not a failed attempt.
-            let _ = ctx
-                .vault
-                .store
-                .tune_retrieval_blend_weights_when_ready(Default::default())?;
+            retrieval_policy::run(ctx.vault)?;
         }
         coach::COACH_READ_HARDENING_FACET => coach::run_read_hardening(ctx.vault)?,
         POLICY_WAKE_FACET => {

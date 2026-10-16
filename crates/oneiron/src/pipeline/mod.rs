@@ -19,6 +19,7 @@ mod filters;
 mod scoped_channels;
 pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
+pub mod retrieval_policy;
 mod support;
 mod temporal_bound;
 mod trace;
