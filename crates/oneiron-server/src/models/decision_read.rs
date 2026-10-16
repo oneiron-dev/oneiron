@@ -59,6 +59,8 @@ pub struct DecisionReadDoor {
     connector: PaidConnector,
     probe: Option<ProbeQuestions>,
     person_threshold: f64,
+    /// The recipe the reader renders with, when it is this server's own.
+    recipe: Option<Arc<DecisionReadRecipe>>,
 }
 
 impl DecisionReadDoor {
@@ -75,7 +77,31 @@ impl DecisionReadDoor {
             connector,
             probe,
             person_threshold,
+            recipe: None,
         }
+    }
+
+    /// What one read of `request` may reserve: the prompt the recipe renders
+    /// for it (no tokenizer makes more tokens than bytes) and the one position
+    /// read. A read the recipe cannot render is refused here, before anything
+    /// is admitted. A host's own reader reserves what the request carries,
+    /// each option once per joint row.
+    pub fn reserve(&self, request: &LabelReadRequest<'_>) -> LlmResult<u64> {
+        let prompt = prompt_of(request);
+        let bytes = match &self.recipe {
+            Some(recipe) => recipe.render(&prompt).map_err(refused)?.len(),
+            None => {
+                let options = prompt
+                    .options
+                    .map_or(0, |options| options.iter().map(String::len).sum::<usize>());
+                prompt.question.len()
+                    + options.saturating_mul(4)
+                    + prompt.paired.len()
+                    + prompt.person.map_or(0, str::len)
+                    + prompt.state.to_string().len()
+            }
+        };
+        Ok(u64::try_from(bytes).unwrap_or(u64::MAX).saturating_add(1))
     }
 
     /// The reader a host fills `DecisionReadProvider` with. Its `read` blocks
@@ -125,12 +151,14 @@ pub(super) fn bind(
         .ok_or_else(|| anyhow::anyhow!("decision read: no local_reasoner provider"))?;
     let model = engine_model_id(&rung.model, provider)?;
     let reader = DecisionReader::new(model.as_str(), provider, settings, runtime)?;
-    Ok(Some(DecisionReadDoor::new(
+    let mut door = DecisionReadDoor::new(
         Arc::new(reader),
         connector(provider, model.as_str())?,
         settings.recipe.probe().cloned(),
         settings.person_threshold,
-    )))
+    );
+    door.recipe = Some(Arc::clone(&settings.recipe));
+    Ok(Some(door))
 }
 
 /// A read admitted as one paid call at the provider's origin: the owner's own
@@ -296,7 +324,7 @@ impl DecisionReader {
             primary,
             paired_yes,
             person_yes,
-            usage: usage(&reply.body),
+            usage: usage(&reply.body)?,
         })
     }
 }
@@ -318,35 +346,38 @@ impl LabelReadModel for DecisionReader {
         request: &LabelReadRequest<'_>,
         _lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        let options = match request.primary.labels {
-            LabelSet::Noul => None,
-            LabelSet::Choice(options) => Some(options),
-        };
-        let count = options.map_or(2, <[String]>::len);
+        let read = prompt_of(request);
+        let count = read.options.map_or(2, <[String]>::len);
         let person = request.person.is_some();
         let rows = self.recipe.rows(count, person).map_err(refused)?;
-        let prompt = self
-            .recipe
-            .render(&ReadPrompt {
-                question: request.primary.text,
-                options,
-                paired: request.paired,
-                person: request.person,
-                state: request.state,
-            })
-            .map_err(refused)?;
+        let prompt = self.recipe.render(&read).map_err(refused)?;
         self.runtime
             .block_on(self.read_prompt(prompt, rows, count, person))
+    }
+}
+
+/// What the recipe renders for `request`.
+fn prompt_of<'a>(request: &LabelReadRequest<'a>) -> ReadPrompt<'a> {
+    ReadPrompt {
+        question: request.primary.text,
+        options: match request.primary.labels {
+            LabelSet::Noul => None,
+            LabelSet::Choice(options) => Some(options),
+        },
+        paired: request.paired,
+        person: request.person,
+        state: request.state,
     }
 }
 
 /// The label rows' log-probabilities, in row order, after the read's checks:
 /// no text, a stop at the forced end, one probability row holding every label.
 fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult<Vec<f64>> {
+    let malformed = || failed(LabelReadFailure::Malformed);
     let text = body
         .get("content")
         .and_then(JsonValue::as_str)
-        .unwrap_or_default();
+        .ok_or_else(malformed)?;
     if !text.trim().is_empty() {
         return Err(failed(LabelReadFailure::EmittedText));
     }
@@ -355,7 +386,6 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
     if !eos {
         return Err(failed(LabelReadFailure::NotEosStop));
     }
-    let malformed = || failed(LabelReadFailure::Malformed);
     let rows = body
         .get("completion_probabilities")
         .and_then(JsonValue::as_array)
@@ -371,14 +401,18 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
         .ok_or_else(malformed)?;
     let mut found: Vec<Option<f64>> = vec![None; ids.len()];
     for entry in entries {
-        let index = match entry.get("id").and_then(JsonValue::as_u64) {
-            Some(id) => ids.iter().position(|label| *label == id),
-            None => entry
-                .get("token")
-                .or_else(|| entry.get("tok_str"))
-                .and_then(JsonValue::as_str)
-                .and_then(|text| tokens.iter().position(|token| token == text)),
-        };
+        // As measured: a label's id, else a label's spelling.
+        let index = entry
+            .get("id")
+            .and_then(JsonValue::as_u64)
+            .and_then(|id| ids.iter().position(|label| *label == id))
+            .or_else(|| {
+                entry
+                    .get("token")
+                    .or_else(|| entry.get("tok_str"))
+                    .and_then(JsonValue::as_str)
+                    .and_then(|text| tokens.iter().position(|token| token == text))
+            });
         let Some(index) = index else {
             continue;
         };
@@ -391,9 +425,8 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
         }
         .filter(|&logprob| logprob.is_finite())
         .ok_or_else(malformed)?;
-        if found[index].replace(logprob).is_some() {
-            return Err(malformed());
-        }
+        // As measured, a label's last entry is its value.
+        found[index] = Some(logprob);
     }
     found
         .into_iter()
@@ -426,23 +459,28 @@ fn joint(logprobs: &[f64], options: usize, person: bool) -> (Vec<f64>, f64, Opti
 }
 
 /// Prompt tokens in, and at least the one position read out: a read that
-/// generates no text still costs its forward pass.
-fn usage(body: &JsonValue) -> LlmUsage {
-    let count = |key: &str| body.get(key).and_then(JsonValue::as_u64).unwrap_or(0);
-    LlmUsage {
+/// generates no text still costs its forward pass. An answer without both
+/// counts is refused, so its caller charges the read's reservation.
+fn usage(body: &JsonValue) -> LlmResult<LlmUsage> {
+    let count = |key: &str| {
+        body.get(key)
+            .and_then(JsonValue::as_u64)
+            .ok_or_else(|| failed(LabelReadFailure::Malformed))
+    };
+    Ok(LlmUsage {
         input: LlmInputUsage {
-            total: count("tokens_evaluated"),
+            total: count("tokens_evaluated")?,
             ..LlmInputUsage::default()
         },
         output: LlmOutputUsage {
-            total: count("tokens_predicted").max(1),
+            total: count("tokens_predicted")?.max(1),
             text: 0,
             reasoning: 0,
         },
         raw_provider: body
             .get("timings")
             .map_or(JsonValue::Null, |timings| json!({ "timings": timings })),
-    }
+    })
 }
 
 fn failed(failure: LabelReadFailure) -> LlmError {

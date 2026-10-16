@@ -72,12 +72,20 @@ impl ReadRequest {
             && state_bytes <= MAX_STATE_BYTES
     }
 
-    /// What the read may reserve: no tokenizer makes more tokens than the
-    /// caller's bytes, plus the one position read.
-    fn reserve(&self) -> u64 {
-        let options: usize = self.options.iter().flatten().map(String::len).sum();
-        let bytes = self.question.len() + options + self.state.to_string().len();
-        u64::try_from(bytes).unwrap_or(u64::MAX).saturating_add(1)
+    /// The read this request asks, with the host's probe questions.
+    fn label_read<'a>(&'a self, probe: &'a ProbeQuestions) -> LabelReadRequest<'a> {
+        LabelReadRequest {
+            state: &self.state,
+            primary: LabelReadout {
+                text: &self.question,
+                labels: match &self.options {
+                    Some(options) => LabelSet::Choice(options),
+                    None => LabelSet::Noul,
+                },
+            },
+            paired: &probe.paired,
+            person: probe.person.as_deref(),
+        }
     }
 }
 
@@ -98,6 +106,11 @@ pub(super) async fn decision_read(
     if !request.valid() {
         return refusal(StatusCode::BAD_REQUEST, "invalid_request");
     }
+    // Priced on the prompt it renders; one it cannot render is refused here.
+    let reserve = match door.reserve(&request.label_read(&probe)) {
+        Ok(reserve) => reserve,
+        Err(error) => return failure(error),
+    };
     // Past `limits.decision_reads` a read waits its turn and the row asks; a
     // count never refuses it.
     let Ok(turn) = server.decision_reads.admit(()).await else {
@@ -109,7 +122,7 @@ pub(super) async fn decision_read(
     // ends nothing the read still holds.
     let read = tokio::task::spawn_blocking(move || {
         let _turn = turn;
-        read(&door, &probe, &request, meter, receipts)
+        read(&door, &request.label_read(&probe), reserve, meter, receipts)
     })
     .await;
     match read {
@@ -119,41 +132,23 @@ pub(super) async fn decision_read(
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests;
-
 /// One read under a run of its own on the raw routes' meter: admitted, its
 /// permit started just before the call, and settled once after it.
 fn read(
     door: &DecisionReadDoor,
-    probe: &ProbeQuestions,
-    request: &ReadRequest,
+    read: &LabelReadRequest<'_>,
+    reserve: u64,
     meter: BudgetGuard,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> Result<ReadAnswer, LlmError> {
-    let labels = match &request.options {
-        Some(options) => LabelSet::Choice(options),
-        None => LabelSet::Noul,
-    };
-    let read = LabelReadRequest {
-        state: &request.state,
-        primary: LabelReadout {
-            text: &request.question,
-            labels,
-        },
-        paired: &probe.paired,
-        person: probe.person.as_deref(),
-    };
     let run = undeclared_run(DECISION_READ_RUN, meter, receipts);
     let refused = |_| LlmError::from(oneiron::llm::BudgetDenied::AdmissionDenied);
-    let permit = run
-        .admit_paid(door.connector(), request.reserve())
-        .map_err(refused)?;
+    let permit = run.admit_paid(door.connector(), reserve).map_err(refused)?;
     run.dispatch_paid(permit.lease(), door.connector())
         .map_err(refused)?;
     let reader = door.reader();
     let lease: &BudgetLease = permit.lease();
-    let answer = reader.read(&read, lease);
+    let answer = reader.read(read, lease);
     // The read went out: a failed one keeps its reservation as spend.
     let outcome = match &answer {
         Ok(answer) => CallOutcome::Answered(&answer.usage),
@@ -172,3 +167,6 @@ fn read(
         usage: answer.usage,
     })
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

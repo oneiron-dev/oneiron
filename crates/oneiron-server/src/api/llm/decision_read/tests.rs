@@ -1,7 +1,7 @@
 //! The owner's decision-read probe: owner-only, one read admitted and settled
 //! once on its meter, a failed check refused typed and charged, and past
 //! `limits.decision_reads` a read waits its turn (rule five).
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -31,11 +31,19 @@ struct Seen {
     state: JsonValue,
 }
 
-/// A house model that answers each read with `answer` after `delay`.
+/// A house model that answers each read with `answer`, once `held` is false.
 struct Reader {
     answer: Mutex<LlmResult<LabelReadResponse>>,
-    delay: Duration,
+    held: Mutex<bool>,
+    released: Condvar,
     seen: Mutex<Vec<Seen>>,
+}
+
+impl Reader {
+    fn release(&self) {
+        *self.held.lock().unwrap() = false;
+        self.released.notify_all();
+    }
 }
 
 impl LabelReadModel for Reader {
@@ -50,7 +58,11 @@ impl LabelReadModel for Reader {
         request: &LabelReadRequest<'_>,
         _: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        std::thread::sleep(self.delay);
+        let mut held = self.held.lock().unwrap();
+        while *held {
+            held = self.released.wait(held).unwrap();
+        }
+        drop(held);
         self.seen.lock().unwrap().push(Seen {
             question: request.primary.text.to_owned(),
             options: match request.primary.labels {
@@ -136,10 +148,11 @@ fn server(reader: &Arc<Reader>, reads: usize) -> (tempfile::TempDir, Arc<SyncSer
     (dir, Arc::new(server), meter)
 }
 
-fn reader(answer: LlmResult<LabelReadResponse>, delay: Duration) -> Arc<Reader> {
+fn reader(answer: LlmResult<LabelReadResponse>, held: bool) -> Arc<Reader> {
     Arc::new(Reader {
         answer: Mutex::new(answer),
-        delay,
+        held: Mutex::new(held),
+        released: Condvar::new(),
         seen: Mutex::new(Vec::new()),
     })
 }
@@ -179,7 +192,7 @@ fn split() -> JsonValue {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_owner_alone_reads_once_on_the_meter_and_a_failed_check_is_refused_typed() {
-    let reader = reader(answered(), Duration::ZERO);
+    let reader = reader(answered(), false);
     let (_dir, server, meter) = server(&reader, 2_048);
 
     // A scoped credential is not the owner: refused before anything is read.
@@ -238,13 +251,27 @@ async fn the_owner_alone_reads_once_on_the_meter_and_a_failed_check_is_refused_t
 }
 
 /// Rule five at `limits.decision_reads`: past a row of one, `callers` owner
-/// reads wait their turn, all are answered, and the row asks.
+/// reads wait their turn behind a held read, all are answered once it lets
+/// go, and the row asks.
 pub(crate) async fn cross_the_decision_reads(callers: usize) -> Crossing {
-    let reader = reader(answered(), Duration::from_millis(50));
+    let reader = reader(answered(), true);
     let (_dir, server, _) = server(&reader, 1);
     let body = split();
-    let calls = (0..callers).map(|_| probe(&server, "jti=owner", &body));
-    let answers = futures_util::future::join_all(calls).await;
+    let calls =
+        futures_util::future::join_all((0..callers).map(|_| probe(&server, "jti=owner", &body)));
+    // One read holds the row's one turn; let go once another waits for it.
+    let release = async {
+        while server.decision_reads.waiting() == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        reader.release();
+    };
+    let (answers, ()) = tokio::time::timeout(
+        Duration::from_secs(120),
+        futures_util::future::join(calls, release),
+    )
+    .await
+    .expect("the queued reads are answered");
     Crossing {
         refused: answers
             .iter()

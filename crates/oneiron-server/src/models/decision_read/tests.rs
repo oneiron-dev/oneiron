@@ -37,20 +37,20 @@ const LOGPROBS: [f64; 44] = [
     -1.833307, -3.57962, -8.483073, -7.501708,
 ];
 const PRIMARY: [f64; 11] = [
-    0.006261389931255666,
-    0.26864313231880016,
-    0.01315561412026209,
-    0.06360434507669226,
-    0.11300887447753137,
-    0.2622146665840434,
-    0.003570796548477098,
-    0.009567476175946636,
-    0.038644952537421236,
-    0.09646130798319574,
-    0.1248674442463744,
+    0.056433601550806824,
+    0.25507978683914173,
+    0.012491409017492374,
+    0.060393067353579535,
+    0.10730324413598537,
+    0.24897588366033815,
+    0.003390512962566954,
+    0.009084430197355343,
+    0.03669383308096691,
+    0.09159113678506065,
+    0.11856309441670619,
 ];
-const THINK: f64 = 0.41977292007014055;
-const PERSON: f64 = 0.7555149441929119;
+const THINK: f64 = 0.4490676214600979;
+const PERSON: f64 = 0.7173702497252611;
 
 /// A llama.cpp server's `/tokenize` and `/completion`: labels tokenize to
 /// test 5's ids, and each completion takes the next queued answer.
@@ -193,13 +193,26 @@ fn answer(entries: &[(u64, f64)]) -> JsonValue {
     })
 }
 
+/// The oracle's answer, with two of the reference's own readings: an earlier
+/// entry for A (the later one wins), and another id spelled "B" after B's
+/// own (read by its text, it overwrites B).
 fn oracle_answer() -> JsonValue {
-    let entries: Vec<(u64, f64)> = LOGPROBS
-        .iter()
-        .enumerate()
-        .map(|(index, logprob)| (label_id(index), *logprob))
-        .collect();
-    answer(&entries)
+    let mut entries = vec![(label_id(0), -50.0)];
+    entries.extend(
+        LOGPROBS
+            .iter()
+            .enumerate()
+            .map(|(index, logprob)| (label_id(index), *logprob)),
+    );
+    let mut answer = answer(&entries);
+    let top = answer["completion_probabilities"][0]["top_logprobs"]
+        .as_array_mut()
+        .unwrap();
+    top.insert(
+        top.len() - 1,
+        json!({"id": 91_000, "token": "B", "logprob": -2.5}),
+    );
+    answer
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -212,7 +225,7 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
         .unwrap()
         .unwrap();
     let options: Vec<String> = (0..11).map(|bin| format!("bin {bin}")).collect();
-    let read = read(&door, Some(options), true).await.unwrap();
+    let read = read(&door, Some(options.clone()), true).await.unwrap();
 
     for (got, want) in read.primary.iter().zip(PRIMARY) {
         assert!((got - want).abs() < 1e-12, "{got} vs {want}");
@@ -252,6 +265,18 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
         ])
     );
     let prompt = request["prompt"].as_str().unwrap();
+    // The probe reserves the prompt it sends, byte for byte, and the position read.
+    let state = json!({"head": "HEAD", "dynamic": "DYNAMIC"});
+    let reserve = door.reserve(&LabelReadRequest {
+        state: &state,
+        primary: LabelReadout {
+            text: "When?",
+            labels: LabelSet::Choice(&options),
+        },
+        paired: "Think?",
+        person: Some("Person?"),
+    });
+    assert_eq!(reserve, Ok(prompt.len() as u64 + 1));
     assert!(prompt.starts_with("HEAD\n(1) When? (2) Think? (3) Person?\nA: bin 0; more thinking no; ask a person no\nB: bin 0; more thinking yes; ask a person no\nC: bin 0; more thinking no; ask a person yes\n"));
     assert!(prompt.contains(
         "\nr: bin 10; more thinking yes; ask a person yes\nDYNAMIC<|im_end|>\nJoint label:"
@@ -272,11 +297,18 @@ async fn each_read_check_refuses_typed_and_none_reads_as_zero() {
     let mut two_rows = answer(&four(-1.0));
     let row = two_rows["completion_probabilities"][0].clone();
     two_rows["completion_probabilities"] = json!([row.clone(), row]);
+    // No text check without a text field, and no charge without the counts.
+    let mut no_content = answer(&four(-1.0));
+    no_content.as_object_mut().unwrap().remove("content");
+    let mut no_usage = answer(&four(-1.0));
+    no_usage.as_object_mut().unwrap().remove("tokens_evaluated");
     // The reference's own leniency: whitespace is no text, `stopped_eos` alone
     // is the stop, and the older schema reads by token text and probability.
     let older = json!({
         "content": " \n",
         "stopped_eos": true,
+        "tokens_evaluated": 9,
+        "tokens_predicted": 0,
         "completion_probabilities": [{"probs": [
             {"tok_str": "A", "prob": 0.4},
             {"tok_str": "B", "prob": 0.2},
@@ -285,10 +317,9 @@ async fn each_read_check_refuses_typed_and_none_reads_as_zero() {
         ]}],
     });
     let fake = Arc::new(Fake::default());
-    fake.answers
-        .lock()
-        .unwrap()
-        .extend([emitted, not_eos, missing, two_rows, older]);
+    fake.answers.lock().unwrap().extend([
+        emitted, not_eos, missing, two_rows, no_content, no_usage, older,
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path(), &serve(Arc::clone(&fake)).await, 44);
     let door = bind(&config, tokio::runtime::Handle::current())
@@ -298,6 +329,8 @@ async fn each_read_check_refuses_typed_and_none_reads_as_zero() {
         LabelReadFailure::EmittedText,
         LabelReadFailure::NotEosStop,
         LabelReadFailure::MissingLabels,
+        LabelReadFailure::Malformed,
+        LabelReadFailure::Malformed,
         LabelReadFailure::Malformed,
     ] {
         assert_eq!(
@@ -361,4 +394,8 @@ fn a_recipe_that_cannot_render_a_read_fails_the_config() {
         error.to_string().contains("unknown placeholder {thought}"),
         "{error}"
     );
+    // A probe that asks the person question reads at least eight labels.
+    package(dir.path(), 6);
+    let error = models(dir.path(), base_url).unwrap_err();
+    assert!(error.to_string().contains("at least 8 tokens"), "{error}");
 }

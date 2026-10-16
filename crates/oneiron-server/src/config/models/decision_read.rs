@@ -222,7 +222,7 @@ impl DecisionReadRecipe {
         }
         let probe = file
             .probe
-            .map(|probe| probe.resolve(row_person.is_some()))
+            .map(|probe| probe.resolve(row_person.is_some(), file.tokens.len()))
             .transpose()?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(&(recipe_bytes.len() as u64).to_le_bytes());
@@ -335,13 +335,18 @@ impl DecisionReadRecipe {
 }
 
 impl ProbeFile {
-    fn resolve(self, row_person: bool) -> anyhow::Result<ProbeQuestions> {
+    /// The probe always asks its questions, so its smallest read, a yes/no
+    /// question, must fit `tokens` labels: four, or eight with the person
+    /// question.
+    fn resolve(self, row_person: bool, tokens: usize) -> anyhow::Result<ProbeQuestions> {
         let blank = |text: &str| text.trim().is_empty();
         if blank(&self.paired)
             || self.person.as_deref().is_some_and(blank)
-            || (self.person.is_some() && !row_person)
+            || (self.person.is_some() && (!row_person || tokens < 8))
         {
-            anyhow::bail!("probe.paired must be set, and probe.person needs row_person");
+            anyhow::bail!(
+                "probe.paired must be set, and probe.person needs row_person and at least 8 tokens"
+            );
         }
         Ok(ProbeQuestions {
             paired: self.paired,
