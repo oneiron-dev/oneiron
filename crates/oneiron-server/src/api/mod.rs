@@ -60,6 +60,9 @@ use axum::http::HeaderMap;
 
 mod ai;
 mod artifacts;
+// OF-511: the artifact family's contract routes (versions, made_by, born-from,
+// export, proposals, Keep/Discard/Undo).
+mod blob_artifacts;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
 // the sole consumer of the ONE-1817 guards below and the sole door into the
 // merged booking solver and lifecycle.
@@ -386,6 +389,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // page by opaque token and dispatches into the one shared executor.
         .merge(self::booking::booking_routes())
         .merge(self::esign::editor_routes())
+        .merge(self::blob_artifacts::routes())
         // ONE-1908: git smart-HTTP. Stock clients clone, fetch, and push here;
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())

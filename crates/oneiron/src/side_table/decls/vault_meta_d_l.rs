@@ -241,8 +241,13 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// A proposal retained beside its artifact until Keep or Discard: an edit proposal or a native
+    /// organ output. Key: id16 + hash32 (blake3 of the proposal ref).
+    EDIT_SETTLE_PENDING_PROPOSAL: VaultMeta b"edit_settle:pending:v1:" Named;
     /// Stranded edit proposal. Key: id16 + hash32.
     EDIT_SETTLE_STRANDED_PROPOSAL: VaultMeta b"edit_settle:stranded:v1:" Named;
+    /// The once-only undo of one kept proposal: the version it restored. Key: id16 + hash32.
+    EDIT_SETTLE_UNDO: VaultMeta b"edit_settle:undo:v1:" Named;
     /// The device family and runtime that computed the current embedding vector, outside the space
     /// identity (ARCH-0036). Key: id16.
     EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;

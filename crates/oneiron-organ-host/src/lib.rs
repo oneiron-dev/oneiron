@@ -25,6 +25,7 @@ mod budget;
 mod error;
 mod fetch;
 mod host;
+mod landing;
 mod process;
 mod receipt;
 mod regions;
@@ -38,6 +39,7 @@ pub use budget::BudgetConfig;
 pub use error::{HostError, Unavailable};
 pub use fetch::GuardedFetch;
 pub use host::{OrganHost, OrganOutcome, OrganOutput};
+pub use landing::propose_organ_outputs;
 pub use receipt::{
     AskReceipt, CallReceipt, FetchTarget, ReceiptInput, ReceiptOutput, SignedReceipt, Unanswered,
 };

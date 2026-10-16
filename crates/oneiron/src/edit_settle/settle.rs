@@ -18,6 +18,7 @@ use crate::edit_roundtrip::judgment_cells::verify_sheet_answer_bytes;
 use crate::edit_roundtrip::{EditOp, EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -40,6 +41,32 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
         proposal: &EditProposal,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SettleSelectOutcome> {
+        self.settle_select_edit_proposal_made_by(
+            artifact_id,
+            proposal,
+            None,
+            consent,
+            actor,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// [`Vault::settle_select_edit_proposal`], with the made_by envelope the
+    /// kept version carries: the task or ask that triggered the work names
+    /// its born-from. `None` gives the proposal's own envelope: the base
+    /// version as input, the agent that made the operations as the process.
+    #[expect(clippy::too_many_arguments)]
+    pub fn settle_select_edit_proposal_made_by(
+        &self,
+        artifact_id: &EntityId,
+        proposal: &EditProposal,
+        made_by: Option<&MadeBy>,
         consent: &SettleConsent,
         actor: WriteActor,
         occurred: TimeRange,
@@ -257,6 +284,9 @@ impl Vault {
                         })?;
                     }
                 }
+                let made_by = made_by.cloned().unwrap_or_else(|| {
+                    proposal_made_by(proposal, base.claim_id, actor, &manifest_hash, learned_at)
+                });
                 let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                     wtxn,
                     artifact_id,
@@ -271,6 +301,7 @@ impl Vault {
                     occurred,
                     learned_at,
                     (format == OfficeFormat::Pptx).then_some(base.version),
+                    Some(&made_by),
                 )?;
                 if let Some(checked) = &checked_deck {
                     self.raise_deck_id_marks_in_txn(wtxn, artifact_id, &checked.marks)?;
@@ -526,7 +557,7 @@ impl Vault {
             .any(|grant| grant.bound().contains(&required)))
     }
 
-    fn authorize_settle(&self, consent: &SettleConsent, actor: WriteActor) -> Result<()> {
+    pub(super) fn authorize_settle(&self, consent: &SettleConsent, actor: WriteActor) -> Result<()> {
         match consent {
             SettleConsent::OwnerConsent { .. } => Ok(()),
             SettleConsent::StandingGrant { brief_ref } => {
@@ -552,7 +583,7 @@ impl Vault {
     /// before this txn opened (the row reads Revoked and the settle refuses)
     /// or commits only after this txn ends (its writes were authorized under
     /// the still-live grant). No post-revoke settle can commit.
-    fn authorize_settle_in_txn(
+    pub(super) fn authorize_settle_in_txn(
         &self,
         wtxn: &heed::RwTxn<'_>,
         consent: &SettleConsent,
@@ -684,6 +715,41 @@ impl Vault {
             )));
         }
         Ok(())
+    }
+}
+
+/// A kept proposal's own envelope: made from its base version, by the agent
+/// its deck context names (else the settling actor), keyed by its manifest.
+fn proposal_made_by(
+    proposal: &EditProposal,
+    base_claim: EntityId,
+    actor: WriteActor,
+    manifest_hash: &[u8; 32],
+    at: u64,
+) -> MadeBy {
+    let deck = crate::edit_roundtrip::deck_op(proposal);
+    let identity = match proposal.manifest.ops.first() {
+        Some(EditOp::DeckTransaction { .. }) => "deck.transaction",
+        Some(EditOp::DocxRevision { .. }) => "docx.revision",
+        _ if proposal.format == OfficeFormat::Pptx => "pptx.review",
+        _ => "sheet.edit",
+    };
+    MadeBy {
+        inputs: vec![MadeByInput {
+            row: base_claim,
+            role: MadeByInputRole::Input,
+        }],
+        process: MadeByProcess {
+            actor: deck
+                .and_then(|(_, _, context)| context.made_by)
+                .unwrap_or_else(|| actor.entity_ref()),
+            class: MadeByClass::Concluded,
+            identity: identity.to_owned(),
+            version: proposal.manifest.schema_version.to_string(),
+            params_hash: crate::blob_artifact::hash_hex(manifest_hash),
+        },
+        at,
+        trigger: None,
     }
 }
 

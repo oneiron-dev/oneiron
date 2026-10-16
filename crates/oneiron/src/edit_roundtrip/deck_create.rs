@@ -36,6 +36,9 @@ use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::note::{NotePin, NoteSpanResolution};
+use crate::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -180,6 +183,8 @@ pub struct DeckCreateRequest<'a> {
     pub name: &'a str,
     pub run_ref: &'a str,
     pub made_by: Option<EntityId>,
+    /// The task or ask the creation answers: the deck's born-from.
+    pub trigger: Option<MadeByTrigger>,
     pub actor: WriteActor,
 }
 
@@ -402,12 +407,42 @@ impl crate::Vault {
             occurred,
             now,
         )?;
-        let version = self.append_blob_artifact_version(
+        let template_hash = *blake3::hash(&template_bytes).as_bytes();
+        // The first version's made_by: the kept outline is the prompt, the
+        // template version an input, and the replay key binds both hashes.
+        let made_by = MadeBy {
+            inputs: vec![
+                MadeByInput {
+                    row: kept.note,
+                    role: MadeByInputRole::Prompt,
+                },
+                MadeByInput {
+                    row: request.template.artifact,
+                    role: MadeByInputRole::Input,
+                },
+            ],
+            process: MadeByProcess {
+                actor: request
+                    .made_by
+                    .unwrap_or_else(|| request.actor.entity_ref()),
+                class: MadeByClass::Concluded,
+                identity: "deck.create".to_owned(),
+                version: "1".to_owned(),
+                params_hash: blake3::hash(&[kept.content_hash, template_hash].concat())
+                    .to_hex()
+                    .to_string(),
+            },
+            at: now,
+            trigger: request.trigger.clone(),
+        };
+        let version = self.append_blob_artifact_version_made_by(
             &artifact,
+            None,
             &candidate.bytes,
             &BlobVersionProvenance::AgentRun {
                 run_ref: request.run_ref.to_owned(),
             },
+            &made_by,
             request.actor,
             occurred,
             now,
@@ -420,7 +455,7 @@ impl crate::Vault {
             outline_version: kept.version.clone(),
             outline_hash: kept.content_hash,
             template: request.template,
-            template_hash: *blake3::hash(&template_bytes).as_bytes(),
+            template_hash,
             run_ref: request.run_ref.to_owned(),
             made_by: request.made_by,
             slides: candidate
