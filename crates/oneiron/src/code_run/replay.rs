@@ -356,6 +356,16 @@ impl CodeRunRawOutput {
             },
         })
     }
+
+    /// Checks stored bytes against this metadata: digest, length and preview.
+    pub(crate) fn verify_bytes(&self, raw: &[u8]) -> Result<()> {
+        if Self::from_bytes(self.path.clone(), raw)? != *self {
+            return Err(invalid_code_run_replay(
+                "stored raw output bytes drifted from metadata",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One pinned host/guest record layout check carried by a replay record.

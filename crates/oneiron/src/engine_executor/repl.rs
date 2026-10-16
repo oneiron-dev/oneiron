@@ -11,9 +11,10 @@ use super::record::{
     validate_executor_config_marker,
 };
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
-    implicit_speak_output_path, load_utf8_output, observation_output_path, record_output,
-    record_text_output, recoverable_chunk_path, script_output_path, validate_runtime_outputs,
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
+    implicit_speak_output_path, load_utf8_output, observation_output_path, observation_ref,
+    record_output, record_text_output, recoverable_chunk_path, script_output_path,
+    validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -22,8 +23,8 @@ use super::types::{
 };
 use super::wire::{HealedExecutorReply, heal_executor_reply};
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunReplayGeneration, CodeRunReplayRecord,
-    CodeRunStepCheckpoint, SelfDurableWait,
+    CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput, CodeRunReplayGeneration,
+    CodeRunReplayRecord, CodeRunStepCheckpoint, SelfDurableWait,
 };
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
 use crate::off_record::ExecutorUtterance;
@@ -166,6 +167,7 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
+            let recoverable = self.observation_refs(&record)?;
             let mut host = RecordingJsHost::new(
                 self.gated_write,
                 config.run_id,
@@ -173,7 +175,7 @@ impl EngineNativeExecutor<'_> {
                 config.determinism,
                 self.legibility,
             )
-            .with_recoverable_outputs(&self.storage, &record)?;
+            .with_recoverable_outputs(&self.storage, &record, recoverable)?;
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -672,11 +674,11 @@ impl EngineNativeExecutor<'_> {
 
     /// Sync every durably completed observation before either a model request
     /// or a compaction mint. No uncommitted runtime output enters context.
+    /// Returns the step that holds each source, for the views that expand it.
     pub(super) fn sync_output_context(
         &mut self,
         record: &CodeRunReplayRecord,
-    ) -> EngineExecutorResult<HashMap<OutputRef, String>> {
-        let completed_steps = completed_step_count(record)?;
+    ) -> EngineExecutorResult<HashMap<OutputRef, u64>> {
         // Reconstruct references from the routed durable replay record. No
         // observation is copied into the base vault for off-record sessions.
         // Working flags are projections of committed typed coverage. Rebuild
@@ -689,20 +691,45 @@ impl EngineNativeExecutor<'_> {
             }
             crate::code_run::ExecutorStorage::Session(_) => Vec::new(),
         };
-        let mut raw = HashMap::new();
-        for seq in 0..completed_steps {
-            let observation =
-                load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
-            let source = OutputRef::from_bytes(observation.as_bytes());
-            let overview: String = observation.chars().take(128).collect();
+        let mut steps = HashMap::new();
+        for (seq, _, observation) in self.observation_refs(record)? {
             self.output_context
-                .record_referenced(seq, source, overview)?;
+                .record_referenced(seq, observation.source, observation.overview)?;
             if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
                 self.output_context.compact_span(seq, seq);
             }
-            raw.insert(source, observation);
+            steps.insert(observation.source, seq);
         }
-        Ok(raw)
+        Ok(steps)
+    }
+
+    /// Every completed step's observation reference. A body is read once per
+    /// executor, in place, the first time its content handle is seen; a turn
+    /// after that reads no past body at all.
+    pub(super) fn observation_refs(
+        &mut self,
+        record: &CodeRunReplayRecord,
+    ) -> EngineExecutorResult<Vec<(u64, CodeRunRawOutput, ObservationRef)>> {
+        let mut refs = Vec::new();
+        for seq in 0..completed_step_count(record)? {
+            let path = observation_output_path(seq);
+            let output = record
+                .outputs
+                .iter()
+                .find(|output| output.path == path)
+                .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+            let observation = match self.observations.get(&output.handle) {
+                Some(observation) => observation.clone(),
+                None => {
+                    let observation = observation_ref(&self.storage, output)?;
+                    self.observations
+                        .insert(output.handle.clone(), observation.clone());
+                    observation
+                }
+            };
+            refs.push((seq, output.clone(), observation));
+        }
+        Ok(refs)
     }
 
     fn build_llm_request(
@@ -731,13 +758,16 @@ impl EngineNativeExecutor<'_> {
             }],
         });
 
-        let raw = self.sync_output_context(record)?;
+        let steps = self.sync_output_context(record)?;
+        // Only a Full view expands its body; older steps cost their reference.
         let views =
             self.output_context
                 .assemble_with(completed_steps, self.output_decay, |source| {
-                    raw.get(&source)
-                        .map(|text| text.as_bytes().to_vec())
-                        .ok_or(Error::CorruptedIndex("missing executor observation"))
+                    let seq = steps
+                        .get(&source)
+                        .ok_or(Error::CorruptedIndex("missing executor observation"))?;
+                    load_utf8_output(&self.storage, record, &observation_output_path(*seq))
+                        .map(String::into_bytes)
                 })?;
         let epochs = self.compaction_epochs(record.run_id)?;
         if !epochs.is_empty() {

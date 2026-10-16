@@ -256,6 +256,17 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             .map(Cow::into_owned))
     }
 
+    /// The stored bytes of one row, lent by the read transaction where the store can lend
+    /// them (an overlay row is still a copy), for a reader that needs part of a large value.
+    pub(crate) fn get_borrowed<'txn>(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &'txn RoTxn<'_>,
+        key: &K,
+    ) -> Result<Option<Cow<'txn, [u8]>>> {
+        self.get_raw(dbs, txn, &self.key_bytes(key))
+    }
+
     /// Reads one row, treating a row that does not decode as absent, for readers whose rows
     /// were always read leniently (a damaged sidecar falls back to its default). A storage error
     /// still fails the read.

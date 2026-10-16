@@ -665,6 +665,23 @@ impl OffRecordSession<'_> {
         table.get(&view, &rtxn, key)
     }
 
+    /// [`Self::side_table_get`]'s stored bytes, lent to `read` inside the
+    /// read: a base row is read in place, an overlay row from its copy.
+    pub(crate) fn side_table_read_bytes<K: SideKey, V, C: SideCodec<V>, R>(
+        &self,
+        table: &SideTable<K, V, C>,
+        key: &K,
+        read: impl FnOnce(&[u8]) -> Result<R>,
+    ) -> Result<Option<R>> {
+        let view = self.read_view()?;
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.participant_in_txn(&rtxn)?;
+        table
+            .get_borrowed(&view, &rtxn, key)?
+            .map(|bytes| read(&bytes))
+            .transpose()
+    }
+
     /// Identity of the vault this session belongs to.
     ///
     /// The executor binding compares its storage's owning vault against its

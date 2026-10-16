@@ -57,6 +57,18 @@ fn field<T: serde::de::DeserializeOwned>(value: &Value, name: &str) -> Reply<T> 
     .map_err(|_| "invalid_host_response_field".into())
 }
 
+/// A file reply's bytes: text arrives as a JSON string, other bytes as a
+/// number array. The guest receives bytes either way.
+fn file_bytes(value: &Value) -> Reply<Vec<u8>> {
+    match value.get("text") {
+        Some(text) => text
+            .as_str()
+            .map(|text| text.as_bytes().to_vec())
+            .ok_or_else(|| "invalid_host_response_field".into()),
+        None => field(value, "bytes"),
+    }
+}
+
 pub(super) fn link_imports(
     linker: &mut Linker<State>,
     contract: SandboxBoundaryContract,
@@ -89,7 +101,7 @@ pub(super) fn link_imports(
                     let reply: Reply<Vec<u8>> = cx
                         .data_mut()
                         .call("sandbox.fs.read_file", json!({"path":path}))
-                        .and_then(|value| field(&value, "bytes"));
+                        .and_then(|value| file_bytes(&value));
                     Ok((reply,))
                 },
             ),
