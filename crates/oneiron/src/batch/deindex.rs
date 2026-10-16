@@ -26,6 +26,8 @@ pub(super) fn reject_engine_authored_delete(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    // Before a batch delete destroys world keys or custody (OF-470).
+    store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
@@ -77,6 +79,8 @@ pub(crate) fn deindex_entity(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    // Every physical tear (batch, port, purge, cascade) keeps a held record.
+    store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
     // The port's direct delete reaches here without the batch guard.
     crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
@@ -139,6 +143,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    // The lexical-hint cascade tears dependent ids through here.
+    store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
     crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;

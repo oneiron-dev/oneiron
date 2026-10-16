@@ -14,8 +14,11 @@ use crate::config::models::ProviderConfig;
 pub(super) enum KeyStyle {
     /// `Authorization: Bearer <key>` (OpenAI-compatible servers).
     Bearer,
-    /// `x-api-key: <key>` (Anthropic-compatible servers).
+    /// `x-api-key: <key>` (Anthropic-compatible servers, Cartesia).
     ApiKeyHeader,
+    /// The key under a header of the provider's own name (ElevenLabs'
+    /// `xi-api-key`).
+    Named(&'static str),
 }
 
 /// Why an HTTP exchange failed before any provider status arrived.
@@ -104,6 +107,7 @@ impl ProviderHttp {
                 KeyStyle::ApiKeyHeader => {
                     (reqwest::header::HeaderName::from_static("x-api-key"), key)
                 }
+                KeyStyle::Named(name) => (reqwest::header::HeaderName::from_static(name), key),
             };
             let mut value = reqwest::header::HeaderValue::from_str(&value)?;
             value.set_sensitive(true);

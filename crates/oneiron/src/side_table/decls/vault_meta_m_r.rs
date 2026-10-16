@@ -487,6 +487,13 @@ side_tables! {
     /// Chronological index of every turn in a room, walked for paged message history. Key: id16
     /// (room) + u64be (at) + id16 (turn).
     ROOMS_HISTORY: VaultMeta b"rooms.history.v1/" Raw;
+    /// One room-join intent's receipt (OF-531): the request, each party's recorded answer, the three
+    /// consents as last decided, and the participation a Ready decision committed. Key: string (hex64
+    /// join ref).
+    ROOMS_JOIN: VaultMeta b"rooms.join.v1/" LegacyJson;
+    /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
+    /// subject hex "/" branch hex or "-").
+    ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;
