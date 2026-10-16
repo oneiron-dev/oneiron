@@ -15828,7 +15828,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PersonThresholdPolicy"
@@ -15836,14 +15836,14 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 6,
-      "crate-vis": 2,
+      "const": 7,
+      "crate-vis": 3,
       "fn": 5,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CuratorQuestions",
@@ -15851,9 +15851,9 @@
       "CuratorTrigger"
      ],
      "path": "src/dreamer_runner/maintenance/curator.rs",
-     "purpose": "Curator grading data and minimum-force proposals; never applies or deletes",
+     "purpose": "Curator grading data and minimum-force proposals",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -15889,19 +15889,21 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerTuningConfig",
       "HarnessEvaluation",
+      "HarnessEvaluationTarget",
       "RetuneThresholds"
      ],
      "path": "src/dreamer_runner/maintenance/evaluation.rs",
      "purpose": "Eval-schedule observations over actual immutable config artifact versions",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2,
-      "struct": 3
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -15925,7 +15927,7 @@
      "path": "src/dreamer_runner/maintenance/proposals.rs",
      "purpose": "The shared Generated/Proposed writer for deterministic maintenance findings",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -33497,7 +33499,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 5,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -33588,6 +33590,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Tier1Sweep"
+     ],
+     "path": "src/self_heal/sweep.rs",
+     "purpose": "The Coach's scheduled tier-1 sweep (ARCH-0066 §4) and its proposed-only repair bridge",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -33662,7 +33678,8 @@
      "path": "src/self_heal/tripwires.rs",
      "purpose": "Closed-form T1 projections",
      "surface": {
-      "crate-vis": 3,
+      "const": 1,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 5
      }
@@ -44380,7 +44397,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44676,7 +44693,7 @@
    },
    "over_bar": 63,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2680,
+   "source_files": 2681,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54031,6 +54048,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/harness.rs",
+     "purpose": "The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -59939,7 +59966,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60186,7 +60213,7 @@
    },
    "over_bar": 15,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 389,
+   "source_files": 390,
    "test_files": 182
   },
   "oneiron-spawn": {
