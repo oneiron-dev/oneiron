@@ -53,15 +53,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/doors.rs` | src | m | 1 enum · 7 fn · 5 crate-vis | AgentDefinitionPutDisposition | Vault CRUD doors over the generic entity/batch machinery |
 | `src/agent_def/id_pin.rs` | src | m | 14 crate-vis | — | The pin an agent id keeps (H215): the widest ceiling a row at the id may hold, and the fork lineage it was… |
 | `src/agent_def/manifest.rs` | src | m | 10 crate-vis | — | Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation |
-| `src/agent_def/mod.rs` | src | s | 1 mod · 4 re-export · 16 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
+| `src/agent_def/mod.rs` | src | s | 1 mod · 5 re-export · 16 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
 | `src/agent_def/optional_memory.rs` | src | m | 1 struct · 1 enum · 4 fn · 2 const · 2 crate-vis | OptionalMemory, OptionalMemoryProfile | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) |
 | `src/agent_def/portable.rs` | src | s | 7 crate-vis | — | Canonical, inert AGENT_PACK facets derived from real definitions and selected rows |
 | `src/agent_def/portable_binding.rs` | src | s | 3 crate-vis | — | Frozen source tree identity at genuine local birth |
 | `src/agent_def/portable_knowledge.rs` | src | s | 4 crate-vis | — | The selected-knowledge facet's bytes (`knowledge/selected.json`) |
 | `src/agent_def/portable_source.rs` | src | s | 12 crate-vis | — | Immutable captured agent source |
 | `src/agent_def/portable_source/tests.rs` | test | m | — | — | Actual birth capture and replay retain bytes without granting authority |
+| `src/agent_def/refusal.rs` | src | s | 1 struct · 4 enum · 12 fn · 1 const · 4 crate-vis | RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind | The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set… |
 | `src/agent_def/tests.rs` | test | XL | — | — | AGENT_DEF (ONE-1443) tests |
-| `src/agent_def/types.rs` | src | m | 4 struct · 5 enum · 20 fn · 13 const · 48 crate-vis | AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef +1 | AgentDefinition domain types, key/limit consts, and constructors |
+| `src/agent_def/types.rs` | src | m | 4 struct · 5 enum · 21 fn · 13 const · 49 crate-vis | AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef +1 | AgentDefinition domain types, key/limit consts, and constructors |
 | `src/agent_def/widening.rs` | src | s | 1 crate-vis | — | Which puts hand an agent definition back authority it gave up |
 | `src/agent_def/workflow.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | WorkflowDefinition | Saved ordered agent compositions |
 | `src/agent_def/workflow/tests.rs` | test | s | — | — | — |
@@ -3270,9 +3271,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/dormant_magistrate.rs` | src | m | 8 fn · 1 crate-vis | — | Dormant subsystem — zero production callers as of 2026-08-19 |
 | `src/task_verb/entity_delta_facade.rs` | src | s | 1 fn · 6 crate-vis | — | — |
 | `src/task_verb/follow_up.rs` | src | s | 2 fn · 7 crate-vis | — | — |
-| `src/task_verb/lifecycle_facade.rs` | src | m | 6 fn · 1 crate-vis | — | — |
+| `src/task_verb/lifecycle_facade.rs` | src | m | 6 fn · 4 crate-vis | — | — |
 | `src/task_verb/linear_store.rs` | src | m | 1 struct · 5 fn · 6 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
-| `src/task_verb/mod.rs` | src | s | 1 mod · 18 re-export · 20 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | s | 1 mod · 19 re-export · 20 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
@@ -3284,6 +3285,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/rate_limit.rs` | src | s | 1 fn · 9 crate-vis | — | — |
 | `src/task_verb/recall_door.rs` | src | s | 1 struct · 3 fn | RecallDoor | The recall door: when a recall's clock starts, what it answers when its door stops waiting, and how it… |
 | `src/task_verb/reconciliation.rs` | src | s | 1 fn · 1 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
+| `src/task_verb/refusal.rs` | src | s | 3 struct · 1 fn | SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord | The agent's own refusal of a TASK, applied through her dial (OF-533) |
 | `src/task_verb/room_thread.rs` | src | s | 1 crate-vis | — | Existing TASK intent and follow-up facts projected onto a room thread |
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 1 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
