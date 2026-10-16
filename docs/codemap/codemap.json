@@ -8187,7 +8187,7 @@
      "path": "src/channel_identity_autonomy/autonomy.rs",
      "purpose": "Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 9,
       "fn": 6
      }
     },
@@ -8208,7 +8208,7 @@
      "path": "src/channel_identity_autonomy/envelopes.rs",
      "purpose": "Vault row primitives (owner check, row read/write, content-addressed envelope put) and the owner-only…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 11,
       "fn": 4
      }
     },
@@ -8229,7 +8229,7 @@
      "path": "src/channel_identity_autonomy/mod.rs",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 3
      }
     },
@@ -21242,7 +21242,7 @@
      "path": "src/gate/effect/effect_grants.rs",
      "purpose": "Standing-grant resolution plus scoped-MCP channel check and grant touch",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30519,6 +30519,7 @@
      "purpose": "Channel-identity consume door with usage accounting",
      "surface": {
       "const": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -30565,7 +30566,7 @@
      "path": "src/outbound_grant/mod.rs",
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
