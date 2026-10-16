@@ -5,7 +5,10 @@
 //! for a backoff, a spent window until its reset, spent credit until the
 //! owner clears it) and the same request goes to the next offer; while only
 //! rests stop the call, it waits for the first offer back and tries again,
-//! until its wait budget is spent. A request error ends the call.
+//! until its wait budget is spent. Once every rung has parked, the owner
+//! is asked about each offer parked on spent quota, and a call whose
+//! parked offer the owner gave a fallback goes there instead. A request
+//! error ends the call.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,9 +16,9 @@ use oneiron::llm::SpentKind;
 use oneiron::llm::media::MediaRequest;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
 use oneiron::{
-    ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
-    LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
-    RetryableLlmError,
+    ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
+    LlmUsage, ModelId, RetryableLlmError,
 };
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
@@ -255,11 +258,62 @@ impl OfferLadder {
             return true;
         }
         let rung = &self.rungs[index];
-        let Some(until) = self.rests.resting(&rung.offer.binding, &rung.wire_model) else {
+        let Some(rest) = self.rests.resting(&rung.offer.binding, &rung.wire_model) else {
             return false;
         };
-        walk.note(index, Passed::Resting { until });
+        walk.note(index, Passed::Resting { rest });
         true
+    }
+
+    /// Whether every rung of this ladder rests now.
+    pub(super) fn rests_now(&self) -> bool {
+        self.rungs.iter().all(|rung| {
+            self.rests
+                .resting(&rung.offer.binding, &rung.wire_model)
+                .is_some()
+        })
+    }
+
+    /// Once every rung the call met has parked, the owner's question about
+    /// each one parked on a spent window or spent credit (OF-305: asked only
+    /// when no rung is left to serve the call).
+    fn ask_parked(&self, walk: &Walk) {
+        let Some(parked) = walk.parked(self.rungs.len()) else {
+            return;
+        };
+        let own: Vec<&str> = self.rungs.iter().map(|rung| rung.provider.as_str()).collect();
+        for (index, rest) in parked {
+            let rung = &self.rungs[index];
+            let asked = Asked {
+                provider: &rung.provider,
+                wire_model: &rung.wire_model,
+                media: rung.media.is_some(),
+            };
+            self.rests.ask(&rung.offer.binding, rest, asked, &own);
+        }
+    }
+
+    /// Once every rung the call met has parked, the fallback the owner named
+    /// for the first parked offer that has one (`use_fallback`), while that
+    /// model's offer is in rotation and the call's world may go where it
+    /// runs. A media call has none.
+    fn fallback(&self, call: Call<'_>, walk: &Walk) -> Option<Arc<OfferLadder>> {
+        walk.parked(self.rungs.len())?
+            .into_iter()
+            .filter(|(index, _)| self.rungs[*index].media.is_none())
+            .find_map(|(index, _)| {
+                let rung = &self.rungs[index];
+                self.rests
+                    .fallback_for(&rung.offer.binding, &rung.wire_model)
+                    .filter(|fallback| !fallback.rests_now())
+                    .filter(|fallback| {
+                        !fallback
+                            .rungs
+                            .iter()
+                            .any(|rung| leaves_device(&rung.offer.binding))
+                            || self.rests.world_may_leave(call.request)
+                    })
+            })
     }
 
     /// Keeps the call's work from the rung at `index`, a fallback that would
@@ -317,13 +371,9 @@ impl OfferLadder {
             _ => return None,
         };
         let rung = &self.rungs[index];
-        let asked = Asked {
-            provider: &rung.provider,
-            wire_model: &rung.wire_model,
-        };
         let rest = self
             .rests
-            .rest(&rung.offer.binding, &rung.wire_model, refusal, asked);
+            .rest(&rung.offer.binding, &rung.wire_model, refusal);
         tracing::warn!(
             rung = rung.position,
             kind = failure_kind(error),
@@ -392,7 +442,9 @@ impl OfferLadder {
     /// failure that was a limit refusal, or a call that reached no rung
     /// because each one it could use rests, refuses with that time, so a
     /// caller can say when. Any other last failure is returned as it came.
+    /// Every rung parked, the owner is asked about the spent ones.
     fn unanswered(&self, walk: Walk) -> LlmError {
+        self.ask_parked(&walk);
         let back = walk
             .back()
             .zip(self.rests.now())
@@ -475,6 +527,38 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
     ) -> LlmResult<LlmResponse> {
+        self.generate_from(run, request, selector, may_send, wait_budget, true)
+            .await
+    }
+
+    /// [`Self::generate_within`]; once every rung has parked, a call whose
+    /// parked offer has the owner's fallback goes there, when
+    /// `may_fall_back` (a fallback's own call falls back no further). Boxed,
+    /// since a fallback's call is this one again.
+    fn generate_from<'a>(
+        &'a self,
+        run: &'a RunAdmission,
+        request: LlmRequest,
+        selector: Option<&'a str>,
+        may_send: &'a (dyn Fn() -> bool + Sync),
+        wait_budget: Duration,
+        may_fall_back: bool,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            self.walk_generate(run, request, selector, may_send, wait_budget, may_fall_back)
+                .await
+        })
+    }
+
+    async fn walk_generate(
+        &self,
+        run: &RunAdmission,
+        mut request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        wait_budget: Duration,
+        may_fall_back: bool,
+    ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         let call = Call {
             run,
@@ -484,10 +568,28 @@ impl OfferLadder {
         let mut walk = Walk::default();
         let mut budget = wait_budget.as_secs();
         // The chain, each rung at most once a pass; then, while only rests
-        // stopped it, a wait for its first offer back and the chain again,
-        // until the waits would pass the call's budget.
+        // stopped it, the owner's fallback, or a wait for its first offer
+        // back and the chain again, until the waits would pass the call's
+        // budget.
         for pass in 0.. {
             if pass > 0 {
+                if may_fall_back && let Some(fallback) = self.fallback(call, &walk) {
+                    request.model = fallback.model().clone();
+                    let fell = fallback
+                        .generate_from(
+                            run,
+                            request,
+                            selector,
+                            may_send,
+                            Duration::from_secs(budget),
+                            false,
+                        )
+                        .await;
+                    if fell.is_err() {
+                        self.ask_parked(&walk);
+                    }
+                    return fell;
+                }
                 let Some(back) = self
                     .waits_for(call, &mut walk, budget)
                     .filter(|_| may_send())
@@ -684,6 +786,19 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&str>,
     ) -> LlmResult<LlmStream<'static>> {
+        self.stream_from(run, request, selector, true)
+    }
+
+    /// [`Self::stream`]; a stream that opens with every rung parked goes to
+    /// the owner's fallback for a parked offer, when `may_fall_back` (a
+    /// fallback's own stream falls back no further).
+    fn stream_from(
+        self: &Arc<Self>,
+        run: &RunAdmission,
+        mut request: LlmRequest,
+        selector: Option<&str>,
+        may_fall_back: bool,
+    ) -> LlmResult<LlmStream<'static>> {
         self.admits(&request)?;
         let call = Call {
             run,
@@ -694,10 +809,20 @@ impl OfferLadder {
         let (start, wait) =
             match (0..self.rungs.len()).find(|index| !self.passes_over(call, *index, &mut walk)) {
                 Some(start) => (start, None),
-                None => match self.waits_for(call, &mut walk, self.rests.max_wait_secs()) {
-                    Some(back) => (back.index, Some(back)),
-                    None => return Err(self.unanswered(walk)),
-                },
+                None => {
+                    if may_fall_back && let Some(fallback) = self.fallback(call, &walk) {
+                        request.model = fallback.model().clone();
+                        let fell = fallback.stream_from(run, request, selector, false);
+                        if fell.is_err() {
+                            self.ask_parked(&walk);
+                        }
+                        return fell;
+                    }
+                    match self.waits_for(call, &mut walk, self.rests.max_wait_secs()) {
+                        Some(back) => (back.index, Some(back)),
+                        None => return Err(self.unanswered(walk)),
+                    }
+                }
             };
         let first = self.admit(run, &self.rungs[start], &request, selector, true)?;
         let (ladder, run) = (Arc::clone(self), run.clone());
