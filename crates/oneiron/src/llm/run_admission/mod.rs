@@ -17,6 +17,7 @@ mod declaration;
 mod gate;
 mod host;
 mod job_maximum;
+mod media;
 mod permit;
 mod receipt;
 mod settle;
@@ -26,6 +27,7 @@ pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };
 pub use gate::GatedBackend;
+pub use media::MediaGate;
 pub use host::{
     AccountStatus, Allocation, AllocationGrantError, AllocationRef, AllocationRefusal, HostAccount,
     KeyCustody, OfferBinding, OfferRoute, OfferRouteError, PaidConnector, Payer, UnitRate,

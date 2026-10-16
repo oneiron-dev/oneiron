@@ -196,4 +196,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),
     (&t::WORKSPACE_ONBOARDING, CONTENT),
     (&t::WORKSPACE_ROSTER_PRESET, CONTENT),
+    // A destroyed world stays destroyed: no image restores its keys.
+    (&t::WORLD_KEY_DESTROYED, LIVE),
 ];
