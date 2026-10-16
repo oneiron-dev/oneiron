@@ -23348,7 +23348,7 @@
      "path": "src/llm/decision/ladder.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5,
       "struct": 6,
       "trait": 3
@@ -23392,14 +23392,15 @@
       "DecisionBandPolicy",
       "LearnedBand",
       "PersonThreshold",
-      "Reversibility"
+      "Reversibility",
+      "ThinkThreshold"
      ],
      "path": "src/llm/decision/policy.rs",
      "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
      "surface": {
       "enum": 2,
-      "fn": 5,
-      "struct": 3
+      "fn": 7,
+      "struct": 4
      }
     },
     {
@@ -23565,7 +23566,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DecisionSeat",
@@ -23628,20 +23629,24 @@
       "DecisionQuestion",
       "DecisionReceipt",
       "DecisionRung",
+      "DecisionTime",
       "EvidenceVersion",
       "HumanAskReason",
       "PairedReading",
       "PersonChangedAnswer",
       "ProviderPin",
+      "Reasoning",
+      "ReasoningCause",
+      "StopCause",
       "TypedDecision"
      ],
      "path": "src/llm/decision/types.rs",
      "purpose": "Closed answer contracts and engine-owned decision receipts",
      "surface": {
       "crate-vis": 4,
-      "enum": 5,
+      "enum": 8,
       "fn": 6,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -31833,7 +31838,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RecallExecution",
@@ -31843,8 +31848,8 @@
      "path": "src/retrieval_depth/controls.rs",
      "purpose": "Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 8,
+      "crate-vis": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -41824,6 +41829,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/decision_deadline.rs",
+     "purpose": "DECISION-DEADLINE (owner, 2026-10-16): every typed decision runs under one clock",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -43737,7 +43750,7 @@
    "over_bar": 52,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2623,
-   "test_files": 902
+   "test_files": 903
   },
   "oneiron-android": {
    "files": [
