@@ -28,7 +28,7 @@ pub use oneiron_model::llm::{
     DeterministicRunner, DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute,
     FallbackError, FallbackRegistry, LlmEventBus, ProgressSnapshot, ProgressSubscriber, Scope,
     ScopeResource, StreamAssembly, StreamSubscription, TerminalSink, VoiceChunkPolicy,
-    VoiceChunker, image, scope,
+    VoiceChunker, image, media, scope,
 };
 pub(crate) use oneiron_model::llm::{
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,

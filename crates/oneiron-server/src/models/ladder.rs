@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::llm::media::MediaRequest;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
@@ -18,6 +19,7 @@ use tokio::sync::mpsc::Sender;
 use super::cooldown::{OfferCooldowns, Rest, leaves_device};
 use super::driven::Driven;
 use super::forward::{Ended, forward};
+use super::media::{HeldJob, MediaAnswer, MediaRung};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::walk::{Passed, Walk, ends_call, failure_kind};
@@ -34,6 +36,9 @@ pub(super) struct LadderRung {
     pub(super) wire_model: String,
     pub(super) prompt: Option<String>,
     pub(super) offer: ServedOffer,
+    /// A media seat's rung: the media wire it sends `ai.*` media calls
+    /// through, and what it serves. A chat rung has none.
+    pub(super) media: Option<MediaRung>,
 }
 
 impl LadderRung {
@@ -143,6 +148,7 @@ impl OfferLadder {
                 model,
                 prompt: None,
                 offer,
+                media: None,
             },
             OfferCooldowns::unkept(),
         )
@@ -491,6 +497,116 @@ impl OfferLadder {
                 let sent = settle_failed(permit);
                 self.failed(index, error, sent, walk)?;
                 Ok(Sent::Failed)
+            }
+        }
+    }
+
+    /// One media call (`ai.image`, `ai.video`, ...) under `run`, on the
+    /// same walk as a text call: each rung it reaches whose row serves the
+    /// call is admitted on its own permit, sent through the run's media gate
+    /// and settled on its own, in token units; an offer refused for a limit
+    /// rests and the call goes to the next, and a chain that only rests
+    /// waits once for its first offer back. A job (`ai.video`) answers with
+    /// its started permit held, to settle when the job ends.
+    pub(super) async fn media(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        selector: Option<&str>,
+    ) -> LlmResult<MediaAnswer> {
+        let admission = request.admission_request();
+        self.admits(&admission)?;
+        let call = Call {
+            run,
+            request: &admission,
+            selector,
+        };
+        let mut walk = Walk::default();
+        for waited in [false, true] {
+            if waited {
+                let Some(back) = self.waits_for(call, &mut walk) else {
+                    break;
+                };
+                self.rests.wait(back.wait, back.at, &|| true).await;
+            }
+            let mut sent = vec![false; self.rungs.len()];
+            while let Some(index) = self.next_rung(call, &sent, &mut walk) {
+                sent[index] = true;
+                if let Some(answer) = self.send_media(call, index, &request, &mut walk).await? {
+                    return Ok(answer);
+                }
+            }
+        }
+        Err(self.unanswered(walk))
+    }
+
+    /// Sends the media call to the rung at `index`: its answer, `None` when
+    /// the call goes on, or the failure that ends it.
+    async fn send_media(
+        &self,
+        call: Call<'_>,
+        index: usize,
+        request: &MediaRequest,
+        walk: &mut Walk,
+    ) -> LlmResult<Option<MediaAnswer>> {
+        let rung = &self.rungs[index];
+        let Some(media) = &rung.media else {
+            return Ok(None);
+        };
+        let mut bound = request.clone();
+        bound.model = rung.model.clone();
+        bound.envelope.locality = rung.offer.binding.locality;
+        // A rung whose row does not serve the call (its inputs, its
+        // references) is passed, unsent; a call no rung serves is refused.
+        if media.row.admit_media(&bound).is_err() {
+            return Ok(None);
+        }
+        let selector = Some(call.selector.unwrap_or(self.name.as_str()));
+        let permit = call
+            .run
+            .admit_media(selector, &bound, &rung.offer.binding)?;
+        if self.kept_on_device(index, call.request) {
+            settle_failed(permit);
+            self.hold(call, index, walk);
+            return Ok(None);
+        }
+        let gate = call
+            .run
+            .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
+        let operation = request.operation;
+        if operation.is_job() {
+            let submitted = gate.submit(bound, permit.lease()).await;
+            return match submitted {
+                Ok(provider_job) => Ok(Some(MediaAnswer::Job(HeldJob {
+                    gate,
+                    permit: Some(permit),
+                    provider_job,
+                    model: rung.model.clone(),
+                    operation,
+                    caps: media.caps.clone(),
+                }))),
+                Err(error) => {
+                    let sent = settle_failed(permit);
+                    self.failed(index, error, sent, walk)?;
+                    Ok(None)
+                }
+            };
+        }
+        let answered = gate.run(bound, permit.lease()).await;
+        match answered {
+            Ok(mut response) => {
+                permit.settle_media(response.usage.token_units(operation, &media.caps))?;
+                if self.receipt {
+                    let raw = std::mem::take(&mut response.usage.raw_provider);
+                    response.usage.raw_provider =
+                        rung.stamp(walk.went_out(), walk.passed_over(&self.rungs), raw);
+                }
+                Ok(Some(MediaAnswer::Done(response)))
+            }
+            Err(error) => {
+                let sent = settle_failed(permit);
+                self.failed(index, error, sent, walk)?;
+                Ok(None)
             }
         }
     }

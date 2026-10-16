@@ -1,48 +1,51 @@
 //! Bounded typed review of slide/shape units into one retained comment proposal.
 //!
-//! The host supplies access-checked text and rendered image evidence for the
-//! exact deck bytes. No provider output may select the principal, receipt,
-//! comment anchor, or settle authority. The existing PPTX writer owns OOXML.
+//! Every unit is one call through the shared decide() ladder (ARCH-0076 §2).
+//! The engine reads each unit's identity and text from the typed deck view; the
+//! host supplies only the rendered image, which stays host-side and reaches a
+//! provider by its key in `state.media`. No provider output may select the
+//! principal, receipt, comment anchor, or settle authority. The existing PPTX
+//! writer owns OOXML.
 
 use super::EditProposal;
 use super::pptx::{
     PptxAuthor, PptxCommentAction, PptxCommentPatch, PptxCommentTarget, PptxError,
-    PptxProposalError, inspect_pptx, run_comment_roundtrip,
+    PptxProposalError, PptxSlideIdentity, inspect_pptx, run_comment_roundtrip,
 };
 use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionQuestion, DecisionReceipt, DecisionRung, PairedReading, ProviderDecision, ProviderPin,
-    Reversibility, SlideReviewLimits, TypedDecision,
+    DecisionLadder, DecisionQuestion, DecisionRung, EvidenceVersion, MAX_DECISION_STATE_BYTES,
+    PairedReading, Reasoning, ReasoningCause, Reversibility, SlideReviewLimits, StopCause,
+    TypedDecision,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result, Vault};
+use oneiron_docedit::deck::{DeckView, ShapeView, SlideView};
+use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 /// Persisted-row structural ceiling; a decoder must accept every row we write.
 pub(crate) const MAX_JUDGMENTS: usize = 4096;
 
-/// One caller-approved unit and its inspected text and rendered image. The
-/// renderer must have rendered these exact `base` bytes; its identity is saved
-/// beside the deck frontier, not treated as PowerPoint oracle evidence.
+/// One caller-approved unit and its rendered image. The renderer must have
+/// rendered these exact `base` bytes; its identity is saved beside the deck
+/// frontier, not treated as PowerPoint oracle evidence. The unit's text is
+/// read from the deck, never supplied by the host.
 #[derive(Debug, Clone)]
 pub struct SlideReviewUnit {
     pub target: PptxCommentTarget,
-    pub text: String,
+    /// Kept by the host: a provider resolves it by [`review_image_key`].
     pub review_image: Vec<u8>,
     pub renderer: String,
 }
 
-/// Host-injected provider seat. Calls are bounded batches of at most eight;
-/// results are positional and malformed batches fail the entire preview.
-/// Each provider must use the access/egress posture chosen by the host.
-pub trait SlideReviewProvider {
-    fn pin(&self) -> ProviderPin;
-    fn decide_batch(
-        &self,
-        question: &DecisionQuestion,
-        units: &[SlideReviewUnit],
-    ) -> Result<Vec<ProviderDecision>>;
+/// The key a review image goes by in a unit's `state.media`; the host's
+/// providers look its bytes up by this key.
+pub fn review_image_key(image: &[u8]) -> String {
+    blake3::hash(image).to_hex().to_string()
 }
 
 /// User-configured display words, including the severity words in comments.
@@ -85,20 +88,43 @@ impl SlideReviewLabels {
     }
 }
 
+/// The managed anchor kept beside the comment, not only inside the exported
+/// file (ARCH-0077, "Managed anchor"): the typed view's slide identity and
+/// fingerprints, and for a shape unit its retained node and fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlideReviewAnchor {
+    pub slide_part: String,
+    pub sld_id: u32,
+    pub slide_fingerprint: [u8; 32],
+    pub render_fingerprint: [u8; 32],
+    pub shape: Option<ShapeReviewAnchor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShapeReviewAnchor {
+    /// The retained shape element: its part and document-order index.
+    pub node_part: String,
+    pub node_index: u64,
+    pub shape_id: Option<u32>,
+    pub fingerprint: [u8; 32],
+}
+
 /// Bound to its exported comment and exact source version. Settlement keeps
 /// this record with the consume-once receipt, not just a client-side preview.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlideJudgment {
     pub thread_id: EntityId,
     pub target: PptxCommentTarget,
+    pub anchor: SlideReviewAnchor,
+    /// The shared ladder's decision and receipt, as it wrote them.
     pub decision: TypedDecision,
     /// The immutable primitive selected by the question version for this run.
     pub answer_contract: AnswerContract,
     pub band_mode: BandMode,
-    pub first_probability: f64,
     pub renderer: String,
     pub frontier: [u8; 32],
-    /// Hash of the exact text and image passed to the selected answerer.
+    /// Hash of the exact state the providers read: the unit, its text and its
+    /// image key.
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
     pub comment: String,
@@ -108,13 +134,57 @@ pub struct SlideJudgment {
 
 #[derive(Debug, Clone)]
 pub struct SlideReviewRun {
-    /// `None` when every unit abstained; no empty or phantom write is settled.
+    /// `None` when no unit was answered; no empty or phantom write is settled.
     pub proposal: Option<EditProposal>,
-    pub abstained: Vec<PptxCommentTarget>,
+    pub abstained: Vec<SlideAbstention>,
+    pub refused: Vec<SlideUnitRefusal>,
+}
+
+/// A unit the ladder left unanswered. The decision carries its typed reason and
+/// clock (a cut, no rung able to take it); none when the host had no image.
+#[derive(Debug, Clone)]
+pub struct SlideAbstention {
+    pub target: PptxCommentTarget,
+    pub decision: Option<TypedDecision>,
+}
+
+/// A selected unit the review will not ask as given. A shape unit offers its
+/// slide unit when the slide itself can be judged; a judgment never moves to a
+/// nearby shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlideUnitRefusal {
+    pub target: PptxCommentTarget,
+    pub reason: SlideUnitRefusalReason,
+    pub offer: Option<PptxCommentTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlideUnitRefusalReason {
+    /// No shape on the slide carries the creation id.
+    MissingShape,
+    /// Several shapes carry it.
+    AmbiguousShape,
+    /// The shape no longer matches the caller's fingerprint.
+    TargetChanged,
+    /// The writer cannot verify the shape's slide-space position.
+    UnresolvedGeometry,
+    /// The unit's text or state exceeds the evidence budget; nothing is trimmed.
+    EvidenceBudget,
+}
+
+/// The exact deck a review reads.
+#[derive(Clone, Copy)]
+pub struct SlideReviewBase<'a> {
+    pub bytes: &'a [u8],
+    pub version: Option<u64>,
+    /// The artifact these bytes are a version of: each call's evidence id,
+    /// pinned to the frontier on its receipt.
+    pub artifact: Option<EntityId>,
+    pub package_limits: Limits,
 }
 
 /// One typed ask, whose principal and display configuration are fixed by the
-/// caller, never by a provider result. The host supplies its eligible rungs.
+/// caller, never by a provider result. The host brings the shared ladder.
 #[derive(Clone, Copy)]
 pub struct SlideReviewRequest<'a> {
     pub units: &'a [SlideReviewUnit],
@@ -130,20 +200,26 @@ pub struct SlideReviewRequest<'a> {
     pub policy: &'a DecisionBandPolicy,
     pub reversibility: Reversibility,
     pub labels: &'a SlideReviewLabels,
-    pub providers: &'a [&'a dyn SlideReviewProvider],
+    /// The decide() ladder every unit goes through; the review keeps no rungs.
+    pub ladder: &'a DecisionLadder<'a>,
+    /// Access-checked evidence beside the deck, such as the excerpt a claim cites.
+    pub evidence: &'a [EntityId],
+    /// Each unit call's anytime budget, from when it is asked.
+    pub budget: Duration,
+    /// The run's deadline: no call's clock runs past it.
+    pub deadline: Instant,
     pub run_ref: &'a str,
     pub at: u64,
 }
 
-/// One question over selected slide/shape units, via a route of provider
-/// rungs: the first at the dial's first rung, each above the one before (a
-/// rung with no provider is skipped, ARCH-0076 #posture), the last at the
-/// dial's ceiling; any other route is refused. An enforced in-band answer from
-/// the first provider moves once, to the next; an abstention lists its unit as
-/// abstained. Errors and malformed output leave no partial proposal behind.
+/// One question over selected slide/shape units, one decide() call per unit
+/// under the run's deadline. The ladder routes each call (its first rung, one
+/// step up for a cause, a skipped empty rung, the cut rule) and writes its
+/// receipt; an abstention lists its unit with that receipt. A Human ceiling is
+/// refused: the landing is a comment proposal, not a person's queue. Errors and
+/// malformed output leave no partial proposal behind.
 pub fn review_slides(
-    base: &[u8],
-    base_version: Option<u64>,
+    base: &SlideReviewBase<'_>,
     request: &SlideReviewRequest<'_>,
 ) -> std::result::Result<SlideReviewRun, SlideReviewError> {
     let SlideReviewRequest {
@@ -158,7 +234,10 @@ pub fn review_slides(
         policy,
         reversibility,
         labels,
-        providers,
+        ladder,
+        evidence,
+        budget,
+        deadline,
         run_ref,
         at,
     } = *request;
@@ -173,193 +252,288 @@ pub fn review_slides(
     if dial.first > dial.ceiling
         || dial.ceiling == DecisionRung::Human
         || units.len() > limits.max_units
-        || providers.is_empty()
+        || budget.is_zero()
     {
         return Err(invalid("invalid slide review selection or dial").into());
     }
-    let provider_pins: Vec<_> = providers.iter().map(|provider| provider.pin()).collect();
-    // The route starts at the dial's first rung and skips a rung with no provider
-    // (ARCH-0076 #posture), so each provider sits above the one before it.
-    for (index, pin) in provider_pins.iter().enumerate() {
-        if index
-            .checked_sub(1)
-            .map_or(pin.rung != dial.first, |previous| {
-                pin.rung <= provider_pins[previous].rung
-            })
-            || pin.rung > dial.ceiling
-            || pin.rung == DecisionRung::Human
-            || pin.model.trim().is_empty()
-            || pin.version.trim().is_empty()
-            || pin.model.len() > 256
-            || pin.version.len() > 256
-        {
-            return Err(invalid("invalid provider sequence").into());
-        }
-    }
-    if provider_pins.last().map(|pin| pin.rung) != Some(dial.ceiling) {
-        return Err(invalid("missing review provider rung").into());
-    }
-    let inspection = inspect_pptx(base)?;
+    let inspection = inspect_pptx(base.bytes)?;
     if !inspection.signature_parts.is_empty() {
         return Err(PptxError::SignedPackage.into());
     }
+    let package = Package::open(base.bytes, base.package_limits)
+        .map_err(|_| invalid("slide review package"))?;
+    let view = DeckView::read(&package).map_err(|_| invalid("slide review deck view"))?;
+    let frontier = *blake3::hash(base.bytes).as_bytes();
+    let evidence: Vec<EntityId> = evidence.iter().copied().chain(base.artifact).collect();
     let mut seen = HashSet::new();
     let mut abstained = Vec::new();
-    let mut reviewable = Vec::new();
+    let mut refused = Vec::new();
+    let mut judgments = Vec::new();
+    let mut patches = Vec::new();
     for unit in units {
-        if unit.target.slide == 0
-            || !inspection.slides.iter().any(|slide| {
-                slide.slide == unit.target.slide
-                    && unit
-                        .target
-                        .slide_creation_id
-                        .is_none_or(|id| slide.creation_id == Some(id))
-            })
-            || !seen.insert((unit.target.slide, unit.target.shape_creation_id.clone()))
-            || unit.text.len() > limits.max_text_bytes
+        let target = &unit.target;
+        let shape_key = target
+            .shape_creation_id
+            .as_deref()
+            .map(canonical_guid)
+            .transpose()?;
+        let slide = target
+            .slide
+            .checked_sub(1)
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| view.slides.get(index));
+        let identity = inspection
+            .slides
+            .iter()
+            .find(|slide| slide.slide == target.slide);
+        let (Some(slide), Some(identity)) = (slide, identity) else {
+            return Err(invalid("invalid slide review unit").into());
+        };
+        if slide.part != identity.part
+            || slide.sld_id != identity.sld_id
+            || target
+                .slide_creation_id
+                .is_some_and(|id| slide.creation_id != Some(id))
+            || !seen.insert((target.slide, shape_key.clone()))
             || unit.review_image.len() > limits.max_image_bytes
             || unit.renderer.len() > 256
         {
             return Err(invalid("invalid slide review unit or exceeded evidence budget").into());
         }
-        // An unavailable unit is not a negative answer or a malformed batch.
-        if unit.text.is_empty() || unit.review_image.is_empty() || unit.renderer.trim().is_empty() {
-            abstained.push(unit.target.clone());
-        } else {
-            reviewable.push(unit.clone());
+        let read = match read_unit(slide, identity, target, shape_key.as_deref()) {
+            Ok(read) => read,
+            Err(reason) => {
+                refused.push(refusal(target, reason));
+                continue;
+            }
+        };
+        // An unavailable image is not a negative answer or a malformed call.
+        if unit.review_image.is_empty() || unit.renderer.trim().is_empty() {
+            abstained.push(SlideAbstention {
+                target: target.clone(),
+                decision: None,
+            });
+            continue;
         }
-    }
-    let frontier = *blake3::hash(base).as_bytes();
-    let mut judgments = Vec::new();
-    let mut patches = Vec::new();
-    for chunk in reviewable.chunks(limits.batch_size) {
-        let mut pending: Vec<usize> = (0..chunk.len()).collect();
-        let mut pins: Vec<Vec<ProviderPin>> = vec![Vec::new(); chunk.len()];
-        let mut first_probabilities: Vec<Option<f64>> = vec![None; chunk.len()];
-        let mut paired: Vec<Vec<PairedReading>> = vec![Vec::new(); chunk.len()];
-        let mut person: Vec<Vec<PairedReading>> = vec![Vec::new(); chunk.len()];
-        for (rung, provider) in providers.iter().enumerate() {
-            if pending.is_empty() {
-                break;
-            }
-            let selected: Vec<_> = pending.iter().map(|&i| chunk[i].clone()).collect();
-            let results = provider.decide_batch(question, &selected)?;
-            if results.len() != selected.len() {
-                return Err(invalid("malformed review batch length").into());
-            }
-            let mut next = Vec::new();
-            for (index, result) in pending.iter().copied().zip(results) {
-                if result.validate(question).is_err() {
-                    return Err(invalid("malformed review answer").into());
-                }
-                if let Some(reading) = result.paired {
-                    paired[index].push(reading.bind(provider_pins[rung].clone()));
-                }
-                if let Some(reading) = result.person {
-                    person[index].push(reading.bind(provider_pins[rung].clone()));
-                }
-                pins[index].push(provider_pins[rung].clone());
-                if rung == 0 {
-                    first_probabilities[index] = result.probability;
-                }
-                let in_band =
-                    first_probabilities[index].is_some_and(|p| band_policy.band.contains(p));
-                // Match the shared ladder: only an enforced band moves once.
-                if rung == 0
-                    && band_policy.mode == BandMode::Enforce
-                    && in_band
-                    && rung + 1 < providers.len()
-                {
-                    next.push(index);
-                    continue;
-                }
-                if result.answer == DecisionAnswer::Abstain {
-                    abstained.push(chunk[index].target.clone());
-                    continue;
-                }
-                let probability = result
-                    .probability
-                    .ok_or_else(|| invalid("missing review probability"))?;
-                let unit = &chunk[index];
-                let thread_id = EntityId::now();
-                let decision = TypedDecision {
-                    answer: result.answer,
-                    probability: Some(probability),
-                    evidence: Vec::new(),
-                    in_band,
-                    receipt: DecisionReceipt {
-                        question: question.id,
-                        question_version: question.version,
-                        principal,
-                        providers: pins[index].clone(),
-                        band: band_policy.band,
-                        band_version: band_policy.version,
-                        evidence_versions: Vec::new(),
-                        cost_per_thousand: None,
-                        paired: paired[index].clone(),
-                        person: person[index].clone(),
-                        time: None,
-                    },
-                    human_ask: None,
-                };
-                let comment = labels.comment(&decision.answer, probability, band_policy.band);
-                patches.push(PptxCommentPatch {
-                    asked_by: principal,
-                    answered_by,
-                    author: author.clone(),
-                    thread_id,
-                    comment_id: thread_id,
-                    at,
-                    action: PptxCommentAction::Add {
-                        target: unit.target.clone(),
-                        text: comment.clone(),
-                    },
-                });
-                judgments.push(SlideJudgment {
-                    thread_id,
-                    target: unit.target.clone(),
-                    decision,
-                    answer_contract: question.contract.clone(),
-                    band_mode: band_policy.mode,
-                    first_probability: first_probabilities[index]
-                        .ok_or_else(|| invalid("missing first-rung probability"))?,
-                    renderer: unit.renderer.clone(),
-                    frontier,
-                    evidence_hash: evidence_hash(unit),
-                    judged_version: base_version,
-                    comment,
-                    labels: labels.clone(),
-                });
-            }
-            pending = next;
+        let state = serde_json::json!({
+            "unit": {
+                "slide": target.slide,
+                "sld_id": slide.sld_id,
+                "slide_creation_id": slide.creation_id,
+                "shape_creation_id": shape_key,
+                "shape_id": read.anchor.shape.as_ref().and_then(|shape| shape.shape_id),
+                "shape_name": read.name,
+            },
+            "text": read.text,
+            "media": [{
+                "kind": "image",
+                "key": review_image_key(&unit.review_image),
+                "bytes": unit.review_image.len(),
+                "renderer": unit.renderer,
+            }],
+        });
+        let state_bytes =
+            serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
+        if read.text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES
+        {
+            refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
+            continue;
         }
+        let now = Instant::now();
+        let clock =
+            RetrievalDeadline::hard(now, budget.min(deadline.saturating_duration_since(now)));
+        let mut decision = ladder.run(
+            question,
+            principal,
+            &evidence,
+            &state,
+            dial,
+            policy,
+            reversibility,
+            &clock,
+        )?;
+        decision.receipt.evidence_versions = base
+            .artifact
+            .map(|id| EvidenceVersion {
+                id,
+                body_hash: frontier,
+            })
+            .into_iter()
+            .collect();
+        if decision.answer == DecisionAnswer::Abstain {
+            abstained.push(SlideAbstention {
+                target: target.clone(),
+                decision: Some(decision),
+            });
+            continue;
+        }
+        let probability = decision
+            .probability
+            .ok_or_else(|| invalid("missing review probability"))?;
+        let thread_id = EntityId::now();
+        let comment = labels.comment(&decision.answer, probability, decision.receipt.band);
+        patches.push(PptxCommentPatch {
+            asked_by: principal,
+            answered_by,
+            author: author.clone(),
+            thread_id,
+            comment_id: thread_id,
+            at,
+            action: PptxCommentAction::Add {
+                target: target.clone(),
+                text: comment.clone(),
+            },
+        });
+        judgments.push(SlideJudgment {
+            thread_id,
+            target: target.clone(),
+            anchor: read.anchor,
+            decision,
+            answer_contract: question.contract.clone(),
+            band_mode: band_policy.mode,
+            renderer: unit.renderer.clone(),
+            frontier,
+            evidence_hash: *blake3::hash(&state_bytes).as_bytes(),
+            judged_version: base.version,
+            comment,
+            labels: labels.clone(),
+        });
     }
     if patches.is_empty() {
         return Ok(SlideReviewRun {
             proposal: None,
             abstained,
+            refused,
         });
     }
-    let mut proposal = run_comment_roundtrip(base, &patches, run_ref)?;
-    proposal.base_version = base_version;
+    let mut proposal = run_comment_roundtrip(base.bytes, &patches, run_ref)?;
+    proposal.base_version = base.version;
     proposal.manifest.slide_judgments = judgments;
     Ok(SlideReviewRun {
         proposal: Some(proposal),
         abstained,
+        refused,
     })
 }
 
-fn evidence_hash(unit: &SlideReviewUnit) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    for field in [
-        unit.text.as_bytes(),
-        &unit.review_image,
-        unit.renderer.as_bytes(),
-    ] {
-        hasher.update(&(field.len() as u64).to_le_bytes());
-        hasher.update(field);
+/// What the typed view gives one unit: its text, managed anchor and shape name.
+struct UnitRead {
+    text: String,
+    anchor: SlideReviewAnchor,
+    name: Option<String>,
+}
+
+/// A slide unit reads every text-bearing shape in document order; a shape unit
+/// reads its one shape, which the writer must be able to anchor at its own
+/// verified slide-space top-left.
+fn read_unit(
+    slide: &SlideView,
+    identity: &PptxSlideIdentity,
+    target: &PptxCommentTarget,
+    shape_key: Option<&str>,
+) -> std::result::Result<UnitRead, SlideUnitRefusalReason> {
+    let mut anchor = SlideReviewAnchor {
+        slide_part: slide.part.clone(),
+        sld_id: slide.sld_id,
+        slide_fingerprint: slide.content_fingerprint,
+        render_fingerprint: slide.render_fingerprint,
+        shape: None,
+    };
+    let Some(key) = shape_key else {
+        let text = slide
+            .shapes
+            .iter()
+            .filter_map(shape_text)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        return Ok(UnitRead {
+            text,
+            anchor,
+            name: None,
+        });
+    };
+    let shape = match slide
+        .shapes
+        .iter()
+        .filter(|shape| shape.creation_id.as_deref() == Some(key))
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] => return Err(SlideUnitRefusalReason::MissingShape),
+        [shape] => *shape,
+        _ => return Err(SlideUnitRefusalReason::AmbiguousShape),
+    };
+    let written = match identity
+        .shapes
+        .iter()
+        .filter(|shape| shape.creation_id.as_deref() == Some(key))
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] => return Err(SlideUnitRefusalReason::MissingShape),
+        [written] => *written,
+        _ => return Err(SlideUnitRefusalReason::AmbiguousShape),
+    };
+    if target
+        .shape_fingerprint
+        .is_some_and(|fingerprint| fingerprint != written.fingerprint)
+    {
+        return Err(SlideUnitRefusalReason::TargetChanged);
     }
-    *hasher.finalize().as_bytes()
+    if written.position.is_none() {
+        return Err(SlideUnitRefusalReason::UnresolvedGeometry);
+    }
+    anchor.shape = Some(ShapeReviewAnchor {
+        node_part: shape.node.part.clone(),
+        node_index: shape.node.index as u64,
+        shape_id: shape.id,
+        fingerprint: shape.content_fingerprint,
+    });
+    Ok(UnitRead {
+        text: shape_text(shape).unwrap_or_default(),
+        anchor,
+        name: shape.name.clone(),
+    })
+}
+
+/// A shape's paragraphs, one line each; `None` for a shape with no text body.
+fn shape_text(shape: &ShapeView) -> Option<String> {
+    let body = shape.text.as_ref()?;
+    Some(
+        body.paragraphs
+            .iter()
+            .map(|paragraph| {
+                paragraph
+                    .runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+fn refusal(target: &PptxCommentTarget, reason: SlideUnitRefusalReason) -> SlideUnitRefusal {
+    let offer = (target.shape_creation_id.is_some()
+        && reason != SlideUnitRefusalReason::EvidenceBudget)
+        .then(|| PptxCommentTarget {
+            shape_creation_id: None,
+            shape_fingerprint: None,
+            ..target.clone()
+        });
+    SlideUnitRefusal {
+        target: target.clone(),
+        reason,
+        offer,
+    }
+}
+
+fn canonical_guid(id: &str) -> Result<String> {
+    uuid::Uuid::parse_str(id)
+        .map(|id| format!("{{{id}}}").to_ascii_uppercase())
+        .map_err(|_| invalid("invalid slide review shape identity"))
 }
 
 fn invalid(message: &str) -> Error {
@@ -416,54 +590,44 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
         return Err(invalid("review receipt/comment mismatch"));
     }
     for (row, patch) in rows.iter().zip(patches) {
-        let super::pptx::PptxCommentAction::Add { target, text } = &patch.action else {
+        let PptxCommentAction::Add { target, text } = &patch.action else {
             return Err(invalid("review receipt requires a new comment"));
         };
         let decision = &row.decision;
+        let receipt = &decision.receipt;
         let probability = decision
             .probability
             .ok_or_else(|| invalid("missing review probability"))?;
-        if decision.answer == DecisionAnswer::Abstain {
+        if decision.answer == DecisionAnswer::Abstain || decision.human_ask.is_some() {
             return Err(invalid("abstentions cannot create comments"));
         }
         if row.thread_id != patch.thread_id
             || row.thread_id != patch.comment_id
             || row.target != *target
             || row.comment != *text
-            || decision.receipt.principal != patch.asked_by
+            || receipt.principal != patch.asked_by
             || !probability.is_finite()
             || !(0.0..=1.0).contains(&probability)
-            || decision.receipt.band.validate().is_err()
+            || receipt.band.validate().is_err()
             || row.labels.validate().is_err()
             || row.answer_contract.validate().is_err()
             || !row.answer_contract.accepts(&decision.answer)
-            || row.comment
-                != row
-                    .labels
-                    .comment(&decision.answer, probability, decision.receipt.band)
-            || !row.first_probability.is_finite()
-            || !(0.0..=1.0).contains(&row.first_probability)
-            || decision.in_band != decision.receipt.band.contains(row.first_probability)
-            || decision.receipt.providers.is_empty()
-            || decision.receipt.providers.len() > 2
-            || (row.band_mode == BandMode::Enforce && decision.receipt.band_version == 0)
-            || (decision.receipt.providers.len() == 1 && row.first_probability != probability)
-            || (decision.receipt.providers.len() == 2
-                && (row.band_mode != BandMode::Enforce
-                    || !decision.in_band
-                    || decision.receipt.providers[1].rung <= decision.receipt.providers[0].rung))
-            || decision.receipt.providers.iter().any(|pin| {
-                pin.model.trim().is_empty()
-                    || pin.version.trim().is_empty()
-                    || pin.rung == DecisionRung::Human
-            })
+            || row.comment != row.labels.comment(&decision.answer, probability, receipt.band)
+            || (row.band_mode == BandMode::Enforce && receipt.band_version == 0)
+            || !ladder_route(row, probability)
             || !PairedReading::readings_valid(
-                &decision.receipt.paired,
-                &decision.receipt.person,
-                decision.receipt.question,
-                &decision.receipt.providers,
+                &receipt.paired,
+                &receipt.person,
+                receipt.question,
+                &receipt.providers,
             )
-            || decision.receipt.question_version == 0
+            || receipt.question_version == 0
+            || receipt
+                .evidence_versions
+                .iter()
+                .any(|version| version.body_hash != row.frontier)
+            || row.anchor.slide_part.is_empty()
+            || row.anchor.shape.is_some() != target.shape_creation_id.is_some()
             || row.frontier != proposal.base_content_hash
             || row.judged_version != proposal.base_version
             || row.renderer.trim().is_empty()
@@ -473,6 +637,48 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Whether the receipt is one the shared ladder writes for an answered unit below
+/// the person: on the decision clock, either the first read standing (clear, or
+/// taken at the cut outside its band) or one read a rung up for its cause.
+fn ladder_route(row: &SlideJudgment, probability: f64) -> bool {
+    let decision = &row.decision;
+    let receipt = &decision.receipt;
+    let Some(time) = receipt.time else {
+        return false;
+    };
+    let enforced_margin = decision.in_band && row.band_mode == BandMode::Enforce;
+    if receipt.providers.iter().any(|pin| {
+        pin.model.trim().is_empty() || pin.version.trim().is_empty() || pin.rung == DecisionRung::Human
+    }) || time.answered != receipt.providers.last().map(|pin| pin.rung)
+    {
+        return false;
+    }
+    match (receipt.providers.as_slice(), time.reasoning) {
+        ([_], Reasoning::NotNeeded) => {
+            time.stop == StopCause::Done
+                && decision.in_band == receipt.band.contains(probability)
+                && !enforced_margin
+        }
+        ([_], Reasoning::Skipped(_) | Reasoning::Cut(_)) => {
+            time.stop == StopCause::Deadline
+                && !decision.in_band
+                && !receipt.band.contains(probability)
+        }
+        ([first, second], Reasoning::Ran(cause)) => {
+            second.rung > first.rung
+                && time.stop == StopCause::Done
+                && match cause {
+                    ReasoningCause::SmallMargin => enforced_margin,
+                    ReasoningCause::PairedHigh => {
+                        !enforced_margin && receipt.paired.iter().any(|row| row.provider == *first)
+                    }
+                    ReasoningCause::SecondMeasurement => false,
+                }
+        }
+        _ => false,
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -486,8 +692,9 @@ pub enum SlideReviewError {
 }
 
 impl Vault {
-    /// Review one artifact head. Keep/discard through the existing consume-once
-    /// edit-settle door; a changed head is retained as a stale preview.
+    /// Review one artifact head through the host's decide() ladder. Keep/discard
+    /// through the existing consume-once edit-settle door; a changed head is
+    /// retained as a stale preview.
     pub fn review_blob_artifact_slides(
         &self,
         artifact: &EntityId,
@@ -505,14 +712,18 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
-        let txn = self.store.env.read_txn().map_err(Error::from)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
-        let vault_limits = policy
-            .slide_review_limits(request.principal)
-            .ok_or_else(|| invalid("slide review policy manifest is invalid"))?;
-        let route = policy
-            .slide_review_route(request.principal)
-            .ok_or_else(|| invalid("slide review route manifest is invalid"))?;
+        // The policy read ends before any provider call starts.
+        let (vault_limits, route) = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+            let vault_limits = policy
+                .slide_review_limits(request.principal)
+                .ok_or_else(|| invalid("slide review policy manifest is invalid"))?;
+            let route = policy
+                .slide_review_route(request.principal)
+                .ok_or_else(|| invalid("slide review route manifest is invalid"))?;
+            (vault_limits, route)
+        };
         let owner_dial = DecisionDial {
             first: route.first,
             ceiling: route.ceiling,
@@ -523,7 +734,13 @@ impl Vault {
             dial: owner_dial.narrow(request.dial)?,
             ..*request
         };
-        review_slides(&bytes, Some(head.version), &effective)
+        let base = SlideReviewBase {
+            bytes: &bytes,
+            version: Some(head.version),
+            artifact: Some(*artifact),
+            package_limits: self.docedit_package_limits()?,
+        };
+        review_slides(&base, &effective)
     }
 }
 

@@ -2,6 +2,8 @@ mod cold_attach;
 mod device;
 mod eligibility;
 mod locality;
+mod media;
+mod space;
 mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
 pub use device::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
@@ -14,6 +16,14 @@ pub(crate) use eligibility::{
     turn_text_in_txn,
 };
 pub(crate) use locality::clear_embedding_locality_in_txn;
+pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput};
+pub use space::{
+    EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
+    KindSlotBindings,
+};
+pub(crate) use space::{
+    delete_media_vectors_in_txn, embedding_space_in_txn, search_media_space_in_txn,
+};
 pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
     mark_turn_in_txn,
