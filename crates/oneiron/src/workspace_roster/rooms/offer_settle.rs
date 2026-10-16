@@ -16,6 +16,8 @@
 //! Not now records the host's no on the join and lands the decline in the
 //! agent's private diary, in the same write: no seat, no participation fact,
 //! no launch and no spend hold. It settles this card and bars no later ask.
+//! A not now always settles: when the agent's standing refuses the diary
+//! note, the card settles with no diary entry; any other error fails it.
 
 use std::collections::BTreeSet;
 
@@ -24,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::offers::{OFFERS, OfferCard, OfferState, StoredOffer, is_offer_id, join_refused};
 use super::participation::{JoinCause, record_participation_in_txn};
 use crate::edge::EdgeActorClass;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
     WitnessTurn,
@@ -312,6 +314,36 @@ fn decline_note(card: &OfferCard) -> String {
     )
 }
 
+/// Lands the decline in the agent's private diary, in a savepoint of the
+/// answer's write. The host's not now never waits on the agent's standing: a
+/// diary note the agent's content-write standing refuses rolls back alone,
+/// and the card settles with no diary entry. Any other error fails the answer.
+fn decline_in_diary_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    card: &OfferCard,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match crate::memory::append_agent_diary_in_txn(
+        vault,
+        &mut savepoint,
+        WriteActor::new(card.agent, EdgeActorClass::Agent),
+        decline_note(card),
+        now,
+    ) {
+        Ok(note) => {
+            savepoint.commit()?;
+            Ok(Some(note))
+        }
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => {
+            drop(savepoint);
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Answers `request` as `caller` in the caller's write. `ended` says the
 /// card's thread has ended, read before the write from the room's fold.
 fn answer_in_txn(
@@ -366,16 +398,8 @@ fn answer_in_txn(
     };
     match request.action {
         OfferAnswer::NotNow => {
-            let diary = crate::memory::append_agent_diary_in_txn(
-                vault,
-                txn,
-                WriteActor::new(stored.card.agent, EdgeActorClass::Agent),
-                decline_note(&stored.card),
-                now,
-            )?;
-            stored.card.state = OfferState::NotNow {
-                diary_ref: Some(diary),
-            };
+            let diary_ref = decline_in_diary_in_txn(vault, txn, &stored.card, now)?;
+            stored.card.state = OfferState::NotNow { diary_ref };
             stored.answer = Some(answer);
             OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
             Ok(Step::Done(Settled {

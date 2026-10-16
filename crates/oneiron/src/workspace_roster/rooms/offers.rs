@@ -79,8 +79,9 @@ pub enum OfferState {
     /// The join was Ready and the agent's acceptance landed as `turn`, its
     /// own turn in the room or thread.
     Joined { turn: EntityId, receipt_ref: String },
-    /// Not now. The decline is in the agent's private diary; it settles this
-    /// card and bars no later ask.
+    /// Not now. The decline is in the agent's private diary, or `None` when
+    /// the agent's standing refused the note; it settles this card and bars no
+    /// later ask.
     NotNow { diary_ref: Option<EntityId> },
     /// A newer card from the same agent for the same room or thread
     /// replaced this one.
