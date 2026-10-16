@@ -85,7 +85,8 @@ pub use self::contact_clearance::{
     CONTACT_DISCLOSURE_REASON_STANDING, CONTACT_DISCLOSURE_REASON_USED,
     CONTACT_DISCLOSURE_WIDEN_KIND, ContactClearanceAct, ContactDisclosureOffer,
     ContactDisclosureOutcome, ContactDisclosureProposal, DisclosureConfirmationReceipt,
-    DisclosureOfferMode, contact_clearance_ref,
+    DisclosureOfferMode, contact_clearance_ref, contact_disclosure_room_channel,
+    contact_disclosure_voice_channel,
 };
 pub use self::doors::{
     AuthenticatedOwner, ConsentEvaluation, bound_catastrophe_class, load_active_standing_grants,

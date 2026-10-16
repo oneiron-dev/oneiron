@@ -346,6 +346,10 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
+    /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
+    /// + fold u64 BE). Key: id16(dependent).
+    CODE_RUN_FOLD_WORDS: VaultMeta b"code_run:fold_words:v1:" Raw;
     /// Node-local fold ledger of one executor run: its marks, compact ask, folds and unfold
     /// appends (JSON). Key: id16(run).
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
@@ -407,6 +411,9 @@ side_tables! {
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.
     COMMITMENT_DUE_REVERSE: VaultMeta b"commitment_due_rev:v1:" Raw;
+    /// Where the owner's own commitment reminders go, and the owner's civil
+    /// clock for their delivery windows (OF-187). Key: ().
+    COMMITMENT_REMINDER_ROUTE: VaultMeta b"commitment_reminder_route:v1" Named;
     /// Series-membership history. Key: id16 + u64be + u64be + u32be + id16.
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.

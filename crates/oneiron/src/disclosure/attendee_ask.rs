@@ -122,8 +122,14 @@ pub(super) struct AttendeeAskRecord {
 impl AttendeeAskRecord {
     fn to_value(&self) -> Value {
         Value::Map(vec![
-            (Value::from("session"), Value::from(self.session_key.as_str())),
-            (Value::from("speaker"), Value::from(self.speaker_key.as_str())),
+            (
+                Value::from("session"),
+                Value::from(self.session_key.as_str()),
+            ),
+            (
+                Value::from("speaker"),
+                Value::from(self.speaker_key.as_str()),
+            ),
             (Value::from("revision"), Value::from(self.roster_revision)),
             (
                 Value::from("turn"),
@@ -169,10 +175,16 @@ pub(super) fn decode_attendee_ask_value(value: &Value) -> Result<AttendeeAskReco
     else {
         return Err(invalid_ask());
     };
-    if [session_key, speaker_key, revision_key, turn_key, candidates_key]
-        .iter()
-        .map(|key| key.as_str())
-        .ne(["session", "speaker", "revision", "turn", "candidates"].map(Some))
+    if [
+        session_key,
+        speaker_key,
+        revision_key,
+        turn_key,
+        candidates_key,
+    ]
+    .iter()
+    .map(|key| key.as_str())
+    .ne(["session", "speaker", "revision", "turn", "candidates"].map(Some))
     {
         return Err(invalid_ask());
     }
@@ -320,10 +332,8 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("attendee ask has no vault owner"));
         }
         let ask_claim = ConsultPayloadRef::Claim(ask_ref);
-        let mut question = TaskAskQuestion::new(
-            ask.trigger_turn
-                .map_or(ask_claim, ConsultPayloadRef::Turn),
-        );
+        let mut question =
+            TaskAskQuestion::new(ask.trigger_turn.map_or(ask_claim, ConsultPayloadRef::Turn));
         if ask.trigger_turn.is_some() {
             question.context_refs.push(ask_claim);
         }
@@ -369,44 +379,57 @@ impl Vault {
         choice: AttendeeIdentityChoice,
     ) -> Result<AttendeeIdentityResolution> {
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
-            let body = read_stored_claim_body(&self.store, &*txn, ask_ref)?
-                .filter(|body| {
-                    body.predicate == PREDICATE_DISCLOSURE_ATTENDEE_ASK
-                        && body.lifecycle == ClaimLifecycleStatus::Active
-                })
-                .ok_or(Error::EntityNotFound)?;
-            let record = decode_attendee_ask_value(&body.value)?;
-            if record.roster_revision != roster_revision {
+            self.resolve_attendee_identity_in_txn(txn, owner, ask_ref, roster_revision, choice)
+        })
+    }
+
+    /// [`Self::resolve_attendee_identity`] inside the caller's write
+    /// transaction, for the settlement that admitted the owner's answer.
+    pub(crate) fn resolve_attendee_identity_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        ask_ref: &EntityId,
+        roster_revision: u64,
+        choice: AttendeeIdentityChoice,
+    ) -> Result<AttendeeIdentityResolution> {
+        owner.revalidate_in_txn(self, &*txn)?;
+        let body = read_stored_claim_body(&self.store, &*txn, ask_ref)?
+            .filter(|body| {
+                body.predicate == PREDICATE_DISCLOSURE_ATTENDEE_ASK
+                    && body.lifecycle == ClaimLifecycleStatus::Active
+            })
+            .ok_or(Error::EntityNotFound)?;
+        let record = decode_attendee_ask_value(&body.value)?;
+        if record.roster_revision != roster_revision {
+            return Err(invalid_ask());
+        }
+        if let AttendeeIdentityChoice::Contact(contact) = choice {
+            if !record.candidates.contains(&contact) {
                 return Err(invalid_ask());
             }
-            if let AttendeeIdentityChoice::Contact(contact) = choice {
-                if !record.candidates.contains(&contact) {
-                    return Err(invalid_ask());
-                }
-                require_live_contact_in_txn(&self.store, &*txn, &contact)?;
-            }
-            let identity_ref = attendee_identity_ref(ask_ref)?;
-            // The first owner answer is the only one. A claim already at the
-            // id without the slot is not an answer, and is overwritten.
-            let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
-            self.take_decision_slot_in_txn(txn, &attendee_identity_slot(&identity_ref), decision_id)?;
-            let claim = ClaimBody::new(
-                PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
-                ClaimSubject::Entity(*ask_ref),
-                identity_value(roster_revision, choice),
-                1.0,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            )?;
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            self.put_disclosure_claim_in_txn(txn, &identity_ref, &claim, now)?;
-            Ok(AttendeeIdentityResolution {
-                ask_ref: *ask_ref,
-                roster_revision,
-                choice,
-                identity_ref,
-            })
+            require_live_contact_in_txn(&self.store, &*txn, &contact)?;
+        }
+        let identity_ref = attendee_identity_ref(ask_ref)?;
+        // The first owner answer is the only one. A claim already at the
+        // id without the slot is not an answer, and is overwritten.
+        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        self.take_decision_slot_in_txn(txn, &attendee_identity_slot(&identity_ref), decision_id)?;
+        let claim = ClaimBody::new(
+            PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
+            ClaimSubject::Entity(*ask_ref),
+            identity_value(roster_revision, choice),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        self.put_disclosure_claim_in_txn(txn, &identity_ref, &claim, now)?;
+        Ok(AttendeeIdentityResolution {
+            ask_ref: *ask_ref,
+            roster_revision,
+            choice,
+            identity_ref,
         })
     }
 

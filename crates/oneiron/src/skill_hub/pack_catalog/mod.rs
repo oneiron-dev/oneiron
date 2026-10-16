@@ -33,17 +33,17 @@ pub use organs::{
 };
 pub use screening::PackInstallRules;
 pub use setup::{
-    MAX_SETUP_ACCOUNTS, MAX_SETUP_CONNECTIONS, MAX_SETUP_PERMISSIONS, MAX_SETUP_SECRETS,
-    PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission,
-    PackSetupRisk, PackSetupSecret,
+    MAX_SETUP_ACCOUNTS, MAX_SETUP_CONNECTIONS, MAX_SETUP_PERMISSIONS, MAX_SETUP_SECRETS, PackSetup,
+    PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission, PackSetupRisk,
+    PackSetupSecret,
 };
 pub use setup_cards::PackSetupCardAction;
-pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_txn};
 pub use setup_session::{
     PackSetupAnswer, PackSetupCheck, PackSetupCheckRecord, PackSetupConnectionState,
     PackSetupCustodyRef, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermissionState,
     PackSetupSecretState, PackSetupSession, PackSetupView,
 };
+pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_txn};
 pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(

@@ -31,6 +31,7 @@ mod compaction;
 pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
 mod harness;
+pub(crate) mod identity;
 mod local_vision;
 mod policy;
 mod status;
@@ -615,7 +616,10 @@ fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
             };
             let resumed = tokio::task::spawn_blocking(move || resume_outage_parks(&vault)).await;
             if let Err(error) = resumed {
-                tracing::warn!(panicked = error.is_panic(), "recovery resume did not finish");
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "recovery resume did not finish"
+                );
             }
         }
     });
@@ -655,7 +659,10 @@ fn resume_outage_parks(vault: &Vault) {
         }
     }
     if resumed > 0 {
-        tracing::info!(resumed, "a provider recovered; attempts its outage parked resume");
+        tracing::info!(
+            resumed,
+            "a provider recovered; attempts its outage parked resume"
+        );
     }
 }
 

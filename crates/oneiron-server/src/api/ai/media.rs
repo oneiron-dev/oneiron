@@ -249,49 +249,64 @@ fn admit(
             format!("{model} serves no {} call here", operation.as_str()),
         ));
     }
-    let (voice, binding) =
-        match body.voice {
-            None => (None, None),
-            Some(_) if operation != AiOperation::Speech => {
+    let (voice, binding) = match body.voice {
+        None => (None, None),
+        Some(_) if operation != AiOperation::Speech => {
+            return Err(refusal(
+                StatusCode::BAD_REQUEST,
+                "voice_not_speech",
+                "only a speech call names a voice",
+            ));
+        }
+        Some(VoiceChoice::Stock { name }) if name.trim().is_empty() => {
+            return Err(refusal(
+                StatusCode::BAD_REQUEST,
+                "invalid_voice",
+                "a stock voice has a name",
+            ));
+        }
+        Some(VoiceChoice::Stock { name }) => (Some(MediaVoice::Stock { name }), None),
+        Some(VoiceChoice::Bank {
+            voice_id,
+            include_generated,
+        }) => {
+            // The clone is the target's: the call takes the first rung
+            // holding a current one, alone, so no fallback carries its id
+            // to another provider. A rung that renders from the bank's
+            // refs binds the identity's fenced source clip instead.
+            let bound = media.rung_targets(operation, &model).into_iter().find_map(
+                |(rung, target, locality)| {
+                    let binding = if media.renders_from_refs(&target) {
+                        BankVoiceBinding::bind_reference(
+                            &server.vault,
+                            &voice_id,
+                            &target,
+                            None,
+                            locality,
+                        )
+                    } else {
+                        BankVoiceBinding::bind(
+                            &server.vault,
+                            &voice_id,
+                            &target,
+                            include_generated,
+                            locality,
+                        )
+                    };
+                    binding.ok().map(|binding| (rung, binding))
+                },
+            );
+            let Some((rung, binding)) = bound else {
                 return Err(refusal(
-                    StatusCode::BAD_REQUEST,
-                    "voice_not_speech",
-                    "only a speech call names a voice",
+                    StatusCode::CONFLICT,
+                    "voice_not_provisioned",
+                    "no rung this call may reach holds a current clone or reference of the voice",
                 ));
-            }
-            Some(VoiceChoice::Stock { name }) if name.trim().is_empty() => {
-                return Err(refusal(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_voice",
-                    "a stock voice has a name",
-                ));
-            }
-            Some(VoiceChoice::Stock { name }) => (Some(MediaVoice::Stock { name }), None),
-            Some(VoiceChoice::Bank {
-                voice_id,
-                include_generated,
-            }) => {
-                // The clone is the target's: the call takes the first rung
-                // holding a current one, alone, so no fallback carries its id
-                // to another provider.
-                let bound = media.rung_targets(operation, &model).into_iter().find_map(
-                    |(rung, target, _)| {
-                        BankVoiceBinding::bind(&server.vault, &voice_id, &target, include_generated)
-                            .ok()
-                            .map(|binding| (rung, binding))
-                    },
-                );
-                let Some((rung, binding)) = bound else {
-                    return Err(refusal(
-                        StatusCode::CONFLICT,
-                        "voice_not_provisioned",
-                        "no rung this call may reach holds a current clone of the voice",
-                    ));
-                };
-                model = rung;
-                (Some(binding.voice()), Some(binding))
-            }
-        };
+            };
+            model = rung;
+            (Some(binding.voice()), Some(binding))
+        }
+    };
     let Some(locality) = media.locality(operation, &model) else {
         return Err(refusal(
             StatusCode::BAD_REQUEST,

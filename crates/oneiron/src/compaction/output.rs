@@ -353,10 +353,13 @@ pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
         .ok_or(Error::CorruptedIndex("missing recoverable output"))
 }
 
-/// Whether the body `source` names may enter model context as it stands.
+/// Whether the body `source` names may enter model context as it stands. A
+/// reference names bytes, not an occurrence, so no occurrence of them may
+/// carry a mark.
 fn output_clean(vault: &Vault, source: OutputRef) -> Result<bool> {
     crate::engine_executor::clean_for_context(
         &crate::code_run::ExecutorStorage::Canonical(vault),
+        None,
         &crate::code_run::CodeRunRawOutput::of_ref(source),
     )
 }

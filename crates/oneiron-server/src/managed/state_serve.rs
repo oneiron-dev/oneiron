@@ -369,7 +369,10 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
 /// The managed artifact origin: this vault's `/a/`, and its names under the
 /// artifact domains (`oneiron_vault_contract::artifact_origin`), behind the
 /// same freeze gate as the API socket.
-pub(super) fn build_managed_artifact_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> Router {
+pub(super) fn build_managed_artifact_app(
+    server: Arc<SyncServer>,
+    state: Arc<ManagedState>,
+) -> Router {
     let freeze = middleware::from_fn_with_state(state, refuse_frozen_writes);
     crate::build_artifact_app(server).layer(freeze)
 }
@@ -668,6 +671,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     });
+    // Approved sends leave under the same admission (OF-187).
+    let connector_sends = sync_server.spawn_connector_send_worker({
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -692,6 +705,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     background.stop().await;
     connector_events.abort();
     let _ = connector_events.await;
+    connector_sends.abort();
+    let _ = connector_sends.await;
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 

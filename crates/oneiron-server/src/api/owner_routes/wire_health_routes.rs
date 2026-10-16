@@ -69,7 +69,9 @@ async fn outcome(
         let unit = entity_id("unit", &request.unit)?;
         let fact = wire_health::record_outcome(server.vault(), unit, &request.outcome)
             .map_err(|error| crate::owner::OwnerError::Invalid(error.to_string()))?;
-        Ok(OutcomeRecorded { fact: fact.to_hex() })
+        Ok(OutcomeRecorded {
+            fact: fact.to_hex(),
+        })
     })
     .await?;
     Ok(Json(recorded))

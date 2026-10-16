@@ -22,8 +22,12 @@ pub(crate) use guard::waits_for_ask_group;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+mod attendee_entry;
 mod link_proof;
 mod word_admission;
+pub(crate) use attendee_entry::{
+    AttendeeEntryFact, admit_attendee_entry_in_txn, attendee_entry_id, read_attendee_entry_in,
+};
 pub(super) use link_proof::{
     mint_key as mint_link_key, sign_settlement as sign_link_settlement,
     verify_settlement as verify_link_settlement,
@@ -632,6 +636,10 @@ pub(super) fn replay_answer_option_matches(
     Ok(first.word.option == word.option && matching.all(|entry| entry.word.option == word.option))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one consult answer over its writer and the owner proof"
+)]
 pub(super) fn record_answer(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -639,6 +647,7 @@ pub(super) fn record_answer(
     body: &super::consult_result::TaskVerbBody,
     actor: crate::WriteActor,
     answer: (&super::TaskTerminalRecord, Option<&super::TaskAskOptionId>),
+    owner: Option<&crate::consent::AuthenticatedOwner>,
     now: u64,
 ) -> Result<Option<EntityId>> {
     let (terminal, option) = answer;
@@ -673,6 +682,7 @@ pub(super) fn record_answer(
                 confirmation: None,
                 provenance_refs: evidence_refs.iter().copied().collect(),
             },
+            owner,
             now,
         )?;
     }
