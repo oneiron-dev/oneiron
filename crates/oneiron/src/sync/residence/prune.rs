@@ -1,14 +1,25 @@
-//! Last-touch accounting and pruning for opened-item read caches.
+//! Last-touch accounting and pruning for opened-item read caches, and the
+//! demotion of a promoted canonical window.
 //!
 //! Only the thin read cache of an unpromoted item is pruned: its body
 //! (`ri:b:`), text document (`ri:d:`), opened marker (`ro:e:`) and touch row
 //! (`rt:e:`). The thin index, promoted windows, local writes, deletes and
 //! authority stay. No tombstone or Loro operation is produced: a pruned item
 //! is fetched again on its next touch.
+//!
+//! A promoted window is demoted only on request, once the home holds every
+//! op of it: its local replica goes with its `rp:w:` marker, and its items
+//! read through the thin cache again. That writes nothing replicated either.
+
+use loro::VersionVector;
 
 use crate::EntityId;
 use crate::Vault;
 use crate::error::Result;
+use crate::store::Store;
+use crate::store::local_replica::{KeepControls, remove_local_replica_window_in_txn};
+use crate::sync::WindowKey;
+use crate::sync::window_rows::{WINDOW_SNAPSHOT, WINDOW_UPDATE};
 
 /// Recorded-clock seconds of an opened item's last touch. Key: hex32.
 const TOUCH_PREFIX: &str = "rt:e:";
@@ -111,4 +122,89 @@ pub fn prune_thin_items(vault: &Vault, before: u64) -> Result<usize> {
         }
         Ok(pruned)
     })
+}
+
+/// What one [`demote_resident_window`] call did.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct WindowDemotion {
+    /// Entity rows removed with their projections.
+    pub removed: usize,
+    /// Members left in place: controls, tombstoned, pending or uncarried
+    /// rows, which stay readable here.
+    pub kept: usize,
+    /// The replica and its `rp:w:` marker are gone: the window is thin again.
+    /// `false` when the home lacks an op the window holds, or a queued write
+    /// for it waits.
+    pub complete: bool,
+}
+
+/// Demotes promoted canonical window `window` back to thin (OF-534). Nothing
+/// goes unless `home`, the home's version vector for the window, covers every
+/// op the persisted replica holds, so a later promotion gives each removed
+/// row back. Then the replica goes in bounded steps with the window held
+/// closed, and its `rp:w:` marker with the last step. A queued write for the
+/// window defers it until the outbox drains. `None` while the window is live.
+pub(crate) fn demote_resident_window(
+    vault: &Vault,
+    window: &WindowKey,
+    home: &VersionVector,
+) -> Result<Option<WindowDemotion>> {
+    vault
+        .while_window_closed(window, || {
+            let mut demotion = WindowDemotion::default();
+            let held = {
+                let txn = vault.store.env.read_txn()?;
+                persisted_window_vv(&vault.store, &txn, window)?
+            };
+            if !home.includes_vv(&held) {
+                return Ok(demotion);
+            }
+            loop {
+                let step = vault.with_write_txn_grouped(|txn| {
+                    let step = remove_local_replica_window_in_txn(
+                        &vault.store,
+                        txn,
+                        window,
+                        KeepControls::default(),
+                    )?;
+                    if step.complete {
+                        vault
+                            .store
+                            .sync_state
+                            .delete(txn, &format!("rp:w:{window}"))?;
+                    }
+                    Ok(step)
+                })?;
+                demotion.removed += step.removed.len();
+                demotion.kept = step.kept.len();
+                if step.complete {
+                    demotion.complete = true;
+                    break;
+                }
+                // A queued write deferred the step, or nothing moved.
+                if step.removed.is_empty() {
+                    break;
+                }
+            }
+            Ok(demotion)
+        })
+        .transpose()
+}
+
+/// The version vector of `window`'s persisted document: its `d:w:` snapshot
+/// with every `u:w:` row on top.
+fn persisted_window_vv(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    window: &WindowKey,
+) -> Result<VersionVector> {
+    let doc = match WINDOW_SNAPSHOT.get(store, txn, &window.as_str().to_owned())? {
+        Some(bytes) => crate::sync::loro_support::doc_from_snapshot(&bytes)?,
+        None => crate::sync::schema::create_window_doc("local", window),
+    };
+    let prefix = format!("{window}:");
+    for (_, bytes) in WINDOW_UPDATE.scan_from(store, txn, prefix.as_bytes())? {
+        crate::sync::loro_support::import_doc(&doc, &bytes)?;
+    }
+    Ok(doc.oplog_vv())
 }
