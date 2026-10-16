@@ -413,6 +413,30 @@ impl PipelineBuilder<'_> {
                 }
             }
 
+            // OF-370: one ranked list per declared media space, never merged
+            // with another space's raw scores before fusion.
+            for query in &self.media_search {
+                if self.deadline_reached() {
+                    break;
+                }
+                let media_results = self.media_space_results(
+                    rtxn,
+                    query,
+                    filter_config,
+                    &mut metadata_cache,
+                    &mut claim_gate,
+                )?;
+                diagnostics.succeeded.push(RetrievalSignal::MediaVector);
+                acc.admit_channel(
+                    RetrievalSignal::MediaVector,
+                    media_results,
+                    &self.read,
+                    rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
+            }
+
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for scores in &mut acc.ranked_lists {
@@ -485,6 +509,7 @@ impl PipelineBuilder<'_> {
                 gravity: self.apply_gravity,
                 access_factor_overrides: self.access_factor_overrides,
                 access_factor_application: AccessFactorApplication::Apply,
+                affect: self.affect_policy,
             };
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(

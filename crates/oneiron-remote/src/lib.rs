@@ -16,7 +16,8 @@
 //! SDK ships, and it is the same list the server's `/v1/core/facade` nest
 //! routes and the same list both language export censuses assert against. It
 //! holds four quickstart calls, five exact actor-owned keyed-memory calls,
-//! four tasks.* calls and four rooms.* calls. Every catalog row is implemented
+//! the `ask` / `wait` / `tasks.answer` / `tasks.outcomes` calls and the
+//! `vault.rooms.*` calls. Every catalog row is implemented
 //! on both backends and bindings.
 //!
 //! The remaining §HEAD-CONTRACT verbs are ABSENT rather than stubbed, for the

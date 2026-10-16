@@ -9,6 +9,7 @@ mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
 mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
+mod asks;
 mod branch;
 mod capture;
 mod doors;
@@ -17,14 +18,17 @@ mod fork_evidence;
 mod history_policy;
 mod joint;
 mod leader_chat;
+mod owner_signer;
 mod projection;
 mod proof;
 mod read;
 mod refresh;
+mod reparent;
 mod resolution;
 mod revision;
 mod validity;
 mod widen;
+pub use asks::ProjectAsk;
 pub(crate) use capture::{
     capture_before_tear, capture_project_put, check_revision_put, projects_touched_by_put,
     rebuild_project_revision_indexes, refuse_revision_delete,
@@ -50,8 +54,9 @@ pub(crate) use goal::{
 };
 pub use history_policy::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
-    ProjectHistoryOverBudget, ProjectHistoryPolicy,
+    ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectHistoryQuestion,
 };
+pub use owner_signer::OwnerProjectSigner;
 pub(crate) use refresh::refresh_project_frontiers;
 pub use resolution::{ProjectResolution, ProjectSeal};
 #[cfg(feature = "sync")]
@@ -144,6 +149,9 @@ pub struct ProjectRecord {
     pub depth: u8,
     /// Parent projects. A project may belong to more than one venture.
     pub parents: Vec<String>,
+    /// The head each parent a re-parent joined served when it was signed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_heads: Vec<ProjectParentWitness>,
     pub claims_scope_ref: String,
     /// What this project sees. It only narrows going down the tree.
     #[serde(default)]
@@ -202,6 +210,10 @@ pub(crate) const MAX_PROJECT_ANCHORS: usize = 64;
 #[serde(deny_unknown_fields)]
 pub struct ProjectAuthority {
     pub parents: Vec<String>,
+    /// Signed with the rest: the parent heads a re-parent witnessed. A state
+    /// that joins a parent names its head, so a reader holds what it saw.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_heads: Vec<ProjectParentWitness>,
     pub claims_scope_ref: String,
     pub slice: Scope,
     pub depth_limit: u8,
@@ -212,6 +224,28 @@ pub struct ProjectAuthority {
     /// proof or an owner door set carries none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roster: Option<BTreeSet<String>>,
+}
+
+/// One parent's head as a re-parenting state saw it (ARCH-0079 stacking):
+/// the state names it, and that head's leader sits on the state's board.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectParentWitness {
+    pub project: EntityId,
+    pub head: ProjectRevisionHash,
+    pub leader: EntityId,
+}
+
+/// What a PROJECT write did. Past the history budget an authenticated
+/// revision off the frozen lineage is held, never refused: the project keeps
+/// serving its frozen frontier, and the owner is asked (OF-520).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectWriteOutcome {
+    /// The write landed; the project serves this frontier.
+    Installed(ProjectFrontier),
+    /// The revision is held beside the frozen frontier, and the project's
+    /// history question is open for the owner.
+    Held(ProjectHistoryOverBudget),
 }
 
 /// The challenge a project proof signs. A proof from before v3 carries no
@@ -315,6 +349,7 @@ impl ProjectRecord {
     pub fn authority_at(&self, version: ProjectProofVersion) -> ProjectAuthority {
         ProjectAuthority {
             parents: self.parents.clone(),
+            parent_heads: self.parent_heads.clone(),
             claims_scope_ref: self.claims_scope_ref.clone(),
             slice: self.slice.clone(),
             depth_limit: self.depth_limit,
@@ -364,6 +399,7 @@ impl ProjectRecord {
             // value with the vault's resolved manifest creation default.
             depth: crate::gate::seeded_project_depth_default(),
             parents: parent.into_iter().map(|p| p.to_hex()).collect(),
+            parent_heads: vec![],
             claims_scope_ref: claims_scope_ref.to_hex(),
             slice: Scope::default(),
             depth_limit: default_depth_limit(),
@@ -512,10 +548,27 @@ impl Vault {
     }
     /// Creates or edits membership. Birth policy is separately materialized
     /// under an immutable, content-addressed POLICY_MANIFEST identity; the
-    /// write door fills the body's depth cache from it.
+    /// write door fills the body's depth cache from it. [`Self::write_project`]
+    /// is the same write with its outcome.
     pub fn put_project(&self, id: EntityId, record: &ProjectRecord, now: u64) -> Result<()> {
+        self.write_project(id, record, now).map(|_| ())
+    }
+
+    /// [`Self::put_project`], saying what the write did: installed, or, past
+    /// the history budget, held beside the frozen frontier with the owner
+    /// asked.
+    pub fn write_project(
+        &self,
+        id: EntityId,
+        record: &ProjectRecord,
+        now: u64,
+    ) -> Result<ProjectWriteOutcome> {
         self.with_write_txn_grouped(|txn| {
             let body = record.clone();
+            let changed = read::stored(&self.store, txn, id, self.project_type_byte()?)?
+                .is_none_or(|old| {
+                    old.authority() != body.authority() || old.write_proof != body.write_proof
+                });
             // A leader's signed spawn needs no owner birth; the shared door
             // verifies its proof.
             if self.store.entities.get(txn, id.as_bytes())?.is_none() && body.write_proof.is_none()
@@ -564,7 +617,28 @@ impl Vault {
                     &encode(&body)?,
                 )
                 .apply(txn)?;
-            Ok(())
+            let frontier = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+                .ok_or_else(invalid)?
+                .frontier(id)?
+                .ok_or_else(invalid)?;
+            let head = revision::revisions_of_row(id, &body)?
+                .last()
+                .map(|(hash, _)| *hash);
+            // A changed authority the frozen frontier neither serves nor
+            // applied as a narrowing is held.
+            if let ProjectDisposition::OverBudget { state, .. } = &frontier.disposition
+                && changed
+                && let Some(head) = head
+                && frontier.witness.as_ref().map(|witness| witness.head) != Some(head)
+                && !history_policy::PROJECT_FROZEN_APPLIED.contains(
+                    &self.store,
+                    txn,
+                    &(id, head),
+                )?
+            {
+                return Ok(ProjectWriteOutcome::Held(state.clone()));
+            }
+            Ok(ProjectWriteOutcome::Installed(frontier))
         })
     }
     /// Attach an asset to a project collection with a low-weight `belongs_to`
@@ -669,7 +743,13 @@ impl Vault {
 
     /// Person-authorized project creation. The signed birth fact commits with
     /// membership, and can be verified on another replica without assuming
-    /// its default manifest or trusting a receiver-local project body.
+    /// its default manifest or trusting a receiver-local project body. The
+    /// owner-project signer signs the project's state for that same owner;
+    /// the person's key signs only the depth birth.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one owner birth: the depth signer and the project signer"
+    )]
     pub fn create_project_with_owner<S>(
         &self,
         id: EntityId,
@@ -678,11 +758,21 @@ impl Vault {
         now: u64,
         signer_key: crate::authority::AuthorityKey,
         signer: S,
+        owner: &crate::consent::AuthenticatedOwner,
+        project_signer: &OwnerProjectSigner<'_>,
     ) -> Result<()>
     where
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
         self.with_write_txn(|txn| {
+            if owner.revalidate_as_vault_owner_in_txn(self, txn)?
+                != authenticated_owner.entity_ref()
+            {
+                return Err(crate::error::RecordError::InvalidProjectBody(
+                    "the project signer and the birth signer are different owners",
+                )
+                .into());
+            }
             if self.store.entities.get(txn, id.as_bytes())?.is_some()
                 || crate::gate::project_depth::birth_for_project(&self.store, txn, id)?.is_some()
             {
@@ -702,8 +792,18 @@ impl Vault {
             )?;
             let mut body = record.clone();
             body.depth = depth;
+            let signed_at = owner_signer::owner_signed_at(self, txn)?;
+            self.sign_owner_project_in_txn(
+                txn,
+                owner,
+                project_signer,
+                id,
+                &mut body,
+                None,
+                signed_at,
+            )?;
             self.batch_in()
-                .put(
+                .put_engine_history(
                     &id,
                     self.project_type_byte()?,
                     TimeRange {
@@ -714,6 +814,7 @@ impl Vault {
                     &encode(&body)?,
                 )
                 .apply(txn)?;
+            self.require_owner_head_in_txn(txn, id, &body)?;
             Ok(())
         })
     }
@@ -798,8 +899,36 @@ impl Vault {
         .depth;
         Ok(Some(body))
     }
-    /// The home room of a visible project, with the members its proof
-    /// vouches for; a hidden project's room reads as absent.
+    /// What a planner reads of one project, in one snapshot: its content,
+    /// the frontier its signed history folds to, with the effective view
+    /// and witness, and the live policy depth. `None` when the project
+    /// serves no authority: nothing is planned under it.
+    pub(crate) fn project_planning_context_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project: EntityId,
+    ) -> Result<Option<(ProjectRecord, ProjectFrontier, u8)>> {
+        let Some(reader) = ProjectReader::new(&self.store, txn, self.privacy_posture())? else {
+            return Ok(None);
+        };
+        let Some(record) = reader.visible(project)? else {
+            return Ok(None);
+        };
+        let Some(frontier) = reader.frontier(project)? else {
+            return Ok(None);
+        };
+        let depth = crate::gate::project_depth::resolve_project_depth(
+            &self.store,
+            txn,
+            self.privacy_posture(),
+            project,
+        )?
+        .depth;
+        Ok(Some((record, frontier, depth)))
+    }
+    /// The home room of a visible project, with the members and claims
+    /// scope its signed history vouches for; a hidden project's room reads
+    /// as absent.
     pub fn project_room(&self, id: EntityId) -> Result<Option<ProjectRoom>> {
         let txn = self.store.env.read_txn()?;
         let Some(room) = record::<ProjectRoom>(&self.store, &txn, id, ENTITY_TYPE_CONVERSATION)?
@@ -815,6 +944,7 @@ impl Vault {
             .visible_with_effective(project)?
             .map(|(project, effective)| ProjectRoom {
                 member_ids: effective.seat_list(project.members()),
+                claims_scope_ref: effective.claims_scope_ref,
                 ..room
             }))
     }

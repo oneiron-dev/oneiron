@@ -5,7 +5,7 @@ const key = process.env.ONEIRON_KEY
 if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and paired credential")
 const memory = Oneiron.connect(url, key)
 
-const witnessed = memory.witness({
+const witnessed = memory.vault.witness({
   conversationRef: "11111111111111111111111111111111",
   messages: [{
     author: "user",
@@ -15,7 +15,7 @@ const witnessed = memory.witness({
   }],
 })
 
-const claimed = memory.claimUpsert({
+const claimed = memory.vault.claims.upsert({
   id: "22222222222222222222222222222222",
   predicate: "preference.travel.seat",
   subjectRef: witnessed.turnShortId,
@@ -23,7 +23,7 @@ const claimed = memory.claimUpsert({
   confidence: 1,
   source: "user_stated",
 })
-const recalled = memory.recall("window seat")
-const receipts = memory.receipts()
+const recalled = memory.vault.recall("window seat")
+const receipts = memory.vault.receipts()
 
 console.log(JSON.stringify({ witnessed, claimed, recalled, receipts }, null, 2))

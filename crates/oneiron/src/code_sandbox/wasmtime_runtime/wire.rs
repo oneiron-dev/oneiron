@@ -1,6 +1,6 @@
 //! Internal bounded JSON bridge between typed WIT and the borrowed engine host.
 
-use super::{Bridge, failure};
+use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
     MemoryTimeRange, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall,
@@ -171,9 +171,14 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
         "sandbox.fs.read_file" => {
             let args: File = parse(input)?;
             let path = SandboxVirtualPath::try_new(&args.path)?;
+            // The run's own recorded outputs: past observations and bridge
+            // results stored as bodies, each read a chunk at a time.
             if path
                 .as_str()
                 .starts_with("/mnt/outputs/.oneiron-context-ref/")
+                || path
+                    .as_str()
+                    .starts_with(crate::engine_executor::RESULT_READ_ROOT)
             {
                 let bytes = state
                     .host
@@ -261,6 +266,20 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             }
             let verb =
                 AgentVerb::from_name(&args.verb).ok_or_else(|| failure("unknown SDK verb"))?;
+            // The bare `ask` and `wait` rows keep the run's coordination calls:
+            // an ask binds to the run's own task, and a wait reads the run's
+            // replay for the voids it has already seen.
+            if verb == AgentVerb::Ask {
+                let request: crate::task_verb::sdk::TaskAskRequest = decode(args.input)?;
+                let spec = request
+                    .into_spec()
+                    .map_err(|_| failure("invalid ask input"))?;
+                return Ok(SelfCall::TasksAsk(Box::new(spec)));
+            }
+            if verb == AgentVerb::Wait {
+                let request: crate::task_verb::sdk::TaskWaitRequest = decode(args.input)?;
+                return Ok(SelfCall::TasksWait(request.handle));
+            }
             SelfCall::AgentVerb(crate::code_run::SelfAgentVerbCall {
                 verb,
                 input: args.input,
@@ -295,14 +314,14 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
 /// never served undecoded.
 fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
     Ok(match verb {
-        RunVerb::Search => {
+        RunVerb::VaultSearch => {
             let args: MemorySearchInput = decode(input)?;
             SelfCall::MemorySearch(SelfMemorySearchCall::new(
                 args.query,
                 args.limit.map_or(20, |limit| limit as usize),
             ))
         }
-        RunVerb::PutClaim => {
+        RunVerb::VaultClaimsPut => {
             let args: MemoryClaimInput = decode(input)?;
             let confidence = args.confidence.map(js_f32).transpose()?;
             let occurred = args.occurred.unwrap_or(MemoryTimeRange {
@@ -326,7 +345,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 args.learned_at.map_or(Ok(now), js_time)?,
             ))
         }
-        RunVerb::SupersedeClaim => {
+        RunVerb::VaultClaimsSupersede => {
             let args: MemorySupersedeInput = decode(input)?;
             SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(
                 EntityId::from_hex(&args.new_id)?,
@@ -334,7 +353,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 js_time(args.now)?,
             ))
         }
-        RunVerb::PutEdge => {
+        RunVerb::VaultEdgesPut => {
             let args: MemoryEdgeInput = decode(input)?;
             let weight = args.weight.map(js_f32).transpose()?;
             let kind =
@@ -436,10 +455,14 @@ fn json_value(value: Value) -> rmpv::Value {
     }
 }
 
+/// What a step returns beside its streamed result: whether it finished. A
+/// component that does not stream may still return its observation and
+/// files here.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Output {
     done: bool,
+    #[serde(default)]
     observation: String,
     #[serde(default)]
     outputs: Vec<OutputFile>,
@@ -449,6 +472,30 @@ struct Output {
 struct OutputFile {
     path: String,
     bytes: Vec<u8>,
+}
+
+/// Takes one frame of the step's streamed result: into the host's body
+/// store, or held for the step's outcome when the host keeps none. A file
+/// frame must name a file under `/mnt/outputs`.
+pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u8>) -> Result<u64> {
+    if frame.len() > bridge.message_bytes {
+        return Err(failure("streamed output frame exceeds the message limit"));
+    }
+    let target = match target {
+        StreamTarget::File(path) => {
+            let path = SandboxVirtualPath::try_new(&path)?;
+            if path.mount() != crate::code_sandbox::SandboxMount::Outputs {
+                return Err(failure("component output must be under /mnt/outputs"));
+            }
+            StreamTarget::File(path.as_str().to_owned())
+        }
+        other => other,
+    };
+    let len = frame.len() as u64;
+    if !bridge.host.write_output(target.stream(), &frame)? {
+        bridge.held.take(target, frame, bridge.held_limit)?;
+    }
+    Ok(len)
 }
 
 pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStepOutcome> {

@@ -47,12 +47,18 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     );
     fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
     fork_hash_phonetic_query(&mut hasher, builder.phonetic_search.as_deref());
+    fork_hash_media_queries(&mut hasher, &builder.media_search);
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
     fork_hash_f32(
         &mut hasher,
         crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+    );
+    fork_hash_affect_policy(
+        &mut hasher,
+        &builder.affect_policy,
+        builder.affect_policy.congruence_query(builder.query_affect),
     );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
@@ -200,6 +206,27 @@ fn fork_hash_authority_filter(
     fork_hash_bool(hasher, filter.include_stale);
     fork_hash_f32(hasher, filter.min_confidence);
     fork_hash_f32(hasher, filter.min_salience);
+}
+
+/// OF-370 typed media queries, in call order: each is its own list.
+fn fork_hash_media_queries(
+    hasher: &mut Sha256,
+    queries: &[super::super::media_channel::MediaQuery],
+) {
+    fork_hash_len(hasher, queries.len());
+    for query in queries {
+        fork_hash_bytes(hasher, query.space_id.as_bytes());
+        fork_hash_bytes(hasher, format!("{:?}", query.query_kind).as_bytes());
+        fork_hash_len(hasher, query.limit);
+        fork_hash_len(hasher, query.kinds.len());
+        for kind in &query.kinds {
+            fork_hash_bytes(hasher, format!("{kind:?}").as_bytes());
+        }
+        fork_hash_len(hasher, query.vector.len());
+        for value in &query.vector {
+            fork_hash_f32(hasher, *value);
+        }
+    }
 }
 
 fn fork_hash_vector_query(
@@ -566,6 +593,26 @@ fn fork_hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
 
 fn fork_hash_raw_bytes(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes);
+}
+
+/// The OF-423 affect policy and the query VAD its congruence stage uses.
+/// `+ 0.0` folds a validated `-0.0` dial onto `0.0`.
+fn fork_hash_affect_policy(
+    hasher: &mut Sha256,
+    policy: &crate::pipeline::AffectRetrievalPolicy,
+    query: Option<crate::affect::Vad>,
+) {
+    fork_hash_f32(hasher, policy.arousal_stretch + 0.0);
+    fork_hash_bool(hasher, policy.availability_floor.is_some());
+    fork_hash_f32(hasher, policy.availability_floor.unwrap_or(0.0) + 0.0);
+    fork_hash_f32(hasher, policy.floor_arousal + 0.0);
+    fork_hash_f32(hasher, policy.emotion_weight + 0.0);
+    fork_hash_bool(hasher, query.is_some());
+    if let Some(query) = query {
+        fork_hash_f32(hasher, query.valence + 0.0);
+        fork_hash_f32(hasher, query.arousal + 0.0);
+        fork_hash_f32(hasher, query.dominance + 0.0);
+    }
 }
 
 fn fork_hash_bool(hasher: &mut Sha256, value: bool) {

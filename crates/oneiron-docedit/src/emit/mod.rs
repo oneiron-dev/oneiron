@@ -401,7 +401,7 @@ impl Writer<'_> {
                     });
                     FitTrace::Exact { placed }
                 }
-                Content::Table(dataset) | Content::Chart(dataset) => {
+                Content::Table(dataset) | Content::Chart(dataset) | Content::Share(dataset) => {
                     let dataset = plan
                         .data()
                         .iter()
@@ -421,7 +421,7 @@ impl Writer<'_> {
                         NativeEdit::CreateTable {
                             frame,
                             dataset,
-                            merges: &[],
+                            merges: &dataset.merges,
                         }
                     } else {
                         let chart = charts.next().ok_or_else(|| missing(part))?;
@@ -431,9 +431,11 @@ impl Writer<'_> {
                             .find(|rel| rel.source == chart && rel.kind == PACKAGE_REL)
                             .map(|rel| rel.target.as_str())
                             .ok_or_else(|| missing(chart))?;
-                        // The brief names no chart family: a time axis reads
-                        // as a line, any other category axis as columns.
+                        // A share is a pie. Otherwise the brief names no chart
+                        // family: a time axis reads as a line, any other
+                        // category axis as columns.
                         let family = match dataset.columns.first().map(|column| column.kind) {
+                            _ if matches!(placement.content, Content::Share(_)) => ChartFamily::Pie,
                             Some(ColumnKind::Date) => ChartFamily::Line,
                             _ => ChartFamily::Bar,
                         };
