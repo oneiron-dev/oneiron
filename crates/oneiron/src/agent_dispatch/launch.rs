@@ -37,7 +37,9 @@ pub struct SpawnSpend {
 pub enum LaunchRole {
     Agent,
     /// A saved workflow's leaf. The inert workflow wrapper is not an agent.
-    WorkflowLeaf { ordinal: usize },
+    WorkflowLeaf {
+        ordinal: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,8 +119,14 @@ pub(super) struct LaunchAdmission {
 
 enum LaunchReserve {
     Unmetered,
-    Pinned { unit: LeaseUnit, cap_units: u64 },
-    Child { parent: SpendScopeId, ask: ChildSpend },
+    Pinned {
+        unit: LeaseUnit,
+        cap_units: u64,
+    },
+    Child {
+        parent: SpendScopeId,
+        ask: ChildSpend,
+    },
 }
 
 impl LaunchAdmission {
@@ -135,16 +143,16 @@ impl LaunchAdmission {
     ) -> Result<Option<SpendScope>> {
         Ok(match &self.reserve {
             LaunchReserve::Unmetered => None,
-            LaunchReserve::Pinned { unit, cap_units } => Some(
-                dispatcher.open_pinned_scope_in_txn(
+            LaunchReserve::Pinned { unit, cap_units } => {
+                Some(dispatcher.open_pinned_scope_in_txn(
                     txn,
                     &attempt,
                     agent,
                     unit.clone(),
                     *cap_units,
                     now,
-                )?,
-            ),
+                )?)
+            }
             LaunchReserve::Child { parent, ask } => {
                 Some(dispatcher.reserve_agent_in_txn(txn, parent, &attempt, agent, *ask, now)?)
             }
@@ -158,7 +166,11 @@ impl AgentDispatcher<'_> {
     /// per leaf), reads the parent attempt's scope or the root scope the
     /// caller names, and never refuses an expected spend above what is
     /// available: it says so.
-    pub fn plan_launch(&self, input: &DispatchAgent, spawn: &AgentSpawnContext) -> Result<LaunchPlan> {
+    pub fn plan_launch(
+        &self,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+    ) -> Result<LaunchPlan> {
         let txn = self.vault.store.env.read_txn()?;
         Ok(self
             .admit_launch_in_txn(
@@ -353,9 +365,9 @@ impl AgentDispatcher<'_> {
                 }
             }
         };
-        let carve_short = cap
-            .as_ref()
-            .filter(|view| view.hard && view.scope.is_some() && view.cap_units > view.available_units);
+        let carve_short = cap.as_ref().filter(|view| {
+            view.hard && view.scope.is_some() && view.cap_units > view.available_units
+        });
         let over_available = spendable.is_some_and(|most| expected.units > most);
         let more_would_buy = match (carve_short, spendable) {
             (Some(view), _) => Some(format!(
@@ -401,4 +413,3 @@ impl AgentDispatcher<'_> {
         })
     }
 }
-

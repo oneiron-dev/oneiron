@@ -26,8 +26,8 @@ vault:
    records. **ingest_parallel**: `--ingest-callers` agents write the rest; each
    conversation stays with one caller. **ingest_single_full**: one caller
    writes `--single-writes` more records on the full vault. A record is either a
-   witnessed turn (`POST /v1/core/facade/witness`, one or two messages) or a
-   claim (`POST /v1/core/facade/claim_upsert`, about the turn's conversation,
+   witnessed turn (`POST /v1/core/facade/vault.witness`, one or two messages) or a
+   claim (`POST /v1/core/facade/vault.claims.upsert`, about the turn's conversation,
    or about the vault owner with probability `--hot-subject`).
 4. With vectors: wait until the stub has answered a text carrying every
    record's tag, the server has since logged the embedding pass that stored

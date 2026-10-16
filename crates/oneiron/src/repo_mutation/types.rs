@@ -140,7 +140,10 @@ impl RepoMutationRequest {
     }
 
     #[must_use]
-    pub fn with_op_provenance(mut self, provenance: crate::code_document::CodeOpProvenance) -> Self {
+    pub fn with_op_provenance(
+        mut self,
+        provenance: crate::code_document::CodeOpProvenance,
+    ) -> Self {
         self.op_provenance = provenance;
         self
     }

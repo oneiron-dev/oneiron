@@ -92,7 +92,8 @@ impl SecretSource {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("unknown host secret")),
             Self::Directory(dir) => Ok(Zeroizing::new(
-                std::fs::read(dir.join(name)).map_err(|_| anyhow::anyhow!("unknown host secret"))?,
+                std::fs::read(dir.join(name))
+                    .map_err(|_| anyhow::anyhow!("unknown host secret"))?,
             )),
             Self::Keychain(service) => {
                 let output = Command::new("/usr/bin/security")
@@ -221,7 +222,8 @@ fn on_mains_power() -> bool {
     };
     let mut battery = false;
     for supply in supplies.flatten() {
-        let read = |file: &str| std::fs::read_to_string(supply.path().join(file)).unwrap_or_default();
+        let read =
+            |file: &str| std::fs::read_to_string(supply.path().join(file)).unwrap_or_default();
         match read("type").trim() {
             "Mains" if read("online").trim() == "1" => return true,
             "Battery" => battery = true,
@@ -234,11 +236,14 @@ fn on_mains_power() -> bool {
 /// The cgroup v2 ceilings systemd set for this unit, read back.
 fn cgroup_limits() -> HostLimits {
     let mut limits = HostLimits::unbounded();
-    let Some(dir) = std::fs::read_to_string("/proc/self/cgroup").ok().and_then(|text| {
-        text.lines()
-            .find_map(|line| line.strip_prefix("0::"))
-            .map(|path| Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/')))
-    }) else {
+    let Some(dir) = std::fs::read_to_string("/proc/self/cgroup")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("0::"))
+                .map(|path| Path::new("/sys/fs/cgroup").join(path.trim_start_matches('/')))
+        })
+    else {
         return limits;
     };
     if let Ok(memory) = std::fs::read_to_string(dir.join("memory.max"))
@@ -284,7 +289,12 @@ fn notify_socket(path: &OsStr) -> io::Result<UnixDatagram> {
             socket.connect_addr(&std::os::unix::net::SocketAddr::from_abstract_name(name)?)?;
         }
         #[cfg(not(target_os = "linux"))]
-        Some(_) => return Err(io::Error::new(io::ErrorKind::Unsupported, "abstract socket")),
+        Some(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "abstract socket",
+            ));
+        }
         None => socket.connect(Path::new(path))?,
     }
     Ok(socket)
@@ -375,8 +385,10 @@ impl SystemdHost {
         // SAFETY: systemd passed LISTEN_FDS descriptors from 3 (SD_LISTEN_FDS_START)
         // to this very pid, checked above; the first one is adopted here once.
         let listener = ActivatedListener::adopt(unsafe { OwnedFd::from_raw_fd(3) })?;
-        let secrets = std::env::var_os("CREDENTIALS_DIRECTORY")
-            .map_or_else(|| SecretSource::Map(BTreeMap::new()), |dir| SecretSource::Directory(dir.into()));
+        let secrets = std::env::var_os("CREDENTIALS_DIRECTORY").map_or_else(
+            || SecretSource::Map(BTreeMap::new()),
+            |dir| SecretSource::Directory(dir.into()),
+        );
         let (ready, stop): (Hook, Hook) = match std::env::var_os("NOTIFY_SOCKET") {
             Some(path) => {
                 let ready = notify_socket(&path)?;
@@ -394,7 +406,13 @@ impl SystemdHost {
             }
             None => (Box::new(|| Ok(())), Box::new(|| Ok(()))),
         };
-        Ok(Some(Self::assemble(listener, secrets, cgroup_limits(), ready, stop)))
+        Ok(Some(Self::assemble(
+            listener,
+            secrets,
+            cgroup_limits(),
+            ready,
+            stop,
+        )))
     }
 }
 impl Host for SystemdHost {
@@ -465,7 +483,11 @@ impl LaunchdHost {
         if matches!(rc, libc::ESRCH | libc::ENOENT) {
             return Ok(None);
         }
-        anyhow::ensure!(rc == 0, "launch_activate_socket: {}", io::Error::from_raw_os_error(rc));
+        anyhow::ensure!(
+            rc == 0,
+            "launch_activate_socket: {}",
+            io::Error::from_raw_os_error(rc)
+        );
         // SAFETY: on success launchd returned `count` descriptors in a malloc'd
         // array this process now owns.
         let raw = unsafe { std::slice::from_raw_parts(fds, count) }.to_vec();

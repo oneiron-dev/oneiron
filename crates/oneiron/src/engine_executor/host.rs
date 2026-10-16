@@ -427,7 +427,7 @@ pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "oneiron.output.text",
     "oneiron.output.bytes",
     "vault.agents.put",
-    // `self.memory`: the verb table, the memory rows the run answers included.
+    // The verb table at each row's SDK path, the memory rows the run answers included.
     "self.verbs.names",
     "self.verbs.call",
     "self.report_blocked",
@@ -499,7 +499,7 @@ pub(super) fn executor_system_prompt(wire: &str) -> String {
 }
 
 /// The declarations the system prompt teaches, in its order: the WIT host
-/// verbs, the verb table's `self.memory`, and the interpreter's own
+/// verbs, the verb table at each row's SDK path, and the interpreter's own
 /// functions. A shadow check reads these same texts.
 pub(super) fn executor_declarations() -> [oneiron_code_check::Declaration<'static>; 3] {
     [

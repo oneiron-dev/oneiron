@@ -146,7 +146,10 @@ pub fn skill_goal_project(vault: &Vault, skill: &EntityId) -> Result<Option<Enti
 /// rules. "Prefer A over B" approves a vector that gains A and loses B, and
 /// rejects one that gains B and loses A; `+` joins several axes on a side.
 /// A preference that names no exact axis set stays prose for the leader.
-pub(super) fn project_rules(join: &ProjectGoalJoin, axes: &[GoalAxisSpec]) -> Vec<(TradeoffRule, String)> {
+pub(super) fn project_rules(
+    join: &ProjectGoalJoin,
+    axes: &[GoalAxisSpec],
+) -> Vec<(TradeoffRule, String)> {
     let names = |side: &str| -> Option<BTreeSet<String>> {
         let set: BTreeSet<String> = side.split('+').map(|name| name.trim().to_owned()).collect();
         set.iter()
@@ -155,7 +158,8 @@ pub(super) fn project_rules(join: &ProjectGoalJoin, axes: &[GoalAxisSpec]) -> Ve
     };
     let mut rules = Vec::new();
     for (index, preference) in join.record.preferences.iter().enumerate() {
-        let (Some(prefer), Some(over)) = (names(&preference.prefer), names(&preference.over)) else {
+        let (Some(prefer), Some(over)) = (names(&preference.prefer), names(&preference.over))
+        else {
             continue;
         };
         if !prefer.is_disjoint(&over) {
@@ -284,7 +288,9 @@ pub(super) fn responsible_roles_in_txn(
         roles.push(TradeoffRole::VaultOwner(owners));
     }
     if roles.is_empty() {
-        return Err(invalid("no live person holds a role that can answer this tradeoff"));
+        return Err(invalid(
+            "no live person holds a role that can answer this tradeoff",
+        ));
     }
     Ok(roles)
 }

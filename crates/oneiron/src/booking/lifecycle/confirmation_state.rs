@@ -35,8 +35,18 @@ pub(crate) fn booking_invite_identity(
     event: &EntityId,
 ) -> Result<Option<(String, String)>, BookingError> {
     let txn = read_txn(vault)?;
-    Ok(confirmation_receipt_in(vault, &txn, event)?
-        .and_then(|(_, receipt)| receipt.invite_identity))
+    booking_invite_identity_in_txn(vault, &txn, event)
+}
+
+pub(crate) fn booking_invite_identity_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &EntityId,
+) -> Result<Option<(String, String)>, BookingError> {
+    Ok(
+        confirmation_receipt_in(vault, txn, event)?
+            .and_then(|(_, receipt)| receipt.invite_identity),
+    )
 }
 
 /// Set once by CAL's real invite admission, in the passport write transaction.

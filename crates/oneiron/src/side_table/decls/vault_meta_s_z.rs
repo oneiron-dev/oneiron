@@ -299,6 +299,21 @@ side_tables! {
     /// Fence on a displaced candidate judge revision: its replacement revision (UTF-8). Key: string
     /// (the displaced revision).
     SKILL_OPTIMIZE_DISPLACED_REVISION: VaultMeta b"skill_optimize:displaced_revision:v1:" Raw;
+    /// One eval case in a seat's derivation ledger (MessagePack named map). Key: id16 (case).
+    SKILL_OPTIMIZE_EVAL_CASE: VaultMeta b"skill_optimize:eval_case:v1:" Raw;
+    /// One date-cut sealed eval cohort (MessagePack named map). Key: id16 (cohort).
+    SKILL_OPTIMIZE_EVAL_COHORT: VaultMeta b"skill_optimize:eval_cohort:v1:" Raw;
+    /// One counted serving of a sealed eval cohort (MessagePack named map). Key: id16 (cohort) +
+    /// id16 (exposure).
+    SKILL_OPTIMIZE_EVAL_EXPOSURE: VaultMeta b"skill_optimize:eval_exposure:v1:" Raw;
+    /// One eval source family and its purpose (MessagePack named map). Key: id16 (family).
+    SKILL_OPTIMIZE_EVAL_FAMILY: VaultMeta b"skill_optimize:eval_family:v1:" Raw;
+    /// One owner-label ask a waiting decision put (MessagePack named map). Key: sha256 of the
+    /// decision and the case.
+    SKILL_OPTIMIZE_EVAL_LABEL_ASK: VaultMeta b"skill_optimize:eval_label_ask:v1:" Raw;
+    /// The eval family a source root belongs to, per seat. Key: seat token + NUL + root; value:
+    /// id16 (family).
+    SKILL_OPTIMIZE_EVAL_ROOT: VaultMeta b"skill_optimize:eval_root:v1:" Raw;
     /// One proposed judge-calibration A/B ask (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
@@ -399,6 +414,15 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// One run's market: signed referee, lease shares, central ledger, submissions and result.
+    /// Key: string (team reference).
+    TEAM_MARKET: VaultMeta b"team:market:v1:" Named;
+    /// A workflow skill's binding to the coordination pattern it teaches, with its works-well-for
+    /// line. Key: id16 (skill entity).
+    TEAM_PATTERN_SKILL: VaultMeta b"team:pattern_skill:v1:" Named;
+    /// One team run's receipt (type, pattern, models, shape, who decided, coverage, confessions,
+    /// anchored outcome). Key: string (team reference).
+    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named;
     /// The pinned text analyzer manifest (JSON) and, under '_hash', its SHA-256. Key: string.
     TEXT_ANALYZER_MANIFEST: VaultMeta b"text_analyzer_manifest" Raw;
     /// BM25F field schema hash. Key: ().

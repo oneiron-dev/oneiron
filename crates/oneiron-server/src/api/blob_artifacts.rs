@@ -58,7 +58,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/v1/core/artifacts/{artifact}/deck/proposals",
             post(propose_deck),
         )
-        .route("/v1/core/artifacts/{artifact}/outputs", post(propose_output))
+        .route(
+            "/v1/core/artifacts/{artifact}/outputs",
+            post(propose_output),
+        )
         .route(
             "/v1/core/artifacts/{artifact}/proposals/{proposal}/keep",
             post(keep),
@@ -233,9 +236,14 @@ pub(super) async fn create(
                 occurred,
                 now,
             )?,
-            None => {
-                vault.append_blob_artifact_version(&id, &bytes, &provenance, actor, occurred, now)?
-            }
+            None => vault.append_blob_artifact_version(
+                &id,
+                &bytes,
+                &provenance,
+                actor,
+                occurred,
+                now,
+            )?,
         };
         vault.blob_artifact_view(&id)
     })
@@ -332,7 +340,8 @@ async fn export(
     );
     headers.insert(
         CONTENT_DISPOSITION,
-        HeaderValue::from_str(&disposition).unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+        HeaderValue::from_str(&disposition)
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
     headers.insert(

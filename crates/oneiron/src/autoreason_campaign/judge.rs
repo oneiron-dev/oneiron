@@ -6,8 +6,8 @@ use super::{CampaignError, CampaignResult};
 use crate::EntityId;
 use crate::llm::decision::catalogue::CAMPAIGN_TASTE;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionLadder, DecisionRung, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    DecisionRung, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
