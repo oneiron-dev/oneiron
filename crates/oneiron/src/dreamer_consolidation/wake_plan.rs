@@ -323,6 +323,7 @@ impl PreparedWake {
                 partition.conversation_ref.as_bytes(),
             )?;
             let mut turns = Vec::new();
+            let admission_time = crate::ports::job_recorded_at_in_txn(&vault.store, &txn)?;
             for id in peers {
                 scanned.row();
                 let Some((kind, stored, bytes)) = sources.get(&id) else {
@@ -340,7 +341,8 @@ impl PreparedWake {
                     facts.speaker.as_deref(),
                     &vault.config.assistant_display_names,
                 );
-                if dreamer_extraction_role_admissible(role)
+                if *stored <= admission_time
+                    && dreamer_extraction_role_admissible(role)
                     && facts.world_ref.or(parent.world_ref) == partition.world_ref
                     && facts.facet_ref.or(parent.facet_ref) == partition.facet_ref
                     && (original.contains(&id) || learned_at >= watermark)

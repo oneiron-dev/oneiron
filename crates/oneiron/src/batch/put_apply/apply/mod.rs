@@ -474,6 +474,7 @@ pub(in crate::batch) fn apply_put(
     };
 
     let mut body_changed = true;
+    let mut consolidation_dirty = true;
     let mut previous_skill_record = None;
     // ONE-1449 MATERIAL-6 R1: the optimizer-birth marker this create must
     // either match or be born with. Computed by the SKILL create arm below
@@ -500,6 +501,7 @@ pub(in crate::batch) fn apply_put(
         // same-bytes replay must NOT touch the index, and metadata-only
         // (occurred/learned) changes are not body changes.
         body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
+        consolidation_dirty = body_changed || old_learned != learned_at;
         // Retaining an indexed text revision is not permission to retain a
         // withdrawn claim or a replicated LWW loser in the search index.
         // Local, still-surfaceable text edits alone await idle publication.
@@ -790,6 +792,9 @@ pub(in crate::batch) fn apply_put(
     )?;
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
+    if entity_type == crate::registry::ENTITY_TYPE_TURN && consolidation_dirty {
+        crate::dreamer_consolidation::admit_turn_position_in_txn(store, wtxn, &id)?;
+    }
     crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
     if entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::person_substrate::ensure_person_substrate(

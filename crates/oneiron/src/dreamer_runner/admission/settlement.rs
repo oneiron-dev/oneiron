@@ -94,7 +94,11 @@ impl DreamerRunnerStore<'_> {
                 }
                 BUDGET_STEP_CHARGE.put(&self.vault.store, wtxn, &key, &[1])?;
             }
-            self.park_attempt_in_txn(wtxn, park)?;
+            // A trapped child already parked under the step layer's owner.
+            // Settle completed siblings without stealing that park.
+            if !self.is_parked_in_txn(wtxn, park.attempt_id)? {
+                self.park_attempt_in_txn(wtxn, park)?;
+            }
             Ok(settled)
         })?;
         self.vault.store.notify_attempt_observers();

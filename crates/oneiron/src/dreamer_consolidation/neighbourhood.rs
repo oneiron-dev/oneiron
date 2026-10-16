@@ -12,10 +12,10 @@
 //! only the heads it already grants are listed. A candidate that names a
 //! listed claim binds to it through the conflict and grant doors.
 //!
-//! Not here (gap 7's remainder): queue grouping by entity or topic, JointIE,
-//! and typed supersede or merge questions.
+//! Extraction children group the queued turns by the known entities they name.
+//! JointIE and typed supersede or merge questions are separate jobs.
 use std::cmp::Reverse;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::PriorHead;
 use super::resources::{document_version, standing};
@@ -90,6 +90,8 @@ pub(crate) struct Neighbourhood {
     /// Pinned ids the Dreamer can no longer read, erased or withheld since
     /// the attempt listed them. The pin drops them for good.
     gone: BTreeSet<EntityId>,
+    /// Exact named-entity matches for each frozen TURN body and text pair.
+    mentions: BTreeMap<([u8; 32], [u8; 32]), Vec<EntityId>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +151,35 @@ impl Neighbourhood {
             .iter()
             .flat_map(|entity| &entity.claims)
             .any(|known| known.id == claim)
+    }
+
+    /// Exact identity-hint matches from the wake's frozen read. Labels are
+    /// presentation only: an alias must group just like the stored name.
+    pub(super) fn mentioned(&self, body: &[u8], text: Option<&str>) -> Vec<EntityId> {
+        let mut ids: Vec<_> = self
+            .mentions
+            .get(&mention_key(body, text))
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|id| self.entities.iter().any(|entity| entity.id == *id))
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// A child's listing and exact heads. Unlisted replay heads never enter
+    /// its prompt or its request scope.
+    pub(super) fn slice(&self, ids: &[EntityId]) -> Self {
+        Self {
+            entities: self
+                .entities
+                .iter()
+                .filter(|entity| ids.contains(&entity.id))
+                .cloned()
+                .collect(),
+            ..Self::default()
+        }
     }
 
     fn pins(&self) -> Pins {
@@ -221,11 +252,19 @@ pub(super) fn discover_in(
     attempt: AttemptId,
     passage: &Passage<'_>,
 ) -> Result<(Neighbourhood, ListedRows)> {
+    let mut mentions = BTreeMap::new();
+    for turn in passage.turns {
+        mentions.insert(
+            mention_key(turn.0, turn.1),
+            named_entities(vault, txn, std::slice::from_ref(turn))?,
+        );
+    }
     let (fresh, mut rows) = fresh_in(vault, txn, read, passage)?;
     let Some(pins) = PINS.get(&vault.store, txn, attempt.as_bytes())? else {
         return Ok((
             Neighbourhood {
                 entities: fresh,
+                mentions,
                 ..Neighbourhood::default()
             },
             rows,
@@ -289,9 +328,17 @@ pub(super) fn discover_in(
             entities,
             unlisted,
             gone,
+            mentions,
         },
         rows,
     ))
+}
+
+fn mention_key(body: &[u8], text: Option<&str>) -> ([u8; 32], [u8; 32]) {
+    (
+        *blake3::hash(body).as_bytes(),
+        *blake3::hash(text.unwrap_or_default().as_bytes()).as_bytes(),
+    )
 }
 
 /// The bounded listing the passage names at this snapshot.
