@@ -31,6 +31,7 @@ mod booking;
 mod claim_conflict;
 mod conflict_settle;
 mod diary_read;
+mod people_verbs;
 mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -47,12 +48,14 @@ mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
+mod inspection;
 mod key_value;
 mod locality;
 mod machine_write;
 mod notes;
 mod outbound;
 mod owner_door;
+mod presented_credential;
 mod read_lane;
 mod reads;
 mod recall;
@@ -118,12 +121,20 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial,
-    MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
+    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
+    MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
+    MemoryWrongRoot,
+};
+pub use people_verbs::{
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
 // OF-063: a write that names a record its writer cannot resolve is refused
 // with this code; hover and open resolve a typed record ref through the lens.
-pub use crate::lens::{RecordRef, RecordRefPreview, ResolveRecordRefRequest};
+pub use crate::lens::{
+    LinkedText, ProseSpan, RecordLinks, RecordLinksRequest, RecordRef, RecordRefPreview,
+    ResolveRecordRefRequest,
+};
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,

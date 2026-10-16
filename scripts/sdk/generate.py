@@ -64,6 +64,19 @@ for row in ROWS:
     pointers = row['refs']
     if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*|[a-z_][a-z0-9_]*))+', p) for p in pointers):
         raise ValueError(f'{row["name"]}: refs are distinct JSON pointers of field names and `*`')
+# OF-063 prose links (Engine ruling 10-17): `prose_links` lists a row's text
+# slots, read for `[label](oneiron://<ref>)` links before the engine call
+# (`prose_links_check`). A pointer may end at an opaque value (each of its
+# strings is read) and `*[key=value]` takes only the array items whose `key`
+# is the string `value`, which declares them AI-written. An AI-written link
+# that does not resolve for its writer is receipted, never refused.
+for row in ROWS:
+    if 'prose_links' not in row: continue
+    if row.get('context', 'memory') != 'memory' or row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade'):
+        raise ValueError(f'{row["name"]}: only a plain memory row reads its prose links in its engine fn')
+    pointers = row['prose_links']
+    if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*(\[[a-z_][a-z0-9_]*=[a-z0-9_]+\])?|[a-z_][a-z0-9_]*))+', p) for p in pointers):
+        raise ValueError(f'{row["name"]}: prose_links are distinct JSON pointers of field names, `*` and `*[key=value]`')
 def mcp_rows():
     'The rows the MCP doors serve as tools: every row but a browser row.'
     return [row for row in ROWS if row.get('mcp') != 'none']
@@ -193,7 +206,7 @@ def native_boundary(row, language):
     else:
         name = names[args[0]['name']]
         if language == 'napi':
-            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None }}))?;'
+            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None }}))?;'
         else:
             setup = f'let input: serde_json::Value = decode({name}, "{row["name"]}")?;'
         call = f'self.inner.agent_verb("{row["name"]}", input)'
@@ -594,7 +607,9 @@ pub(crate) async fn execute_agent_verb_input(
     }
 
 /// [`execute_agent_verb_input`], its surface listing in `producers` the rows
-/// its reads pick.
+/// its reads pick. Every MCP and code-mode row crosses its verb hooks here,
+/// once (ARCH-0080 §3), under the invocation the call carried or a fresh
+/// one: the pre chain before the row, the post chain over its result.
 async fn execute_agent_verb_listing(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -608,16 +623,35 @@ async fn execute_agent_verb_listing(
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
+    if !oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp) {
+        return Err(invalid());
+    }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).
     let mut position = actor.scope.birth_position();
     if let Ok(Some(facet)) = actor.landing {
         position.facet = Some(facet);
     }
-    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(position).listing_producers(producers);
+    let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
+    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(position).listing_producers(producers).with_invocation(invocation);
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
-    match tool {
+    let hooks = crate::api::facade::row_hooks_pre(server, actor.actor_ref, actor.actor_class, Some(invocation), tool, input).await.map_err(mcp_facade_error)?;
+    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
+    let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
+    Ok((output, source, carrier, epoch))
+    }
+
+/// One row of [`execute_agent_verb_listing`], on the args its pre chain left.
+async fn execute_agent_verb_row(
+        server: &Arc<SyncServer>,
+        tool: &str,
+        input: Value,
+        actor: &McpCallContext,
+        memory: oneiron::Memory<'_>,
+        served: &mut Vec<oneiron::EntityId>,
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
+    result += invalid + 'match tool {\n'
     result += ''.join(mcp_input_dispatch(row) for row in mcp_rows())
     result += '_ => Err(invalid()), } }\n'
     result += '''/// One typed verb result, drained in a single frame.
@@ -653,6 +687,12 @@ def record_refs_check(row):
     if 'refs' not in row: return ''
     pointers = ', '.join(json.dumps(pointer) for pointer in row['refs'])
     return f'crate::gate::record_references::admit_row_references(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
+
+def prose_links_check(row):
+    'OF-063 prose links: the receipt-only link check a row with `prose_links` runs before its engine call.'
+    if 'prose_links' not in row: return ''
+    pointers = ', '.join(json.dumps(pointer) for pointer in row['prose_links'])
+    return f'crate::gate::record_references::admit_prose_links(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
 
 def default_const(row, arg):
     'The engine constant that carries one binding default the manifest states.'
@@ -693,11 +733,16 @@ def outputs():
         binding = 'input' if checks else '_input'
         core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
     core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
-    core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> { match verb {\n"
+    # ARCH-0080 §3: every door that runs a row by name crosses its verb hooks
+    # here, once; no caller of `invoke` wraps it again.
+    core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> {\n"
+    core += 'if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))); }\n'
+    core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
+    core += "crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {\n"
     for r in facade_rows:
         method = r['name'].replace('.', '_')
         core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
-    core += '_ => Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))),\n}}\n'
+    core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
     core += "pub fn invoke_browser(driver: &mut dyn oneiron_browser::BrowserDriver, verb: &str, value: serde_json::Value) -> Result<serde_json::Value, oneiron_browser::BrowserError> {\n"
@@ -715,6 +760,7 @@ def outputs():
         call = r['call']
         result = call[:-1] if call.endswith('?') else f'Ok({call})'
         result = record_refs_check(r) + result
+        result = prose_links_check(r) + result
         if r.get('context') == 'browser':
             core += f"pub fn {method}(driver: &mut dyn oneiron_browser::BrowserDriver, {binding}: {r['input']}) -> Result<{r['output']}, oneiron_browser::BrowserError> {{ {result} }}\n"
         elif r.get('context') == 'board':
@@ -757,18 +803,20 @@ def outputs():
                 }}
                 let value = facade_json(payload)?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
-                let input: oneiron::memory::ExportOptions = facade_input(value)?;
                 let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
+                let hooks = facade_hooks_pre(&server, &headers, &auth, {json.dumps(r["name"])}, value).await?;
+                let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
                 let output = if proof.claims().holder_ref == "host" {{
                     server.vault.export_with_verified_host_owner(&input, proof, auth.locality())?
                 }} else {{
                     let (actor, class) = facade_actor(&auth)?;
                     server.vault.memory(actor, class).at(auth.locality()).export_with_verified_owner(&input, proof)?
                 }};
-                Ok(Json(serde_json::to_value(output).map_err(|_| FacadeApiError::new(
+                let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
                     "export result encoding failed", ["Report this SDK response mismatch."]
-                ))?))
+                ))?;
+                Ok(Json(facade_hooks_post(&server, hooks, output).await?))
             }}\n'''
             continue
         if r.get('host_door'):
@@ -780,48 +828,68 @@ def outputs():
                 facade_outside_room_turn(&headers, {json.dumps(r["name"])})?;
                 let value = facade_json(payload)?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
-                Ok(Json(facade_output(super::host_doors::{method}(&server, &auth, facade_input(value)?).await?)?))
+                let hooks = facade_hooks_pre(&server, &headers, &auth, {json.dumps(r["name"])}, value).await?;
+                let output = facade_output(super::host_doors::{method}(&server, &auth, facade_input(hooks.args.clone())?).await?)?;
+                Ok(Json(facade_hooks_post(&server, hooks, output).await?))
             }}\n'''
             continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
-        guard, result = '', f'facade_invoke(&server, &headers, &auth, actor, class, "{r["name"]}", value)?'
+        room_guard, ref_guard = '', ''
+        result = f'facade_invoke(&server, &headers, &auth, actor, class, "{r["name"]}", value)?'
         if r.get('admission', {}).get('born_record_scope'):
             result = f'facade_invoke_born(&server, &headers, &auth, actor, class, "{r["name"]}", value, position)?'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
         # so the refusal says nothing about the target the lookup would read.
         if 'rows' in readables:
-            guard += f'facade_outside_room_turn(&headers, "{r["name"]}")?;'
+            room_guard += f'facade_outside_room_turn(&headers, "{r["name"]}")?;'
         elif readables:
-            guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
+            room_guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
         for readable in readables:
             if readable == 'rows':
                 result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality()), facade_input(value)?)?)?'
             else:
-                guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
+                ref_guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
         # A server door runs the verb with the host's execution inputs, off the
         # runtime, inside the room turn the request names, if any.
         if r.get('server_door'):
             result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), auth.locality(), facade_room_turn(&headers)?, facade_input(value)?).await?)?'
-        # The typed result path consumes facade_input; invoke decodes its own input.
-        validation = (f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;\n         '
-                      if 'rows' in r.get('admission', {}).get('readable', []) or r.get('server_door') else '')
         landed = ''
         if r.get('lands_turn'):
-            landed = f'let output = {result}; server.ai.turn_landed_by(server.vault(), actor, class);'
-            result = 'output'
-        if r['name'] == 'describe':
-            validation += "if value.get(\"self\").and_then(serde_json::Value::as_bool) == Some(true) { "
-            validation += "facade_outside_room_turn(&headers, \"describe\")?; return Ok(Json(crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?)); } "
+            landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
         # left to check.
         require = 'require_granted' if r.get('admission', {}).get('born_record_scope') else 'require'
-        server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
+        head = f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
         auth.{require}(CoreScope::{r["scope"]})?;
         {record_scope_guard(r)}
-        let value = facade_json(payload)?;
-         {validation}let (actor, class) = facade_actor(&auth)?;{guard}{landed}
+        let value = facade_json(payload)?;\n'''
+        # A route that runs its row itself, not through `invoke`, crosses the
+        # row's verb hooks here (ARCH-0080 §3): after the request's own
+        # refusals, before the checks its args meet, so a rewrite meets them
+        # too. `invoke` crosses them for every other route.
+        if 'rows' in readables or r.get('server_door'):
+            actor = 'let (actor, class) = facade_actor(&auth)?;'
+            self_branch = ''
+            if r['name'] == 'describe':
+                # describe(self) renders the authenticated run brief, under no actor.
+                self_branch = ('if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) { '
+                               'let output = crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?; '
+                               'return Ok(Json(facade_hooks_post(&server, hooks, output).await?)); } ' + actor)
+                actor = ''
+            server += head + f'''oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;
+        {room_guard}{actor}
+        let hooks = facade_hooks_pre(&server, &headers, &auth, "{r["name"]}", value).await?;
+        let value = hooks.args.clone(); {self_branch}{ref_guard}
+        let output = {result};{landed}
+        Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+        }}\n'''
+            continue
+        if landed:
+            landed = f'let output = {result}; {landed}'
+            result = 'output'
+        server += head + f'''let (actor, class) = facade_actor(&auth)?;{room_guard}{ref_guard}{landed}
         Ok(Json({result}))
         }}\n'''
     remote = HEADER + 'use super::*;\n'
@@ -1023,7 +1091,8 @@ CODE_MODE_DTS_REGENERATE = 'ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron
 # self {`, `declare const vault: {`, `declare function describe(input: …`,
 # `const focus: {`, `claims: {`, `upsert(input: …`, or a verb that holds
 # verbs, `diary: ((input: …) => Promise<unknown>) & {`.
-DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \{| \{)')
+# `self.fold` is the one positional verb, `fold: (span: …` (ARCH-0067 #folds).
+DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \(span: |: \{| \{)')
 def code_mode_dts_current():
     declared, scope = set(), []
     for line in (ROOT/CODE_MODE_DTS).read_text().splitlines():
@@ -1033,7 +1102,7 @@ def code_mode_dts_current():
         head = DTS_LINE.match(text)
         if not head: continue
         name, form = head.groups()
-        if 'input' in form: declared.add('.'.join(scope + [name]))
+        if 'input' in form or 'span' in form: declared.add('.'.join(scope + [name]))
         if text.endswith('{'): scope.append(name)
     return declared == {r['name'] for r in ROWS + RUN_ROWS}
 

@@ -64,13 +64,24 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 27] = [
 pub const MCP_REF_KEYS: [&str; 2] = ["key", "minVersion"];
 
 /// The pinned sub-map keys for a [`MemoryProfile`], in encode order.
-pub const MEMORY_PROFILE_KEYS: [&str; 5] = [
+pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
     "window_token_budget",
     "budget_split",
     "compaction_backend",
     "compaction",
+    "hot_steps",
+    "output_decay",
+    "verbatim_pins",
     "optional_memory",
 ];
+
+/// The pinned sub-map keys for a profile's `output_decay`, in encode order.
+pub(super) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
+
+/// Most literal verbatim pins one profile carries, and the most bytes one
+/// pin may hold.
+pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PINS: usize = 64;
+pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
 
 /// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.
 pub const CONTEXT_BUDGET_SPLIT_KEYS: [&str; 4] = ["claims", "turns", "summaries", "other"];
@@ -157,7 +168,13 @@ pub(super) const KEY_PROFILE_COMPACTION_BACKEND: &str = MEMORY_PROFILE_KEYS[2];
 
 pub(super) const KEY_PROFILE_COMPACTION: &str = MEMORY_PROFILE_KEYS[3];
 
-pub(super) const KEY_PROFILE_OPTIONAL_MEMORY: &str = MEMORY_PROFILE_KEYS[4];
+pub(super) const KEY_PROFILE_HOT_STEPS: &str = MEMORY_PROFILE_KEYS[4];
+
+pub(super) const KEY_PROFILE_OUTPUT_DECAY: &str = MEMORY_PROFILE_KEYS[5];
+
+pub(super) const KEY_PROFILE_VERBATIM_PINS: &str = MEMORY_PROFILE_KEYS[6];
+
+pub(super) const KEY_PROFILE_OPTIONAL_MEMORY: &str = MEMORY_PROFILE_KEYS[7];
 
 pub(super) const KEY_SPLIT_CLAIMS: &str = CONTEXT_BUDGET_SPLIT_KEYS[0];
 
@@ -431,6 +448,16 @@ pub struct MemoryProfile {
     pub compaction_backend: ModelTierRef,
     /// Who compacts this agent's context WINDOW.
     pub compaction: CompactionOwnership,
+    /// How many recent steps stay raw past a compaction (agent-runtime-v1
+    /// #d7 hot window, Docs Q13); absent = the host's configured hot window.
+    pub hot_steps: Option<u64>,
+    /// When a stored output decays to its overview, then to a stub, in turns
+    /// (#d7 decay thresholds); absent = the executor's default decay.
+    pub output_decay: Option<crate::compaction::output::OutputDecayPolicy>,
+    /// Literal text every summary of this agent's window keeps verbatim when
+    /// the span holds it (#d7 verbatim pins). User messages and failure lines
+    /// stay pinned regardless; these are added, never a replacement.
+    pub verbatim_pins: Vec<String>,
     /// The optional recall this reader takes per task family; absent = the
     /// caller's request as sent. Separate from the window above.
     pub optional_memory: Option<OptionalMemoryProfile>,
@@ -448,8 +475,32 @@ impl MemoryProfile {
             budget_split: None,
             compaction_backend,
             compaction,
+            hot_steps: None,
+            output_decay: None,
+            verbatim_pins: Vec::new(),
             optional_memory: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_hot_steps(mut self, hot_steps: u64) -> Self {
+        self.hot_steps = Some(hot_steps);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_output_decay(
+        mut self,
+        decay: crate::compaction::output::OutputDecayPolicy,
+    ) -> Self {
+        self.output_decay = Some(decay);
+        self
+    }
+
+    #[must_use]
+    pub fn with_verbatim_pins(mut self, pins: Vec<String>) -> Self {
+        self.verbatim_pins = pins;
+        self
     }
 
     #[must_use]

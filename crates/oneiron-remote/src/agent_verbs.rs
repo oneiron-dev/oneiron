@@ -47,6 +47,25 @@ impl OneironClient {
                 "self.memory.diary.review" => remote_agent_verb_output::<
                     oneiron::memory::DiaryReadRequest,
                 >(client, verb, &input),
+                "vault.people.list" => {
+                    remote_agent_verb_output::<oneiron::memory::PeoplePage>(client, verb, &input)
+                }
+                "vault.people.get" => {
+                    remote_agent_verb_output::<oneiron::context_board::PersonRow>(
+                        client, verb, &input,
+                    )
+                }
+                "self.message" => {
+                    remote_agent_verb_output::<oneiron::memory::MessagePersonReceipt>(
+                        client, verb, &input,
+                    )
+                }
+                "self.grants.ask" => remote_agent_verb_output::<oneiron::memory::GrantAskReceipt>(
+                    client, verb, &input,
+                ),
+                "self.memory.diary.query" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::DiaryQueryOutcome,
+                >(client, verb, &input),
                 "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
                     client, verb, &input,
                 ),
@@ -119,6 +138,65 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.packs.setup.prepare" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackSetupReceipt,
+                >(client, verb, &input),
+                "vault.packs.setup.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackSetupReceipt,
+                >(client, verb, &input),
+                "vault.packs.setup.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackSetupReceipt,
+                >(client, verb, &input),
+                "vault.packs.setup.verify" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackSetupReceipt,
+                >(client, verb, &input),
+                "vault.authority.audit" => remote_agent_verb_output::<
+                    oneiron::receipt::AuthorityAuditPage,
+                >(client, verb, &input),
+                "vault.inspection.resolve" => remote_agent_verb_output::<
+                    oneiron::lens::InspectionResolved,
+                >(client, verb, &input),
+                "vault.shared.propose_delete" => remote_agent_verb_output::<
+                    oneiron::federation::PendingAuthorityAct,
+                >(client, verb, &input),
+                "vault.shared.propose_transfer" => remote_agent_verb_output::<
+                    oneiron::federation::PendingAuthorityAct,
+                >(client, verb, &input),
+                "vault.shared.propose_remove_owner" => remote_agent_verb_output::<
+                    oneiron::federation::PendingAuthorityAct,
+                >(client, verb, &input),
+                "vault.shared.execute" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SharedActExecuted,
+                >(client, verb, &input),
+                "vault.shared.receipt" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.shared.outcomes" => remote_agent_verb_output::<
+                    Vec<oneiron::federation::SharedActOutcome>,
+                >(client, verb, &input),
+                "vault.shared.deletion" => remote_agent_verb_output::<
+                    Option<oneiron::federation::SharedVaultDeletion>,
+                >(client, verb, &input),
+                "vault.members.add" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.members.change" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.members.remove" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.members.leave" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.authority.handoff_alarms" => remote_agent_verb_output::<
+                    Vec<oneiron::authority::AuthorityHandoffAlarm>,
+                >(client, verb, &input),
+                "vault.authority.handoff_alarms.acknowledge" => {
+                    remote_agent_verb_output::<oneiron::authority::AuthorityHandoffAlarm>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.lenses.propose" => remote_agent_verb_output::<
                     oneiron::receipt::LensProposalReceipt,
                 >(client, verb, &input),
@@ -133,6 +211,12 @@ impl OneironClient {
                 }
                 "vault.lenses.default" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>,
+                >(client, verb, &input),
+                "vault.disclosure.offer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::DisclosureOffered,
+                >(client, verb, &input),
+                "vault.shares.create" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::HookReplayRow>,
@@ -199,6 +283,9 @@ impl OneironClient {
                 "vault.rooms.messages" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomPage,
                 >(client, verb, &input),
+                "vault.rooms.participants" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ParticipantsPage,
+                >(client, verb, &input),
                 "vault.rooms.render" => {
                     remote_agent_verb_output::<Vec<String>>(client, verb, &input)
                 }
@@ -220,6 +307,21 @@ impl OneironClient {
                 "vault.rooms.speak" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                     client, verb, &input,
                 ),
+                "vault.projects.propose" => remote_agent_verb_output::<
+                    oneiron::genui::ProjectProposalCard,
+                >(client, verb, &input),
+                "vault.projects.proposals" => remote_agent_verb_output::<
+                    Vec<oneiron::workspace_roster::ProjectCardRecord>,
+                >(client, verb, &input),
+                "vault.projects.dismiss_card" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ProjectCardDismissal,
+                >(client, verb, &input),
+                "vault.projects.confirm" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ProjectMintReceipt,
+                >(client, verb, &input),
+                "vault.projects.goal.intake" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ProjectGoalInterviewContext,
+                >(client, verb, &input),
                 "vault.rooms.join" => remote_agent_verb_output::<
                     oneiron::workspace_roster::JoinOutcome,
                 >(client, verb, &input),
@@ -331,6 +433,9 @@ impl OneironClient {
                 "vault.refs.resolve" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<oneiron::lens::RecordRefPreview>,
                 >(client, verb, &input),
+                "vault.refs.links" => {
+                    remote_agent_verb_output::<oneiron::lens::RecordLinks>(client, verb, &input)
+                }
                 "vault.search.bm25" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
                 >(client, verb, &input),
@@ -443,6 +548,67 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.memory.diary.review", value)
+    }
+    pub fn vault_people_list(
+        &self,
+        input: &oneiron::memory::PeopleListRequest,
+    ) -> Result<oneiron::memory::PeoplePage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.people.list", value)
+    }
+    pub fn vault_people_get(
+        &self,
+        input: &oneiron::memory::PersonRequest,
+    ) -> Result<oneiron::context_board::PersonRow, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.people.get", value)
+    }
+    pub fn self_message(
+        &self,
+        input: &oneiron::memory::MessagePersonRequest,
+    ) -> Result<oneiron::memory::MessagePersonReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.message", value)
+    }
+    pub fn self_grants_ask(
+        &self,
+        input: &oneiron::memory::GrantAskRequest,
+    ) -> Result<oneiron::memory::GrantAskReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.grants.ask", value)
+    }
+    pub fn self_memory_diary_query(
+        &self,
+        input: &oneiron::task_verb::sdk::DiaryQueryRequest,
+    ) -> Result<oneiron::task_verb::sdk::DiaryQueryOutcome, MemoryError> {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.diary.query", value)
     }
     /// Cancels one task under the ladder's `auto` default. The receipt says
     /// what stopped and what became a proposal instead.
@@ -759,6 +925,234 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.packs.put", value)
     }
+    pub fn vault_packs_setup_prepare(
+        &self,
+        input: &oneiron::task_verb::sdk::PackSetupRequest,
+    ) -> Result<oneiron::task_verb::sdk::PackSetupReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.setup.prepare", value)
+    }
+    pub fn vault_packs_setup_get(
+        &self,
+        input: &oneiron::task_verb::sdk::PackSetupRequest,
+    ) -> Result<oneiron::task_verb::sdk::PackSetupReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.setup.get", value)
+    }
+    pub fn vault_packs_setup_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::PackSetupAnswerRequest,
+    ) -> Result<oneiron::task_verb::sdk::PackSetupReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.setup.answer", value)
+    }
+    pub fn vault_packs_setup_verify(
+        &self,
+        input: &oneiron::task_verb::sdk::PackSetupVerifyRequest,
+    ) -> Result<oneiron::task_verb::sdk::PackSetupReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.setup.verify", value)
+    }
+    pub fn vault_authority_audit(
+        &self,
+        input: &oneiron::receipt::AuthorityAuditQuery,
+    ) -> Result<oneiron::receipt::AuthorityAuditPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.audit", value)
+    }
+    pub fn vault_inspection_resolve(
+        &self,
+        input: &oneiron::lens::InspectionResolveRequest,
+    ) -> Result<oneiron::lens::InspectionResolved, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.inspection.resolve", value)
+    }
+    pub fn vault_shared_propose_delete(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedVaultRequest,
+    ) -> Result<oneiron::federation::PendingAuthorityAct, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.propose_delete", value)
+    }
+    pub fn vault_shared_propose_transfer(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedTransferRequest,
+    ) -> Result<oneiron::federation::PendingAuthorityAct, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.propose_transfer", value)
+    }
+    pub fn vault_shared_propose_remove_owner(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedRemoveOwnerRequest,
+    ) -> Result<oneiron::federation::PendingAuthorityAct, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.propose_remove_owner", value)
+    }
+    pub fn vault_shared_execute(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedActRequest,
+    ) -> Result<oneiron::task_verb::sdk::SharedActExecuted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.execute", value)
+    }
+    pub fn vault_shared_receipt(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedReceiptRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.receipt", value)
+    }
+    pub fn vault_shared_outcomes(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedVaultRequest,
+    ) -> Result<Vec<oneiron::federation::SharedActOutcome>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.outcomes", value)
+    }
+    pub fn vault_shared_deletion(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Option<oneiron::federation::SharedVaultDeletion>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.deletion", value)
+    }
+    pub fn vault_members_add(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedMemberAddRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.add", value)
+    }
+    pub fn vault_members_change(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedMemberRoleRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.change", value)
+    }
+    pub fn vault_members_remove(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedMemberRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.remove", value)
+    }
+    pub fn vault_members_leave(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedVaultRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.leave", value)
+    }
+    pub fn vault_authority_handoff_alarms(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::authority::AuthorityHandoffAlarm>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.handoff_alarms", value)
+    }
+    pub fn vault_authority_handoff_alarms_acknowledge(
+        &self,
+        input: &oneiron::task_verb::sdk::HandoffAlarmRequest,
+    ) -> Result<oneiron::authority::AuthorityHandoffAlarm, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.handoff_alarms.acknowledge", value)
+    }
     pub fn vault_lenses_propose(
         &self,
         input: &oneiron::lens::LensProposeRequest,
@@ -818,6 +1212,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.lenses.default", value)
+    }
+    pub fn vault_disclosure_offer(
+        &self,
+        input: &oneiron::task_verb::sdk::DisclosureOfferRequest,
+    ) -> Result<oneiron::task_verb::sdk::DisclosureOffered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.disclosure.offer", value)
+    }
+    pub fn vault_shares_create(
+        &self,
+        input: &oneiron::task_verb::sdk::ShareCreateRequest,
+    ) -> Result<oneiron::task_verb::sdk::ShareCreated, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shares.create", value)
     }
     pub fn vault_hooks_replay(
         &self,
@@ -1086,6 +1504,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.rooms.messages", value)
     }
+    pub fn vault_rooms_participants(
+        &self,
+        input: &oneiron::workspace_roster::ParticipantsRequest,
+    ) -> Result<oneiron::workspace_roster::ParticipantsPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.participants", value)
+    }
     pub fn vault_rooms_render(
         &self,
         input: &oneiron::task_verb::sdk::RoomRefRequest,
@@ -1169,6 +1599,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.speak", value)
+    }
+    pub fn vault_projects_propose(
+        &self,
+        input: &oneiron::workspace_roster::ProjectProposalRequest,
+    ) -> Result<oneiron::genui::ProjectProposalCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.propose", value)
+    }
+    pub fn vault_projects_proposals(
+        &self,
+        input: &oneiron::task_verb::sdk::ProjectConversationRequest,
+    ) -> Result<Vec<oneiron::workspace_roster::ProjectCardRecord>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.proposals", value)
+    }
+    pub fn vault_projects_dismiss_card(
+        &self,
+        input: &oneiron::task_verb::sdk::ProjectCardRequest,
+    ) -> Result<oneiron::task_verb::sdk::ProjectCardDismissal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.dismiss_card", value)
+    }
+    pub fn vault_projects_confirm(
+        &self,
+        input: &oneiron::workspace_roster::ProjectCardConfirmRequest,
+    ) -> Result<oneiron::workspace_roster::ProjectMintReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.confirm", value)
+    }
+    pub fn vault_projects_goal_intake(
+        &self,
+        input: &oneiron::task_verb::sdk::ProjectRefRequest,
+    ) -> Result<oneiron::workspace_roster::ProjectGoalInterviewContext, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.goal.intake", value)
     }
     pub fn vault_rooms_join(
         &self,
@@ -1632,6 +2122,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.refs.resolve", value)
+    }
+    pub fn vault_refs_links(
+        &self,
+        input: &oneiron::lens::RecordLinksRequest,
+    ) -> Result<oneiron::lens::RecordLinks, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.refs.links", value)
     }
     pub fn vault_search_bm25(
         &self,

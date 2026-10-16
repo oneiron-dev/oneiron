@@ -125,6 +125,7 @@ mod gate_decision;
 mod group_commit;
 mod handle;
 mod key_encoding;
+pub(crate) mod legal_hold;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]

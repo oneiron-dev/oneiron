@@ -1,23 +1,28 @@
 //! The Local-vision seat as the decision ladder's Local rung (OF-329 over
 //! OF-600): the small vision model bound as `[models.roles.local_vision]`
 //! answers a Box question over a call's images ("where is `mug` in
-//! `camera`?"). [`LocalVisionModel::rung`] wraps it with
+//! `camera`?"), and a routine driver step's Choice or yes/no question over a
+//! screenshot (OF-523, the CUA-S1 pattern: "which of these do I click?",
+//! "did the form send?"). [`LocalVisionModel::rung`] wraps it with
 //! `ModelDecisionProvider` at `DecisionRung::Local`, so a host's ladder can
 //! seat it.
 //!
 //! A call is one admitted request of the role, on the caller's run: each
 //! image, downscaled to the ladder's long edge, after a line with the
 //! reference its state field holds, then the question and the state as JSON,
-//! under a schema shaped as System One's Box answer (`{"box": {top, bottom,
-//! left, right} | null, "confidence"}`). Any other contract, or a call with
-//! no image, abstains, so the ladder takes it on. An answer outside the
-//! schema is refused whole, never read as an absent target.
+//! under a schema shaped as System One's answer for the contract: a Box
+//! (`{"box": {top, bottom, left, right} | null, "confidence"}`), a Choice
+//! (`{"choice": <one option>, "confidence"}`) or a yes/no (`{"p_yes"}`). A
+//! Score, or a call with no image, abstains, so the ladder takes it on. An
+//! answer outside the schema is refused whole, never read as an absent
+//! target.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::llm::decision::{
     AnswerContract, DECISION_IMAGE_EDGE, DecisionAnswer, DecisionCall, DecisionImage,
-    DecisionModel, DecisionRung, ImageBox, ModelDecisionProvider, ProviderDecision, ProviderPin,
+    DecisionModel, DecisionRung, ImageBox, ModelDecisionProvider, ProviderCapability,
+    ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
@@ -97,7 +102,7 @@ impl LocalVisionModel {
             .clone()
     }
 
-    fn request(&self, call: &DecisionCall<'_>) -> oneiron::Result<LlmRequest> {
+    fn request(&self, call: &DecisionCall<'_>, schema: Value) -> oneiron::Result<LlmRequest> {
         let mut state = call.state.clone();
         let mut content = Vec::with_capacity(call.images.len() * 2 + 1);
         for image in call.images {
@@ -130,9 +135,7 @@ impl LocalVisionModel {
                 tier: TierPrecedence::for_purpose(&purpose, ModelTierRef("local-vision".into())),
                 purpose,
                 class: CallClass::BestEffort,
-                response_format: ResponseFormat::Json {
-                    schema: box_schema(),
-                },
+                response_format: ResponseFormat::Json { schema },
                 locality: self.locality,
             },
             messages: vec![LlmMessage {
@@ -147,6 +150,14 @@ impl LocalVisionModel {
 }
 
 impl DecisionModel for LocalVisionModel {
+    /// It reads no score: the ladder skips it for one.
+    fn capability(&self) -> ProviderCapability {
+        ProviderCapability {
+            score: false,
+            ..ProviderCapability::default()
+        }
+    }
+
     fn reads_images(&self) -> bool {
         true
     }
@@ -155,15 +166,22 @@ impl DecisionModel for LocalVisionModel {
     /// a blocking thread, never on one of that runtime's workers. The call
     /// waits no longer than the decision's work time.
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        if call.question.contract != AnswerContract::Box || call.images.is_empty() {
+        let schema = match &call.question.contract {
+            _ if call.images.is_empty() => None,
+            AnswerContract::Box => Some(box_schema()),
+            AnswerContract::Choice { options } => Some(choice_schema(options)),
+            AnswerContract::Noul => Some(noul_schema()),
+            AnswerContract::Score { .. } => None,
+        };
+        let Some(schema) = schema else {
             return Ok(ProviderDecision {
                 answer: DecisionAnswer::Abstain,
                 probability: None,
                 paired: None,
                 person: None,
             });
-        }
-        let request = self.request(call)?;
+        };
+        let request = self.request(call, schema)?;
         let admitted = self
             .ai
             .admit_role(&self.vault, ROLE, request)
@@ -199,13 +217,99 @@ impl DecisionModel for LocalVisionModel {
                 _ => None,
             })
             .collect::<String>();
-        box_answer(&text).ok_or_else(|| failed("malformed local vision answer"))
+        match &call.question.contract {
+            AnswerContract::Box => box_answer(&text),
+            AnswerContract::Choice { options } => choice_answer(&text, options),
+            AnswerContract::Noul => noul_answer(&text),
+            AnswerContract::Score { .. } => None,
+        }
+        .ok_or_else(|| failed("malformed local vision answer"))
     }
+}
+
+/// A Choice answer's shape: the one option that answers, and how sure.
+fn choice_schema(options: &[String]) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "choice": {
+                "type": "string",
+                "enum": options,
+                "description": "The one option that answers the question, spelled exactly as offered."
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "How sure the answer is, from 0 to 1."
+            }
+        },
+        "required": ["choice", "confidence"],
+        "additionalProperties": false
+    })
+}
+
+/// A yes/no answer's shape: the probability the answer is yes.
+fn noul_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "p_yes": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "How likely the answer to the question is yes, from 0 to 1."
+            }
+        },
+        "required": ["p_yes"],
+        "additionalProperties": false
+    })
+}
+
+/// The seat's answer object: its outermost JSON object (a seat may fence it).
+fn answer_object(text: &str) -> Option<Value> {
+    let object = text.get(text.find('{')?..=text.rfind('}')?)?;
+    serde_json::from_str(object).ok()
+}
+
+/// A probability in 0–1.
+fn unit(value: Option<&Value>) -> Option<f64> {
+    value?
+        .as_f64()
+        .filter(|p| p.is_finite() && (0.0..=1.0).contains(p))
+}
+
+/// The seat's Choice: one of `options`, spelled exactly, and a confidence
+/// in 0–1.
+fn choice_answer(text: &str, options: &[String]) -> Option<ProviderDecision> {
+    let value = answer_object(text)?;
+    let choice = value
+        .get("choice")?
+        .as_str()
+        .filter(|choice| options.iter().any(|option| option == choice))?;
+    Some(ProviderDecision {
+        answer: DecisionAnswer::Choice(choice.to_owned()),
+        probability: Some(unit(value.get("confidence"))?),
+        paired: None,
+        person: None,
+    })
+}
+
+/// The seat's yes/no: P(yes) in 0–1, the answer yes from one half up.
+fn noul_answer(text: &str) -> Option<ProviderDecision> {
+    let p_yes = unit(answer_object(text)?.get("p_yes"))?;
+    Some(ProviderDecision {
+        answer: DecisionAnswer::Noul(p_yes >= 0.5),
+        probability: Some(p_yes),
+        paired: None,
+        person: None,
+    })
 }
 
 /// The answer's shape: System One's Box answer without its `type`.
 fn box_schema() -> Value {
-    let edge = |what: &str| json!({"type": "number", "minimum": 0, "maximum": 1, "description": what});
+    let edge =
+        |what: &str| json!({"type": "number", "minimum": 0, "maximum": 1, "description": what});
     json!({
         "type": "object",
         "properties": {

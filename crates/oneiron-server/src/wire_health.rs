@@ -1,5 +1,6 @@
 //! The health check past a threshold (OF-520, ARCH-0044 C5). Wire counters,
-//! `[limits]` rows and engine scans keep their crossings as questions, and
+//! `[limits]` rows, engine scans and the e-sign ceremony's burst counters
+//! (ARCH-0064a) keep their crossings as questions, and
 //! none refuses for a count. This worker reads the kept crossings off every
 //! lock and write path and asks each one typed question on the host's ladder:
 //! "is everything okay: a bot, or a valid burst?". A known actor under a
@@ -14,13 +15,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use oneiron::blob_artifact::esign::EsignRateCheck;
 use oneiron::llm::decision::catalogue::WIRE_HEALTH;
 use oneiron::llm::decision::questions::{
     HEALTH_OUTCOME_PREDICATE, HealthAnswer, OutcomeBinding, OutcomeSource,
 };
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionProvider, DecisionQuestion,
-    DecisionRung, HeldLadder, ProviderCapability, ProviderDecision, ProviderPin, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionCall, DecisionProvider, DecisionQuestion, DecisionRung,
+    HeldLadder, ProviderCapability, ProviderDecision, ProviderPin, Reversibility,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::scan_check::ScanCheck;
@@ -37,6 +39,8 @@ const CHECK: &str = "wire:health:v1:check:";
 const CURSOR_WIRE: &str = "wire:health:v1:cursor:wire";
 /// How far it has read one `[limits]` row's questions.
 const CURSOR_LIMIT: &str = "wire:health:v1:cursor:limit:";
+/// How far it has read the e-sign ceremony's burst checks.
+const CURSOR_ESIGN: &str = "wire:health:v1:cursor:esign";
 /// How often the worker reads new crossings and asks the held checks.
 const SWEEP_EVERY: Duration = Duration::from_secs(15);
 /// The clock one check's ladder call runs under.
@@ -67,6 +71,9 @@ pub enum CrossingSource {
     Limit,
     /// An engine scan's threshold row.
     Scan,
+    /// One signing document's, or one recipient's, ceremony calls past
+    /// their window's threshold.
+    Esign,
 }
 
 /// Who answered a check.
@@ -158,7 +165,9 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 fn cursor(vault: &Vault, key: &str) -> Result<Option<String>> {
     vault
         .sync_state_get(key)?
-        .map(|bytes| String::from_utf8(bytes).map_err(|_| Error::CorruptedIndex("wire health cursor")))
+        .map(|bytes| {
+            String::from_utf8(bytes).map_err(|_| Error::CorruptedIndex("wire health cursor"))
+        })
         .transpose()
 }
 
@@ -247,6 +256,25 @@ fn scan_crossing(check: &ScanCheck) -> Crossing {
     }
 }
 
+fn esign_crossing(key: String, check: &EsignRateCheck) -> Crossing {
+    let receipt = &check.receipt;
+    let scope = receipt.recipient.as_deref().unwrap_or("all");
+    Crossing {
+        subject: format!("esign:{}:{scope}", receipt.document),
+        source: CrossingSource::Esign,
+        raised_at: receipt.window_started_at_secs,
+        summary: json!({
+            "kind": EsignRateCheck::KIND,
+            "document": receipt.document,
+            "recipient": receipt.recipient,
+            "window_started_at": receipt.window_started_at_secs,
+            "calls": receipt.count,
+            "threshold": check.threshold,
+        }),
+        read: Some((CURSOR_ESIGN.to_owned(), key)),
+    }
+}
+
 /// The kept crossings past each cursor. A scan check is sticky, so one with
 /// a check of its own is read.
 fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
@@ -266,6 +294,10 @@ fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
             unread.push(limit_crossing(key, &question));
         }
     }
+    let esign_after = cursor(vault, CURSOR_ESIGN)?;
+    for (key, check) in vault.esign_rate_checks_after(esign_after.as_deref())? {
+        unread.push(esign_crossing(key, &check));
+    }
     for check in vault.scan_checks()? {
         let crossing = scan_crossing(&check);
         if vault
@@ -282,7 +314,10 @@ fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
 /// one that still covers it, counts it; otherwise it is a new held check.
 fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
     let key = format!("{CHECK}{}", crossing.subject);
-    let existing: Option<HealthCheck> = vault.sync_state_get(&key)?.map(|b| decode(&b)).transpose()?;
+    let existing: Option<HealthCheck> = vault
+        .sync_state_get(&key)?
+        .map(|b| decode(&b))
+        .transpose()?;
     let check = match existing {
         Some(mut check) if check.open() || check.covers(crossing.raised_at) => {
             check.crossings = check.crossings.saturating_add(1);
@@ -488,9 +523,12 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
         return Ok(());
     };
     let unit_id = EntityId::from_hex(unit)?;
-    server
-        .vault()
-        .record_health_outcome(owner, unit_id, &label, oneiron_vault_contract::now_ts())?;
+    server.vault().record_health_outcome(
+        owner,
+        unit_id,
+        &label,
+        oneiron_vault_contract::now_ts(),
+    )?;
     check.state = CheckState::Answered {
         answer: label,
         probability: None,

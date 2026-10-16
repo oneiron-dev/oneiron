@@ -5,6 +5,7 @@
 //! The one store it keeps is the call receipt table: the lasting receipt
 //! every wire reply carries (OF-538), which no other substrate records.
 
+mod authority_audit;
 mod brief_share;
 mod call;
 mod direct_dispatch;
@@ -12,6 +13,7 @@ mod dispatch_observation;
 mod family;
 mod field_set;
 mod grant;
+mod guest_revoke;
 mod identity_kind;
 mod kernel;
 mod ledgers;
@@ -27,6 +29,11 @@ mod session;
 #[cfg(test)]
 mod tests;
 
+pub use self::authority_audit::{
+    AUTHORITY_AUDIT_DEFAULT_LIMIT, AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW,
+    AuthorityAuditEventKind, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery,
+    AuthorityAuditRow, authority_audit_embedded,
+};
 pub use self::call::{
     CALL_RECEIPT_REF_PREFIX, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
     CallTransport, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
@@ -39,6 +46,10 @@ pub use self::field_set::{
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
     StandingOutboundGrantsLensQuery,
+};
+pub use self::guest_revoke::{
+    GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeDisclosure,
+    GuestRevokeOutcome, GuestRevokeResponse, NotRecallable, project_guest_revoke,
 };
 pub use self::identity_kind::{proposal_outcome_amended_body, proposal_outcome_delta};
 pub use self::kernel::{
@@ -61,7 +72,9 @@ pub use self::projection::{
     ReceiptProjectionIntent, ReceiptProjectionRun, project_receipts_by_brief,
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
-pub(crate) use self::reference_refusal::{ReferenceRefusalFacts, record_reference_refusal};
+pub(crate) use self::reference_refusal::{
+    ReferenceOutcome, ReferenceRefusalFacts, record_reference_refusal, record_reference_refusals,
+};
 pub use self::served_form::{PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 

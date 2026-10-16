@@ -134,7 +134,12 @@ export class Oneiron {
       diary: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown), {
         reads: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReads(input) as unknown),
         review: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReview(input) as unknown),
+        query: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as unknown),
       }),
+    },
+    message: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMessage(input) as unknown),
+    grants: {
+      ask: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfGrantsAsk(input) as unknown),
     },
     skills: {
       save: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsSave(input) as unknown),
@@ -142,18 +147,11 @@ export class Oneiron {
       callables: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsCallables(input) as unknown),
     },
   }
-  /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
-  cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
-  steer(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.steer(input) as unknown) }
-  /** Describes one task's card, or the whole TASKS section when no task is named. */
-  describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
-  readonly tasks = {
-    create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.tasksCreate(input) as unknown),
-    update: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.tasksUpdate(input) as unknown),
-    answer: (handle: TaskAskHandle, word: TaskAskWord): TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as TaskAskAnswer),
-    outcomes: (handle: TaskAskHandle): CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as CalibrationPair[]),
-  }
   readonly vault = {
+    people: {
+      list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPeopleList(input) as unknown),
+      get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPeopleGet(input) as unknown),
+    },
     /**
    * Witnesses one conversational turn.
    *
@@ -208,6 +206,36 @@ export class Oneiron {
     },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+      setup: {
+        prepare: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as unknown),
+        get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupGet(input) as unknown),
+        answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as unknown),
+        verify: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupVerify(input) as unknown),
+      },
+    },
+    authority: {
+      audit: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityAudit(input) as unknown),
+      handoff_alarms: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as unknown), {
+        acknowledge: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as unknown),
+      }),
+    },
+    inspection: {
+      resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultInspectionResolve(input) as unknown),
+    },
+    shared: {
+      propose_delete: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeDelete(input) as unknown),
+      propose_transfer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeTransfer(input) as unknown),
+      propose_remove_owner: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeRemoveOwner(input) as unknown),
+      execute: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedExecute(input) as unknown),
+      receipt: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedReceipt(input) as unknown),
+      outcomes: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedOutcomes(input) as unknown),
+      deletion: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedDeletion(input) as unknown),
+    },
+    members: {
+      add: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersAdd(input) as unknown),
+      change: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersChange(input) as unknown),
+      remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
+      leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
     },
     lenses: {
       propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
@@ -215,6 +243,12 @@ export class Oneiron {
       deactivate: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDeactivate(input) as unknown),
       list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesList(input) as unknown),
       default: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDefault(input) as unknown),
+    },
+    disclosure: {
+      offer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultDisclosureOffer(input) as unknown),
+    },
+    shares: {
+      create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesCreate(input) as unknown),
     },
     hooks: {
       replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
@@ -251,6 +285,7 @@ export class Oneiron {
     rooms: {
       list: (): unknown[] => this.#call(() => this.#client.vaultRoomsList({}) as unknown[]),
       messages: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
+      participants: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsParticipants(input) as unknown),
       render: (roomRef: string): string[] => this.#call(() => this.#client.vaultRoomsRender({room_ref: roomRef}) as string[]),
       find: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsFind({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
       get: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsGet({room_ref: roomRef, turn_ref: turnRef}) as unknown),
@@ -264,7 +299,12 @@ export class Oneiron {
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
     projects: {
+      propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsPropose(input) as unknown),
+      proposals: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsProposals(input) as unknown),
+      dismiss_card: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsDismissCard(input) as unknown),
+      confirm: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsConfirm(input) as unknown),
       goal: {
+        intake: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as unknown),
         revisions: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalRevisions(input) as unknown),
         dismiss: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalDismiss(input) as unknown),
       },
@@ -298,6 +338,7 @@ export class Oneiron {
     get: (input: Facade.EntityRequest): {value: Facade.EntityView | null; narrowing: unknown} => this.#call(() => this.#client.vaultGet(input) as {value: Facade.EntityView | null; narrowing: unknown}),
     refs: {
       resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRefsResolve(input) as unknown),
+      links: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRefsLinks(input) as unknown),
     },
     search: {
       bm25: (input: Facade.QueryBm25Request): {value: (Facade.LexicalHit)[]; narrowing: unknown} => this.#call(() => this.#client.vaultSearchBm25(input) as {value: (Facade.LexicalHit)[]; narrowing: unknown}),
@@ -314,6 +355,17 @@ export class Oneiron {
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       edit: (input: Facade.EditNoteRequest): unknown => this.#call(() => this.#client.vaultNotesEdit(input) as unknown),
     },
+  }
+  /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
+  cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
+  steer(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.steer(input) as unknown) }
+  /** Describes one task's card, or the whole TASKS section when no task is named. */
+  describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
+  readonly tasks = {
+    create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.tasksCreate(input) as unknown),
+    update: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.tasksUpdate(input) as unknown),
+    answer: (handle: TaskAskHandle, word: TaskAskWord): TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as TaskAskAnswer),
+    outcomes: (handle: TaskAskHandle): CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as CalibrationPair[]),
   }
   /** Read-only ask routing or attributed partial answers. */
   can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }

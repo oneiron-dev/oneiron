@@ -1,6 +1,7 @@
 //! Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission.
 //! A branch proposal is inert source in vault_meta, never an ordinary live CLAIM.
 
+use super::decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_pair_state};
 use super::refinement_admission::{
     RefinementAdmissionProof, RefinementControl, RefinementState, RefinementTarget, put_control,
     read_control,
@@ -21,7 +22,9 @@ use crate::{
     edge::EdgeActorClass,
     entity_id::EntityId,
     error::{Error, Result},
-    llm::decision::{AnswerContract, DecisionClass, DecisionQuestion, TypedDecision},
+    llm::decision::{
+        AnswerContract, DecisionClass, DecisionQuestion, Reversibility, TypedDecision,
+    },
     skill_optimize::held_out_receipt_set_digest,
     store::Store,
     temporal::TimeRange,
@@ -53,28 +56,6 @@ impl LocalClaimRefinement {
     pub fn claim_body(&self) -> Result<ClaimBody> {
         decode_claim_body(&self.body, false)
     }
-}
-
-/// The configured OF-493 answerer sees only the base and the branch proposal.
-pub trait UsefulUpstreamClaimJudge {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        base: &ClaimBody,
-        candidate: &ClaimBody,
-    ) -> Result<TypedDecision>;
-}
-
-/// Owner-reserved labels; the scorer runs outside transactions and has no pen.
-pub struct HeldOutClaimReplayCase<'a> {
-    pub base: EntityId,
-    pub candidate: EntityId,
-    pub claim: &'a ClaimBody,
-    pub held_out_receipts: &'a [String],
-}
-pub trait HeldOutClaimReplayScorer {
-    fn score(&self, case: &HeldOutClaimReplayCase<'_>) -> Result<f32>;
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +106,8 @@ struct Snapshot {
     base: ClaimBody,
     candidate: ClaimBody,
     evidence: Vec<String>,
+    /// The reserved labels' bodies, as bound.
+    labels: Vec<(EntityId, ClaimBody)>,
     binding: String,
 }
 
@@ -368,13 +351,15 @@ impl Vault {
             self.approve_once_in_txn(txn, owner, ask.effect)
         })
     }
-    /// Typed usefulness is answered first; only a yes runs the independent
-    /// host-held-out scorer. A no or tie consumes consent but never erases the branch.
+    /// Typed usefulness is answered first, seeing only the base and the branch
+    /// proposal; only a yes runs the held-out replay, one typed score per arm over
+    /// the owner's reserved labels. Both run outside transactions on the host's
+    /// ladder. A no or tie consumes consent but never erases the branch.
     pub fn merge_local_claim_refinement(
         &self,
         ask: &ClaimRefinementMergeAsk,
-        useful: &dyn UsefulUpstreamClaimJudge,
-        scorer: &dyn HeldOutClaimReplayScorer,
+        useful: &UsefulUpstreamDecisions<'_>,
+        replay: &ClaimReplayDecisions<'_>,
         at: u64,
     ) -> Result<ClaimRefinementMergeDisposition> {
         let snapshot = {
@@ -387,29 +372,34 @@ impl Vault {
             }
             snapshot
         };
+        let state = claim_pair_state(
+            ask.resident,
+            (snapshot.base_id, &snapshot.base),
+            (ask.candidate, &snapshot.candidate),
+        );
+        // An admitted claim edit has no undo (the effect's fidelity is None).
         let decision = useful.decide(
             &ask.question,
             ask.resident,
-            &snapshot.base,
-            &snapshot.candidate,
+            &[ask.candidate, snapshot.base_id],
+            &state,
+            Reversibility::OutboundEffect,
         )?;
         let useful_upstream = checked_useful_decision(&ask.question, ask.resident, &decision)?;
         let (before, after) = if useful_upstream {
-            let eval = |body: &ClaimBody| -> Result<f32> {
-                let score = scorer.score(&HeldOutClaimReplayCase {
-                    base: snapshot.base_id,
-                    candidate: ask.candidate,
-                    claim: body,
-                    held_out_receipts: &snapshot.evidence,
-                })?;
-                if !score.is_finite() || !(0.0..=1.0).contains(&score) {
-                    return Err(invalid("invalid held-out claim score"));
-                }
-                Ok(score)
-            };
             (
-                Some(eval(&snapshot.base)?),
-                Some(eval(&snapshot.candidate)?),
+                Some(replay.score(
+                    ask.resident,
+                    "base",
+                    (snapshot.base_id, &snapshot.base),
+                    &snapshot.labels,
+                )?),
+                Some(replay.score(
+                    ask.resident,
+                    "candidate",
+                    (ask.candidate, &snapshot.candidate),
+                    &snapshot.labels,
+                )?),
             )
         } else {
             (None, None)
@@ -556,6 +546,7 @@ impl Vault {
             hash.update(&(part.len() as u64).to_be_bytes());
             hash.update(&part);
         }
+        let mut labels = Vec::with_capacity(evidence.len());
         for label in &evidence {
             let label_id = EntityId::from_hex(label)?;
             let body = self
@@ -571,6 +562,7 @@ impl Vault {
             let encoded = encode_claim_body(&body)?;
             hash.update(&(encoded.len() as u64).to_be_bytes());
             hash.update(&encoded);
+            labels.push((label_id, body));
         }
         Ok(Snapshot {
             delta,
@@ -578,6 +570,7 @@ impl Vault {
             base,
             candidate,
             evidence,
+            labels,
             binding: hash.finalize().to_hex().to_string(),
         })
     }
