@@ -53,6 +53,7 @@ mod presence_diagnostics;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
+mod project_tradeoff;
 mod proposal_create;
 mod query_facade;
 mod rate_limit;
@@ -214,6 +215,7 @@ mod sdk_connector;
 mod sdk_diary;
 mod sdk_host;
 mod sdk_self;
+mod sdk_shared;
 
 #[cfg(test)]
 mod ask_outcome_tests;

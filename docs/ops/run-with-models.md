@@ -105,7 +105,8 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
-`local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
+`local-openai-compat`, `oneironer`, and the speech-only `cartesia` and
+`elevenlabs`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
@@ -769,6 +770,76 @@ The verbs, each the owner's and checked against the vault's inference policy:
   when it ends.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
+
+### Voice on the media seats
+
+A speech call can name its voice: `"voice": {"kind": "stock", "name":
+"alloy"}` for a provider's own voice, or `"voice": {"kind": "bank",
+"voice_id": "...", "include_generated": false}` for a banked identity. A
+banked voice lives in the vault's reference bank. A provider sees only the id
+of the clone recorded for its target, and the target is the rung's provider
+name in `[models.providers]`. The call renders on the first rung of its
+ladder whose target holds a current clone, and on that rung alone. With no
+such rung the call answers `409 voice_not_provisioned`. If the voice is
+withdrawn or its clone re-recorded while the call renders, it answers `409
+voice_withdrawn` and the audio is not returned. A call that names a voice
+names no `voice` param, and only a speech call names one.
+
+The speech seat also takes the hosted voice tiers, which are not
+OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`
+with its key in `x-api-key` and a `Cartesia-Version` header (`2026-08-14`
+unless `headers` names one). An `elevenlabs` provider speaks ElevenLabs'
+`POST /v1/text-to-speech/{voice}` with its key in `xi-api-key`. Either one
+serves the speech seat only, never a role or another media seat. Each call
+names a voice, typed or as the `voice` param (these wires have no default
+voice), is asked for raw 24 kHz PCM16, comes back as a WAV, and is charged
+its characters. Name the providers `cartesia` and `elevenlabs_flash` to
+share the clones the cascade's hosted adapters record.
+
+```toml
+[models.providers.cartesia]
+kind = "cartesia"
+base_url = "https://api.cartesia.ai"
+key_env = "CARTESIA_API_KEY"
+
+[models.providers.elevenlabs_flash]
+kind = "elevenlabs"
+base_url = "https://api.elevenlabs.io"
+key_env = "ELEVENLABS_API_KEY"
+
+[models.media.speech]
+rungs = ["cartesia:sonic-3.6", "elevenlabs_flash:eleven_flash_v2_5"]
+tiers = { "tts-live" = "cartesia:sonic-3.6" }
+```
+
+The shipped `tts_live` voice row is `own_server`, so a vault that speaks live
+on Cartesia sets that row's locality to `third_party`.
+
+The two-way voice cascade speaks and hears on these seats too. Bind voice
+tiers to rungs on the speech and transcribe seats:
+
+```toml
+[models.media.speech]
+rungs = ["openai:gpt-4o-mini-tts", "local:kokoro"]
+tiers = { "tts-live" = "local:kokoro", "tts-deferred" = "local:kokoro" }
+
+[models.media.transcribe]
+rungs = ["local:qwen3-asr", "openai:gpt-4o-transcribe"]
+tiers = { "asr-live" = "openai:gpt-4o-transcribe", "asr-batch" = "local:qwen3-asr" }
+```
+
+The vault's voice rows (`asr_live`, `asr_batch`, `tts_live`, `tts_batch`)
+name a tier and a locality. A lane runs on the one bound rung that matches
+both, picked before any work. No rung, or two rungs, refuses the lane, and
+no other rung is relabelled to fill it. The vault's inference policy admits
+the route. The cascade's TTS port (`MediaTtsAdapter`) sends each flushed
+sentence as one speech call that asks for a mono PCM16 WAV. Its ASR port
+(`MediaAsrAdapter`) sends each utterance the host cuts as one transcription
+call, in a WAV of the stream's rate. Each call goes on its own permit through
+the media gate and is charged its characters or seconds. A transcription
+whose provider reports no duration is charged the length of the WAV it was
+sent. These calls are buffered, so live partial transcripts wait for a
+streaming media lease.
 
 ### Lazy images and `ask_image`
 

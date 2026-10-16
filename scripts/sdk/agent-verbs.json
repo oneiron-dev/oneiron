@@ -262,6 +262,7 @@
     },
     {
       "name": "vault.claims.upsert",
+      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "input": "crate::memory::ClaimInput",
       "output": "crate::memory::CommitReceipt",
       "call": "memory.claim_upsert(&input)?",
@@ -597,6 +598,24 @@
       }
     },
     {
+      "name": "vault.weave.report",
+      "input": "crate::claim::WeaveReportRequest",
+      "output": "crate::claim::WeaveReportView",
+      "call": "memory.weave_report(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.digest",
+      "input": "crate::claim::WeaveDigestRequest",
+      "output": "Option<crate::claim::WeaveDigestView>",
+      "call": "memory.weave_digest(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
@@ -606,6 +625,138 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false
+    },
+    {
+      "name": "vault.shared.propose_delete",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::propose_shared_delete(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_delete\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.propose_transfer",
+      "input": "crate::task_verb::sdk::SharedTransferRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::propose_shared_transfer(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_transfer\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.propose_remove_owner",
+      "input": "crate::task_verb::sdk::SharedRemoveOwnerRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::propose_shared_remove_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_remove_owner\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.execute",
+      "input": "crate::task_verb::sdk::SharedActRequest",
+      "output": "crate::task_verb::sdk::SharedActExecuted",
+      "call": "crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.receipt",
+      "input": "crate::task_verb::sdk::SharedReceiptRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::read_shared_receipt(memory.vault(), &memory.embedded_owner(\"vault.shared.receipt\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.outcomes",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::SharedActOutcome>",
+      "call": "crate::task_verb::sdk::read_shared_outcomes(memory.vault(), &memory.embedded_owner(\"vault.shared.outcomes\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.deletion",
+      "input": "EmptyRequest",
+      "output": "Option<crate::federation::SharedVaultDeletion>",
+      "call": "crate::task_verb::sdk::read_shared_deletion(memory.vault())?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.add",
+      "input": "crate::task_verb::sdk::SharedMemberAddRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.change",
+      "input": "crate::task_verb::sdk::SharedMemberRoleRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::change_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.change\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.remove",
+      "input": "crate::task_verb::sdk::SharedMemberRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::remove_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.remove\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.leave",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::leave_shared_vault_as(memory.vault(), &memory.embedded_owner(\"vault.members.leave\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.authority.handoff_alarms",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::authority::AuthorityHandoffAlarm>",
+      "call": "crate::task_verb::sdk::read_handoff_alarms(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms\")?)?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.authority.handoff_alarms.acknowledge",
+      "input": "crate::task_verb::sdk::HandoffAlarmRequest",
+      "output": "crate::authority::AuthorityHandoffAlarm",
+      "call": "crate::task_verb::sdk::acknowledge_handoff_alarm(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms.acknowledge\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
       "section": false
     },
     {
@@ -826,7 +977,32 @@
       }
     },
     {
+      "name": "vault.artifacts.review_slides",
+      "input": "crate::blob_artifact::SlideReviewSubmit",
+      "output": "crate::blob_artifact::SlideReviewOutcome",
+      "call": "memory.artifacts_review_slides(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep.\n",
+          "ts": "/** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */",
+          "py": "Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.propose_deck",
+      "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::DeckProposeRequest",
       "output": "crate::blob_artifact::DeckProposeOutcome",
       "call": "memory.artifacts_propose_deck(&input)?",
@@ -850,6 +1026,7 @@
     },
     {
       "name": "vault.artifacts.propose_output",
+      "refs": ["/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::NativeOutputRequest",
       "output": "crate::edit_settle::PendingProposalView",
       "call": "memory.artifacts_propose_output(&input)?",
@@ -993,6 +1170,7 @@
     },
     {
       "name": "ask",
+      "refs": ["/what/reference/claim", "/what/reference/turn", "/what/context_refs/*/claim", "/what/context_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -1018,6 +1196,7 @@
     },
     {
       "name": "tasks.answer",
+      "refs": ["/word/provenance_refs/*/claim", "/word/provenance_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",
@@ -1184,6 +1363,63 @@
         "spec": "$",
         "room_ref": "=conversation_ref"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.join",
+      "input": "crate::workspace_roster::JoinRequest",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_join(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.consent",
+      "input": "crate::workspace_roster::ConsentAnswer",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_consent(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.revisions",
+      "input": "ProjectRefRequest",
+      "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
+      "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.dismiss",
+      "input": "ProjectGoalDismissRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
+      "call": "ProjectGoalDismissReceipt { dismissed: memory.projects_goal_dismiss(crate::EntityId::from_hex(&input.project_ref)?, crate::EntityId::from_hex(&input.expected_goal_ref)?, &input.question_digest)? }",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.route_tradeoff",
+      "input": "ProjectTradeoffRouteRequest",
+      "output": "crate::task_verb::TaskAskReceipt",
+      "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -1542,7 +1778,48 @@
       "section": false
     },
     {
+      "name": "self.browser.view",
+      "input": "oneiron_browser::ViewInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.view(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.crop",
+      "input": "oneiron_browser::CropInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.crop(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.zoom",
+      "input": "oneiron_browser::ZoomInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.zoom(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.batch",
+      "input": "oneiron_browser::BatchInput",
+      "output": "oneiron_browser::BatchOutput",
+      "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
+      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
@@ -1565,6 +1842,7 @@
     },
     {
       "name": "vault.remember",
+      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "uniffi": {
         "args": {
           "claim": "ClaimInput"
@@ -1756,6 +2034,18 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.refs.resolve",
+      "input": "crate::lens::ResolveRecordRefRequest",
+      "output": "crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>",
+      "call": "memory.resolve_record_ref(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered"
+    },
+    {
       "name": "vault.search.bm25",
       "uniffi": {
         "args": {
@@ -1805,6 +2095,7 @@
     },
     {
       "name": "vault.structural.put",
+      "refs": ["/edges/*/target_ref"],
       "uniffi": {
         "args": {
           "input": "StructuralPutInput"
@@ -1826,6 +2117,7 @@
     },
     {
       "name": "vault.habits.checkin",
+      "refs": ["/habit_ref"],
       "uniffi": {
         "args": {
           "input": "HabitCheckinInput"
@@ -1847,6 +2139,7 @@
     },
     {
       "name": "vault.claims.admit",
+      "refs": ["/subject_ref"],
       "uniffi": {
         "args": {
           "input": "AdmitImportedClaimInput"
@@ -1974,6 +2267,7 @@
     },
     {
       "name": "connector.outbound.schedule",
+      "refs": ["/content_ref"],
       "input": "OutboundScheduleRequest",
       "output": "crate::memory::OutboundIntentReceipt",
       "call": "crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)?",
@@ -2034,6 +2328,7 @@
     },
     {
       "name": "vault.notes.from_entity",
+      "refs": ["/source_ref"],
       "input": "CreateNoteFromEntityRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "memory.create_note_from_entity(&input.source_ref, &input.kind)?",

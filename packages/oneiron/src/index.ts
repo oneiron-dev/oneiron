@@ -203,8 +203,32 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    weave: {
+      report: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveReport(input) as unknown),
+      digest: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveDigest(input) as unknown),
+    },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+    },
+    shared: {
+      propose_delete: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeDelete(input) as unknown),
+      propose_transfer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeTransfer(input) as unknown),
+      propose_remove_owner: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedProposeRemoveOwner(input) as unknown),
+      execute: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedExecute(input) as unknown),
+      receipt: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedReceipt(input) as unknown),
+      outcomes: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedOutcomes(input) as unknown),
+      deletion: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharedDeletion(input) as unknown),
+    },
+    members: {
+      add: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersAdd(input) as unknown),
+      change: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersChange(input) as unknown),
+      remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
+      leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
+    },
+    authority: {
+      handoff_alarms: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as unknown), {
+        acknowledge: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as unknown),
+      }),
     },
     lenses: {
       propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
@@ -229,6 +253,8 @@ export class Oneiron {
       waits: (request: ArtifactRefRequest): OrganWaitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsWaits(keyedJson(request))) as OrganWaitView[]; return result.map(item => item) }),
       /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
       release_wait: (request: ProposalSettleRequest): ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as ReleasedWait; return result }),
+      /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
+      review_slides: (request: SlideReviewSubmit): SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as SlideReviewOutcome; return result }),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
@@ -253,8 +279,17 @@ export class Oneiron {
       reply_strips: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as unknown),
       claim: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
+      join: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsJoin(input) as unknown),
+      consent: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsConsent(input) as unknown),
       host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
+    },
+    projects: {
+      goal: {
+        revisions: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalRevisions(input) as unknown),
+        dismiss: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsGoalDismiss(input) as unknown),
+      },
+      route_tradeoff: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultProjectsRouteTradeoff(input) as unknown),
     },
     conversations: {
       turn: {
@@ -282,6 +317,9 @@ export class Oneiron {
     },
     hydrate: (input: Facade.HydrateRequest): {value: (Facade.EntityView)[]; narrowing: unknown} => this.#call(() => this.#client.vaultHydrate(input) as {value: (Facade.EntityView)[]; narrowing: unknown}),
     get: (input: Facade.EntityRequest): {value: Facade.EntityView | null; narrowing: unknown} => this.#call(() => this.#client.vaultGet(input) as {value: Facade.EntityView | null; narrowing: unknown}),
+    refs: {
+      resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRefsResolve(input) as unknown),
+    },
     search: {
       bm25: (input: Facade.QueryBm25Request): {value: (Facade.LexicalHit)[]; narrowing: unknown} => this.#call(() => this.#client.vaultSearchBm25(input) as {value: (Facade.LexicalHit)[]; narrowing: unknown}),
     },

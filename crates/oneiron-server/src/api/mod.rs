@@ -88,6 +88,8 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+#[cfg(unix)]
+pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 mod off_record_rooms;
 mod org_admin;
 mod pairing;
@@ -109,6 +111,8 @@ mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
 mod lease;
 mod llm;
+#[cfg(feature = "mesh")]
+pub(crate) use llm::MeshLlm;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
@@ -412,6 +416,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
         )
+        // OF-181: the app's one action layer, for its buttons and its agents.
+        .merge(self::facade::action_routes::routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
         .merge(self::report::routes())

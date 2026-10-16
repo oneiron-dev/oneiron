@@ -319,6 +319,26 @@ pub fn label_duplicate_work(vault: &Vault, run_id: &str, label: &DuplicateWork) 
     })
 }
 
+/// Every run with a derived cost or an audit label, in run order: the
+/// coordination sweep's worklist.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn coordination_runs(vault: &Vault) -> Result<Vec<String>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut runs: std::collections::BTreeSet<String> = COORDINATION
+        .scan_keys(&vault.store, &rtxn, &[])?
+        .into_iter()
+        .collect();
+    for key in DUPLICATE_LABEL.scan_keys(&vault.store, &rtxn, &[])? {
+        if let Some((run, _)) = key.split_once('\0') {
+            runs.insert(run.to_owned());
+        }
+    }
+    Ok(runs.into_iter().collect())
+}
+
 /// The last derived coordination cost of a team, if any.
 ///
 /// # Errors

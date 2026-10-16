@@ -150,8 +150,12 @@ pub struct ExportDiaryHold {
 pub enum ExportDiaryHoldReason {
     /// The agent reviews each read of its diary first, and has not yet.
     AgentReviewPending,
-    /// The owner's grant does not reach this diary.
+    /// The reader's `diary.read` Grant does not cover this entry.
     NotCoveredByGrant,
+    /// The agent said no to this reader's reason.
+    Declined,
+    /// The read log could not be written, so the entry was not read.
+    ReadLogUnavailable,
 }
 
 /// OF-490: one agent's diaries an export read, and the reason the read

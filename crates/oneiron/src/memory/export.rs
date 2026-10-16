@@ -10,6 +10,7 @@ use crate::claim::CallerLocality;
 use crate::edge::EdgeActorClass;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
+use crate::write_envelope::WriteActor;
 
 /// The export target. `archive` (the default) is the whole vault: one ZIP of
 /// one JSONL file per record kind, each attached file once by BLAKE3, and a
@@ -113,6 +114,7 @@ impl Memory<'_> {
             opts,
             &self.actor.to_hex(),
             self.locality,
+            WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| {
                 verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
                 if self.actor_class != EdgeActorClass::Human {
@@ -180,7 +182,10 @@ impl Vault {
         proof: &VerifiedSlip,
         locality: CallerLocality,
     ) -> MemoryResult<MemoryExport> {
-        render_export(self, opts, "host", locality, |txn| {
+        // A host-root export reads diaries as the vault's owner (OF-490).
+        let reader =
+            WriteActor::new(crate::vault::embedded_owner_actor_id()?, EdgeActorClass::Human);
+        render_export(self, opts, "host", locality, reader, |txn| {
             validate_verified_owner(self, txn, proof)?;
             if proof.claims().holder_ref != "host" {
                 return Err(export_forbidden());
@@ -216,15 +221,16 @@ fn render_export(
     opts: &ExportOptions,
     by: &str,
     locality: CallerLocality,
+    reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<MemoryExport> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
     let export = match name {
         EXPORT_TARGET_ARCHIVE => {
-            vault.export_whole_vault_with_admission(locality, include_secrets, admit)?
+            vault.export_whole_vault_with_admission(locality, include_secrets, reader, admit)?
         }
-        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, admit)?,
+        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, reader, admit)?,
         _ => {
             return Err(MemoryError::bad_request_with(
                 format!("unknown export format {name:?}"),

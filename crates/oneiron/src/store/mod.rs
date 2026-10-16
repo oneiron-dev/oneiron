@@ -124,6 +124,7 @@ mod gate_decision;
 mod group_commit;
 mod handle;
 mod key_encoding;
+pub(crate) mod legal_hold;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
@@ -149,8 +150,8 @@ mod tests;
 
 #[cfg(unix)]
 pub(crate) use body_store::{
-    BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_SUFFIX, SunkBody, body_file_name,
-    read_body_range,
+    BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, SunkBody,
+    body_file_name, read_body_range,
 };
 pub use channel_identity_receipts::*;
 #[cfg(test)]

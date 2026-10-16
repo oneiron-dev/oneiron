@@ -7,12 +7,12 @@ use super::{
     PackQualifier, PackSource, admission,
 };
 use crate::side_table::{self, Raw, SideTable};
-use crate::skill_hub::HubFile;
+use crate::skill_hub::{HubFile, HubPin, HubRef};
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 5] = [
+const PACKS: [(&str, &str); 6] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -30,10 +30,55 @@ const PACKS: [(&str, &str); 5] = [
         include_str!("../../../../../packs/builtin/linkedin/PACK.md"),
     ),
     (
+        "browser",
+        include_str!("../../../../../packs/builtin/browser/PACK.md"),
+    ),
+    (
         "native_mail",
         include_str!("../../../../../packs/builtin/native_mail/PACK.md"),
     ),
 ];
+/// Each built-in pack's guided setup skill (OF-378), at the folder its
+/// PACK.md `setup` names. It ships in the same exact source, so the owner
+/// reads it while the connector is still a Candidate.
+const SETUP_SKILLS: [(&str, &str); 4] = [
+    (
+        "slack",
+        include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
+    ),
+    (
+        "line",
+        include_str!("../../../../../packs/builtin/line/skills/setup/SKILL.md"),
+    ),
+    (
+        "email",
+        include_str!("../../../../../packs/builtin/email/skills/setup/SKILL.md"),
+    ),
+    (
+        "linkedin",
+        include_str!("../../../../../packs/builtin/linkedin/skills/setup/SKILL.md"),
+    ),
+];
+const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
+
+/// One built-in pack's exact source: its PACK.md and its setup skill.
+fn builtin_source(name: &str, markdown: &str) -> Result<PackSource> {
+    let mut files = vec![HubFile::new("PACK.md", markdown.as_bytes())];
+    if let Some((_, skill)) = SETUP_SKILLS.iter().find(|(channel, _)| *channel == name) {
+        files.push(HubFile::new(SETUP_SKILL_PATH, skill.as_bytes()));
+    }
+    PackSource::from_files(files)
+}
+
+/// The engine hub ref a built-in source's bundled skills are imported under,
+/// pinned to that exact source.
+fn builtin_hub_ref(name: &str, source: &PackSource) -> Result<HubRef> {
+    HubRef::new(
+        engine_hub_id()?,
+        format!("built-in:{name}"),
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )
+}
 
 fn engine_hub_id() -> Result<EntityId> {
     EntityId::derive(
@@ -66,7 +111,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     for (name, markdown) in PACKS {
-        let source = PackSource::from_files(vec![HubFile::new("PACK.md", markdown.as_bytes())])?;
+        let source = builtin_source(name, markdown)?;
         if source.manifest.name != format!("oneiron.{name}")
             || source.manifest.kind != PackKind::Connector
             || source.manifest.adapter != Some(PackAdapter::Builtin(name.to_owned()))
@@ -97,6 +142,16 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             continue;
         }
         vault.stage_pack_source_in_txn(&mut txn, &source, TimeRange { start: 0, end: 0 }, 0)?;
+        // The setup skill imports the ordinary bundled way and is held
+        // Candidate with its pack until the connector qualifies.
+        let skills = vault.admit_pack_skills_in_txn(
+            &mut txn,
+            &source,
+            &builtin_hub_ref(name, &source)?,
+            None,
+            Some(PackCandidateReason::QualificationRequired),
+            crate::unix_seconds_now(),
+        )?;
         let receipt = PackInstallReceipt {
             source_id: source_id.to_hex(),
             pack_name: source.manifest.name.clone(),
@@ -118,7 +173,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             sections: source.sections().to_vec(),
             predicates: source.manifest.predicates.iter().cloned().collect(),
             kinds: source.manifest.kinds.iter().cloned().collect(),
-            skills: Vec::new(),
+            skills: skills.iter().map(EntityId::to_hex).collect(),
             installed_at: 0,
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;
@@ -141,7 +196,8 @@ impl Vault {
             .iter()
             .find(|(name, _)| *name == channel)
             .ok_or_else(|| super::invalid("unknown built-in connector pack"))?;
-        let source = PackSource::from_files(vec![HubFile::new("PACK.md", markdown.as_bytes())])?;
+        let source = builtin_source(channel, markdown)?;
+        let hub = builtin_hub_ref(channel, &source)?;
         let hash = source.content_hash().to_hex();
         let (candidate, installed) = {
             let txn = self.store.env.read_txn()?;
@@ -190,6 +246,13 @@ impl Vault {
                 ));
             }
             validate_installed_qualification(&source, &receipt)?;
+            // The held setup skill installs with its now-qualified pack.
+            let at = crate::unix_seconds_now();
+            let skills = self.admit_pack_skills_in_txn(txn, &source, &hub, None, None, at)?;
+            if let Some(prior) = installed.as_ref() {
+                self.supersede_pack_skills_in_txn(txn, prior, &skills, at)?;
+            }
+            receipt.skills = skills.iter().map(EntityId::to_hex).collect();
             admission::PACK_INSTALL.put(&self.store, txn, &receipt.pack_name, &receipt)?;
             admission::PACK_CANDIDATE.delete(&self.store, txn, &hash)?;
             Ok(receipt.clone())

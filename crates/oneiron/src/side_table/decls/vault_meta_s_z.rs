@@ -49,6 +49,9 @@ side_tables! {
     /// T2 local-file registration for a materialized secret, read wholesale for snapshot exclusion.
     /// Key: hex32(lease id).
     SECRET_LOCAL_REGISTRATION: VaultMeta b"secret_local:v1:" Raw;
+    /// Where a mask on write found the secret one custody record holds: the record, the field and
+    /// the key's kind (OF-560). Key: id16 (custody record id).
+    SECRET_MASK_ORIGIN: VaultMeta b"secret_mask:origin:v1:" Named;
     /// Durable attestation of one secret rotate-or-revoke op; carries no value bytes. Key:
     /// hex32(receipt id).
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
@@ -94,6 +97,9 @@ side_tables! {
     CUSTOMIZATION_EVENT_SEQUENCE: VaultMeta b"settings:customization:v1:event_sequence" Raw;
     /// Persisted four-layer (accent/type/mode/world) client customization profile. Key: ().
     CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named;
+    /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
+    /// auto). Value: the mode's ASCII name. Key: ().
+    DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
     DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson;
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
@@ -298,6 +304,9 @@ side_tables! {
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
     /// A skill goal's join to a project's goal record (MessagePack named map). Key: id16 (goal).
     SKILL_OPTIMIZE_PROJECT_GOAL: VaultMeta b"skill_optimize/project_goal/v1\0" Raw;
+    /// A vault owner's dismissal of one learned goal-revision proposal under the goal claim in
+    /// force (MessagePack named map). Key: id16 (project) + question digest (64 hex).
+    SKILL_OPTIMIZE_PROJECT_GOAL_DISMISSED: VaultMeta b"skill_optimize/project_goal_dismissed/v1\0" Raw;
     /// A learned preference proposed for a project's goal record (MessagePack named map). Key:
     /// id16 (project) + id16 (row).
     SKILL_OPTIMIZE_PROJECT_GOAL_PROPOSAL: VaultMeta b"skill_optimize/project_goal_proposal/v1\0" Raw;
@@ -428,6 +437,12 @@ side_tables! {
     TASK_OWNER_FACT_REVERSE: VaultMeta b"tasks.owner_fact.v1/" Raw;
     /// Display handle for a peer actor. Key: id16.
     TASK_PEER_HANDLE: VaultMeta b"tasks.peer.handle.v1\0" Raw;
+    /// The skill tradeoff a project ask carries: proposal, question digest, project, task, question
+    /// turn and whether the gate settled it or it went void. Key: id16 (ask group).
+    TASK_PROJECT_TRADEOFF_ASK: VaultMeta b"tasks.project_tradeoff.ask.v1/" Named;
+    /// The home-room TURN one skill tradeoff question was witnessed as, ids reserved before the
+    /// speak. Key: id16 (proposal) + id16 (project) + question digest (64 hex).
+    TASK_PROJECT_TRADEOFF_TURN: VaultMeta b"tasks.project_tradeoff.turn.v1/" Named;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// Registered external ask wait. Key: id16 + bytes32.
@@ -588,6 +603,10 @@ side_tables! {
     /// When a shelved sealed packet was retired (u64be vault seconds); it is purged 30 days on.
     /// Key: hex64 (tag) ":" hex64 (packet digest).
     WORLD_KEY_SEALED_RETIRED: VaultMeta b"world_keys:sealed-retired:v1:" Raw;
+    /// The newest shelved sealed packet of one window (its shelf id, `tag:digest` hex), so a
+    /// relay node that may not read the world can answer a reader's request for that window.
+    /// Key: string (window label).
+    WORLD_KEY_SEALED_WINDOW: VaultMeta b"world_keys:sealed-window:v1:" Raw;
     /// One sealed packet of a private world's window, kept for a reader by a node that may not
     /// read the world (OF-570). Key: hex64 (tag) ":" hex64 (packet digest).
     WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw;

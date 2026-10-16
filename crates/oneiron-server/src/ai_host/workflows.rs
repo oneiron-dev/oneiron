@@ -5,6 +5,9 @@
 //! (recovery). A step whose leaf is scheduled or backing off has no signal
 //! of its own, so while any workflow is open but waiting the pump also
 //! re-checks on a slow timer; with nothing open it only waits for a signal.
+//! Each pass also resumes a TASK's attempts held while its comment was
+//! unattached, once the comment is back (OF-368); a reattach signals no
+//! attempt, so while any is held the timer runs too.
 //! A failed step goes to the engine's failure ladder ([`super::step_failure`]).
 //! A metered leaf with no spend left under its lease's cap stops before its
 //! model call (OF-532); the engine pump settles each leaf's lease.
@@ -110,7 +113,8 @@ fn pump(
 }
 
 /// Runs every open workflow as far as it will go. Returns whether any
-/// workflow is still open (and so may need a timed re-check).
+/// workflow is still open, a wave plan is pending, or any attempt is still
+/// held for an unattached comment (and so may need a timed re-check).
 fn pump_once(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
@@ -118,6 +122,13 @@ fn pump_once(
     status: &StatusCell,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
+    let held = match vault.release_annotation_holds() {
+        Ok(sweep) => sweep.held > 0,
+        Err(error) => {
+            tracing::warn!(%error, "annotation hold release failed");
+            true
+        }
+    };
     if !*stopped.borrow() {
         super::waves::run_once(runtime, vault, runner, status)?;
     }
@@ -222,7 +233,7 @@ fn pump_once(
                     | oneiron::attempt_queue::AttemptState::Leased
             )
     });
-    Ok(wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
+    Ok(held || wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
 }
 
 fn now_secs() -> u64 {

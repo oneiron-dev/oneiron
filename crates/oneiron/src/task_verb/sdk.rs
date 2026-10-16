@@ -93,6 +93,34 @@ pub struct RoomClaimRequest {
     pub room_ref: String,
     pub turn_ref: String,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRefRequest {
+    pub project_ref: String,
+}
+/// `vault.projects.goal.dismiss`'s input: the proposal one tradeoff question
+/// made, under the goal claim the caller saw in force.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGoalDismissRequest {
+    pub project_ref: String,
+    pub expected_goal_ref: String,
+    pub question_digest: String,
+}
+/// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
+/// wrote nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectGoalDismissReceipt {
+    pub dismissed: bool,
+}
+/// `vault.projects.route_tradeoff`'s input: the project TASK to ask on and
+/// the skill proposal whose tradeoff question it carries.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectTradeoffRouteRequest {
+    pub task_ref: String,
+    pub proposal_ref: String,
+}
 /// `vault.rooms.host`: the room, and the live session whose participants
 /// count as present beside the caller.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -214,6 +242,7 @@ pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_host::*;
 pub use super::sdk_self::*;
+pub use super::sdk_shared::*;
 
 /// `vault.writes.pending`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
