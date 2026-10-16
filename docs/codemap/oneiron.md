@@ -1112,7 +1112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/credential_door/door_credential.rs` | src | s | 10 crate-vis | — | DoorCredential attenuation, lifetime math, and floor-naming evaluation |
 | `src/credential_door/door_policy.rs` | src | m | 18 crate-vis | — | Policy model: effectors, dials, floors, merge rules, and map helpers |
 | `src/credential_door/door_service.rs` | src | s | 11 crate-vis | — | CredentialDoorService: checkout admission and pre-receive scanning |
-| `src/credential_door/door_types.rs` | src | m | 24 crate-vis | — | Door constants, floor names and prefixes, error type, and small naming helpers |
+| `src/credential_door/door_types.rs` | src | m | 25 crate-vis | — | Door constants, floor names and prefixes, error type, and small naming helpers |
 | `src/credential_door/mod.rs` | src | s | 6 crate-vis | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `src/credential_door/tests.rs` | test | L | — | — | Checkout receive-pack, catastrophe policy, closed scope, and pre-receive scan laws |
 | `src/credential_door/verb_class.rs` | src | s | 4 crate-vis | — | Registered verb classes for the credential door |
@@ -2140,17 +2140,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
 | `src/origin/smart_http/advertise.rs` | src | m | 6 crate-vis | — | The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy |
 | `src/origin/smart_http/advertise_tests.rs` | test | m | — | — | Advertisement gate and stock-client roundtrip tests, plus the LFS attach/detach landing tests and the room… |
+| `src/origin/smart_http/bounds.rs` | src | s | 2 struct · 5 fn · 1 const | ExchangeBounds, ScanBounds | What one served exchange may cost the machine: how long it may sit idle, how long a push waits for its… |
 | `src/origin/smart_http/cgi_finish.rs` | src | s | 3 crate-vis | — | CGI response framing, observed-ref narrowing, and the exchange-to-report landing commit |
 | `src/origin/smart_http/checkout_tests.rs` | test | m | — | — | Stock Git checkout-to-door round trip with a live epoch-fenced lease |
 | `src/origin/smart_http/door.rs` | src | s | 1 struct · 1 enum · 5 fn · 3 crate-vis | DoorAdmissionStamp, DoorSeam | The door seam: admission stamp, the always-present hook trait with its noop default and landed wiring, and… |
 | `src/origin/smart_http/door_serve_tests.rs` | test | m | — | — | Serve command and door tests: closed env/argv, vetted hook, unlandable names, framed blobs, coordinator… |
-| `src/origin/smart_http/door_window.rs` | src | m | 1 struct · 1 enum · 1 fn · 10 crate-vis | DoorWindowReport, DoorWindowVerdict | The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish |
+| `src/origin/smart_http/door_window.rs` | src | m | 1 struct · 1 enum · 1 fn · 9 crate-vis | DoorWindowReport, DoorWindowVerdict | The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish |
 | `src/origin/smart_http/epoch_tests.rs` | test | m | — | — | Epoch-bound receive-pack admission, landing and crash recovery |
 | `src/origin/smart_http/evidence.rs` | src | m | 4 struct · 1 fn · 16 crate-vis | ObservedRef, PackStats, ReceivePackOutcome, RefUpdate | Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the… |
 | `src/origin/smart_http/exchange_idle.rs` | src | s | 9 crate-vis | — | An exchange's idle limit: a clock of the last byte it moved in either direction, the request body and… |
 | `src/origin/smart_http/exchange_tests.rs` | test | m | 1 crate-vis | — | One exchange's lifetime: a push whose client is gone before its response begins, or whose exchange unwinds… |
 | `src/origin/smart_http/history_scan_tests.rs` | test | m | — | — | The door scans every blob a push makes reachable, not only the tip diff (H263): a secret one commit adds and… |
-| `src/origin/smart_http/hooks.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | DoorHooksDir | The per-request door-owned hook directory and the vetted pre-receive script it carries |
+| `src/origin/smart_http/hooks.rs` | src | m | 1 struct · 2 fn · 7 crate-vis | DoorHooksDir | The per-request door-owned hook directory and the vetted pre-receive script it carries |
 | `src/origin/smart_http/intent.rs` | src | m | 1 struct · 1 enum · 1 fn · 13 crate-vis | ReceivePackRefResult, ReceivePackRefStatus | The crash-durable per-ref intent journal and its reconcile/resume path |
 | `src/origin/smart_http/intent_recovery_tests.rs` | test | m | — | — | Crash/recovery contract: pre-outcome crash, declined effects, partial resume, supersede, delete-only… |
 | `src/origin/smart_http/landing.rs` | src | m | 2 struct · 1 enum · 3 fn | ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding | The single-writer landing: apply path, per-ref publication fan-out, and wire-outcome mapping |
@@ -2158,12 +2159,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/landing_tests.rs` | test | m | — | — | Landing and attribution tests: unauthenticated push, delete-only pin, secret scan, sync-plane silence… |
 | `src/origin/smart_http/maintain.rs` | src | m | 1 struct · 1 fn · 1 const | ServedRepositoryMaintenance | Maintenance of the served repositories |
 | `src/origin/smart_http/maintain_tests.rs` | test | m | — | — | Done-means for served repository maintenance: a repository past git's own threshold is maintained; one a… |
-| `src/origin/smart_http/mod.rs` | src | s | 10 re-export · 1 crate-vis | — | Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908) |
-| `src/origin/smart_http/paths.rs` | src | s | 3 fn · 11 const · 19 crate-vis | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
+| `src/origin/smart_http/mod.rs` | src | s | 11 re-export · 1 crate-vis | — | Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908) |
+| `src/origin/smart_http/paths.rs` | src | s | 3 fn · 11 const · 18 crate-vis | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
 | `src/origin/smart_http/push_cert_tests.rs` | test | s | — | — | Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs… |
 | `src/origin/smart_http/recreate_tests.rs` | test | m | — | — | A ref deleted and pushed again at a tip it was already published at lands on that earlier publication: the… |
 | `src/origin/smart_http/scan_cap_tests.rs` | test | s | — | — | No origin scan refuses for how many rows it reads (rule 5): a repository keeps taking pushes, advertisements… |
-| `src/origin/smart_http/serve.rs` | src | m | 2 struct · 1 trait · 5 fn · 4 crate-vis | ExchangeBounds, ServeReport, ServeSink | One-request orchestration: coordinator lock, reconcile, threaded exchange, finish |
+| `src/origin/smart_http/serve.rs` | src | m | 1 struct · 1 trait · 5 fn · 4 crate-vis | ServeReport, ServeSink | One-request orchestration: coordinator lock, reconcile, threaded exchange, finish |
 | `src/origin/smart_http/serve_cmd.rs` | src | m | 3 struct · 12 fn · 7 crate-vis | ServeChild, ServeCommand, ServeRequest | The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle |
 | `src/origin/smart_http/tests.rs` | test | m | 29 crate-vis | — | Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin |
 | `src/origin/tree.rs` | src | s | 1 struct · 1 fn | OriginTreeFile | Bounded, byte-preserving projection of Git trees |
