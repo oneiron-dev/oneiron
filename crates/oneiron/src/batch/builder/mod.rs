@@ -121,12 +121,15 @@ impl<'a> BatchBuilder<'a> {
     /// Stamps `id`'s Rule A birth envelope (`made_by`) in the transaction
     /// that applies this batch, after every op: the row must be live then.
     /// Birth is immutable, so a second, different envelope refuses the batch.
+    /// `None` stamps nothing: the door has no birth it can name.
     pub(crate) fn made_by(
         mut self,
         id: &EntityId,
-        birth: crate::provenance::birth::RowBirth,
+        birth: Option<crate::provenance::birth::RowBirth>,
     ) -> Self {
-        self.births.push((*id, birth));
+        if let Some(birth) = birth {
+            self.births.push((*id, birth));
+        }
         self
     }
 

@@ -9,6 +9,8 @@ use super::side_keys::HexPair;
 use super::sync_rows::{EntityIdWire, NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
 use super::{NoteEdit, NoteEditOutcome, NotePin};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
@@ -375,13 +377,19 @@ fn propose_claim(
     } else {
         ClaimSource::Generated
     };
+    let actor = WriteActor::new(memory.actor(), memory.actor_class());
     let envelope = WriteEnvelope::new(
-        WriteActor::new(memory.actor(), memory.actor_class()),
+        actor,
         source,
         WriteProvenance::new(rmpv::Value::from("note.propose_claim"))?,
         ClaimApprovalStatus::Proposed,
     );
     let now = memory.vault().now_recorded_at();
+    // The proposal is made from the NOTE at the version its edit names.
+    let base: &[u8] = match &op.change {
+        NoteChange::Edit { base, .. } => base,
+        NoteChange::Cite { .. } | NoteChange::SetTitle { .. } => &[],
+    };
     memory
         .vault()
         .batch_in()
@@ -394,6 +402,17 @@ fn propose_claim(
                 end: now,
             },
             now,
+        )
+        .made_by(
+            &id,
+            RowBirth::written(
+                actor,
+                MadeByClass::of_source(source),
+                "note.propose_claim",
+                &[note],
+                &[base],
+                now,
+            ),
         )
         .apply_recording_gate_decisions(txn)?;
     let claim = memory

@@ -7,6 +7,8 @@ use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
 };
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -320,6 +322,15 @@ impl Vault {
                 &pointer,
             )?;
 
+            stamp_document_birth(
+                &self.store,
+                txn,
+                entity,
+                birth_actor,
+                header.occurred_start,
+                "entity_doc.migrate_text",
+            )?;
+
             let mut h = Head {
                 entity: entity.to_hex(),
                 incarnation: EntityId::now().to_hex(),
@@ -332,6 +343,27 @@ impl Vault {
         })?;
         registry.remove(entity);
         Ok(())
+    }
+}
+
+/// Rule A at a document birth: the row's birth is the birth actor and time
+/// its first commit records, unless the door that wrote the row stamped one.
+/// Only a person's birth is named here; anyone else's names no input, so it
+/// stays unknown.
+pub(super) fn stamp_document_birth(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    actor: WriteActor,
+    at: u64,
+    door: &str,
+) -> Result<()> {
+    let class = MadeByClass::of_writer(actor.actor_class());
+    match RowBirth::written(actor, class, door, &[], &[], at) {
+        Some(birth) => {
+            crate::provenance::birth::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
+        }
+        None => Ok(()),
     }
 }
 
