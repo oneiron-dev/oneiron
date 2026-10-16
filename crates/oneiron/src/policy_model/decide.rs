@@ -364,10 +364,12 @@ pub(super) async fn safeguard_verdict(
     let violation = match decided {
         Reading::Unusable => return Ok(skipped(PolicySkipReason::ResponseUnusable, audit)),
         Reading::Clean => None,
-        Reading::Violation { label, probability } => match resolve_violation(prompt, plane, label) {
-            Ok((decision, category)) => Some((label, decision, category, probability)),
-            Err(_) => return Ok(skipped(PolicySkipReason::ResponseUnusable, audit)),
-        },
+        Reading::Violation { label, probability } => {
+            match resolve_violation(prompt, plane, label) {
+                Ok((decision, category)) => Some((label, decision, category, probability)),
+                Err(_) => return Ok(skipped(PolicySkipReason::ResponseUnusable, audit)),
+            }
+        }
     };
     if prompt.output_contract == PolicyOutputContract::RationaleJson {
         let label = violation.as_ref().and_then(|(label, ..)| *label);

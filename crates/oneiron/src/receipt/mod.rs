@@ -40,8 +40,10 @@ pub use self::call::{
 };
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
-    ContextReceiptFields, append_context_receipt_fields, append_pack_attribution_fields,
-    append_pack_manifest_fields, append_task_type_fields, memories_state_ref,
+    ContextReceiptFields, FIELD_LEARNING_DECIDED_BY, FIELD_LEARNING_PATTERN,
+    FIELD_LEARNING_TEAM_REF, append_context_receipt_fields, append_pack_attribution_fields,
+    append_pack_manifest_fields, append_task_type_fields, append_team_receipt_fields,
+    memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,

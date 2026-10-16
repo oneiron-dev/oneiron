@@ -19,7 +19,9 @@ use super::admission::{PACK_CANDIDATE, pack_permissions};
 use super::setup::{PackSetup, PackSetupConnection, PackSetupSecret};
 use super::{PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource, invalid};
 use crate::consent::AuthenticatedOwner;
-use crate::secret_custody::{SecretCustodyStatus, read_secret_custody_in_txn, resolve_secret_ref_in_txn};
+use crate::secret_custody::{
+    SecretCustodyStatus, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault, error::Result};
@@ -161,7 +163,9 @@ pub enum PackSetupCheck {
         checked_at: u64,
     },
     /// A grant, credential or key moved after the check.
-    Stale { checked_at: u64 },
+    Stale {
+        checked_at: u64,
+    },
 }
 
 /// One owner answer. A credential's value never passes here: it goes to the
@@ -182,7 +186,10 @@ pub enum PackSetupAnswer {
     },
     /// A registered connector key governs the connection; its real
     /// qualification becomes the connection's check.
-    BindKey { connection: String, key: String },
+    BindKey {
+        connection: String,
+        key: String,
+    },
 }
 
 /// One session's exact frame, read in one snapshot: the receipt, the live
@@ -370,10 +377,7 @@ impl Vault {
                 .ok_or_else(|| invalid("no source of this pack has that content hash"));
         }
         let mut found = None;
-        for (seen, entry) in PACK_CANDIDATE
-            .iter_from(&self.store, txn, &[])?
-            .enumerate()
-        {
+        for (seen, entry) in PACK_CANDIDATE.iter_from(&self.store, txn, &[])?.enumerate() {
             if seen >= MAX_CANDIDATE_SCAN {
                 return Err(invalid("candidate pack catalog exceeds bound"));
             }

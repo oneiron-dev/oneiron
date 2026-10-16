@@ -14,7 +14,7 @@ use super::{
     PeerInput, PeerOutcome, PeerResult, Reply, Request, decode, encode, exchange,
 };
 use crate::error::HostError;
-use crate::handlers::{AskHandlers, AskRequest, Answered, HandlerScope};
+use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
 use crate::outcome::{OrganOutcome, OrganOutput, OutputBytes};
 use crate::spec::{FetchGrant, LentInput, OrganCall, OrganInput};
 
@@ -305,8 +305,6 @@ fn run_handler(
         let _scope = HandlerScope::enter();
         handler.answer(&request)
     };
-    let signed = signing
-        .into_inner()
-        .unwrap_or_else(PoisonError::into_inner);
+    let signed = signing.into_inner().unwrap_or_else(PoisonError::into_inner);
     (answered, signed)
 }

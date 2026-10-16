@@ -16,9 +16,9 @@ mod standing_tests;
 
 pub(crate) use arrival::project_arrivals_in_txn;
 pub use graph_ask::{
-    GraphAnswerer, GraphAskFailure, GraphAskResult, GraphContextSource, GraphPrediction,
-    GraphTypeSelection, GraphUnitContext, run_graph_ask, run_graph_ask_by_type,
-    select_graph_units_by_type,
+    GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,
+    GraphDecision, GraphPrediction, GraphTypeSelection, GraphUnitContext, run_graph_ask,
+    run_graph_ask_by_type, run_graph_ask_receipted, select_graph_units_by_type,
 };
 pub use health_ask::{
     HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
@@ -28,7 +28,8 @@ pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
 pub use refresh::{
-    RefreshBatch, RefreshFailure, answer_records, refresh_due_questions, refresh_question,
+    RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
+    refresh_due_questions_with, refresh_question,
 };
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub use store::{create_question, edit_question, pause_question, read_question};
