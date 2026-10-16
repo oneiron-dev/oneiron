@@ -6,6 +6,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.memory.diary", post(self_memory_diary))
         .route("/self.memory.diary.reads", post(self_memory_diary_reads))
         .route("/self.memory.diary.review", post(self_memory_diary_review))
+        .route("/self.memory.diary.query", post(self_memory_diary_query))
         .route("/cancel", post(cancel))
         .route("/steer", post(steer))
         .route("/describe", post(describe))
@@ -26,6 +27,34 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.weave.report", post(vault_weave_report))
         .route("/vault.weave.digest", post(vault_weave_digest))
         .route("/vault.packs.put", post(vault_packs_put))
+        .route(
+            "/vault.shared.propose_delete",
+            post(vault_shared_propose_delete),
+        )
+        .route(
+            "/vault.shared.propose_transfer",
+            post(vault_shared_propose_transfer),
+        )
+        .route(
+            "/vault.shared.propose_remove_owner",
+            post(vault_shared_propose_remove_owner),
+        )
+        .route("/vault.shared.execute", post(vault_shared_execute))
+        .route("/vault.shared.receipt", post(vault_shared_receipt))
+        .route("/vault.shared.outcomes", post(vault_shared_outcomes))
+        .route("/vault.shared.deletion", post(vault_shared_deletion))
+        .route("/vault.members.add", post(vault_members_add))
+        .route("/vault.members.change", post(vault_members_change))
+        .route("/vault.members.remove", post(vault_members_remove))
+        .route("/vault.members.leave", post(vault_members_leave))
+        .route(
+            "/vault.authority.handoff_alarms",
+            post(vault_authority_handoff_alarms),
+        )
+        .route(
+            "/vault.authority.handoff_alarms.acknowledge",
+            post(vault_authority_handoff_alarms_acknowledge),
+        )
         .route("/vault.lenses.propose", post(vault_lenses_propose))
         .route("/vault.lenses.activate", post(vault_lenses_activate))
         .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
@@ -247,6 +276,21 @@ async fn self_memory_diary_review(
         class,
         "self.memory.diary.review",
         value,
+    )?))
+}
+async fn self_memory_diary_query(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "self.memory.diary.query")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("self.memory.diary.query", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::self_memory_diary_query(&server, &auth, facade_input(value)?).await?,
     )?))
 }
 async fn cancel(
@@ -692,6 +736,210 @@ async fn vault_packs_put(
     oneiron::task_verb::sdk::validate_input("vault.packs.put", &value)?;
     Ok(Json(facade_output(
         super::host_doors::vault_packs_put(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_shared_propose_delete(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shared.propose_delete")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.propose_delete", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_shared_propose_delete(&server, &auth, facade_input(value)?)
+            .await?,
+    )?))
+}
+async fn vault_shared_propose_transfer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shared.propose_transfer")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.propose_transfer", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_shared_propose_transfer(&server, &auth, facade_input(value)?)
+            .await?,
+    )?))
+}
+async fn vault_shared_propose_remove_owner(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shared.propose_remove_owner")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.propose_remove_owner", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_shared_propose_remove_owner(&server, &auth, facade_input(value)?)
+            .await?,
+    )?))
+}
+async fn vault_shared_execute(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shared.execute")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.execute", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_shared_execute(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_shared_receipt(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shared.receipt")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.receipt", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_shared_receipt(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_shared_outcomes(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shared.outcomes")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.outcomes", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_shared_outcomes(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_shared_deletion(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shared.deletion")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.deletion", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_shared_deletion(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_members_add(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.add")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.add", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_members_add(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_members_change(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.change")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.change", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_members_change(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_members_remove(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.remove")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.remove", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_members_remove(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_members_leave(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.leave")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.leave", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_members_leave(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_authority_handoff_alarms(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.authority.handoff_alarms")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.authority.handoff_alarms", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_authority_handoff_alarms(&server, &auth, facade_input(value)?)
+            .await?,
+    )?))
+}
+async fn vault_authority_handoff_alarms_acknowledge(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.authority.handoff_alarms.acknowledge")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.authority.handoff_alarms.acknowledge", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_authority_handoff_alarms_acknowledge(
+            &server,
+            &auth,
+            facade_input(value)?,
+        )
+        .await?,
     )?))
 }
 async fn vault_lenses_propose(

@@ -31,6 +31,7 @@ report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+selfMemoryDiaryQuery(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
@@ -51,6 +52,19 @@ vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultSharedProposeDelete(input: unknown): unknown
+vaultSharedProposeTransfer(input: unknown): unknown
+vaultSharedProposeRemoveOwner(input: unknown): unknown
+vaultSharedExecute(input: unknown): unknown
+vaultSharedReceipt(input: unknown): unknown
+vaultSharedOutcomes(input: unknown): unknown
+vaultSharedDeletion(input: unknown): unknown
+vaultMembersAdd(input: unknown): unknown
+vaultMembersChange(input: unknown): unknown
+vaultMembersRemove(input: unknown): unknown
+vaultMembersLeave(input: unknown): unknown
+vaultAuthorityHandoffAlarms(input: unknown): unknown
+vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
