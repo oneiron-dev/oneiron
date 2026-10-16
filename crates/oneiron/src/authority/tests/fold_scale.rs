@@ -125,7 +125,7 @@ pub(super) fn vault_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         vouched: BTreeSet::new(),
         unvouched: false,
         policy: AuthorityObservationPolicy {
-            log_fold_memory_floor_bytes: u64::MAX,
+            log_fold_memory_floor_bytes: Some(u64::MAX),
             ..AuthorityObservationPolicy::default()
         },
     };
