@@ -19,7 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine.rs` | src | m | 1 struct · 1 fn · 8 const · 1 re-export · 1 crate-vis | FormualizerEngine | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `src/error.rs` | src | s | 1 enum · 1 fn · 1 type | FormulaError | Typed failures for the formula crate |
 | `src/lib.rs` | src | s | 6 mod · 7 re-export | — | In-process XLSX formula recalculation, the default of the edit round trip |
-| `src/links.rs` | src | L | 7 crate-vis | — | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |
+| `src/links.rs` | src | L | 8 crate-vis | — | Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the… |
 | `src/measure.rs` | src | m | 4 struct · 3 fn · 1 const | CaseResult, CorpusCase, CorpusReport, MeasureOptions | Step-19 corpus runner: honest per-case results over the pinned 834 cases |
 | `src/routing.rs` | src | s | 2 fn · 1 re-export | — | External links on the precision fallback's route |
 | `src/workbook.rs` | src | L | 1 struct · 1 fn · 3 crate-vis | WorkbookRecalc | Recalculate a local XLSX through the fork's retained cache writer |

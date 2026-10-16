@@ -26,7 +26,7 @@ pub use self::off_record::OffRecordError;
 pub use self::record::RecordError;
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
-pub use self::secret::SecretError;
+pub use self::secret::{KitRecord, SecretError};
 pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem};
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
@@ -88,6 +88,7 @@ pub enum ErrorKind {
     InvalidConsentEffectFacts,
     ConsentOwnerNotAuthenticated,
     ConsentUnauthenticatedActor,
+    ConsentGuestNotRecorded,
     ConsentCatastropheNotRememberable,
     ConsentGrantNotFound,
     ConsentGrantRevoked,
@@ -250,6 +251,9 @@ pub enum ErrorKind {
     InvalidSecretLeaseBody,
     InvalidSecretRotationBody,
     TaintedArtifactStale,
+    WorldKeyRefused,
+    KeystoreUnavailable,
+    UnverifiedKitRestore,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
     MicroVmOverlayError,
@@ -285,6 +289,7 @@ pub enum ErrorKind {
     GitHttpRepositoryBusy,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
+    OriginPublicationBeyondOwner,
     VaultCleanupRestoreNotArchived,
     VaultCleanupArchiveMarkerUndecodable,
     VaultCleanupProposalNotFound,

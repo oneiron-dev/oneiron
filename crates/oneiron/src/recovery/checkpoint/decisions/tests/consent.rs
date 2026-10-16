@@ -327,7 +327,7 @@ pub(super) fn booking_publications() -> Result<Case> {
 /// again, giving the other its autonomy back.
 pub(super) fn principal_autonomy() -> Result<Case> {
     let (dir, vault) = open_vault();
-    let owner = person(&vault, 0x71)?;
+    let owner = vault.ensure_embedded_owner_actor().map_err(invalid)?;
     let (sora, rin) = (person(&vault, 0x72)?, person(&vault, 0x73)?);
     let owner = vault.authenticate_owner(
         owner,

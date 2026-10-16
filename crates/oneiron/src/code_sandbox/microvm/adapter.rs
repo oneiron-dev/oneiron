@@ -143,7 +143,7 @@ impl MicroVmSandboxAdapter {
 
 impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
     fn read_file(&self, call: SandboxReadFile) -> Result<SandboxFileRead> {
-        let host_path = self.mounts.resolve_host_path(&call.path);
+        let host_path = self.mounts.resolve_host_path(&call.path)?;
         // Confinement walk: the OS path resolver follows intermediate symlinks,
         // so a symlinked directory under the mount root would smuggle host
         // bytes from outside it — the overlay walker refuses symlinks per
