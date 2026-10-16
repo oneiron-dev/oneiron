@@ -200,6 +200,33 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         owner.revalidate_in_txn(self, txn)?;
+        self.write_policy_manifest_in_txn(txn, id, data, now)
+    }
+
+    /// [`Self::write_owner_policy_manifest_in_txn`] for a door whose own check,
+    /// in this transaction, found `holder`'s actor among the named holders of
+    /// the change it writes: a live Owner, or an Admin or Delegate whose
+    /// Owner-minted grant names the exact target. The grant is the authority,
+    /// so the proof takes the person tier.
+    pub(crate) fn write_holder_policy_manifest_in_txn(
+        &self,
+        holder: &AuthenticatedOwner,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<()> {
+        holder.revalidate_person_in_txn(self, txn)?;
+        self.write_policy_manifest_in_txn(txn, id, data, now)
+    }
+
+    fn write_policy_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<()> {
         // An optional notification table is made explicit on admission, so
         // an authenticated install is immediately editable by the owner.
         let data = super::default_manifest::with_default_owner_policy_notifications(data)?;

@@ -9,6 +9,8 @@ mod graph;
 #[cfg(feature = "sync")]
 pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
 pub(crate) mod topology;
+#[cfg(test)]
+pub(crate) use admission::stored_body_pin_for_test;
 pub(crate) use admission::{
     guard_record_put, guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
     pin_membership, pin_typed_record, room_turn_owner, validate_local_membership,

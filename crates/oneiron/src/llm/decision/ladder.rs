@@ -92,7 +92,7 @@ impl DecisionProvider for RuleDecisionProvider {
     }
 }
 
-/// Host adapter for local head, Jev (SystemOne), or big model. Model access,
+/// Host adapter for the local head, the System One rung or the big model. Model access,
 /// budget admission, egress, and evidence reads stay with the host.
 pub trait DecisionModel: Send + Sync {
     fn decide(
@@ -153,7 +153,7 @@ pub trait HumanDecisionQueue: Send + Sync {
 pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
-    pub jev: Option<&'a dyn DecisionProvider>,
+    pub system_one: Option<&'a dyn DecisionProvider>,
     pub big: Option<&'a dyn DecisionProvider>,
     pub human: &'a dyn HumanDecisionQueue,
     pub human_pin: ProviderPin,
@@ -243,7 +243,7 @@ impl DecisionLadder<'_> {
         let provider = match rung {
             DecisionRung::Rule => self.rule,
             DecisionRung::Local => self.local,
-            DecisionRung::SystemOne => self.jev,
+            DecisionRung::SystemOne => self.system_one,
             DecisionRung::Big => self.big,
             DecisionRung::Human => None,
         }

@@ -28,7 +28,10 @@ pub(super) fn standing_outbound_grant_for_effect(
     } else {
         Vec::new()
     };
-    if candidate_ids.is_empty() {
+    // A scoped MCP call is decided by its required grant alone. Any other
+    // required grant is a booking-page grant the dispatch door bound to this
+    // invite: it narrows which page grant may match, never the actor's others.
+    if candidate_ids.is_empty() || effect.scoped_mcp_call.is_none() {
         let candidate_principals = if effect.scoped_mcp_call.is_some() {
             verified_standing_outbound_grant_principal(effect)
                 .into_iter()
@@ -84,6 +87,19 @@ pub(super) fn standing_outbound_grant_for_effect(
                         }
                     },
                 ) == ScopedMcpConsentDecision::AutoFire
+            {
+                return Ok(Some((id, grant)));
+            }
+            continue;
+        }
+        // A booking-page grant covers only the invite the dispatch door's
+        // calendar admission bound to it and named here, never a verb.
+        if matches!(
+            grant.scope,
+            crate::outbound_grant::StandingOutboundGrantScope::BookingPageInvites { .. }
+        ) {
+            if required_grant_id == Some(id)
+                && effect.verb.trim() == crate::calendar::CALENDAR_INVITE_VERB
             {
                 return Ok(Some((id, grant)));
             }

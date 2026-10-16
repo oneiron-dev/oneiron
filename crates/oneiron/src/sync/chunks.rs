@@ -107,6 +107,12 @@ pub fn serve_chunk_request(
     super::selector::authorize_sync_selector(vault, scope, &selector)?;
     let oid = LfsOid::from_bytes(request.oid);
     let object = vault.lfs_object(oid)?.ok_or_else(invalid)?;
+    // A manifest no frame carries is never served (its own request fails at
+    // the frame), so a want for its object never reads it whole either: an
+    // exchange's working set stays within the frames its server counted.
+    if !row_fits_a_frame(vault, &object.asset_id)? {
+        return Err(invalid());
+    }
     // Use the standing entity selector, not a second interpretation of bands
     // or empty axes. No fabricated facet edge can widen a manifest's scope.
     let source = create_window_doc("lfs-chunk-scope", &WindowKey::new("1970-01"));
@@ -236,6 +242,18 @@ fn respond(vault: &Vault, request: ChunkSyncRequest) -> Result<Vec<u8>> {
         ChunkSyncResponse::Manifest(manifest.encode()?)
     };
     encode(&response)
+}
+
+/// Whether `id`'s stored row fits one frame, judged on the row in place,
+/// without copying it.
+fn row_fits_a_frame(vault: &Vault, id: &EntityId) -> Result<bool> {
+    use crate::store::ManifestDbs as _;
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .entities()
+        .get(&txn, id.as_bytes())?
+        .is_some_and(|row| row.len() <= MAX_CHUNK_SYNC_FRAME))
 }
 
 /// Pulls an object through a bounded authenticated transport exchange. The HAVE

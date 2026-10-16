@@ -287,7 +287,8 @@ impl crate::Vault {
         now: u64,
         expires_at: u64,
     ) -> Result<EntityId> {
-        let holder_actor = holder.revalidate_in_txn(self, txn)?;
+        // Person tier, own holder check: the parent admin grant names this holder.
+        let holder_actor = holder.revalidate_person_in_txn(self, txn)?;
         let raw = self
             .get_raw_in(txn, &parent_grant_id)?
             .ok_or(Error::EntityNotFound)?;
