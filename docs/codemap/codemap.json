@@ -14684,7 +14684,7 @@
      "path": "src/deletion/derived_rows.rs",
      "purpose": "Rows a record feeds outside the generic index set, torn with the record",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -24015,7 +24015,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 184,
+      "mod": 185,
       "re-export": 72
      }
     },
@@ -41134,6 +41134,25 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "TypedBodyCommit",
+      "TypedBodyFork",
+      "TypedBodyHead",
+      "TypedBodyWriter",
+      "TypedForkState"
+     ],
+     "path": "src/typed_body.rs",
+     "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 11,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ActorBound"
      ],
      "path": "src/vault/actors_memory.rs",
@@ -45576,6 +45595,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "typed_body": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
+    },
     "vault": {
      "files": 29,
      "impl_vault": true,
@@ -45649,7 +45675,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2742,
+   "source_files": 2743,
    "test_files": 903
   },
   "oneiron-android": {
