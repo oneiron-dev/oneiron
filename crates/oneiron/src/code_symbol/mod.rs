@@ -1,8 +1,12 @@
 mod codec;
+mod document_view;
 mod keys;
 mod rust_source;
 mod semantic_diff;
 mod storage;
+pub use document_view::{
+    CodeAttributedChange, CodeUnitBlame, render_attributed_semantic_diff, render_op,
+};
 pub use semantic_diff::{
     CodeContentVersion, CodeSemanticChange, code_text_diff, render_code_semantic_diff,
     semantic_code_diff,
