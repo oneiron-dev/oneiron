@@ -7945,7 +7945,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Custody",
@@ -7958,7 +7958,7 @@
      "surface": {
       "crate-vis": 13,
       "enum": 3,
-      "fn": 16,
+      "fn": 19,
       "struct": 1
      }
     },
@@ -8311,7 +8311,20 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HttpGmailSendWire"
+     ],
+     "path": "src/channel_identity_provider/gmail/http.rs",
+     "purpose": "Production Gmail send wire: one POST to `users.messages.send` (OF-374)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GmailDelegatedAdapter",
@@ -8323,12 +8336,12 @@
       "GmailReadWire"
      ],
      "path": "src/channel_identity_provider/gmail/mod.rs",
-     "purpose": "Gmail/Workspace read-side adapter for `delegated_grant` rows",
+     "purpose": "Gmail/Workspace adapter for `delegated_grant` rows: reads, and (OF-374) member send-as through…",
      "surface": {
-      "const": 5,
+      "const": 6,
       "crate-vis": 5,
-      "fn": 17,
-      "re-export": 2,
+      "fn": 21,
+      "re-export": 4,
       "struct": 6,
       "trait": 1
      }
@@ -8345,6 +8358,28 @@
       "crate-vis": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "GmailReplyThread",
+      "GmailSendAuthority",
+      "GmailSendPlan",
+      "GmailSendSink",
+      "GmailSendWire",
+      "GmailSendWireError",
+      "GmailSentMessage"
+     ],
+     "path": "src/channel_identity_provider/gmail/send.rs",
+     "purpose": "Member send-as through a Gmail delegated row (OF-374)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 17,
+      "struct": 5,
+      "trait": 1
      }
     },
     {
@@ -8432,9 +8467,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/channel_identity_provider/member_mail.rs",
+     "purpose": "Member-mailbox send predicates (OF-374)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/channel_identity_provider/mod.rs",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
+      "crate-vis": 1,
       "mod": 4,
       "re-export": 5
      }
@@ -8450,7 +8496,7 @@
      "path": "src/channel_identity_provider/native_mail.rs",
      "purpose": "Native mail fulfillment adapter",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 7,
       "struct": 1,
@@ -10042,14 +10088,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 4,
-      "fn": 3
+      "crate-vis": 7,
+      "fn": 4
      }
     },
     {
@@ -10122,7 +10168,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 8,
       "re-export": 1,
       "struct": 1,
@@ -10197,6 +10243,7 @@
       "MemorySearchInput",
       "MemorySupersedeInput",
       "MemoryTimeRange",
+      "SkillCallInput",
       "TaskRefuseDomain",
       "TaskRefuseInput"
      ],
@@ -10205,7 +10252,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -10351,6 +10398,8 @@
       "SelfMemorySupersedeClaimCall",
       "SelfMemoryWriteFixtureCall",
       "SelfMemoryWriteResult",
+      "SelfSkillCall",
+      "SelfSkillCallResult",
       "SelfSpeechCall",
       "SelfSpeechResult",
       "SelfTaskRefusalResult",
@@ -10363,7 +10412,7 @@
       "const": 2,
       "enum": 6,
       "fn": 19,
-      "struct": 26,
+      "struct": 28,
       "trait": 2
      }
     },
@@ -12361,9 +12410,9 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -12507,17 +12556,50 @@
       "SlateDataClass",
       "SlateDisposition",
       "SlateDraftRow",
+      "SlateFacetNarrow",
+      "SlateHolderNarrow",
       "SlateOwnerOverride",
       "SlateRow",
       "SlateToolManifest"
      ],
      "path": "src/connector_key/slate.rs",
-     "purpose": "ARCH-0072 typed per-tool grant slates",
+     "purpose": "ARCH-0072 typed per-capability grant slates",
      "surface": {
-      "crate-vis": 4,
+      "const": 1,
+      "crate-vis": 10,
       "enum": 2,
-      "fn": 11,
-      "struct": 5
+      "fn": 27,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectorSlateDelta",
+      "ConnectorSlateDrafter",
+      "ConnectorSlateRedraft",
+      "SlatePastRulings",
+      "SlateTrait"
+     ],
+     "path": "src/connector_key/slate_draft.rs",
+     "purpose": "ARCH-0072's memory-informed drafter",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/slate_setting.rs",
+     "purpose": "The four capability settings at call time (DEC-0006 §MCP connector permissions)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -19071,13 +19153,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/host.rs",
      "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -25059,7 +25141,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 17,
+      "const": 18,
       "fn": 1,
       "struct": 1
      }
@@ -28412,7 +28494,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 10,
       "struct": 2
      }
@@ -46354,7 +46436,7 @@
     "channel_identity": {
      "files": 21,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)"
     },
@@ -46380,9 +46462,9 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 15,
+     "files": 18,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)"
     },
@@ -46541,7 +46623,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47675,9 +47757,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 79,
+   "over_bar": 83,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2873,
+   "source_files": 2878,
    "test_files": 903
   },
   "oneiron-android": {
