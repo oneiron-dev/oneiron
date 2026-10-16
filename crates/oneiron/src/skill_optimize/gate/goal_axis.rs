@@ -282,11 +282,14 @@ pub fn set_skill_edit_goal_axes(
     })
 }
 
+/// `measured` holds the axes a bound live report measured; each is taken as
+/// measured, never judged again.
 pub(super) fn score_goal_axes(
     scorer: &dyn HeldOutReplayNotes,
     before: &HeldOutReplayCase<'_>,
     after: &HeldOutReplayCase<'_>,
     definition: &GoalDefinition,
+    mut measured: BTreeMap<String, GoalAxisScore>,
 ) -> Result<BTreeMap<String, GoalAxisScore>> {
     let task_axes: Vec<_> = definition
         .axes
@@ -304,6 +307,10 @@ pub(super) fn score_goal_axes(
     }
     let mut scored = BTreeMap::new();
     for axis in &definition.axes {
+        if let Some(score) = measured.remove(&axis.name) {
+            scored.insert(axis.name.clone(), score);
+            continue;
+        }
         let (old, new) = if axis.name == HONESTY_AXIS {
             let honesty = super::measurement::measure_honesty(scorer, before, after)?;
             (honesty.before, honesty.after)

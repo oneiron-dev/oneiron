@@ -87,22 +87,12 @@ pub(super) fn finalize_job(
         }
         let mut finalized = 0u64;
         let mut completed: Vec<EntityId> = Vec::new();
-        for entry in vault
+        for id in vault
             .store
-            .type_index
-            .prefix_iter(&*wtxn, &[ENTITY_TYPE_REDACTION_AUDIT])?
+            .port_entity_ids_by_type(&*wtxn, ENTITY_TYPE_REDACTION_AUDIT, None)?
         {
-            let (type_key, _) = entry?;
-            if type_key.len() != 17 {
-                return Err(Error::CorruptedIndex("type index key"));
-            }
-            let id_bytes: [u8; 16] = type_key[1..17]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("type index key"))?;
-            let Some(raw) = vault
-                .store
-                .port_entity_raw(&*wtxn, &EntityId::from_bytes(id_bytes)?)?
-            else {
+            let id = id?;
+            let Some(raw) = vault.store.port_entity_raw(&*wtxn, &id)? else {
                 continue;
             };
             let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -145,7 +135,7 @@ pub(super) fn finalize_job(
                 continue;
             }
 
-            completed.push(EntityId::from_bytes(id_bytes)?);
+            completed.push(id);
         }
         // The single sanctioned mutation: monotone None→Some, envelope
         // preserved byte-exactly, body re-validated before the put.
@@ -340,20 +330,11 @@ pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
 
     let mut missing = 0u64;
     let mut undecodable = 0u64;
-    for entry in vault
+    for id in vault
         .store
-        .type_index
-        .prefix_iter(&rtxn, &[ENTITY_TYPE_REDACTION_AUDIT])?
+        .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_REDACTION_AUDIT, None)?
     {
-        let (type_key, _) = entry?;
-        if type_key.len() != 17 {
-            return Err(Error::CorruptedIndex("type index key"));
-        }
-        let id = EntityId::from_bytes(
-            type_key[1..17]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("type index key"))?,
-        )?;
+        let id = id?;
         let Some(raw) = vault.store.port_entity_raw(&rtxn, &id)? else {
             continue;
         };
