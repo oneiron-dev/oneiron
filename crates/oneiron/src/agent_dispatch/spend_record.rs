@@ -20,7 +20,9 @@ pub(super) const MAX_SPEND_DEPTH: usize = 256;
 
 /// A spend scope's id. A root scope's id is its launch id; a child scope's id
 /// is the child's attempt id, in lowercase hex.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct SpendScopeId(pub(super) String);
 
@@ -68,6 +70,22 @@ pub enum SpendState {
     Closed,
 }
 
+/// The payer's consent a root scope carries (OF-531): this PERSON was shown
+/// the root's cap and accepted it for this scope. Children inherit it by
+/// walking to their root; it is never copied. A cap, a scope id or an attempt
+/// id is never this evidence by itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpendPayer {
+    /// The PERSON whose funds the tree spends.
+    pub party: EntityId,
+    /// The actor that took the payer's yes: the payer's own PERSON, or an
+    /// actor anchored to it. Checked against the stored binding, never a label.
+    pub granted_by: EntityId,
+    /// When the payer accepted the cap, in host milliseconds.
+    pub at_ms: u64,
+}
+
 /// One node of a launch's lease tree.
 ///
 /// `cap_units` is a hard scope's cap, or what a soft scope holds from its
@@ -98,6 +116,10 @@ pub struct SpendScope {
     /// The AGENT_DEF this scope's settlement calibrates; `None` for a root or
     /// an inert workflow wrapper, which are not agents.
     pub agent: Option<EntityId>,
+    /// A root's payer consent (OF-531); `None` on every child, which reads its
+    /// root's, and on a root no payer accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<SpendPayer>,
 }
 
 impl SpendScope {

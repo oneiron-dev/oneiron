@@ -256,6 +256,8 @@ export class Oneiron {
       reply_strips: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as unknown),
       claim: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
+      join: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsJoin(input) as unknown),
+      consent: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsConsent(input) as unknown),
       host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
@@ -292,6 +294,9 @@ export class Oneiron {
     },
     hydrate: (input: Facade.HydrateRequest): {value: (Facade.EntityView)[]; narrowing: unknown} => this.#call(() => this.#client.vaultHydrate(input) as {value: (Facade.EntityView)[]; narrowing: unknown}),
     get: (input: Facade.EntityRequest): {value: Facade.EntityView | null; narrowing: unknown} => this.#call(() => this.#client.vaultGet(input) as {value: Facade.EntityView | null; narrowing: unknown}),
+    refs: {
+      resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRefsResolve(input) as unknown),
+    },
     search: {
       bm25: (input: Facade.QueryBm25Request): {value: (Facade.LexicalHit)[]; narrowing: unknown} => this.#call(() => this.#client.vaultSearchBm25(input) as {value: (Facade.LexicalHit)[]; narrowing: unknown}),
     },

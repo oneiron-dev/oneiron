@@ -642,6 +642,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_rooms_join(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.join")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.join", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_consent(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.consent")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.consent", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_projects_goal_revisions(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.projects.goal.revisions")?;
         let output = py
@@ -907,6 +921,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_refs_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.refs.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.refs.resolve", input))
             .map_err(raise)?;
         encode(&output)
     }

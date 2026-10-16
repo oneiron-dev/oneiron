@@ -1,6 +1,6 @@
 //! Board turn anchors reference one CRDT frontier; facts remain CLAIM rows.
 
-use super::claims::{PREDICATES, decode_value, sets, validate_board_claim, value};
+use super::claims::{PREDICATES, bases, decode_value, sets, validate_board_claim, value};
 use super::types::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
@@ -85,7 +85,7 @@ fn claim(
     }
     let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     validate_board_claim(&body)?;
-    let (_, writing_frontier) = decode_value(&body.value)?;
+    let (_, _, writing_frontier) = decode_value(&body.value)?;
     // Unchanged families reuse earlier claims. Authenticate each claim's
     // writing frontier at every read/write door, not the requesting turn.
     if CLAIM_FRONTIER.get(&vault.store, txn, id)? != Some(writing_frontier.0) {
@@ -103,10 +103,17 @@ fn id_from(bytes: &[u8]) -> Result<EntityId> {
     .map_err(Into::into)
 }
 
-fn selection_hash(items: &std::collections::BTreeSet<EntityId>) -> [u8; 32] {
+fn selection_hash(
+    items: &std::collections::BTreeSet<EntityId>,
+    base: Option<bool>,
+) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     for id in items {
         hash.update(id.as_bytes());
+    }
+    // One trailing byte: no run of 16-byte ids ends in it.
+    if let Some(base) = base {
+        hash.update(&[u8::from(base)]);
     }
     *hash.finalize().as_bytes()
 }
@@ -120,6 +127,7 @@ fn owner_key(owner: &EntityId) -> Result<ScopedReadActorKey> {
 fn validate_selection(selection: &BoardSelection) -> Result<()> {
     if !selection.active.is_subset(&selection.allowed)
         || !selection.default_on.is_subset(&selection.allowed)
+        || (selection.active_base || selection.default_on_base) && !selection.allowed_base
     {
         return Err(BoardHistoryError::InvalidSelection(
             "active and default_on must be subsets of allowed",
@@ -161,7 +169,8 @@ impl Vault {
     /// `worlds` is the world authority the board resolved: its allowed,
     /// default and active world ids become the selection's world tiers. A
     /// world `caller` cannot read is no document it was shown, so it carries
-    /// no history; base reality is no entity and has no slot.
+    /// no history. Base reality is no entity: each tier records it as its
+    /// own flag.
     ///
     /// `owner` must be `caller`'s own actor, and the TURN must carry it as
     /// the author its door stamped, so a reader of someone else's turn cannot
@@ -199,6 +208,9 @@ impl Vault {
             selection.allowed = readable(&worlds.allowed_set)?;
             selection.default_on = readable(&worlds.default_subset)?;
             selection.active = readable(&worlds.active_set)?;
+            selection.allowed_base = worlds.allowed_set.include_base();
+            selection.default_on_base = worlds.default_subset.include_base();
+            selection.active_base = worlds.active_set.include_base();
         }
         let served = memories.map_or_else(BTreeMap::new, |memories| {
             selection.served_revisions(memories)
@@ -293,23 +305,28 @@ impl Vault {
             LoroDoc::new()
         };
         let mut changes = Vec::new();
-        for (predicate, selected) in PREDICATES.iter().zip(sets(&input.selection)) {
+        let families = PREDICATES
+            .iter()
+            .zip(sets(&input.selection))
+            .zip(bases(&input.selection));
+        for ((predicate, selected), base) in families {
             let old_id = map_bytes(&doc, "claims", predicate)?
                 .map(|raw| id_from(raw.get(..16).ok_or(BoardHistoryError::MissingFrontier)?))
                 .transpose()?;
             if let Some(id) = old_id {
                 let (body, _) = claim(self, &txn, &id)?;
-                if decode_value(&body.value)?.0 == *selected {
+                let (items, recorded, _) = decode_value(&body.value)?;
+                if items == *selected && recorded == base {
                     continue;
                 }
-            } else if selected.is_empty() {
+            } else if selected.is_empty() && base != Some(true) {
                 continue;
             }
             let next = EntityId::now();
             let mut claim_ref = next.as_bytes().to_vec();
-            claim_ref.extend_from_slice(&selection_hash(selected));
+            claim_ref.extend_from_slice(&selection_hash(selected, base));
             map_insert(&doc, "claims", predicate, &claim_ref)?;
-            changes.push((*predicate, selected, old_id, next));
+            changes.push((*predicate, selected, base, old_id, next));
         }
         // Retained document pointers are CRDT map entries, updated only when
         // a text frontier changes. No board bytes or rendered text are stored.
@@ -375,7 +392,7 @@ impl Vault {
         let frontier = doc.oplog_frontiers().encode();
         let anchor_ref = reference(&input.owner, &frontier);
         let mut changed_claims = Vec::new();
-        for (predicate, selected, old, id) in changes {
+        for (predicate, selected, base, old, id) in changes {
             if let Some(old) = old {
                 let (mut previous, header) = claim(self, &txn, &old)?;
                 previous.valid_to = Some(input.at - 1);
@@ -393,7 +410,7 @@ impl Vault {
             let mut body = ClaimBody::new(
                 predicate,
                 ClaimSubject::Entity(input.owner),
-                value(selected, anchor_ref),
+                value(selected, base, anchor_ref),
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
@@ -511,14 +528,15 @@ impl Vault {
             .fork_at(&frontier)
             .map_err(|_| BoardHistoryError::MissingFrontier)?;
         let mut selected = Vec::new();
+        let mut base = Vec::new();
         for predicate in PREDICATES {
-            let items = match map_bytes(&doc, "claims", predicate)? {
+            let (items, flag) = match map_bytes(&doc, "claims", predicate)? {
                 None => Default::default(),
                 Some(raw) => {
                     let id = id_from(raw.get(..16).ok_or(BoardHistoryError::MissingFrontier)?)?;
                     let (body, header) = claim(self, &txn, &id)?;
-                    let items = decode_value(&body.value)?.0;
-                    if raw.get(16..) != Some(selection_hash(&items).as_slice()) {
+                    let (items, flag, _) = decode_value(&body.value)?;
+                    if raw.get(16..) != Some(selection_hash(&items, flag).as_slice()) {
                         return Err(BoardHistoryError::MissingFrontier);
                     }
                     if body.predicate != predicate
@@ -530,15 +548,19 @@ impl Vault {
                     {
                         return Err(BoardHistoryError::MissingFrontier);
                     }
-                    items
+                    (items, flag)
                 }
             };
             selected.push(items);
+            base.push(flag.unwrap_or(false));
         }
         let selection = BoardSelection {
             allowed: selected.remove(0),
             default_on: selected.remove(0),
             active: selected.remove(0),
+            allowed_base: base[0],
+            default_on_base: base[1],
+            active_base: base[2],
             pinned: selected.remove(0),
             top_snippet: selected.remove(0),
             index_only: Default::default(),

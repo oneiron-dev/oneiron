@@ -20,6 +20,7 @@ pub(crate) use coreference::share_consent_valid_at;
 mod grant;
 pub(crate) mod grant_policy;
 mod membership_gate;
+pub use membership_gate::MembershipStanding;
 pub use membership_gate::SharedVaultWrite;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
@@ -48,6 +49,7 @@ mod peer_authority;
 pub mod record_scope;
 mod relationships;
 mod stale;
+pub(crate) use stale::world_registered_to_pact_in;
 
 pub use self::coreference::{
     COREFERENCE_LINK_WEIGHT, CoreferenceStatus, coreference_share_consent,

@@ -663,6 +663,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_join(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.join", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_consent(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.consent", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_projects_goal_revisions(
         &self,
         input: serde_json::Value,
@@ -900,6 +912,12 @@ impl NativeClient {
     pub fn vault_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_refs_resolve(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.refs.resolve", input)
             .map_err(facade_error)
     }
     #[napi]
