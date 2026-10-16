@@ -4409,7 +4409,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -13583,6 +13583,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HookPin"
+     ],
+     "path": "src/context_board/hook_pins.rs",
+     "purpose": "Hook blocks on the board (ARCH-0080 §11, OI-1 = A)",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AssembledContext",
       "HydrationBudget",
       "NotificationItem",
@@ -13635,6 +13648,7 @@
      "path": "src/context_board/memories_frame.rs",
      "purpose": "Connects typed MEMORIES projections to the shared board frame and shed ladder",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -13656,6 +13670,7 @@
      "path": "src/context_board/memory_pins.rs",
      "purpose": "Explicit memory pins bypass query relevance and render shedding, never read authority",
      "surface": {
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -13667,7 +13682,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 7,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -20726,7 +20741,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -27801,7 +27816,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -35971,12 +35986,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SecretSight"
+     ],
+     "path": "src/secret_custody/masked_files.rs",
+     "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 11,
-      "re-export": 3
+      "crate-vis": 12,
+      "re-export": 4
      }
     },
     {
@@ -48042,7 +48071,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48791,7 +48820,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49157,7 +49186,7 @@
    },
    "over_bar": 100,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2964,
+   "source_files": 2966,
    "test_files": 903
   },
   "oneiron-android": {
