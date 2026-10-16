@@ -21,6 +21,9 @@ pub enum SelfCall {
     TasksAsk(Box<crate::task_verb::TaskAskSpec>),
     /// Requests a C9 wait for this handle, only at the caller's idle point.
     TasksWait(crate::task_verb::TaskAskHandle),
+    /// The agent's own refusal of the run's bound TASK, through her refusal
+    /// dial (OF-533). The TASK comes from the host binding.
+    TasksRefuse(SelfTaskRefuseCall),
     /// Fixture for `vault.search(...)`.
     MemorySearch(SelfMemorySearchCall),
     /// Internal fixture proving dispatcher-stamped writes use the batch/gate path.
@@ -78,6 +81,7 @@ impl SelfCall {
             Self::AgentsPut(_) => SelfEffect::AgentsPut,
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
+            Self::TasksRefuse(_) => SelfEffect::TasksRefuse,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
@@ -130,6 +134,8 @@ pub enum SelfEffect {
     AgentsSpawn,
     TasksAsk,
     TasksWait,
+    /// The agent's own refusal of its bound TASK (OF-533).
+    TasksRefuse,
     MemorySearch,
     MemoryWriteFixture,
     MemoryPutClaim,
@@ -171,6 +177,7 @@ impl SelfEffect {
             Self::AgentsPut => "vault.agents.put",
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
+            Self::TasksRefuse => "tasks.refuse",
             Self::MemorySearch => "self.memory.search",
             Self::MemoryWriteFixture => "self.memory.write_fixture",
             Self::MemoryPutClaim => "self.memory.put_claim",
@@ -209,6 +216,7 @@ impl SelfEffect {
             | Self::AgentsPut
             | Self::TasksAsk
             | Self::TasksWait
+            | Self::TasksRefuse
             | Self::MemorySearch
             | Self::MemoryWriteFixture
             | Self::MemoryPutClaim
@@ -503,6 +511,18 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// Whether a result the run retained stays on this device for the door's
+    /// caller now (DEC-0005), re-checked at each read of it: `rows` are the
+    /// rows the run was served producing it, `None` when one of its answers
+    /// was recorded with no row set. A door whose caller sits on this device
+    /// withholds nothing.
+    fn withholds_retained(
+        &self,
+        _rows: Option<&[EntityId]>,
+    ) -> std::result::Result<bool, AgentVerbRefusal> {
+        Ok(false)
+    }
 }
 
 /// One call a run serves itself, as its host door is asked about it.
@@ -545,6 +565,50 @@ pub enum SelfDispatchOutcome {
     AgentVerb(AgentVerbAnswer),
     /// A fold verb's answer, as JSON.
     Fold(String),
+    /// What the agent's dial made of her refusal.
+    TaskRefusal(SelfTaskRefusalResult),
+}
+
+/// `tasks.refuse(...)`. The reason stays the caller's string until the
+/// dispatcher resolves it against the vault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfTaskRefuseCall {
+    /// The TASK the guest named, if any; it must be the bound one.
+    pub task_ref: Option<EntityId>,
+    pub domain: crate::agent_def::RefusalDomain,
+    pub reason_ref: String,
+    pub at: u64,
+}
+
+/// What one self-refusal became.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfTaskRefusalResult {
+    pub task_ref: EntityId,
+    /// Where her dial sat; the outcome is the level's.
+    pub level: crate::agent_def::RefusalLevel,
+    /// A byte-identical retry answered by the first decision.
+    pub replay: bool,
+}
+
+impl SelfTaskRefusalResult {
+    /// Whether the refusal declined the TASK: the run does nothing more for it.
+    #[must_use]
+    pub const fn declined(&self) -> bool {
+        matches!(
+            self.level.outcome(),
+            crate::agent_def::RefusalOutcome::Decline
+        )
+    }
+
+    /// The outcome's wire word.
+    #[must_use]
+    pub const fn outcome_word(&self) -> &'static str {
+        match self.level.outcome() {
+            crate::agent_def::RefusalOutcome::Proceed => "proceed",
+            crate::agent_def::RefusalOutcome::Object => "object",
+            crate::agent_def::RefusalOutcome::Decline => "decline",
+        }
+    }
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.

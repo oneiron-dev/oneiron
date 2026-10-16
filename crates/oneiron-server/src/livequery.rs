@@ -170,10 +170,11 @@ fn bound_actor_class(auth: &CoreAuth) -> Result<oneiron::EdgeActorClass, AppErro
 pub(crate) fn residence_rpc(
     server: &crate::server::SyncServer,
     auth: &CoreAuth,
+    peer: oneiron::authority::PeerMachine,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
 ) -> Result<RpcReply, ProtocolError> {
-    residence::run(server, auth, request, index_cache)
+    residence::run(server, auth, peer, request, index_cache)
 }
 
 #[cfg(test)]

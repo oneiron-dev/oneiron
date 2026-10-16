@@ -8,5 +8,7 @@
   "default_type_prior": 0.5,
   "frequency_scale": 10,
   "diversity_scale": 3,
-  "recency_window_ms": 86400000
+  "recency_window_ms": 86400000,
+  "extraction_parallelism": 8,
+  "extraction_turns_per_child": 16
 }

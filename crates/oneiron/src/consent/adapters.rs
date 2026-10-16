@@ -55,11 +55,10 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
         }
         AccessGrantScope::CompanionProfile {
             person_ref,
-            persona_ref,
-        } => Ok(vec![
-            format!("person:{}", person_ref.to_hex()),
-            format!("persona:{}", persona_ref.to_hex()),
-        ]),
+            facet_ref,
+        } => Ok(std::iter::once(format!("person:{}", person_ref.to_hex()))
+            .chain(facet_ref.map(|facet_ref| format!("facet:{}", facet_ref.to_hex())))
+            .collect()),
         AccessGrantScope::Calendar { calendar_ref, rung } => Ok(vec![
             format!("calendar:{}", calendar_ref.to_hex()),
             format!("rung:{}", rung.as_str()),

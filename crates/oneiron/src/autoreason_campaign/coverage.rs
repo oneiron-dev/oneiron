@@ -167,7 +167,7 @@ impl CoverageFloorComparison {
         }
     }
 
-    fn score_case(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+    pub(crate) fn score_case(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         if self.before.matches(case) {
             Ok(1.0)
         } else if self.after.matches(case) {
@@ -242,6 +242,10 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         state: &serde_json::Value,
     ) -> Result<()> {
         self.inner.record_decision(question, decision, state)
+    }
+
+    fn coverage_floor(&self) -> Option<&CoverageFloorComparison> {
+        Some(self.comparison)
     }
 
     fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {

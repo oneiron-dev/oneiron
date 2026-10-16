@@ -16,6 +16,7 @@ mod criticality;
 mod execution;
 mod execution_binding;
 mod filters;
+pub mod retrieval_loop;
 mod scoped_channels;
 pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;

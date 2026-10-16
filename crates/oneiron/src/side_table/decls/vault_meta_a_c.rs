@@ -13,6 +13,8 @@ side_tables! {
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
     /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
     AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
+    /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
+    AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
@@ -68,6 +70,8 @@ side_tables! {
     /// Empty marker: this channel pointer changed and its publication has not reached the sync
     /// server yet. Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
+    /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
@@ -88,6 +92,22 @@ side_tables! {
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
+    /// One autoresearch candidate's held-out basis, its one sealed confirmation (consumed before
+    /// the cohort is released) and its promotion receipt. Key: id16 (root attempt) + id16
+    /// (candidate attempt).
+    AUTORESEARCH_BASIS: VaultMeta b"autoresearch:basis:v1:" Named;
+    /// One bound autoresearch campaign: its ruler, goal pin, policy digest, cohort and budget
+    /// share, written once. Key: id16 (root attempt).
+    AUTORESEARCH_BINDING: VaultMeta b"autoresearch:binding:v1:" Named;
+    /// One autoresearch experiment node annotating an existing attempt: lineage, candidate pin,
+    /// search and held-out evidence, buggy, weave and prune receipts. Key: id16 (root attempt) +
+    /// id16 (node attempt).
+    AUTORESEARCH_NODE: VaultMeta b"autoresearch:node:v1:" Named;
+    /// One RSI reservation an autoresearch campaign holds or held. Key: id16 (root attempt) +
+    /// id16 (reservation id).
+    AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
+    /// One autoresearch selection round's receipt. Key: id16 (root attempt) + u64be (round).
+    AUTORESEARCH_ROUND: VaultMeta b"autoresearch:round:v1:" Named;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
     /// Born-from projection: one row per version whose made_by names a trigger (task or ask) or
@@ -262,6 +282,9 @@ side_tables! {
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
+    /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
+    /// rung per reminder window. Key: id16 of the ask's proposal.
+    COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;
     /// Immutable tested snapshot of a code document at one exact operation frontier (document id + op
     /// fold hash). Key: hash32 + hash32.
     CODE_DOCUMENT_FRONTIER: VaultMeta b"code_document:frontier:v1:" Named;
@@ -415,6 +438,9 @@ side_tables! {
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
     CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson;
+    /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
+    /// actor's one unsealed pad (tag 2) and each sealed pad (tag 3). Key: u8 tag + id16 [+ string].
+    CONTEXT_BOARD_SCRATCHPAD: VaultMeta b"context_board.scratchpad.v1:" Named;
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.
