@@ -82,6 +82,15 @@ impl SlideReviewLabels {
             DecisionAnswer::Noul(false) => self.no.clone(),
             DecisionAnswer::Choice(value) => value.clone(),
             DecisionAnswer::Score(value) => value.to_string(),
+            DecisionAnswer::Box(found) => found.map_or_else(
+                || "absent".to_owned(),
+                |found| {
+                    format!(
+                        "top {} bottom {} left {} right {}",
+                        found.top, found.bottom, found.left, found.right
+                    )
+                },
+            ),
             DecisionAnswer::Abstain => unreachable!("abstentions never create comments"),
         };
         format!("{severity}: {text}")
