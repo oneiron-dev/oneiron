@@ -6,11 +6,15 @@
 //! Apache-2.0-selected stemma fork, and the DOCX read and projection a live
 //! office body imports from and exports through.
 //!
+//! [`contract`] is the engine contract over all of it: one versioned op
+//! table, served by this crate and by the hosted documents API.
+//!
 //! The wrapper owns no global session or handle store. Its document value
 //! facade addresses stable block IDs and staleness guards; the writer applies
 //! a typed transaction and refuses bytes that fail the Word package linker.
 //! `PROVENANCE.md` records the fork, licenses and local changes.
 
+pub mod contract;
 pub mod deck;
 pub mod design_plan;
 pub mod docx_body;

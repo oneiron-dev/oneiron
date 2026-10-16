@@ -12,6 +12,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::claim::ClaimSource;
+use crate::entity_id::EntityId;
+
 /// `self.fold`: marks steps `from..=through` of this run's log. The mark
 /// waits as pending; the log does not change until `self.compact`, or the
 /// next compaction breakpoint, folds it.
@@ -164,21 +167,84 @@ pub struct FoldCompactAsk {
     pub note: Option<String>,
 }
 
-/// One fold, written once when its batch landed.
+/// One fold, written once when its batch landed. Its summary is the only
+/// copy of its words (Docs Q23, Q24): the stub is rendered from it, and it
+/// goes once a record it came from is withdrawn, while the fold keeps its
+/// span and references.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldRecord {
     pub fold: u64,
     pub from: u64,
     pub through: u64,
-    /// The one stub the log shows in the span's place, byte for byte.
-    pub stub: String,
-    /// The accepted summary: model output, written from the span's own turns.
-    pub summary: String,
+    /// The accepted summary: model output, written from the span's own
+    /// turns. `None` once withdrawn.
+    pub summary: Option<String>,
+    /// Always [`ClaimSource::Generated`]: the host stamps the summary as
+    /// model output it wrote, and no guest call sets it.
+    pub source: ClaimSource,
+    /// The host's byline on the summary.
+    pub actor: EntityId,
+    /// Every record whose words could reach the span, from the sealed
+    /// request: what the summary is derived from.
+    pub sources: Vec<EntityId>,
     /// The ids the span's turns name.
     pub ids: Vec<String>,
     /// The result handles the span covers: each step's output and every
     /// stored result its turns name.
     pub handles: Vec<String>,
+}
+
+/// The most ids a stub lists itself; `describe({fold})` lists them all.
+const STUB_IDS: usize = 64;
+
+impl FoldRecord {
+    /// The one stub the log shows in the span's place: its handle and span,
+    /// the accepted summary (model output), the ids its turns name that the
+    /// summary does not, and a handle to every result the span covers. The
+    /// same bytes at every render, so the cached log holds, until the
+    /// summary is withdrawn; then it keeps only the references.
+    #[must_use]
+    pub fn stub(&self) -> String {
+        let mut stub = format!("⟨{} · t{}–t{}⟩ ", fold_handle(self.fold), self.from, self.through);
+        let summary = self.summary.as_deref().unwrap_or_default();
+        match &self.summary {
+            Some(summary) => stub.push_str(&escape_compacted_text(summary)),
+            None => stub.push_str("(summary withdrawn)"),
+        }
+        let ids: Vec<&str> = self
+            .ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !summary.contains(id))
+            .collect();
+        if !ids.is_empty() {
+            stub.push_str("\nids: ");
+            stub.push_str(&ids[..ids.len().min(STUB_IDS)].join(", "));
+            if ids.len() > STUB_IDS {
+                stub.push_str(&format!(
+                    " and {} more (describe({{fold: \"{}\"}}))",
+                    ids.len() - STUB_IDS,
+                    fold_handle(self.fold)
+                ));
+            }
+        }
+        for handle in &self.handles {
+            stub.push('\n');
+            stub.push_str(handle);
+        }
+        stub
+    }
+}
+
+/// Frame marks a summary may not forge: the record marks and the compacted
+/// frame.
+pub(crate) fn escape_compacted_text(text: &str) -> String {
+    text.replace("<exec>", r"<\exec>")
+        .replace("</exec>", r"<\/exec>")
+        .replace("<console>", r"<\console>")
+        .replace("</console>", r"<\/console>")
+        .replace("<compacted", r"<\compacted")
+        .replace("</compacted", r"<\/compacted")
 }
 
 /// One unfold: the fold's raw turns render just before step `at`, where the
@@ -422,7 +488,8 @@ impl FoldLedger {
                         "fold": fold_handle(record.fold),
                         "from": record.from,
                         "through": record.through,
-                        "stub": record.stub,
+                        "stub": record.stub(),
+                        "source": record.source.as_str(),
                         "ids": record.ids,
                         "handles": record.handles,
                     }));

@@ -241,6 +241,13 @@ export class Oneiron {
       remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
       leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
     },
+    legal_holds: {
+      place: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as unknown),
+      widen: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsWiden(input) as unknown),
+      list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsList(input) as unknown),
+      log: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsLog(input) as unknown),
+      lift_and_erase: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as unknown),
+    },
     lenses: {
       propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
       activate: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesActivate(input) as unknown),
@@ -326,6 +333,7 @@ export class Oneiron {
     companions: {
       sharing: {
         get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as unknown),
+        set: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as unknown),
       },
     },
     workspace: {
