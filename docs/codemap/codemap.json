@@ -2210,6 +2210,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/slip_vault/courtesy.rs",
+     "purpose": "The host's signature on a courtesy deletion ask and on its answer (OF-273)",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
@@ -14014,7 +14024,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ReviewDecisions",
@@ -14053,7 +14063,47 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "CooperativeDeletionAnswer",
+      "CooperativeDeletionDelivery",
+      "CooperativeDeletionDeliveryStatus",
+      "CooperativeDeletionDisposition",
+      "CooperativeDeletionDispositionKind",
+      "CooperativeDeletionIngress",
+      "CooperativeDeletionNotice",
+      "CooperativeDeletionTry",
+      "IncomingCooperativeDeletion"
+     ],
+     "path": "src/deletion/coop_delivery.rs",
+     "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle)",
+     "surface": {
+      "const": 4,
+      "enum": 4,
+      "fn": 13,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CooperativeDeletionReply",
+      "CooperativeDeletionReplyOutcome",
+      "SignedCooperativeDeletionReply"
+     ],
+     "path": "src/deletion/coop_reply.rs",
+     "purpose": "The recipient's one-line answer to a courtesy deletion ask (OF-273): its owner acted on the ask, or declined…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CooperativeDeletionRequest",
@@ -14063,7 +14113,8 @@
      "purpose": "One-way authenticated courtesy deletion requests",
      "surface": {
       "const": 4,
-      "fn": 4,
+      "crate-vis": 8,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -14249,7 +14300,7 @@
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
       "crate-vis": 19,
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
@@ -18460,12 +18511,12 @@
      "kind": "src",
      "notable": [
       "AppliedFanoutEscalationRuling",
-      "FanoutAskClassifier",
       "FanoutAskContext",
       "FanoutAskTrigger",
       "FanoutAskVerdict",
       "FanoutClassifierView",
       "FanoutDecisionHistory",
+      "FanoutDecisions",
       "FanoutEscalationRuling",
       "FanoutHistoryRuling",
       "FanoutProposalOutcome",
@@ -18474,11 +18525,11 @@
      "path": "src/fanout_auto.rs",
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam",
      "surface": {
+      "const": 1,
       "crate-vis": 3,
       "enum": 5,
       "fn": 6,
-      "struct": 5,
-      "trait": 1
+      "struct": 6
      }
     },
     {
@@ -22320,9 +22371,173 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LearningCell",
+      "LearningPredicate",
+      "TypeRef"
+     ],
+     "path": "src/learning/cell.rs",
+     "purpose": "One cell of measured state (ARCH-0003 #learning-qualifiers): the subject, the predicate and the applicable…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 20,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CoordinationCost",
+      "DuplicateWork",
+      "ReuseDelay",
+      "TeamEvent"
+     ],
+     "path": "src/learning/coordination.rs",
+     "purpose": "Coordination cost of a team (ARCH-0079 #coordination-cost, DLM-005): where its time went",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BetaView",
+      "Estimate",
+      "EstimateForm",
+      "EstimateLabels",
+      "EstimateValue",
+      "Prior",
+      "PriorOrigin",
+      "Window"
+     ],
+     "path": "src/learning/estimate.rs",
+     "purpose": "The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 3,
+      "fn": 17,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Anchor",
+      "CellRow",
+      "EvidenceRow",
+      "EvidenceSource",
+      "LearningEvidence",
+      "Observation"
+     ],
+     "path": "src/learning/evidence.rs",
+     "purpose": "The anchored-evidence ledger: the only input the projector reads",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DivergenceCase",
+      "JudgeConversion",
+      "TakeoverVerdict"
+     ],
+     "path": "src/learning/judge.rs",
+     "purpose": "Judge swaps as projections (ARCH-0079 #model-swaps, ARCH-0003 #learning)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning/mod.rs",
+     "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…",
+     "surface": {
+      "const": 6,
+      "crate-vis": 2,
+      "fn": 1,
+      "mod": 9,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning/prior.rs",
+     "purpose": "Priors: everything that is not a cell's own evidence enters with an origin and a weight in runs (ARCH-0003…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SettingFit"
+     ],
+     "path": "src/learning/project.rs",
+     "purpose": "The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LearningRead"
+     ],
+     "path": "src/learning/read.rs",
+     "purpose": "Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Retest",
+      "RetestScore"
+     ],
+     "path": "src/learning/retest.rs",
+     "purpose": "`learning.retest_noise`: how often a judge or scorer disagrees with itself when it scores the same case twice",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SettingCheck",
       "SettingMode",
       "SettingRow",
       "SettingSpec"
@@ -22330,11 +22545,11 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 4,
-      "crate-vis": 1,
+      "const": 9,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -22933,7 +23148,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 181,
+      "mod": 182,
       "re-export": 72
      }
     },
@@ -23350,7 +23565,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 3,
+      "const": 4,
       "fn": 1,
       "struct": 1
      }
@@ -23597,7 +23812,7 @@
       "DecisionReadProvider"
      ],
      "path": "src/llm/decision/read.rs",
-     "purpose": "The escalation rung's decision read: the house model scores the question's labels and the paired \"does this…",
+     "purpose": "The escalation rung's decision read: the house model reads the paired \"does this need more thinking?\"…",
      "surface": {
       "fn": 1,
       "struct": 1
@@ -28262,7 +28477,7 @@
      "path": "src/persona_snapshot/compile.rs",
      "purpose": "Tier-A clamp, row build, fingerprint, and Vault compile pass",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -28863,9 +29078,9 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 38,
+      "crate-vis": 37,
       "enum": 5,
-      "fn": 12,
+      "fn": 14,
       "re-export": 1,
       "struct": 9
      }
@@ -42472,7 +42687,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 122,
+     "files": 123,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42836,7 +43051,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 26,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43136,10 +43351,17 @@
      "layout": "file+dir",
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
+    "learning": {
+     "files": 10,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…"
+    },
     "learning_setting": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
@@ -43816,9 +44038,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 54,
+   "over_bar": 55,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2627,
+   "source_files": 2640,
    "test_files": 903
   },
   "oneiron-android": {
@@ -43877,7 +44099,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 85,
+      "const": 83,
       "re-export": 1,
       "type": 1
      }
@@ -46150,7 +46372,7 @@
   "oneiron-container": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContainerRuntime",
@@ -46176,7 +46398,7 @@
     "lib": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice"
     }
@@ -50660,6 +50882,7 @@
      "purpose": "Label-read seam: a host model scores a closed label set instead of generating text",
      "surface": {
       "enum": 1,
+      "fn": 2,
       "struct": 3,
       "trait": 1
      }
@@ -53791,6 +54014,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/cooperative_deletion.rs",
+     "purpose": "The peer-facing courtesy deletion routes (OF-273)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/core/batch.rs",
      "purpose": "Batch-write DTOs, route handler, and entity-put staging",
      "surface": {
@@ -54475,6 +54708,16 @@
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/cooperative_deletion_routes.rs",
+     "purpose": "`/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -57801,6 +58044,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/cooperative_deletion.rs",
+     "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -57877,7 +58130,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -58100,6 +58353,16 @@
      "purpose": "The board publisher: committed TASK writes reach STREAM subscribers",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/cooperative_deletion.rs",
+     "purpose": "Delivers queued courtesy deletion asks and answers (OF-273)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -58842,7 +59105,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 210,
+     "files": 212,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59010,7 +59273,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59038,7 +59301,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59082,7 +59345,7 @@
    },
    "over_bar": 14,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 376,
+   "source_files": 380,
    "test_files": 182
   },
   "oneiron-spawn": {

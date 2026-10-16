@@ -88,10 +88,10 @@ pub mod slides_review;
 mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
-pub(crate) use self::deck::{VaultAssets, deck_op, verify_deck_proposal};
 pub use self::deck::{
     DeckEditContext, DeckRender, DeckRenderSide, DeckSettleEvidence, run_deck_transaction,
 };
+pub(crate) use self::deck::{VaultAssets, deck_op, verify_deck_proposal};
 pub use self::docx::run_docx_revision;
 pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
