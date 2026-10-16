@@ -125,6 +125,15 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// A caller's own question through the host's ladder (`ai.verdict`): yes or
+/// no, or one of its labels. The wording is the caller's; keyed by the
+/// answer contract, so a changed label set is a new question.
+pub const AI_VERDICT: QuestionFamily = QuestionFamily {
+    name: "ai.verdict",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// The paired yes/no question every decision read asks beside the labels: does this need
 /// more thinking? Keyed by its wording alone.
 pub const THINK_MORE: QuestionFamily = QuestionFamily {
@@ -165,6 +174,14 @@ pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Is everything okay past a wire, limit or scan threshold: a bot, or a valid burst
+/// (OF-520)? Keyed by the crossing.
+pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
+    name: "server.wire_health",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Which capability setting one connector grant-slate row drafts (auto, always ask or
 /// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
 pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
@@ -203,11 +220,13 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    AI_VERDICT,
     THINK_MORE,
     ASK_UP,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
+    WIRE_HEALTH,
     CONNECTOR_SLATE_DRAFT,
     CONFLICT_RESOLUTION,
     CORRECTION,

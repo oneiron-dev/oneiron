@@ -691,8 +691,9 @@ nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 
 The decision read takes yes/no and choice questions over text. A Box question
 ("where is `mug` in `camera`?"), and any question over images, goes only to a
-rung that reads images: a host `DecisionModel` whose `reads_images` is true,
-or the opt-in System One seat (`decide_at_remote_seat`). The ladder skips
+rung that reads images: a host `DecisionModel` whose `reads_images` is true
+(the Local-vision seat at the Local rung, below), or the opt-in System One
+seat (`decide_at_remote_seat`). The ladder skips
 every other rung (`DecisionLadder::run_images`, `run_pack_images`). A Box
 answer is `{top, bottom, left, right}` in 0–1 fractions of the image from its
 top-left corner, edges in order, with its confidence; it is `null` when the
@@ -769,6 +770,47 @@ The verbs, each the owner's and checked against the vault's inference policy:
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
+### Lazy images and `ask_image`
+
+A read serves each generated image down a ladder. A reader whose request
+says it takes images (`"image_input": true`) gets the full image when it
+fits. If it doesn't fit, the reader gets a 384-pixel JPEG thumbnail beside
+the image's description. If that doesn't fit either, it gets the description
+alone. Every rung carries the image's view handle (`<asset>@<hash>`). When
+nothing fits, the body is omitted and the vault asks whether everything is
+okay (`limits.image_room_bytes`, 32 MiB by default, is the room a model
+call's context gets when its host names none). The agent verb
+`vault.images.view` (`{"handle", "region": {"x", "y", "width", "height"},
+"edge"}`) fetches the full pixels behind a handle: the whole image, a crop,
+or a zoom to `edge` pixels.
+
+`POST /v1/ai/ask_image` (`{"handle", "question", "region"}`) asks a small
+vision model about the pixels instead, so they never enter the asker's
+context. Bind that model as its own role:
+
+```toml
+[models.roles.local_vision]
+rungs = ["local:qwen3-vl-4b"]
+```
+
+Its provider needs `image_input` among its capabilities. The answer is
+`{"asset_ref", "text", "receipt"}`.
+
+Add `"contract": {"kind": "box"}` to ask where something is instead
+("where is the mug in `image`?"). The same seat then answers as the decision
+ladder's Local rung (`LocalVisionModel`, a `DecisionModel` that reads
+images): it reads the whole image (a Box ask takes no `region`) and answers
+with a JSON schema shaped like System One's box answer. The answer is
+`{"asset_ref", "typed", "receipt"}`, where `typed` is the typed decision:
+`{"kind": "box", "value": {top, bottom, left, right}}` in 0–1 fractions of
+the image, or `"value": null` when the target is absent, with its
+confidence as `probability` and the decision's receipt (the Local rung's
+pin and the image's evidence version). The ask runs at the Local rung alone,
+on a 60-second clock, and queues no person. Only a Box contract is answered
+here. Each rung served and each pull (view,
+crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
+which rung each image got and whether the pixels were pulled afterwards.
+
 ## 11. When a provider refuses for a limit
 
 A rung refused for a limit hands the call to the next rung of its ladder, and
@@ -781,7 +823,9 @@ keeps it:
 - **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
   wait of 15 minutes or more) is parked until the reset it names.
 - **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
-  "billing") is parked until the owner tops up or clears it.
+  "billing", Anthropic's `billing_error`) is parked until the owner tops up
+  or clears it. The same words in an error inside an open stream read the
+  same way.
 
 While only rests stop a call, it waits for the first offer back and tries the
 chain again, until its waits pass the vault's longest wait in all (a caller
@@ -789,12 +833,28 @@ with its own deadline passes its own budget). A call whose every offer is
 parked on credit fails `quota_spent`; one that ran out of wait fails
 `rate_limited` with the earliest reset.
 
-A spent window or spent credit leaves the owner a question in
-`GET /v1/ai/status` (`quota_questions`: the provider, model, route, what was
-spent, the reset if any, and the choices). Answer it with
-`POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
-`top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
-`add_account` close the question and leave the offer parked until its reset.
+Once every rung of a call has parked, each offer parked on a spent window or
+spent credit leaves the owner a question in `GET /v1/ai/status`
+(`quota_questions`: the provider, model, route, what was spent, the reset if
+any, the choices, and `fallbacks`). A call that a later rung serves asks
+nothing. `fallbacks` lists the chat models on other providers that still have
+usage left, and while it is non-empty the choices include `use_fallback`.
+Answer with `POST /v1/ai/quota/{id}`
+`{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait" | "use_fallback", "fallback": "<model>"}`:
+
+- `top_up` and `pay_as_you_go` put the offer back in rotation now.
+- `wait` and `add_account` close the question and leave the offer parked
+  until its reset.
+- `use_fallback` names one of `fallbacks` (its engine id). While the offer is
+  parked, a call whose every rung has parked goes to that model instead,
+  whenever the model's own offer is in rotation and the call's world may go
+  where it runs. Setting it is the permission, paid models included. Once the
+  offer is back, calls use it again.
+
+On raw `/v1/llm/stream`, a stream that fails after it has started ends with
+one last line carrying the same typed body as a refusal before it:
+`{"error": {"code": "quota_spent", "llm": …, "quota": {…}}}` when credit or a
+window runs out mid-stream.
 
 ## 12. Batch GPU pods (`[gpu]`)
 

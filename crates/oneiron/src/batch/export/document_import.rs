@@ -70,6 +70,7 @@ impl Vault {
         let super::VaultArchive {
             mut document,
             secrets,
+            result_files,
         } = super::read_vault_archive(bytes)?;
         document.validate(self)?;
         if actor.is_none()
@@ -93,7 +94,7 @@ impl Vault {
             .collect::<Result<_>>()?;
         // Run result bodies are written whole before any row names them; the
         // rows commit with the rest below, or not at all.
-        let staged_results = stage_run_results(self, &document.run_results)?;
+        let staged_results = stage_run_results(self, &document.run_results, &result_files)?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -371,30 +372,21 @@ impl Vault {
 fn stage_run_results(
     vault: &Vault,
     results: &ExportRunResults,
+    files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
-    let contents: BTreeMap<&str, &str> = results
-        .bodies
-        .iter()
-        .filter_map(|body| Some((body.blake3.as_str(), body.content.as_deref()?)))
-        .collect();
     let mut staged = BTreeMap::new();
     for output in results.runs.iter().flat_map(|run| &run.outputs) {
         let digest = parse_digest(&output.blake3)?;
         if staged.contains_key(&digest) {
             continue;
         }
-        let Some(content) = contents.get(output.blake3.as_str()) else {
+        let Some(body) = files.get(output.blake3.as_str()) else {
             continue;
         };
-        if content.len() as u64 != output.bytes
-            || *blake3::hash(content.as_bytes()).as_bytes() != digest
-        {
+        if body.len() as u64 != output.bytes || *blake3::hash(body).as_bytes() != digest {
             return Err(invalid("run result body does not match its digest"));
         }
-        staged.insert(
-            digest,
-            vault.stage_code_run_output(output.path.clone(), content.as_bytes())?,
-        );
+        staged.insert(digest, vault.stage_code_run_output(output.path.clone(), body)?);
     }
     Ok(staged)
 }

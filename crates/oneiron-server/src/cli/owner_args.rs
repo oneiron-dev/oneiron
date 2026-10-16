@@ -154,7 +154,9 @@ pub struct RecoverClockArgs {
 #[derive(Args, Clone, Debug)]
 pub struct ExportArgs {
     /// `archive`: the whole vault as one re-importable ZIP (JSONL per record
-    /// kind, files by BLAKE3, manifest). Export is not a backup.
+    /// kind, files by BLAKE3, manifest). `okf`: a lossy ZIP of markdown
+    /// concepts (Open Knowledge Format) for other tools, not a full copy.
+    /// Export is not a backup.
     #[arg(long, default_value = "archive")]
     pub format: String,
 
