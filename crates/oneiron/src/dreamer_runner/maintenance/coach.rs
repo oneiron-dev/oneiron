@@ -1,7 +1,8 @@
 //! The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066
-//! #coach): skill discovery and authoring, the person-threshold tune and the
-//! read-side pass. Each runs under the Coach's stamp; the Dreamer keeps
-//! extract, weave, consolidate and cleanup.
+//! #coach): skill discovery and authoring, the person-threshold tune, the
+//! read-side pass, the tier-1 sweep and the tradeoff-ask climb. Each runs
+//! under the Coach's stamp; the Dreamer keeps extract, weave, consolidate and
+//! cleanup.
 //!
 //! Two lanes. A job that needs the host's model or facts (the session distill,
 //! the attribution sweep, the threshold rule) sits on [`COACH_HOST_QUEUE_KIND`]:
@@ -44,6 +45,10 @@ pub const COACH_READ_HARDENING_FACET: &str = "coach.read_hardening";
 /// Observe, tier-1 detection: the nightly sweep of the signed tripwires and
 /// its proposed-only repairs (ARCH-0066 §4).
 pub const COACH_TRIPWIRES_FACET: &str = "coach.tripwires";
+/// Coordination, responsible-role escalation (ARCH-0053 #self-revision,
+/// ARCH-0079): a pending skill tradeoff ask that waited out a reminder window
+/// climbs one rung of its role chain, ending at the vault owners.
+pub const COACH_TRADEOFF_ESCALATION_FACET: &str = "coach.tradeoff_escalation";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 
@@ -55,7 +60,15 @@ const HOST_FACETS: [&str; 3] = [
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;
 const MAX_PERSON_THRESHOLD_BATCH: usize = 1024;
+/// How long a pending tradeoff ask waits on one rung before it climbs. Canon
+/// names no window: one night apart, less an hour of wake jitter, so a
+/// nightly pass climbs once a night.
+const TRADEOFF_REMINDER_SECS: u64 = 23 * 60 * 60;
 
+/// When the Coach last climbed, or first saw, a pending tradeoff ask. Key: the
+/// ask's proposal.
+const TRADEOFF_CLIMB: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::COACH_TRADEOFF_CLIMB);
 /// Override records the Coach has not read yet. Key: the source the host bound
 /// the person's answer to (its ask or receipt).
 const PERSON_CHANGED: SideTable<EntityId, PersonChangedAnswer, Named> =
@@ -132,6 +145,23 @@ impl DreamerRunnerStore<'_> {
             wake_key.map(|key| {
                 format!(
                     "{COACH_TRIPWIRES_FACET}:{}",
+                    blake3::hash(key.as_bytes()).to_hex()
+                )
+            }),
+            run_id.clone(),
+            now,
+        )?;
+        self.enqueue_kind_in_txn(
+            txn,
+            MAINTENANCE_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: COACH_TRADEOFF_ESCALATION_FACET.into(),
+                input: Value::Nil,
+                parent_attempt,
+            },
+            wake_key.map(|key| {
+                format!(
+                    "{COACH_TRADEOFF_ESCALATION_FACET}:{}",
                     blake3::hash(key.as_bytes()).to_hex()
                 )
             }),
@@ -321,5 +351,47 @@ pub(super) fn run_read_hardening(vault: &Vault, now: u64) -> Result<()> {
 /// The nightly tier-1 sweep, as the Coach.
 pub(super) fn run_tripwires(vault: &Vault, now: u64) -> Result<()> {
     vault.run_tier1_sweep(now)?;
+    Ok(())
+}
+
+/// The responsible-role climb. The first pass that sees an ask only starts
+/// its window; each window it waits after that climbs one rung, and the top
+/// rung stays. The window restarts before the climb, so a pass cut between
+/// the two climbs a night late rather than skipping a role. The row of an ask
+/// that is answered or withdrawn goes.
+pub(super) fn run_tradeoff_escalation(vault: &Vault, now: u64) -> Result<()> {
+    let asks = crate::skill_optimize::pending_skill_tradeoff_asks(vault)?;
+    for ask in &asks {
+        let proposal = ask.question.proposal;
+        let since = {
+            let txn = vault.store.env.read_txn()?;
+            TRADEOFF_CLIMB.get(&vault.store, &txn, &proposal)?
+        };
+        if since.is_some_and(|since| now.saturating_sub(since) < TRADEOFF_REMINDER_SECS) {
+            continue;
+        }
+        vault.with_write_txn_grouped(|txn| TRADEOFF_CLIMB.put(&vault.store, txn, &proposal, &now))?;
+        if since.is_some() {
+            crate::skill_optimize::escalate_skill_tradeoff_ask(vault, &proposal)?;
+        }
+    }
+    let pending: std::collections::BTreeSet<EntityId> =
+        asks.iter().map(|ask| ask.question.proposal).collect();
+    let settled: Vec<EntityId> = {
+        let txn = vault.store.env.read_txn()?;
+        TRADEOFF_CLIMB
+            .scan_keys(&vault.store, &txn, &[])?
+            .into_iter()
+            .filter(|proposal| !pending.contains(proposal))
+            .collect()
+    };
+    if !settled.is_empty() {
+        vault.with_write_txn_grouped(|txn| {
+            for proposal in &settled {
+                TRADEOFF_CLIMB.delete(&vault.store, txn, proposal)?;
+            }
+            Ok(())
+        })?;
+    }
     Ok(())
 }

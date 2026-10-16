@@ -181,7 +181,8 @@ pub use project_goal::{
 };
 pub use tradeoff::{
     JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,
-    TradeoffRule, escalate_skill_tradeoff_ask, set_skill_tradeoff_preferences,
+    TradeoffRule, escalate_skill_tradeoff_ask, pending_skill_tradeoff_asks,
+    set_skill_tradeoff_preferences,
     settle_skill_tradeoff_ask, skill_tradeoff_ask, skill_tradeoff_asks_for,
     skill_tradeoff_preferences,
 };
