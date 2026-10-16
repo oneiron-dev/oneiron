@@ -88,6 +88,7 @@ mod admission;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod search;
+mod retrieval_loop;
 mod visibility;
 
 #[cfg(test)]
