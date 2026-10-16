@@ -176,7 +176,11 @@ impl GitWire<'_> {
             ));
         }
         self.validate_repo_binding(repo)?;
-        self.run_at(&repo.repo_root, argv)
+        let output = self.run_effect_at(repo, argv)?;
+        if output.success {
+            return Ok(output);
+        }
+        Err(classify_failure(&output).error(argv.operation()))
     }
 
     /// Runs a ref publication. Object-producing work is structurally impossible
@@ -192,11 +196,22 @@ impl GitWire<'_> {
             ));
         }
         self.validate_repo_binding(repo)?;
-        let output = self.run_raw_at(&repo.repo_root, argv)?;
+        let output = self.run_effect_at(repo, argv)?;
         if output.success {
             return Ok(Ok(output));
         }
         Ok(Err(classify_failure(&output)))
+    }
+
+    /// Runs an effect whose child inherits this thread's hold on the
+    /// repository, when it holds one.
+    fn run_effect_at(
+        &self,
+        repo: &GitWireRepo,
+        argv: &FrozenGitArgv,
+    ) -> Result<GitWireProcessOutput> {
+        let command = GitCommandSpec::wire(&repo.repo_root, argv).holding(&repo.common_dir);
+        spawn_git(&self.process_env, &command)
     }
 
     // -- reads -------------------------------------------------------------

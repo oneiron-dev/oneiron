@@ -6,6 +6,9 @@
 //! and `yaml_format` are the writers.
 
 mod credential_nulling;
+mod value_json;
+pub(crate) use value_json::msgpack_value_projection;
+pub use value_json::{msgpack_value_from_json, msgpack_value_to_json};
 mod field_profile_table;
 mod group_labels;
 mod handles;
