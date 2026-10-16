@@ -940,6 +940,18 @@
       "section": false
     },
     {
+      "name": "vault.rooms.consent",
+      "input": "crate::workspace_roster::ConsentAnswer",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_consent(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.host",
       "input": "RoomHostRequest",
       "output": "crate::workspace_roster::RoomStanding",
@@ -985,18 +997,6 @@
       "call": "memory.workspace_work_companion_get(&input.workspace_ref)?",
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {
-        "spec": "$"
-      },
-      "mcp_scope": "unrestricted",
-      "section": false
-    },
-    {
-      "name": "vault.rooms.consent",
-      "input": "crate::workspace_roster::ConsentAnswer",
-      "output": "crate::workspace_roster::JoinOutcome",
-      "call": "memory.rooms_consent(&input)?",
-      "scope": "Write",
       "mcp_fields": {
         "spec": "$"
       },

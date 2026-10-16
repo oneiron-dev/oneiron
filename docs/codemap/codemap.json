@@ -771,7 +771,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 2,
-      "re-export": 10
+      "re-export": 12
      }
     },
     {
@@ -782,6 +782,29 @@
      "purpose": "OF-221: the conversation that started a dispatch",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AvailableModel",
+      "CostEnvelope",
+      "GracefulStop",
+      "PartialResultHold",
+      "PlannerDecisions",
+      "PlannerRung",
+      "PlannerThresholds",
+      "ShapeQuote",
+      "SpawnPlanReceipt",
+      "TeamPlan"
+     ],
+     "path": "src/agent_dispatch/planner.rs",
+     "purpose": "The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a-launch-ready plan — which…",
+     "surface": {
+      "enum": 1,
+      "fn": 13,
+      "struct": 9
      }
     },
     {
@@ -860,6 +883,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoordinationPattern",
+      "PayoffRow",
+      "PlannerCard",
+      "SeededShape",
+      "TeamShape"
+     ],
+     "path": "src/agent_dispatch/team_shape.rs",
+     "purpose": "The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed pattern vocabulary, the seeded…",
+     "surface": {
+      "const": 5,
+      "enum": 1,
+      "fn": 13,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -885,22 +927,25 @@
       "AgentDispatchTarget",
       "AgentSpawnContext",
       "AttenuatedDispatchTarget",
+      "CareLevel",
       "DispatchAgent",
       "DispatchHealer",
       "HealerSlot",
       "HealerSlotOutcome",
       "KillOutcome",
       "KillProposal",
-      "KillerLease"
+      "KillerLease",
+      "SpawnNeed",
+      "SpawnOverride"
      ],
      "path": "src/agent_dispatch/types.rs",
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
-      "const": 6,
+      "const": 7,
       "crate-vis": 17,
-      "enum": 5,
-      "fn": 11,
-      "struct": 8
+      "enum": 7,
+      "fn": 23,
+      "struct": 9
      }
     },
     {
@@ -23656,7 +23701,7 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 9,
+      "const": 12,
       "crate-vis": 3,
       "enum": 1,
       "fn": 6,
@@ -24691,7 +24736,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 12,
+      "const": 13,
       "fn": 1,
       "struct": 1
      }
@@ -45181,7 +45226,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46611,7 +46656,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2801,
+   "source_files": 2803,
    "test_files": 903
   },
   "oneiron-android": {

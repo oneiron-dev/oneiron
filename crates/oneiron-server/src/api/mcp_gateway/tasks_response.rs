@@ -681,6 +681,7 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.sharing" => {
             let mut map = serde_json::Map::new();
@@ -692,7 +693,6 @@ fn mcp_agent_verb_input(
         }
         "vault.companions.sharing.get" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.work_companion.get" => a.spec.clone().ok_or_else(invalid),
-        "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
         "vault.workspace.work_companion.set" => a.spec.clone().ok_or_else(invalid),
         "self.skills.save" => a.spec.clone().ok_or_else(invalid),
         "self.skills.fork" => a.spec.clone().ok_or_else(invalid),
@@ -918,6 +918,9 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
         }
+        "vault.rooms.consent" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.rooms.host" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -930,9 +933,6 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.workspace.work_companion.get" => {
-            arguments.insert("spec".to_owned(), input.clone());
-        }
-        "vault.rooms.consent" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.workspace.work_companion.set" => {
@@ -1538,6 +1538,14 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.rooms.consent" => {
+            let input: oneiron::workspace_roster::ConsentAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_consent(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.rooms.host" => {
             let input: oneiron::task_verb::sdk::RoomHostRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -1568,14 +1576,6 @@ async fn execute_agent_verb_listing(
             let output =
                 oneiron::task_verb::sdk::vault_workspace_work_companion_get(&memory, input)
                     .map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(1);
-            mcp_agent_verb_output(output, source)
-        }
-        "vault.rooms.consent" => {
-            let input: oneiron::workspace_roster::ConsentAnswer =
-                serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_rooms_consent(&memory, input)
-                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

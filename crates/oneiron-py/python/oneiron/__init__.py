@@ -393,12 +393,12 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
         def join(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
+        def consent(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
         def host(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
         def sharing(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
-        def consent(self, spec):
-            return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
     class _VaultCompanionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

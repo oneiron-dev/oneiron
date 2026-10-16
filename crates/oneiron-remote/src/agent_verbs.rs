@@ -170,6 +170,9 @@ impl OneironClient {
                 "vault.rooms.join" => remote_agent_verb_output::<
                     oneiron::workspace_roster::JoinOutcome,
                 >(client, verb, &input),
+                "vault.rooms.consent" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::JoinOutcome,
+                >(client, verb, &input),
                 "vault.rooms.host" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomStanding,
                 >(client, verb, &input),
@@ -181,9 +184,6 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.workspace.work_companion.get" => remote_agent_verb_output::<
                     oneiron::workspace_roster::WorkCompanionPolicy,
-                >(client, verb, &input),
-                "vault.rooms.consent" => remote_agent_verb_output::<
-                    oneiron::workspace_roster::JoinOutcome,
                 >(client, verb, &input),
                 "vault.workspace.work_companion.set" => remote_agent_verb_output::<
                     oneiron::workspace_roster::WorkCompanionPolicy,
@@ -828,6 +828,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.rooms.join", value)
     }
+    pub fn vault_rooms_consent(
+        &self,
+        input: &oneiron::workspace_roster::ConsentAnswer,
+    ) -> Result<oneiron::workspace_roster::JoinOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.consent", value)
+    }
     pub fn vault_rooms_host(
         &self,
         input: &oneiron::task_verb::sdk::RoomHostRequest,
@@ -875,18 +887,6 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.workspace.work_companion.get", value)
-    }
-    pub fn vault_rooms_consent(
-        &self,
-        input: &oneiron::workspace_roster::ConsentAnswer,
-    ) -> Result<oneiron::workspace_roster::JoinOutcome, MemoryError> {
-        let value = serde_json::to_value(input).map_err(|_| {
-            crate::error::bad_request(
-                "SDK input encoding failed",
-                &["Send the documented typed SDK input."],
-            )
-        })?;
-        self.typed_agent_verb("vault.rooms.consent", value)
     }
     pub fn vault_workspace_work_companion_set(
         &self,
