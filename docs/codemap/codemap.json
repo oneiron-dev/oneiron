@@ -487,7 +487,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 1,
       "re-export": 4
      }
@@ -587,6 +587,16 @@
       "enum": 5,
       "fn": 20,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/widening.rs",
+     "purpose": "Which puts hand an agent definition back authority it gave up",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -3108,14 +3118,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
       "crate-vis": 3,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -8704,13 +8714,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "fn": 6
      }
     },
@@ -10570,7 +10580,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/codebase/tests.rs",
@@ -17789,7 +17799,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/engine_executor/tests/agent_verb_regressions.rs",
@@ -20829,7 +20839,7 @@
      "path": "src/hnsw/mod.rs",
      "purpose": "HNSW graph index over the persisted neighbor graph",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -20897,7 +20907,7 @@
      "path": "src/hnsw/types.rs",
      "purpose": "Shared graph, heap, and beam option types",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -22778,7 +22788,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 178,
       "re-export": 72
      }
@@ -24345,6 +24355,7 @@
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
       "const": 13,
+      "crate-vis": 1,
       "fn": 13
      }
     },
@@ -25700,6 +25711,16 @@
       "fn": 6,
       "struct": 10,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/msgpack_shape.rs",
+     "purpose": "A budget check of untrusted MessagePack before it is decoded",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -28155,7 +28176,7 @@
      "path": "src/pipeline/budget.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -28189,7 +28210,7 @@
      "path": "src/pipeline/builder_capture.rs",
      "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 5
      }
     },
@@ -28427,16 +28448,6 @@
      "surface": {
       "crate-vis": 6,
       "re-export": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/pipeline/population.rs",
-     "purpose": "How many rows a read's text and vector indexes can return: the populations a scoped channel widens to, for a…",
-     "surface": {
-      "crate-vis": 2
      }
     },
     {
@@ -31195,7 +31206,7 @@
      "path": "src/recovery/quarantine.rs",
      "purpose": "Atomic no-clobber quarantine renames",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -36624,7 +36635,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FederationBurstReviewBundle"
@@ -36632,7 +36643,7 @@
      "path": "src/sync/federation_burst/queue.rs",
      "purpose": "Actual deferred payloads and their identity-bound, idempotent completion",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1
      }
@@ -37151,7 +37162,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "FederationAdmissionRole"
@@ -38489,6 +38500,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
+      "const": 2,
       "fn": 37
      }
     },
@@ -39146,7 +39158,7 @@
      "path": "src/vault/actors_memory.rs",
      "purpose": "Vault actor binding, structural kinds and code-memory attachment",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 23,
       "struct": 1
      }
@@ -41727,6 +41739,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/agent_definition_peer_reenable.rs",
+     "purpose": "A federation peer turns no agent definition back on",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -42080,7 +42100,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42877,6 +42897,13 @@
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
     },
+    "msgpack_shape": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A budget check of untrusted MessagePack before it is decoded"
+    },
     "note": {
      "files": 37,
      "impl_vault": true,
@@ -42962,7 +42989,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 56,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43452,10 +43479,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 47,
+   "over_bar": 48,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2608,
-   "test_files": 897
+   "source_files": 2609,
+   "test_files": 898
   },
   "oneiron-android": {
    "files": [
@@ -51339,7 +51366,6 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "const": 2,
       "fn": 13,
       "mod": 1,
       "re-export": 2,
@@ -53421,13 +53447,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/core/write_shape.rs",
      "purpose": "Create-entity DTOs, announcement normalization, and body field helpers",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -54107,6 +54133,14 @@
      "surface": {
       "crate-vis": 15
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/agent_definition_doors.rs",
+     "purpose": "A `core:write` credential below owner grade turns no agent definition back on: over `POST /v1/core/batch` or…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -56600,6 +56634,7 @@
      "notable": [
       "McpPageBudget",
       "McpPageCursorError",
+      "McpPageResume",
       "McpPageSource",
       "McpResultEnd",
       "McpRetrievalHealth"
@@ -56610,8 +56645,8 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 3,
-      "fn": 19,
-      "struct": 2
+      "fn": 22,
+      "struct": 3
      }
     },
     {
@@ -58171,7 +58206,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 204,
+     "files": 205,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58412,7 +58447,7 @@
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 361,
-   "test_files": 175
+   "test_files": 176
   },
   "oneiron-spawn": {
    "files": [
