@@ -134,7 +134,10 @@ pub(crate) fn execute(
                 .store
                 .tune_retrieval_blend_weights_when_ready(Default::default())?;
         }
-        coach::COACH_READ_HARDENING_FACET => coach::run_read_hardening(ctx.vault)?,
+        coach::COACH_READ_HARDENING_FACET => {
+            coach::run_read_hardening(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_TRIPWIRES_FACET => coach::run_tripwires(ctx.vault, ctx.now_ms / 1000)?,
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })

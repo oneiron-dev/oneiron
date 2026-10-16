@@ -284,7 +284,16 @@ and files a retune proposal naming the surfaces a backbone change or a score
 drop implicates. Both land in the owner run tray (`/v1/owner/runs`), one
 run per night. Approve a curator run and its next pass applies each demotion
 whose target is unchanged since grading; a retune proposal is advice only and
-changes nothing. Each wake waits for no running chat turn,
+changes nothing.
+
+The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
+detectors (refused Dreamer consolidations, consent storms and denials,
+per-actor write drift) over the last day of Gate receipts, and the read-side
+pass runs the retrieval-miss detector. Each run is signed by the scheduled
+detector instance, and a run that does not verify stores nothing. A retrieval
+miss files a proposed reindex and a refused consolidation a proposed retry,
+through the production healer host (`Vault::healer_proposal`); nothing applies
+them. Each wake waits for no running chat turn,
 no running workflow and `idle_secs` of quiet since the last turn. A peer's sync apply wakes the
 Dreamer too, so turns another host wrote are read without waiting for a local
 one.
