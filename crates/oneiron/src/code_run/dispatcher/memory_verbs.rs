@@ -71,6 +71,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
+            | SelfEffect::TasksRefuse
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
@@ -92,7 +93,10 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::Context
             | SelfEffect::Speak
             | SelfEffect::Think
-            | SelfEffect::Express => Ok(()),
+            | SelfEffect::Express
+            // A fold is the run's own view of its own log: its ledger rides
+            // the room's route into the overlay and evaporates with it.
+            | SelfEffect::Fold => Ok(()),
         }
     }
 
