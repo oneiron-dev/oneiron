@@ -6,7 +6,8 @@ use crate::federation::{
 };
 use crate::memory::{StructuralEdgeSpec, StructuralPutInput};
 use crate::registry::{
-    ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK,
 };
 use crate::{TimeRange, VaultConfig};
 
@@ -261,4 +262,45 @@ fn reducer_and_replay_keep_the_birth_stamp_and_replay_never_mints() {
     materialize_streak(&vault, parent, 3);
     assert!(vault.record_scope(&parent).unwrap().is_none());
     assert!(stamp_bytes(&vault, parent).is_none());
+}
+
+/// Facet rule C at the native scoped read and export doors: a text written
+/// from an image is selected only beside it. A selector of both kinds reads
+/// and exports the text; one narrowed to texts admits the text's own
+/// position but not its image's, and selects the text on neither door. On
+/// main the narrowed selector read and exported the text without its image.
+#[test]
+fn a_text_is_selected_only_beside_its_source_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let (image, text) = (EntityId::now(), EntityId::now());
+    let at = TimeRange { start: 10, end: 10 };
+    vault
+        .put_entity(&image, ENTITY_TYPE_ASSET, at, 10, b"image")
+        .unwrap();
+    vault
+        .batch()
+        .put(&text, ENTITY_TYPE_ASSET_TEXT, at, 10, b"a caption")
+        .edge(&text, crate::EdgeKind::DerivedFrom, &image, 1.0)
+        .commit()
+        .unwrap();
+    let top = Scope::top();
+    let selects = |bands: &[u8]| {
+        let mut selector = Scope::top();
+        selector.bands = ScopeAxis::Some(bands.iter().copied().collect());
+        let read = vault
+            .records_in_scope(&selector, &top, &top, ScopeView::Normal)
+            .unwrap()
+            .iter()
+            .any(|record| record.id == text);
+        let exported = vault
+            .export_records_in_scope(&selector, &top, &top)
+            .unwrap()
+            .iter()
+            .any(|record| record.id == text);
+        assert_eq!(read, exported, "read and export select alike");
+        read
+    };
+    assert!(selects(&[ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT]));
+    assert!(!selects(&[ENTITY_TYPE_ASSET_TEXT]));
 }

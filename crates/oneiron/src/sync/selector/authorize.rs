@@ -28,6 +28,7 @@ use crate::sync::window::{
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
 use super::epoch_egress::unbacked_epochs;
+use super::text_egress::{source_selected, text_backed};
 use super::scope::{
     band_filter, coreference_export_context, entity_selector_decision, facet_filter,
     facet_scope_by_source,
@@ -566,6 +567,27 @@ pub(super) fn filter_window_doc(
         ) else {
             return;
         };
+        // Facet rule C: a text is never a candidate, so never kept, seeded
+        // or shipped, unless every source it was written from is a live row
+        // this export reads, judged on its stored row.
+        match text_backed(vault, &rtxn, &id, Some(blob), |source, raw| {
+            source_selected(
+                vault,
+                &rtxn,
+                (source, raw),
+                &grant.authority_scope,
+                selector,
+                scope_position,
+                &facet_scope,
+            )
+        }) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
         candidates.insert(id);
         if facets.is_some() {
             if decision.facet_visible {
