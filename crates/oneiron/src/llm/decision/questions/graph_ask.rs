@@ -389,6 +389,7 @@ fn answer_unit(
                         })
                         .collect(),
                     cost_per_thousand: Some(prediction.cost_per_thousand),
+                    paired: Vec::new(),
                 },
                 human_ask: None,
             },

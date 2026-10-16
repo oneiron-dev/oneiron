@@ -72,6 +72,9 @@ pub use oneiron_model::llm::{
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
+pub use oneiron_model::llm::{
+    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
+};
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub use self::autocheck::{
