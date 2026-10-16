@@ -7,6 +7,12 @@
 //! engine refuses a cutover until the repository's publications are drained,
 //! and refuses one whose expected epoch moved. The git route then pushes
 //! under the lease this host holds, or refuses the push when it holds none.
+//!
+//! `/v1/owner/origin-mirror`: the repository's outbound mirror (ARCH-0068
+//! RA8). The owner names an https URL, the custody record of its push token
+//! (bound to `origin:mirror-push`) and a cadence in seconds; the origin host
+//! pushes its published refs there on that cadence, which is the real RPO.
+//! `POST /v1/owner/origin-mirror/push` pushes now.
 
 use std::sync::Arc;
 
@@ -14,7 +20,8 @@ use axum::Router;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
+use oneiron::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
 use serde::{Deserialize, Serialize};
 
@@ -26,10 +33,18 @@ use crate::owner::{OwnerError, entity_id};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route(
-        "/origin-authority",
-        get(origin_authority).post(cut_origin_authority),
-    )
+    Router::new()
+        .route(
+            "/origin-authority",
+            get(origin_authority).post(cut_origin_authority),
+        )
+        .route(
+            "/origin-mirror",
+            get(origin_mirror)
+                .post(set_origin_mirror)
+                .delete(clear_origin_mirror),
+        )
+        .route("/origin-mirror/push", post(push_origin_mirror))
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,4 +131,99 @@ async fn cut_origin_authority(
     })
     .await?;
     Ok(Json(row))
+}
+
+/// One served repository's mirror; `None` when the owner set none.
+#[derive(Debug, Serialize)]
+struct OriginMirrorState {
+    repo: String,
+    mirror: Option<OriginMirrorTarget>,
+}
+
+async fn origin_mirror(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<RepoQuery>, QueryRejection>,
+) -> Result<Json<OriginMirrorState>, EnvelopedApiError> {
+    owner(&auth, &server)?;
+    let RepoQuery { repo } = query_params(query)?;
+    let state = blocking(move || {
+        Ok(OriginMirrorState {
+            mirror: server.vault().served_origin_mirror(&repo)?,
+            repo,
+        })
+    })
+    .await?;
+    Ok(Json(state))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetOriginMirror {
+    repo: String,
+    /// The mirror's https URL, with no credential in it.
+    url: String,
+    /// The custody record of the mirror's push token.
+    secret_ref: String,
+    /// The basic-auth user the token goes with; `x-access-token` when absent.
+    user: Option<String>,
+    /// Seconds between pushes: the repository's RPO.
+    every_secs: u64,
+}
+
+async fn set_origin_mirror(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SetOriginMirror>, JsonRejection>,
+) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let row = blocking(move || {
+        Ok(server.vault().set_served_origin_mirror(
+            &request.repo,
+            OriginMirrorTargetInput {
+                url: request.url,
+                secret_ref: request.secret_ref,
+                user: request.user,
+                every_secs: request.every_secs,
+            },
+        )?)
+    })
+    .await?;
+    Ok(Json(row))
+}
+
+#[derive(Debug, Serialize)]
+struct ClearedOriginMirror {
+    repo: String,
+    /// Whether a mirror was set.
+    cleared: bool,
+}
+
+async fn clear_origin_mirror(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<RepoQuery>, QueryRejection>,
+) -> Result<Json<ClearedOriginMirror>, EnvelopedApiError> {
+    owner(&auth, &server)?;
+    let RepoQuery { repo } = query_params(query)?;
+    let cleared = blocking(move || {
+        Ok(ClearedOriginMirror {
+            cleared: server.vault().clear_served_origin_mirror(&repo)?,
+            repo,
+        })
+    })
+    .await?;
+    Ok(Json(cleared))
+}
+
+async fn push_origin_mirror(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RepoQuery>, JsonRejection>,
+) -> Result<Json<OriginMirrorRun>, EnvelopedApiError> {
+    owner(&auth, &server)?;
+    let RepoQuery { repo } = json_payload(payload)?;
+    let run = blocking(move || Ok(server.vault().push_served_origin_mirror(&repo)?)).await?;
+    Ok(Json(run))
 }

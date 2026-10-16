@@ -124,6 +124,11 @@ static GIT_WIRE_REPO_LOCKS: LazyLock<Mutex<HashMap<Vec<u8>, Arc<GitWireRepoLockC
 thread_local! {
     static GIT_WIRE_HELD_DEPTH: RefCell<HashMap<Vec<u8>, usize>> =
         RefCell::new(HashMap::new());
+    /// The lock descriptor of each repository's outermost hold on this
+    /// thread, for its effect children to inherit.
+    #[cfg(unix)]
+    static GIT_WIRE_HELD_FD: RefCell<HashMap<Vec<u8>, std::os::fd::RawFd>> =
+        RefCell::new(HashMap::new());
 }
 
 /// The exclusive hold on one repository's ref and worktree effects.
@@ -249,6 +254,11 @@ fn acquire_repository(common_dir: &Path, take: Take) -> Result<Option<GitWireRep
         }
     };
     set_held_depth(&key, 1);
+    #[cfg(unix)]
+    if let Some(file) = &file {
+        use std::os::fd::AsRawFd;
+        GIT_WIRE_HELD_FD.with(|held| held.borrow_mut().insert(key.clone(), file.as_raw_fd()));
+    }
     Ok(Some(GitWireRepoGuard {
         key,
         cell: Some(cell),
@@ -261,12 +271,27 @@ impl Drop for GitWireRepoGuard {
         let depth = held_depth(&self.key);
         set_held_depth(&self.key, depth.saturating_sub(1));
         if let Some(file) = self.file.take() {
-            release_file_lock(&file);
+            #[cfg(unix)]
+            GIT_WIRE_HELD_FD.with(|held| held.borrow_mut().remove(&self.key));
+            // Released by close alone, never `LOCK_UN`: an effect child that
+            // inherited the descriptor and outlives this hold keeps the
+            // repository held until it exits too.
+            drop(file);
         }
         if let Some(cell) = self.cell.take() {
             release_cell(&cell);
         }
     }
+}
+
+/// The descriptor of this thread's hold on the repository behind
+/// `common_dir`, for a ref or worktree effect child to inherit: a child that
+/// outlives the hold, its parent's death included, keeps the repository held
+/// until it exits, so no next effect interleaves with it.
+#[cfg(unix)]
+pub(super) fn held_lock_fd(common_dir: &Path) -> Option<std::os::fd::RawFd> {
+    let key = common_dir.as_os_str().as_encoded_bytes();
+    GIT_WIRE_HELD_FD.with(|held| held.borrow().get(key).copied())
 }
 
 fn held_depth(key: &[u8]) -> usize {
@@ -403,17 +428,3 @@ fn acquire_file_lock(common_dir: &Path, until: Until) -> Result<FileLock> {
 fn acquire_file_lock(_common_dir: &Path, _until: Until) -> Result<FileLock> {
     Ok(FileLock::Held(None))
 }
-
-#[cfg(unix)]
-fn release_file_lock(file: &fs::File) {
-    use std::os::fd::AsRawFd;
-
-    // SAFETY: `file.as_raw_fd()` is a live descriptor owned by the guard, and
-    // `flock(LOCK_UN)` releases the advisory lock before it is closed.
-    unsafe {
-        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
-    }
-}
-
-#[cfg(not(unix))]
-fn release_file_lock(_file: &fs::File) {}

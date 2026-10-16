@@ -35,6 +35,7 @@ mod execution_scope;
 mod failure;
 mod hub_read;
 mod ids;
+mod mirror_push;
 mod objects;
 mod operation;
 mod plan;

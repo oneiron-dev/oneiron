@@ -318,6 +318,41 @@ in flight; retry once it drains. After the cutover, a push here runs under this 
 it is the writer. Otherwise the push gets 403 naming the epoch: at a mirror (`"mirror": true`),
 or when another host writes the repository. Reads still serve. Only a live owner can cut over.
 
+## Mirror a served repository outward
+
+The repository's origin pushes its published refs to one https mirror (GitHub, GitLab, a Gitea)
+on a cadence you set. **That cadence is the repository's real RPO**: a promoted replica or the
+mirror holds what the last push carried, and nothing newer. Put the mirror's push token into
+custody first, bound to `origin:mirror-push`, then name the mirror:
+
+```sh
+oneiron api raw POST /v1/owner/secrets/register --data '{"name": "demo-mirror-token",
+  "class": "custody-portable", "rung": 0,
+  "bindings": [{"effector": "origin:mirror-push", "scopes": ["read"]}],
+  "value_base64": "<base64 of the token>"}'
+oneiron api raw POST /v1/owner/origin-mirror --data '{"repo": "demo",
+  "url": "https://github.com/you/demo.git", "secret_ref": "demo-mirror-token",
+  "every_secs": 900}'
+oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target and its last push
+oneiron api raw POST /v1/owner/origin-mirror/push --data '{"repo": "demo"}'   # push now
+oneiron api raw DELETE '/v1/owner/origin-mirror?repo=demo' # stop; the mirror keeps what it has
+```
+
+The token goes to git as a basic-auth header with the user `x-access-token` (GitHub's; pass
+`"user": "oauth2"` for GitLab). It is handed to the one push inside the custody door, never
+written to git config or disk. Every push is forced and carries only refs this vault published,
+never keep-refs or anything a push has not landed; a ref you delete here is deleted at the mirror
+on the next push. `every_secs` is at least 60. Only the host that is the repository's origin
+pushes: a host holding a mirror copy, or another host's epoch, does not. A failed push is
+recorded on the target (`last.failure`) and tried again next cadence. Git LFS objects are not
+pushed.
+
+The mirror's `main` is read-only. Work done on the mirror side comes back in through this
+vault's door: push it here as `refs/imported/<source>/<branch>` (for example
+`git push origin HEAD:refs/imported/github/fix-typo`), where the change index stamps it as a
+mirror import. Merge it here; the next mirror push carries the merge out. Imported refs are never
+pushed back to the mirror.
+
 ## Approve an import in one act
 
 To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use

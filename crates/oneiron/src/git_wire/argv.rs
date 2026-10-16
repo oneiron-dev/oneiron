@@ -201,6 +201,37 @@ impl FrozenGitArgv {
         Self::frozen(GitWireOperation::PublishRefs, tail).with_stdin(payload.into_bytes())
     }
 
+    /// `push --porcelain --no-verify -- <url> +<oid>:<ref>... :<ref>...`: the
+    /// mirror takes exactly the named pairs, forced, and loses exactly the
+    /// named deletions. Never `--mirror`: keep-refs and unpublished refs stay
+    /// home.
+    pub(super) fn mirror_push(
+        url: &str,
+        refs: &[(GitRefName, GitOid)],
+        deletions: &[GitRefName],
+    ) -> GitWireResult<Self> {
+        validate_argv_token(url)?;
+        let mut tail = os_args(&[
+            "push",
+            "--porcelain",
+            "--no-verify",
+            "--no-recurse-submodules",
+            "--",
+        ]);
+        tail.push(OsString::from(url));
+        for (name, oid) in refs {
+            tail.push(OsString::from(format!(
+                "+{}:{}",
+                oid.as_str(),
+                name.as_str()
+            )));
+        }
+        for name in deletions {
+            tail.push(OsString::from(format!(":{}", name.as_str())));
+        }
+        Ok(Self::frozen(GitWireOperation::MirrorPush, tail))
+    }
+
     /// `worktree add --detach -- <path> <commit>`: materializes exactly one
     /// commit and never moves the repository head.
     pub(super) fn worktree_add(path: &Path, commit: &GitOid) -> GitWireResult<Self> {

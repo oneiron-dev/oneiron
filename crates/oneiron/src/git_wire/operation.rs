@@ -66,9 +66,12 @@ pub enum GitWireOperation {
     WorktreeAdd,
     WorktreeRemove,
     WorktreePrune,
+    /// `push` of explicit published `(ref, oid)` pairs to an https mirror. It
+    /// reads the local store only; its one effect is on the mirror.
+    MirrorPush,
 }
 
-pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 21] = [
+pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 22] = [
     GitWireOperation::ReadConfig,
     GitWireOperation::ConfigureCheckout,
     GitWireOperation::ReadRefs,
@@ -90,6 +93,7 @@ pub(super) const GIT_WIRE_ALL_OPERATIONS: [GitWireOperation; 21] = [
     GitWireOperation::WorktreeAdd,
     GitWireOperation::WorktreeRemove,
     GitWireOperation::WorktreePrune,
+    GitWireOperation::MirrorPush,
 ];
 
 impl GitWireOperation {
@@ -117,6 +121,7 @@ impl GitWireOperation {
             Self::WorktreeAdd => "worktree_add",
             Self::WorktreeRemove => "worktree_remove",
             Self::WorktreePrune => "worktree_prune",
+            Self::MirrorPush => "mirror_push",
         }
     }
 
@@ -134,7 +139,8 @@ impl GitWireOperation {
             | Self::WorktreeList
             | Self::StatusPorcelain
             | Self::NotesShow
-            | Self::GitPath => GitWireEffectClass::Read,
+            | Self::GitPath
+            | Self::MirrorPush => GitWireEffectClass::Read,
             Self::WriteBlob | Self::WriteTree | Self::WriteCommit => {
                 GitWireEffectClass::ObjectWrite
             }
