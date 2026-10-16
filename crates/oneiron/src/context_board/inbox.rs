@@ -4,16 +4,19 @@
 //! nothing is addressed to the agent.
 use super::frame::{BoardFrameError, BoardSection, SectionPolicy, ShedRank};
 use super::one_line_token;
+use super::people::PeopleView;
 use crate::agent_inbox_lens::{AgentInboxItemKind, AgentInboxLensItem};
 use crate::entity_id::EntityId;
 
 /// INBOX for `actor`, or `None` when its slice is empty. One row per item:
 /// the item handle, its kind, impact, the actor's own identity that carries
-/// it, the thread, and how many identities share that thread. Rows hold
-/// refs only; foreign message text never renders here.
+/// it, the thread, how many identities share that thread, and the other
+/// persons on it, named by handle (PEOPLE, ARCH-0067). Rows hold refs only;
+/// foreign message text never renders here.
 pub fn assemble_inbox_section(
     actor: EntityId,
     items: &[AgentInboxLensItem],
+    people: &PeopleView<'_>,
 ) -> Result<Option<BoardSection>, BoardFrameError> {
     if items.is_empty() {
         return Ok(None);
@@ -46,6 +49,22 @@ pub fn assemble_inbox_section(
             }
             if item.participants.len() > 1 {
                 row.push_str(&format!(" identities={}", item.participants.len()));
+            }
+            let mut others = Vec::new();
+            for participant in &item.participants {
+                if participant.actor_ref != actor && !others.contains(&participant.actor_ref) {
+                    others.push(participant.actor_ref);
+                }
+            }
+            if !others.is_empty() {
+                row.push_str(&format!(
+                    " with={}",
+                    others
+                        .into_iter()
+                        .map(|other| people.label(other))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ));
             }
             row
         })
