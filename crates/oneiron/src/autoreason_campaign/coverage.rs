@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 
 use crate::llm::decision::{DecisionQuestion, TypedDecision};
 use crate::skill_optimize::{
-    GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayScorer,
-    HonestyReplayObservation, SkillOptimizeDecisions, SkillReplayPair,
+    GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
+    HonestyReplay, SkillOptimizeDecisions, SkillReplayPair,
 };
 use crate::workspace_roster::GoalRecord;
 use crate::{EntityId, Error, Result};
@@ -186,13 +186,13 @@ impl CoverageFloorComparison {
 /// Measured coverage loss refuses scoring. All scores and judge audits use
 /// the inner scorer's shared typed-decision path.
 pub struct CoverageFloorScorer<'a> {
-    inner: &'a dyn HeldOutReplayScorer,
+    inner: &'a dyn HeldOutReplayNotes,
     comparison: &'a CoverageFloorComparison,
 }
 
 impl<'a> CoverageFloorScorer<'a> {
     pub fn new(
-        inner: &'a dyn HeldOutReplayScorer,
+        inner: &'a dyn HeldOutReplayNotes,
         comparison: &'a CoverageFloorComparison,
         goal: &GoalRecord,
     ) -> CampaignResult<Self> {
@@ -202,7 +202,7 @@ impl<'a> CoverageFloorScorer<'a> {
     }
 }
 
-impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
+impl HeldOutReplayNotes for CoverageFloorScorer<'_> {
     fn judge_revision(&self) -> &str {
         self.inner.judge_revision()
     }
@@ -244,11 +244,12 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         self.inner.record_decision(question, decision, state)
     }
 
-    fn replay_honesty(
-        &self,
-        case: &HeldOutReplayCase<'_>,
-    ) -> Result<Vec<HonestyReplayObservation>> {
-        self.inner.replay_honesty(case)
+    fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+        self.inner.honesty_replays(case)
+    }
+
+    fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        self.inner.human_minutes(case)
     }
 
     fn coverage_floor(&self) -> Option<&CoverageFloorComparison> {
