@@ -465,22 +465,7 @@ impl Vault {
         RAW_OUTPUT_SECRETS
             .scan(&self.store, &rtxn)?
             .into_iter()
-            .map(|(key, detector_reason)| {
-                let (handle, occurrence) = ResultOccurrence::parse_mark_key(&key)?;
-                Ok(CodeRunSecretLiftProposal {
-                    suggested_secret_name: format!(
-                        "code_run.{}",
-                        handle
-                            .strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX)
-                            .unwrap_or(handle)
-                            .get(..16)
-                            .unwrap_or_default()
-                    ),
-                    handle: handle.to_owned(),
-                    occurrence,
-                    detector_reason,
-                })
-            })
+            .map(|(key, detector_reason)| lift_proposal(&key, detector_reason))
             .collect()
     }
 
@@ -638,6 +623,24 @@ pub(super) fn finish_output(
         output,
         body,
         secret: facts.secret,
+    })
+}
+
+/// The lift proposal of the secret mark at `key`.
+fn lift_proposal(key: &str, detector_reason: String) -> Result<CodeRunSecretLiftProposal> {
+    let (handle, occurrence) = ResultOccurrence::parse_mark_key(key)?;
+    Ok(CodeRunSecretLiftProposal {
+        suggested_secret_name: format!(
+            "code_run.{}",
+            handle
+                .strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX)
+                .unwrap_or(handle)
+                .get(..16)
+                .unwrap_or_default()
+        ),
+        handle: handle.to_owned(),
+        occurrence,
+        detector_reason,
     })
 }
 

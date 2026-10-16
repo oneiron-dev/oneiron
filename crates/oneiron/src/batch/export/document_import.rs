@@ -389,7 +389,10 @@ fn stage_run_results(
         if body.len() as u64 != output.bytes || *blake3::hash(body).as_bytes() != digest {
             return Err(invalid("run result body does not match its digest"));
         }
-        staged.insert(digest, vault.stage_code_run_output(output.path.clone(), body)?);
+        staged.insert(
+            digest,
+            vault.stage_code_run_output(output.path.clone(), body)?,
+        );
     }
     Ok(staged)
 }

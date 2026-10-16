@@ -176,7 +176,10 @@ pub(crate) fn serialize_vault_snapshot(
 fn export_run_results(
     runs: Vec<crate::batch::export::ExportSnapshotRun>,
     bodies: std::collections::BTreeMap<[u8; 32], crate::batch::export::ExportSnapshotBody>,
-) -> (ExportRunResults, std::collections::BTreeMap<String, Vec<u8>>) {
+) -> (
+    ExportRunResults,
+    std::collections::BTreeMap<String, Vec<u8>>,
+) {
     let hex = crate::entity_id::bytes_to_hex_lower;
     let mut binary = std::collections::BTreeMap::new();
     let results = ExportRunResults {

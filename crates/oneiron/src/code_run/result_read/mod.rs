@@ -351,7 +351,13 @@ pub(crate) fn card(
     output: &CodeRunRawOutput,
     name: Option<&str>,
 ) -> Result<Value> {
-    match ResultRead::new(storage, owner, output.clone(), name.map(str::to_owned), None)? {
+    match ResultRead::new(
+        storage,
+        owner,
+        output.clone(),
+        name.map(str::to_owned),
+        None,
+    )? {
         Ok(read) => read.card(storage),
         Err(_) => Err(Error::InvariantViolation("a whole result has no range")),
     }

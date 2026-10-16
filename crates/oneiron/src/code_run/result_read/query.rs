@@ -626,8 +626,7 @@ fn page_value(
         let Some(at) = end.checked_sub(len + peeked) else {
             continue;
         };
-        if body.read(at, head.len())? == head && body.read(at + len - 1, 1)?.last() == text.last()
-        {
+        if body.read(at, head.len())? == head && body.read(at + len - 1, 1)?.last() == text.last() {
             start = Some(at);
             break;
         }

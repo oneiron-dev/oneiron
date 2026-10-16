@@ -990,7 +990,8 @@ impl EngineNativeExecutor<'_> {
             else {
                 return Err(Error::CorruptedIndex("executor result binding").into());
             };
-            let preview: String = if clean_for_context(&self.storage, Some(record.run_id), output)? {
+            let preview: String = if clean_for_context(&self.storage, Some(record.run_id), output)?
+            {
                 output
                     .preview
                     .text
