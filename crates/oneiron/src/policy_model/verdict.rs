@@ -9,12 +9,16 @@ use super::request::{PolicyModelConfig, RelayClassifierMode};
 
 /// What a policy verdict can ask for. `Warn` and `Skipped` are the non-`Allow`
 /// arms that still deliver the content, and they deliver it BYTE-IDENTICALLY —
-/// there is deliberately no arm that returns rewritten content.
+/// there is deliberately no arm that returns rewritten content. `Reword`
+/// withholds the original and asks its author for a fresh candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PolicyClassifyDecision {
     Allow,
     Warn,
+    /// Withhold this candidate and ask its author for a new one. The new
+    /// candidate crosses the same policy door; this is never a permit.
+    Reword,
     Block,
     RouteToHelp,
     Hold,
@@ -65,6 +69,7 @@ impl PolicyClassifyDecision {
         match self {
             Self::Allow => "allow",
             Self::Warn => "warn",
+            Self::Reword => "reword",
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route-to-help",
@@ -79,6 +84,7 @@ impl PolicyClassifyDecision {
         match self {
             Self::Allow => "allow",
             Self::Warn => "warn",
+            Self::Reword => "reword",
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
@@ -189,6 +195,9 @@ pub struct HostedPlaneAttestation {
     /// call, a wrongly trusted one costs the coverage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classifier_mode: Option<RelayClassifierMode>,
+    /// The hosted typed-ladder snapshot, when the host selected that path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_binding: Option<String>,
     /// The host's OUTAGE POSTURE at the moment the attested pass ran, and
     /// whether that pass needed it.
     ///
@@ -243,7 +252,7 @@ fn is_zero(value: &usize) -> bool {
 /// engine records which ones fired and what the model said about them, and the
 /// substrate owner reads that back. It carries IDS and the model's own words —
 /// never a pattern's source text, and never the policy document.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PolicyPassAudit {
     /// Every substrate-owner pattern rule that matched, in rule order — even
     /// the ones the model went on to overrule.
@@ -272,6 +281,10 @@ pub struct PolicyPassAudit {
     /// The model's stated reason, bounded and otherwise untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_rationale: Option<String>,
+    /// Registered row questions and their shared-ladder receipts. These
+    /// contain answers and hashes/ids, never the candidate or policy text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_decisions: Vec<crate::llm::decision::TypedDecision>,
 }
 
 impl PolicyPassAudit {
@@ -286,6 +299,7 @@ impl PolicyPassAudit {
             && self.model_rule_ids_dropped == 0
             && self.model_confidence.is_none()
             && self.model_rationale.is_none()
+            && self.typed_decisions.is_empty()
     }
 }
 
@@ -316,6 +330,9 @@ pub struct PolicyClassifyVerdict {
     /// re-derivation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classifier_mode: Option<RelayClassifierMode>,
+    /// The exact host-selected typed-ladder configuration, if one ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_binding: Option<String>,
     /// What the pass learned. Boxed and absent-by-default for the same reason
     /// the hosted attestation is: most verdicts have nothing to say, and a
     /// verdict rides inside every relay pass.
@@ -370,6 +387,7 @@ impl PolicyClassifyVerdict {
             binding,
             safeguard_binding: config.safeguard_binding.selector(),
             classifier_mode: Some(config.classifier_mode(plane)),
+            decision_binding: config.decision_binding(plane),
             audit: None,
             hosted_attestation: None,
             plane_minted: Some(plane),
@@ -452,6 +470,7 @@ impl PolicyClassifyVerdict {
             // The dial the pass RAN under, never the caller's current one: a
             // pattern-gated pass is no evidence of a classify-all one.
             classifier_mode: ran.verdict.classifier_mode,
+            decision_binding: ran.verdict.decision_binding.clone(),
             // A degraded pass that did not halt proceeded through an outage,
             // which only `ProceedReceipted` tolerates; the posture it records
             // is the one the pass ran under.
@@ -500,6 +519,7 @@ impl PolicyClassifyVerdict {
                 && attestation.policy_hash == policy.policy_hash
                 && attestation.classifier_mode
                     == Some(config.classifier_mode(PolicyPlane::HostedLegal))
+                && attestation.decision_binding == config.decision_binding(PolicyPlane::HostedLegal)
                 && match attestation.degraded {
                     // The model answered. The verdict it reached is the same
                     // under either posture, so posture is not evidence about

@@ -339,6 +339,7 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
 pub(super) fn parse_owner_row_action(action: &str) -> Option<OwnerRowAction> {
     match action {
         "warn" => Some(OwnerRowAction::Warn),
+        "reword" => Some(OwnerRowAction::Reword),
         "block" => Some(OwnerRowAction::Block),
         "route_to_help" | "route-to-help" => Some(OwnerRowAction::RouteToHelp),
         _ => None,
