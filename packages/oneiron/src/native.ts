@@ -101,6 +101,7 @@ tasksAnswer(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
+vaultRoomsParticipants(input: unknown): unknown
 vaultRoomsRender(input: unknown): unknown
 vaultRoomsFind(input: unknown): unknown
 vaultRoomsGet(input: unknown): unknown

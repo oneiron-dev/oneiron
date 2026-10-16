@@ -711,6 +711,14 @@ fn mcp_agent_verb_input(
             }
             Ok(Value::Object(map))
         }
+        "vault.rooms.participants" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.rooms.render" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -1119,6 +1127,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("after") {
                 arguments.insert("turn_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.rooms.participants" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
             }
         }
         "vault.rooms.render" => {
@@ -2329,6 +2343,20 @@ async fn execute_agent_verb_row(
             )
             .rows_at("rows")
             .resumed_by("next_after", "turn_ref");
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.participants" => {
+            let input: oneiron::workspace_roster::ParticipantsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_participants(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("rows");
             mcp_agent_verb_output(output, source)
         }
         "vault.rooms.render" => {

@@ -112,6 +112,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/tasks.outcomes", post(tasks_outcomes))
         .route("/vault.rooms.list", post(vault_rooms_list))
         .route("/vault.rooms.messages", post(vault_rooms_messages))
+        .route("/vault.rooms.participants", post(vault_rooms_participants))
         .route("/vault.rooms.render", post(vault_rooms_render))
         .route("/vault.rooms.find", post(vault_rooms_find))
         .route("/vault.rooms.get", post(vault_rooms_get))
@@ -866,9 +867,17 @@ async fn vault_packs_setup_prepare(
     facade_outside_room_turn(&headers, "vault.packs.setup.prepare")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.packs.setup.prepare", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::vault_packs_setup_prepare(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks =
+        facade_hooks_pre(&server, &headers, &auth, "vault.packs.setup.prepare", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_packs_setup_prepare(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_packs_setup_get(
     auth: CoreAuth,
@@ -881,9 +890,12 @@ async fn vault_packs_setup_get(
     facade_outside_room_turn(&headers, "vault.packs.setup.get")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.packs.setup.get", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::vault_packs_setup_get(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.packs.setup.get", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_packs_setup_get(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_packs_setup_answer(
     auth: CoreAuth,
@@ -896,9 +908,17 @@ async fn vault_packs_setup_answer(
     facade_outside_room_turn(&headers, "vault.packs.setup.answer")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.packs.setup.answer", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::vault_packs_setup_answer(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks =
+        facade_hooks_pre(&server, &headers, &auth, "vault.packs.setup.answer", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_packs_setup_answer(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_packs_setup_verify(
     auth: CoreAuth,
@@ -911,9 +931,17 @@ async fn vault_packs_setup_verify(
     facade_outside_room_turn(&headers, "vault.packs.setup.verify")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.packs.setup.verify", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::vault_packs_setup_verify(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks =
+        facade_hooks_pre(&server, &headers, &auth, "vault.packs.setup.verify", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_packs_setup_verify(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_authority_audit(
     auth: CoreAuth,
@@ -1743,6 +1771,26 @@ async fn vault_rooms_messages(
         actor,
         class,
         "vault.rooms.messages",
+        value,
+    )?))
+}
+async fn vault_rooms_participants(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.rooms.participants",
         value,
     )?))
 }
