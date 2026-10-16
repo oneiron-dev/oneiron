@@ -24,6 +24,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.kv.search", post(vault_kv_search))
         .route("/vault.kv.namespaces", post(vault_kv_namespaces))
         .route("/vault.packs.put", post(vault_packs_put))
+        .route("/vault.hooks.replay", post(vault_hooks_replay))
         .route("/vault.artifacts.view", post(vault_artifacts_view))
         .route("/vault.artifacts.export", post(vault_artifacts_export))
         .route(
@@ -33,6 +34,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route(
             "/vault.artifacts.proposals",
             post(vault_artifacts_proposals),
+        )
+        .route("/vault.artifacts.waits", post(vault_artifacts_waits))
+        .route(
+            "/vault.artifacts.release_wait",
+            post(vault_artifacts_release_wait),
         )
         .route(
             "/vault.artifacts.propose_deck",
@@ -105,6 +111,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.video", post(ai_video))
         .route("/ai.video.poll", post(ai_video_poll))
         .route("/ai.video.cancel", post(ai_video_cancel))
+        .route("/ai.verdict", post(ai_verdict))
         .route("/connector.list", post(connector_list))
         .route("/connector.status", post(connector_status))
         .route("/vault.commit", post(vault_commit))
@@ -622,6 +629,21 @@ async fn vault_packs_put(
         super::host_doors::vault_packs_put(&server, &auth, facade_input(value)?).await?,
     )?))
 }
+async fn vault_hooks_replay(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.hooks.replay")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.replay", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_hooks_replay(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
 async fn vault_artifacts_view(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -699,6 +721,46 @@ async fn vault_artifacts_proposals(
         actor,
         class,
         "vault.artifacts.proposals",
+        value,
+    )?))
+}
+async fn vault_artifacts_waits(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.artifacts.waits",
+        value,
+    )?))
+}
+async fn vault_artifacts_release_wait(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.artifacts.release_wait",
         value,
     )?))
 }
@@ -1460,6 +1522,21 @@ async fn ai_video_cancel(
     oneiron::task_verb::sdk::validate_input("ai.video.cancel", &value)?;
     Ok(Json(facade_output(
         super::host_doors::ai_video_cancel(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn ai_verdict(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "ai.verdict")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("ai.verdict", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::ai_verdict(&server, &auth, facade_input(value)?).await?,
     )?))
 }
 async fn connector_list(

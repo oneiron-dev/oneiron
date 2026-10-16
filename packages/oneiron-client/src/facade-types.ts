@@ -101,6 +101,10 @@ export type RecallRequest = {
 export type ReceiptsRequest = {
   limit?: number | null
 }
+export type VaultReceiptsRequest = {
+  limit?: number | null
+  kinds?: (string)[]
+}
 export type InboxListRequest = {
   after?: string | null
   limit?: number | null
@@ -199,6 +203,7 @@ export type PendingWrite = {
 }
 export type MemoryReceipt = {
   receipt_ref: string
+  kind: string
   outcome: string
   created_at: number
   reason_codes: (string)[]
@@ -206,6 +211,7 @@ export type MemoryReceipt = {
   actor_ref?: string | null
   content_kind: string
   claim_ref?: string | null
+  fields?: unknown
 }
 export type EntityView = {
   id_hex: string
@@ -325,7 +331,7 @@ export type ExportReceipt = {
 }
 export type MemoryExport = {
   format: string
-  archive: (number)[]
+  archive: string
   digest: string
 }
 export type WitnessMessage = {

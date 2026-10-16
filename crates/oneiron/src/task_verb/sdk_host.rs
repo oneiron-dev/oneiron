@@ -1,8 +1,9 @@
 //! The inputs and answers of the verb-table rows a host door answers: the
-//! owner's `vault.packs.put` and the `ai.*` model calls past text. A server
-//! answers each with its own state (the owner's proof, its model seats); an
+//! owner's `vault.packs.put` and `vault.hooks.replay`, the `ai.*` model calls
+//! past text and `ai.verdict`. A server answers each with its own state (the
+//! owner's proof, its model seats, its decision ladder, its hook sandbox); an
 //! embedded handle answers a pack put as the vault's embedded owner and
-//! refuses an `ai.*` call, which has no seat to run on there.
+//! refuses the rest, which have nothing to run on there.
 use std::collections::BTreeMap;
 
 use base64::Engine as _;
@@ -108,8 +109,10 @@ pub fn put_pack_embedded(
 pub fn host_only<T, I>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
-        format!("{verb} runs on a server's model seats; an embedded vault has none"),
-        &["Call it through a remote client of a server with a [models.media] seat."],
+        format!(
+            "{verb} runs on a server's own model seats, decision ladder or hook sandbox; an embedded vault has none"
+        ),
+        &["Call it through a remote client of a server that serves it."],
     ))
 }
 
@@ -297,4 +300,210 @@ impl From<MediaJobState> for AiVideoJob {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiVideoCancelled {
     pub job: String,
+}
+
+/// What a wrong `ai.verdict` would cost: a read that can be redone, or an
+/// effect that leaves the vault. The bands escalate an outbound effect
+/// sooner.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AiVerdictReversibility {
+    #[default]
+    ReversibleRead,
+    OutboundEffect,
+}
+
+impl From<AiVerdictReversibility> for crate::llm::decision::Reversibility {
+    fn from(value: AiVerdictReversibility) -> Self {
+        match value {
+            AiVerdictReversibility::ReversibleRead => Self::ReversibleRead,
+            AiVerdictReversibility::OutboundEffect => Self::OutboundEffect,
+        }
+    }
+}
+
+/// `ai.verdict`'s clock, in milliseconds, when the request names none.
+pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
+
+/// `ai.verdict`'s input: one typed question through the host's decision
+/// ladder (ARCH-0076), asked for the caller. The principal is the caller's
+/// own actor, never a field here.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiVerdictRequest {
+    /// The question, as the ladder's providers read it.
+    pub question: String,
+    /// The labels the answer is one of; a yes/no question when empty.
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// Entity refs (short refs or 32-hex ids, each optionally `@<revision>`)
+    /// the answer reads. Each must be readable by the caller; the providers
+    /// read their views in the call's state.
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    /// What else the question reads, beside the evidence.
+    #[serde(default)]
+    pub state: Option<serde_json::Value>,
+    /// The highest rung that may answer; `big` when absent. A verdict never
+    /// queues an owner ask, so `human` is refused.
+    #[serde(default)]
+    pub ceiling: Option<crate::llm::decision::DecisionRung>,
+    #[serde(default)]
+    pub reversibility: AiVerdictReversibility,
+    /// The call's clock, 1 to 60000 milliseconds;
+    /// [`AI_VERDICT_DEADLINE_MS`] when absent.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+}
+
+/// `ai.verdict`'s answer: the ladder's answer, its probability, the rung
+/// whose answer stands (none when the call abstained), and the decision's
+/// receipt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AiVerdict {
+    pub answer: crate::llm::decision::DecisionAnswer,
+    pub p: Option<f64>,
+    pub rung: Option<crate::llm::decision::DecisionRung>,
+    pub receipt: crate::llm::decision::DecisionReceipt,
+}
+
+impl From<crate::llm::decision::TypedDecision> for AiVerdict {
+    fn from(decision: crate::llm::decision::TypedDecision) -> Self {
+        Self {
+            answer: decision.answer,
+            p: decision.probability,
+            rung: decision.receipt.time.and_then(|time| time.answered),
+            receipt: decision.receipt,
+        }
+    }
+}
+
+/// `vault.hooks.replay`'s page size when the request names none.
+pub const HOOKS_REPLAY_LIMIT_DEFAULT: usize = 64;
+/// The most entries one `vault.hooks.replay` returns: the engine's own cap.
+pub const HOOKS_REPLAY_LIMIT_MAX: usize = 256;
+
+/// `vault.hooks.replay`'s input: the fact hook to replay, where to start and
+/// how many entries to return.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HooksReplayRequest {
+    /// The hook binding's 32-hex id.
+    pub binding: String,
+    /// The fact position to replay after (`claim_changelog:<hex32>` or
+    /// `settlement:<hex16>`); every source from its start when absent.
+    #[serde(default)]
+    pub since: Option<String>,
+    /// Entries to return, 1 to [`HOOKS_REPLAY_LIMIT_MAX`];
+    /// [`HOOKS_REPLAY_LIMIT_DEFAULT`] when absent.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+impl HooksReplayRequest {
+    /// The page size this request names, refused outside its bounds.
+    pub fn limit(&self) -> MemoryResult<usize> {
+        let limit = self.limit.unwrap_or(HOOKS_REPLAY_LIMIT_DEFAULT);
+        if limit == 0 || limit > HOOKS_REPLAY_LIMIT_MAX {
+            return Err(MemoryError::bad_request_with(
+                format!("limit must be between 1 and {HOOKS_REPLAY_LIMIT_MAX}"),
+                &["Request a smaller page and continue from the last entry's position."],
+            ));
+        }
+        Ok(limit)
+    }
+}
+
+/// One past fact a hook takes, and what its body returns for it now.
+/// Nothing landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookReplayRow {
+    pub position: crate::runtime_hooks::FactPositionHex,
+    pub kind: crate::runtime_hooks::FactKind,
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub entity: crate::EntityId,
+    pub result: HookReplayOutcome,
+}
+
+/// What a replayed entry gave: the body's outcome, or the history it lacks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum HookReplayOutcome {
+    /// The body ran on this entry. Nothing landed.
+    Ran {
+        outcome_json: Option<String>,
+        /// The outcome kind, or `refused` / `failed`.
+        outcome: String,
+        reason: Option<String>,
+        /// The outcome the live run recorded, when one ran.
+        recorded: Option<String>,
+        /// The input came from the run's pinned memo row.
+        from_memo: bool,
+        /// No run pinned this entry's reads; they read current rows.
+        reads_live: bool,
+    },
+    /// The entry's inputs are gone: replay will not read newer state instead.
+    MissingHistory { reason: String },
+}
+
+impl From<crate::runtime_hooks::HookReplayEntry> for HookReplayRow {
+    fn from(entry: crate::runtime_hooks::HookReplayEntry) -> Self {
+        use crate::runtime_hooks::HookReplayResult;
+        Self {
+            position: entry.position,
+            kind: entry.kind,
+            entity: entry.entity,
+            result: match entry.result {
+                HookReplayResult::Ran {
+                    outcome_json,
+                    outcome,
+                    reason,
+                    recorded,
+                    from_memo,
+                    reads_live,
+                } => HookReplayOutcome::Ran {
+                    outcome_json,
+                    outcome,
+                    reason,
+                    recorded,
+                    from_memo,
+                    reads_live,
+                },
+                HookReplayResult::MissingHistory { reason } => {
+                    HookReplayOutcome::MissingHistory { reason }
+                }
+            },
+        }
+    }
+}
+
+/// `vault.hooks.replay` under the owner's proof a host minted from the
+/// request, on `runtime`, the host's own hook sandbox: a dry run of the
+/// binding's body over past facts, landing nothing.
+pub fn replay_hooks_as_owner(
+    vault: &crate::Vault,
+    _owner: &crate::consent::AuthenticatedOwner,
+    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+    input: &HooksReplayRequest,
+) -> MemoryResult<Vec<HookReplayRow>> {
+    let limit = input.limit()?;
+    let binding = crate::EntityId::from_hex(input.binding.trim())
+        .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
+    let since = input
+        .since
+        .as_ref()
+        .map(|position| crate::runtime_hooks::FactPositionHex(position.trim().to_owned()));
+    let entries =
+        vault
+            .hooks_replay(runtime, binding, since, limit)
+            .map_err(|error| match error {
+                crate::Error::EntityNotFound => {
+                    MemoryError::not_found(format!("no hook binding {}", input.binding.trim()))
+                }
+                crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
+                other => other.into(),
+            })?;
+    Ok(entries.into_iter().map(HookReplayRow::from).collect())
 }

@@ -210,6 +210,8 @@ pub(super) async fn serve_with_config(
     let mut workers = sync_server.spawn_slot_workers();
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
+    // Crossed thresholds ask the ladder whether everything is okay (OF-520).
+    workers.push(crate::wire_health::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]
@@ -316,11 +318,16 @@ async fn spawn_fact_hooks(
     .await
     .and_then(|built| built);
     match built {
-        Ok(sandbox) => Some(FactHookRunner::spawn(
-            Arc::clone(server.vault()),
-            Arc::new(sandbox),
-            stop,
-        )),
+        Ok(sandbox) => {
+            let runtime: Arc<dyn oneiron::runtime_hooks::HookBodyRuntime> = Arc::new(sandbox);
+            // `vault.hooks.replay` replays on the runner's own sandbox.
+            let _ = server.hook_runtime.set(Arc::clone(&runtime));
+            Some(FactHookRunner::spawn(
+                Arc::clone(server.vault()),
+                runtime,
+                stop,
+            ))
+        }
         Err(error) => {
             tracing::warn!(%error, "hook sandbox did not load; fact hooks are off");
             None
