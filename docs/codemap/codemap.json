@@ -47249,9 +47249,9 @@
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "mod": 9,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -47454,7 +47454,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/comment_anchors.rs",
