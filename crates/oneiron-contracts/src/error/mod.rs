@@ -8,6 +8,7 @@ mod artifact;
 mod claim;
 mod code;
 mod gate;
+mod hook;
 mod maintenance;
 mod off_record;
 mod record;
@@ -21,6 +22,7 @@ pub use self::artifact::ArtifactError;
 pub use self::claim::ClaimError;
 pub use self::code::CodeError;
 pub use self::gate::{GateDenial, GateDenialOutcome, GateDenialReason, GateError};
+pub use self::hook::VerbHookStop;
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
 pub use self::record::RecordError;
@@ -43,6 +45,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum ErrorKind {
     Storage,
+    /// A verb hook skipped or asked, or a blocking one failed safe.
+    VerbHookStopped,
     Io,
     DimensionMismatch,
     InvalidVector,
@@ -386,6 +390,9 @@ pub enum Error {
     /// Internal state violated an invariant that should be preserved by the crate.
     #[error("invariant violation: {0}")]
     InvariantViolation(&'static str),
+    /// A verb hook stopped the verb (ARCH-0080 §3).
+    #[error("{0}")]
+    VerbHook(Box<VerbHookStop>),
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
@@ -564,6 +571,7 @@ impl Error {
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
+            Self::VerbHook(_) => ErrorKind::VerbHookStopped,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,

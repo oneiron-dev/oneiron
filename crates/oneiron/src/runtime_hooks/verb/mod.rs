@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::skill_hub::pack_catalog::HookActorClass;
+pub use crate::error::VerbHookStop;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 /// One logical verb's id, minted once where the call enters and passed
@@ -104,29 +105,6 @@ pub fn hook_class(class: EdgeActorClass) -> HookActorClass {
         EdgeActorClass::Human => HookActorClass::Human,
         EdgeActorClass::Agent => HookActorClass::Agent,
         EdgeActorClass::System => HookActorClass::System,
-    }
-}
-
-/// Why the verb did not run, or why its result stays hidden.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum VerbHookStop {
-    /// A pre-hook skipped the verb; on a host verb, terminated it.
-    Skipped { hook: String, reason: String },
-    /// A pre-hook asked, or a blocking hook failed on a write: the ask is
-    /// open, and a retry with the same invocation returns the same handle.
-    Pending { invocation: String, ask: String },
-    /// A blocking hook failed on a read, or one on a post-hook did before a
-    /// result was released: the caller's view stays hidden.
-    Hidden { hook: String },
-}
-
-impl VerbHookStop {
-    /// The engine error a row door returns for this stop.
-    #[must_use]
-    pub fn into_error(self) -> crate::Error {
-        let _ = self;
-        crate::Error::InvariantViolation("a verb hook stopped the verb")
     }
 }
 
