@@ -1,39 +1,26 @@
-//! The escalation rung's decision read: the house model scores the question's labels, the
-//! paired "does this need more thinking?" question and, when the host asks it, the person
-//! question ("ask a person?") in one forward evaluation.
+//! The escalation rung's decision read: the house model scores the question's labels and the
+//! paired "does this need more thinking?" question in one forward evaluation. The person
+//! question ("ask a person?") is its own typed question in the ladder's pack, read apart.
 
-use super::ladder::{DecisionProvider, PairedAnswer, ProviderDecision, validate_pin};
+use super::ladder::{
+    DecisionCall, DecisionProvider, PairedAnswer, ProviderCapability, ProviderDecision,
+    validate_pin,
+};
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
 use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage};
-use crate::retrieval_depth::RetrievalDeadline;
-use crate::{EntityId, Result};
-use serde_json::Value;
+use crate::Result;
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
 const DISTRIBUTION_TOLERANCE: f64 = 1e-6;
-/// The remote seat's state bound.
-const MAX_STATE_BYTES: usize = 65_536;
-
-/// One prepared call: the question, its access-checked evidence, and the bounded state the
-/// host built from that evidence.
-#[derive(Debug, Clone, Copy)]
-pub struct DecisionReadCall<'a> {
-    pub question: &'a DecisionQuestion,
-    pub evidence: &'a [EntityId],
-    pub state: &'a Value,
-}
-
-/// Fills the escalation slot. It is built per prepared call, reads only that call's state,
-/// admits and settles one lease per read, and returns no authority, receipt or provenance.
+/// Fills the escalation slot. It reads only the call's state, admits and settles one lease per
+/// read, and returns no authority, receipt or provenance.
 pub struct DecisionReadProvider<'a> {
     pin: ProviderPin,
     reader: &'a dyn LabelReadModel,
     guard: &'a BudgetGuard,
     paired: &'a DecisionQuestion,
-    person: Option<&'a DecisionQuestion>,
-    call: DecisionReadCall<'a>,
 }
 
 impl<'a> DecisionReadProvider<'a> {
@@ -44,43 +31,21 @@ impl<'a> DecisionReadProvider<'a> {
         reader: &'a dyn LabelReadModel,
         guard: &'a BudgetGuard,
         paired: &'a DecisionQuestion,
-        call: DecisionReadCall<'a>,
     ) -> Result<Self> {
         validate_pin(&pin, DecisionRung::Escalation)?;
         if pin.model != reader.model() || pin.version != reader.revision() {
             return Err(invalid("decision reader serves another model"));
         }
-        call.question.validate()?;
         paired.validate()?;
-        if paired.contract != AnswerContract::Noul || paired.id == call.question.id {
+        if paired.contract != AnswerContract::Noul {
             return Err(invalid("invalid paired question"));
-        }
-        let state_bytes =
-            serde_json::to_vec(call.state).map_err(|_| invalid("invalid decision read state"))?;
-        if !call.state.is_object() || state_bytes.len() > MAX_STATE_BYTES {
-            return Err(invalid("invalid decision read state"));
         }
         Ok(Self {
             pin,
             reader,
             guard,
             paired,
-            person: None,
-            call,
         })
-    }
-
-    /// Reads the host's versioned person question in the same evaluation.
-    pub fn with_person(mut self, person: &'a DecisionQuestion) -> Result<Self> {
-        person.validate()?;
-        if person.contract != AnswerContract::Noul
-            || person.id == self.call.question.id
-            || person.id == self.paired.id
-        {
-            return Err(invalid("invalid person question"));
-        }
-        self.person = Some(person);
-        Ok(self)
     }
 }
 
@@ -89,14 +54,22 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         self.pin.clone()
     }
 
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        evidence: &[EntityId],
-        deadline: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
-        if question != self.call.question || evidence != self.call.evidence {
-            return Err(invalid("decision read prepared for another call"));
+    fn capability(&self) -> ProviderCapability {
+        ProviderCapability {
+            score: false,
+            ..ProviderCapability::default()
+        }
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let DecisionCall {
+            question,
+            state,
+            deadline,
+            ..
+        } = *call;
+        if question.id == self.paired.id {
+            return Err(invalid("invalid paired question"));
         }
         let labels = match &question.contract {
             AnswerContract::Noul => LabelSet::Noul,
@@ -118,13 +91,14 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             return Err(invalid("decision read admitted after the work time"));
         }
         let request = LabelReadRequest {
-            state: self.call.state,
+            state,
             primary: LabelReadout {
                 text: &question.text,
                 labels,
             },
             paired: &self.paired.text,
-            person: self.person.map(|person| person.text.as_str()),
+            // The ladder asks the person question as its own typed question.
+            person: None,
             // An instant, not a duration, so the reader's own preparation spends it too.
             work_until: Some(Instant::now() + deadline.decision_time_left()),
         };
@@ -151,8 +125,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             || !read.primary.iter().all(unit)
             || (read.primary.iter().sum::<f64>() - 1.0).abs() > DISTRIBUTION_TOLERANCE
             || !unit(&read.paired_yes)
-            || read.person_yes.is_some() != self.person.is_some()
-            || !read.person_yes.iter().all(unit)
+            || read.person_yes.is_some()
         {
             return Err(invalid("malformed decision read"));
         }
@@ -179,14 +152,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 question_version: self.paired.version,
                 probability: read.paired_yes,
             }),
-            person: self
-                .person
-                .zip(read.person_yes)
-                .map(|(person, probability)| PairedAnswer {
-                    question: person.id,
-                    question_version: person.version,
-                    probability,
-                }),
+            person: None,
         })
     }
 }

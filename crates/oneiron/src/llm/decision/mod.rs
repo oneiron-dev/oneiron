@@ -1,5 +1,6 @@
 //! Typed question records and shared outcome projection.
 
+pub mod catalogue;
 mod codec;
 mod ladder;
 mod local;
@@ -9,7 +10,7 @@ pub use local::{
 };
 pub mod questions;
 mod read;
-pub use read::{DecisionReadCall, DecisionReadProvider};
+pub use read::DecisionReadProvider;
 mod seat;
 mod slides_policy;
 mod types;
