@@ -8,12 +8,19 @@
 //! behind them and take the same chain. A hook runs once per logical verb:
 //! one [`InvocationId`] crosses transport wrappers and internal dispatch.
 
+mod ask;
+mod chain;
+mod redact;
+mod state;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::skill_hub::pack_catalog::HookActorClass;
 pub use crate::error::VerbHookStop;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
+
+pub(crate) use state::{HookDepth, VerbHookState};
 
 /// One logical verb's id, minted once where the call enters and passed
 /// across transport wrappers and internal dispatch (review fix M7).
@@ -116,6 +123,8 @@ pub struct VerbHookPre {
     call: VerbCall,
     /// The args after every Rewrite, each re-validated.
     pub args: Value,
+    /// Set when hooks are live for this call: the post chain runs on it.
+    carry: Option<state::Carry>,
 }
 
 impl VerbHookPre {
@@ -143,8 +152,7 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        let _ = check;
-        Ok(Ok(VerbHookPre { call, args }))
+        chain::pre(self, call, args, check)
     }
 
     /// Runs the post chain over the verb's `result`: the caller's view after
@@ -159,8 +167,7 @@ impl Vault {
         pre: VerbHookPre,
         result: Value,
     ) -> Result<std::result::Result<Value, VerbHookStop>> {
-        let _ = pre;
-        Ok(Ok(result))
+        chain::post(self, pre, result)
     }
 
     /// The pre chain, the verb and the post chain for one call. `run` gets

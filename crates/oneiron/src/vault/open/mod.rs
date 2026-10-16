@@ -581,6 +581,7 @@ impl Vault {
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
             result_body_pins: Default::default(),
+            verb_hook_state: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };

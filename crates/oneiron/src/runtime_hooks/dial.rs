@@ -14,7 +14,9 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             ENABLED.put(&self.store, txn, &(), &enabled)
-        })
+        })?;
+        self.verb_hook_bindings_changed();
+        Ok(())
     }
 
     /// Whether hooks run on this vault.

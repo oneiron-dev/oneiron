@@ -558,7 +558,9 @@ impl Vault {
                     at,
                 )
                 .apply(txn)
-        })
+        })?;
+        self.verb_hook_bindings_changed();
+        Ok(())
     }
 
     /// Each hook of `source` becomes a CODE entity, derived from the pack
@@ -636,6 +638,7 @@ impl Vault {
             }
         }
         batch.apply(txn)?;
+        self.verb_hook_bindings_changed();
         Ok(bound)
     }
 }

@@ -147,6 +147,9 @@ pub struct Vault {
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::result_body::ResultBodyPins,
+    /// Verb hooks' in-memory state: the process switch, the cached binding
+    /// list, the sandbox and the invocations in flight (ARCH-0080 §3).
+    pub(crate) verb_hook_state: crate::runtime_hooks::verb::VerbHookState,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

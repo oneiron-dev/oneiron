@@ -1,6 +1,8 @@
 //! The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through
 //! the reader's `ScopedRead` lane, then the hook's own grant.
 
+use std::collections::HashSet;
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -94,6 +96,18 @@ pub(super) fn answer(
     request: &str,
     pins: &mut Vec<HookReadPin>,
 ) -> std::result::Result<String, String> {
+    answer_within(lane, None, grant, request, pins)
+}
+
+/// [`answer`], serving only rows `cap` also reads: a verb hook reads under
+/// its caller's lane, narrowed to its grant's reader.
+pub(super) fn answer_within(
+    lane: &ScopedRead<'_>,
+    cap: Option<&ScopedRead<'_>>,
+    grant: &HookGrant,
+    request: &str,
+    pins: &mut Vec<HookReadPin>,
+) -> std::result::Result<String, String> {
     if request.len() > MAX_REQUEST_BYTES {
         return Err("read request is too large".to_owned());
     }
@@ -103,13 +117,14 @@ pub(super) fn answer(
     let parsed: ReadRequest =
         serde_json::from_str(request).map_err(|_| "read request does not parse".to_owned())?;
     let (response, rows) = match parsed {
-        ReadRequest::Claim { claim } => read_claim(lane, grant, &claim),
+        ReadRequest::Claim { claim } => read_claim(lane, cap, grant, &claim),
         ReadRequest::About {
             claims_about,
             predicate,
             limit,
         } => read_about(
             lane,
+            cap,
             grant,
             &claims_about,
             predicate.as_deref(),
@@ -127,11 +142,13 @@ pub(super) fn answer(
 
 fn read_claim(
     lane: &ScopedRead<'_>,
+    cap: Option<&ScopedRead<'_>>,
     grant: &HookGrant,
     id: &str,
 ) -> Result<(String, Vec<HookReadRow>)> {
     let id = EntityId::from_hex(id)?;
-    let rows = lane.read(&[PointRead::id(id)], None)?.value;
+    let reads = [PointRead::id(id)];
+    let rows = lane.read(&reads, None)?.value;
     let mut served = Vec::new();
     let mut value = Value::Null;
     if let Some(row) = rows.into_iter().next().flatten()
@@ -139,7 +156,9 @@ fn read_claim(
         && let Some(body) = row.body.as_deref()
     {
         let claim = crate::claim::decode_claim_body(body, true)?;
-        if grant.admits(&claim) {
+        if grant.admits(&claim)
+            && visible_to(cap, &reads)?.is_none_or(|seen| seen.contains(&id))
+        {
             value = claim_json(id, &claim);
             served.push(HookReadRow {
                 id,
@@ -152,6 +171,7 @@ fn read_claim(
 
 fn read_about(
     lane: &ScopedRead<'_>,
+    cap: Option<&ScopedRead<'_>>,
     grant: &HookGrant,
     subject: &str,
     predicate: Option<&str>,
@@ -166,12 +186,16 @@ fn read_about(
         .collect();
     let reads: Vec<PointRead<'_>> = ids.iter().map(|id| PointRead::id(*id)).collect();
     let rows = lane.read(&reads, None)?.value;
+    let seen = visible_to(cap, &reads)?;
     let mut served = Vec::new();
     let mut values = Vec::new();
     let mut bytes = 2_usize;
     for row in rows.into_iter().flatten() {
         if values.len() >= limit {
             break;
+        }
+        if seen.as_ref().is_some_and(|seen| !seen.contains(&row.id)) {
+            continue;
         }
         let Some(body) = row.body.as_deref() else {
             continue;
@@ -197,6 +221,24 @@ fn read_about(
         });
     }
     Ok((Value::Array(values).to_string(), served))
+}
+
+/// The ids of `reads` that `cap` reads; `None` with no cap.
+fn visible_to(
+    cap: Option<&ScopedRead<'_>>,
+    reads: &[PointRead<'_>],
+) -> Result<Option<HashSet<EntityId>>> {
+    let Some(cap) = cap else {
+        return Ok(None);
+    };
+    Ok(Some(
+        cap.read(reads, None)?
+            .value
+            .into_iter()
+            .flatten()
+            .map(|row| row.id)
+            .collect(),
+    ))
 }
 
 /// A claim in a hook's input shape.
