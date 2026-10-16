@@ -241,12 +241,14 @@ impl SlackSharedPresenceAdapter {
             "oauth_config": {
                 "redirect_urls": &self.config.redirect_urls,
                 "scopes": {
+                    // Exactly what the subscribed events and the persona
+                    // send need. No `channels:history`: the bot hears a
+                    // channel only when mentioned. No `commands`: the
+                    // manifest declares no slash command or shortcut.
                     "bot": [
                         "app_mentions:read",
-                        "channels:history",
                         "chat:write",
                         "chat:write.customize",
-                        "commands",
                         "im:history",
                         "im:write",
                     ],

@@ -33,7 +33,6 @@ const AT: u64 = 1_700_000_000;
 
 const WRITER: u8 = 0x9A;
 const OUTSIDER: u8 = 0x9B;
-const MEMBER_PERSON: u8 = 0xB1;
 const ORG: u8 = 0xB2;
 const MEMBER_FACET: u8 = 0xB3;
 const MEMBER_ACTOR: u8 = 0xB5;
@@ -44,6 +43,14 @@ const COMPANION_ACTOR: u8 = 0xC2;
 const COMPANION_FACET: u8 = 0xC3;
 const PROFILE_GRANT: u8 = 0xC5;
 const MAILBOX_IDENTITY: u8 = 0xC6;
+
+/// The onboarding member: the vault's embedded owner onboarding their own
+/// mailbox, so one proof consents and authorizes. A member who owns nothing
+/// onboards with the owner's separate proof
+/// (`a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorization`).
+fn member_person() -> EntityId {
+    crate::vault::embedded_owner_actor_id().expect("owner id")
+}
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let mut cfg = VaultConfig::device();
@@ -198,8 +205,8 @@ fn mailbox() -> DelegatedMailboxOnboarding {
 
 fn mailbox_owner(vault: &Vault) -> Result<AuthenticatedOwner> {
     vault.authenticate_owner(
-        entity(MEMBER_PERSON),
-        &entity(MEMBER_PERSON).to_hex(),
+        member_person(),
+        &member_person().to_hex(),
         true,
         crate::store::GateDecisionId::now(),
     )
@@ -209,7 +216,7 @@ fn intent(vault: &Vault, workspace_ref: &str, venture_name: &str) -> MemberOnboa
     MemberOnboardingIntent {
         onboarding_id: "onboard-1".to_owned(),
         workspace: preset(vault, workspace_ref, venture_name),
-        person_ref: entity(MEMBER_PERSON),
+        person_ref: member_person(),
         actor_ref: entity(MEMBER_ACTOR),
         actor_definition: definition("fixture.member"),
         work_facet_ref: entity(MEMBER_FACET),
@@ -230,7 +237,7 @@ fn fixture(venture_name: &str) -> (tempfile::TempDir, Vault, MemberOnboardingInt
     let (dir, vault) = test_vault();
     seed_plain(&vault, WRITER, ENTITY_TYPE_PERSON);
     seed_plain(&vault, OUTSIDER, ENTITY_TYPE_PERSON);
-    seed_plain(&vault, MEMBER_PERSON, ENTITY_TYPE_PERSON);
+    vault.ensure_embedded_owner_actor().expect("member person");
     seed_plain(&vault, ORG, ENTITY_TYPE_ORG);
     seed_plain(&vault, MEMBER_FACET, ENTITY_TYPE_FACET);
     seed_plain(&vault, COMPANION_FACET, ENTITY_TYPE_FACET);
@@ -293,7 +300,7 @@ fn member_bundle_never_widens_to_admin() -> Result<()> {
     assert_eq!(grant.role, FederationGrantRole::Member);
     assert_eq!(grant.preset, FederationGrantPreset::Member);
     assert_eq!(grant.scope, FederationGrantScope::vault(VAULT_ID));
-    assert_eq!(grant.member_ref, entity(MEMBER_PERSON));
+    assert_eq!(grant.member_ref, member_person());
     assert!(!grant.role.is_admin());
 
     for (role, preset) in [
@@ -372,20 +379,20 @@ fn companion_birth_is_full_person() -> Result<()> {
         .get_access_grant(&birth.profile_grant_ref)?
         .expect("profile grant");
     assert!(grant.allows_companion_profile_read(
-        &entity(MEMBER_PERSON),
-        &entity(MEMBER_PERSON),
+        &member_person(),
+        &member_person(),
         &birth.person_ref,
         43
     ));
     assert!(!grant.allows_companion_profile_read(
         &entity(OUTSIDER),
-        &entity(MEMBER_PERSON),
+        &member_person(),
         &birth.person_ref,
         43
     ));
     assert!(!grant.allows_companion_profile_read(
-        &entity(MEMBER_PERSON),
-        &entity(MEMBER_PERSON),
+        &member_person(),
+        &member_person(),
         &entity(MEMBER_ACTOR),
         43
     ));
@@ -399,7 +406,7 @@ fn companion_birth_is_full_person() -> Result<()> {
         .iter()
         .find(|row| {
             row.role == WorkspaceRosterRole::PrincipalCompanion
-                && row.principal_ref == Some(entity(MEMBER_PERSON))
+                && row.principal_ref == Some(member_person())
         })
         .expect("principal's companion row");
     assert_eq!(companion_row.actor_ref, birth.actor_ref);
@@ -583,7 +590,7 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     assert_eq!(roster.len(), 3);
     assert_eq!(roster[0].role, WorkspaceRosterRole::HouseMind);
     for (principal, birth) in [
-        (entity(MEMBER_PERSON), companion_birth()),
+        (member_person(), companion_birth()),
         (entity(0xB9), second_birth),
     ] {
         let row = roster
@@ -645,10 +652,10 @@ fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
         "rules": [],
         "actor_ceilings": [
             {"actor_class": "human", "actor_ref": entity(WRITER).to_hex(), "ceiling": "auto"},
-            {"actor_class": "human", "actor_ref": entity(MEMBER_PERSON).to_hex(), "ceiling": "auto"}
+            {"actor_class": "human", "actor_ref": member_person().to_hex(), "ceiling": "auto"}
         ],
         "scoped_grants": [{
-            "actor_class": "human", "actor_ref": entity(MEMBER_PERSON).to_hex(),
+            "actor_class": "human", "actor_ref": member_person().to_hex(),
             "effector": "external:bind", "scope": crate::federation::scope_codec::effect_preset(), "selectors": {"channel": "email"}
         }]
     });

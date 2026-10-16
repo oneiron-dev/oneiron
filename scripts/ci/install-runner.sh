@@ -22,12 +22,18 @@
 # once (.runner present = registered), and .env is rewritten every time so the
 # exported cache contract is exactly the one below. Afterwards start it with
 # ./run.sh (foreground) or ./svc.sh install && ./svc.sh start (service).
+#
+# Every run also copies runner-job-started.sh into the runner directory as its
+# job-started hook (F32): a job whose event carries a pull request from a fork
+# fails before its first step, whatever its workflow asks for. Re-run this
+# script and restart the runner after the hook changes.
 set -euo pipefail
 if [ "$#" -lt 4 ]; then
   echo "usage: RUNNER_TOKEN=<token> $0 <name> <labels> <os-arch> <cargo-target-dir> [tmpdir]" >&2
   exit 2
 fi
 NAME="$1"; LABELS="$2"; OSARCH="$3"; TDIR="$4"; TMP="${5:-}"
+HOOK_SRC="$(cd "$(dirname "$0")" && pwd)/runner-job-started.sh"
 VER=2.337.0; DIR="$HOME/actions-runner"
 mkdir -p "$DIR" "$TDIR"; cd "$DIR"
 if [ ! -x ./config.sh ]; then
@@ -38,5 +44,7 @@ if [ ! -f .runner ]; then
   : "${RUNNER_TOKEN:?set RUNNER_TOKEN to a fresh registration token (environment only)}"
   ./config.sh --url https://github.com/oneiron-dev/oneiron --token "$RUNNER_TOKEN" --name "$NAME" --labels "$LABELS" --work _work --unattended --replace >/tmp/runner-config.log 2>&1 || { tail -5 /tmp/runner-config.log; exit 1; }
 fi
-{ echo "CARGO_TARGET_DIR=$TDIR"; echo "CARGO_INCREMENTAL=0"; echo "PATH=$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"; [ -n "$TMP" ] && { mkdir -p "$TMP"; echo "TMPDIR=$TMP"; }; } > .env
+cp "$HOOK_SRC" job-started.sh
+chmod 0755 job-started.sh
+{ echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=$DIR/job-started.sh"; echo "CARGO_TARGET_DIR=$TDIR"; echo "CARGO_INCREMENTAL=0"; echo "PATH=$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"; [ -n "$TMP" ] && { mkdir -p "$TMP"; echo "TMPDIR=$TMP"; }; } > .env
 echo "configured $(cat .runner | tr -d '\n' | cut -c1-120)"

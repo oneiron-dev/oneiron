@@ -1,0 +1,153 @@
+//! The `[keystore]` section: where this install keeps its this-device-only key
+//! slots (world privacy P6b). The engine keeps one secret there per vault: the seed
+//! of this machine's encryption key, which opens the world keys wrapped to it.
+//!
+//! - `backend = "platform"` (the default) is the Apple data-protection keychain, or
+//!   a 0700 key directory on other Unix systems. `"off"` installs none, and every
+//!   world-key door then answers `KeystoreUnavailable`.
+//! - `dir` is that key directory. It defaults to `$XDG_STATE_HOME/oneiron/keys`,
+//!   then `$HOME/.local/state/oneiron/keys`, and it must lie outside the vault.
+//! - `service` is the Apple keychain service name.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use serde::Deserialize;
+
+/// The keychain service the Apple adapter files slots under by default.
+pub const DEFAULT_KEYCHAIN_SERVICE: &str = "oneiron.device-keys";
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeystoreBackend {
+    #[default]
+    Platform,
+    Off,
+}
+
+/// Resolved keystore settings.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct KeystoreConfig {
+    pub backend: KeystoreBackend,
+    pub dir: Option<PathBuf>,
+    pub service: Option<String>,
+}
+
+impl KeystoreConfig {
+    pub(super) fn apply_override(&mut self, over: KeystoreConfigOverride) {
+        if let Some(value) = over.backend {
+            self.backend = value;
+        }
+        if let Some(value) = over.dir {
+            self.dir = Some(value);
+        }
+        if let Some(value) = over.service {
+            self.service = Some(value);
+        }
+    }
+
+    pub(super) fn validate(&self) -> anyhow::Result<()> {
+        if self.dir.as_deref().is_some_and(Path::is_relative) {
+            anyhow::bail!("keystore.dir must be an absolute path");
+        }
+        if self.service.as_deref() == Some("") {
+            anyhow::bail!("keystore.service must not be empty");
+        }
+        Ok(())
+    }
+
+    /// Builds this platform's keystore for the vault at `vault_path`. `Ok(None)` when
+    /// the backend is off. An error says why the platform has none; the caller logs it
+    /// and serves on, since only the world-key doors need a keystore.
+    pub fn open(
+        &self,
+        vault_path: &Path,
+    ) -> anyhow::Result<Option<Arc<dyn oneiron_keystore::DeviceKeystore>>> {
+        if self.backend == KeystoreBackend::Off {
+            return Ok(None);
+        }
+        let dir = match &self.dir {
+            Some(dir) => dir.clone(),
+            None => default_key_dir()?,
+        };
+        let service = self.service.as_deref().unwrap_or(DEFAULT_KEYCHAIN_SERVICE);
+        let keystore = oneiron_keystore::platform_keystore(service, &dir, &[vault_path])?;
+        Ok(Some(keystore))
+    }
+
+    /// Installs this platform's keystore on `vault`, opened at `vault_path`.
+    /// A platform with none does not stop serve: only the world-key doors need
+    /// one, and they answer `KeystoreUnavailable` without it. True when one
+    /// was installed.
+    pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
+        match self.open(vault_path) {
+            Ok(Some(keystore)) => {
+                vault.install_device_keystore(keystore);
+                true
+            }
+            Ok(None) => {
+                tracing::info!("keystore backend is off; world-key doors are unavailable");
+                false
+            }
+            Err(error) => {
+                // The keystore's closed error, or none for an unresolved key
+                // directory; never the chain's text.
+                tracing::warn!(
+                    reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
+                    "no this-device-only keystore; world-key doors are unavailable"
+                );
+                false
+            }
+        }
+    }
+}
+
+/// `$XDG_STATE_HOME/oneiron/keys`, else `$HOME/.local/state/oneiron/keys`. Unset,
+/// empty and relative variables name no place a key may be written.
+fn default_key_dir() -> anyhow::Result<PathBuf> {
+    let absolute = |key: &str| {
+        let path = PathBuf::from(std::env::var_os(key)?);
+        path.is_absolute().then_some(path)
+    };
+    if let Some(state) = absolute("XDG_STATE_HOME") {
+        return Ok(state.join("oneiron").join("keys"));
+    }
+    if let Some(home) = absolute("HOME") {
+        return Ok(home
+            .join(".local")
+            .join("state")
+            .join("oneiron")
+            .join("keys"));
+    }
+    anyhow::bail!(
+        "the key directory is unresolvable: neither XDG_STATE_HOME nor HOME names an absolute \
+         directory; set keystore.dir (ONEIRON_KEYSTORE_DIR)"
+    )
+}
+
+/// One layer's `[keystore]` keys.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct KeystoreConfigOverride {
+    pub(super) backend: Option<KeystoreBackend>,
+    pub(super) dir: Option<PathBuf>,
+    pub(super) service: Option<String>,
+}
+
+pub(super) fn lookup_keystore_override(
+    lookup: &mut impl FnMut(&str) -> Option<String>,
+) -> anyhow::Result<Option<KeystoreConfigOverride>> {
+    let backend = lookup("ONEIRON_KEYSTORE_BACKEND")
+        .map(|value| {
+            serde_json::from_value(serde_json::Value::String(value.clone())).map_err(|_| {
+                anyhow::anyhow!("ONEIRON_KEYSTORE_BACKEND must be platform or off, not {value:?}")
+            })
+        })
+        .transpose()?;
+    let over = KeystoreConfigOverride {
+        backend,
+        dir: lookup("ONEIRON_KEYSTORE_DIR").map(PathBuf::from),
+        service: lookup("ONEIRON_KEYSTORE_SERVICE"),
+    };
+    Ok((over != KeystoreConfigOverride::default()).then_some(over))
+}
