@@ -2,17 +2,19 @@
 //! `LabelReadModel` the escalation rung is filled with (ARCH-0076
 //! `#decide-required`).
 //!
-//! One read is one `/completion` call that forces the end of generation at
-//! the position after the prompt and returns the probabilities the model gave
-//! every token there, before any sampler. The joint labels' share of them,
-//! normalized over the labels alone, is the read: the question's options, "more
-//! thinking?" and, when asked, "ask a person?", from one forward pass. Each
-//! call checks that no text came back and that generation stopped at the
-//! forced end; a read that fails a check is refused, never read as p = 0. This
-//! is the read idle-fold tests 4 to 6 measured (one row, `logit_bias` on the
-//! end token, `post_sampling_probs` off). It lists the top `n_probs` tokens and,
-//! when a label falls below them, retries once over the whole vocabulary:
-//! test 6 read the same label numbers both ways, bit for bit.
+//! One read is a pack (idle-fold test 6b): one `/completion` call whose
+//! prompt is an array, one prompt per typed question, each the recipe's
+//! template over the same state with the question's own text and labels. Each
+//! answer forces the end of generation at the position after its prompt and
+//! returns the probabilities the model gave every token there, before any
+//! sampler. A question's labels' share of them, normalized over its labels
+//! alone, is its readout. Each answer is checked: no text came back and
+//! generation stopped at the forced end; a read that fails a check is refused
+//! whole, never read as p = 0. This is the read idle-fold tests 4 to 6
+//! measured (one row, `logit_bias` on the end token, `post_sampling_probs`
+//! off). It lists the top `n_probs` tokens and, when one of a question's
+//! labels falls below them, sends that question once more alone over the
+//! whole vocabulary: test 6 read the same label numbers both ways, bit for bit.
 //!
 //! The prompt, the label wording and the verbalizer tokens are the host's
 //! recipe (`[models.decision_read]`); nothing here is prompt text.
@@ -23,8 +25,8 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
 use oneiron::llm::{
     BudgetLease, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
-    LabelReadResponse, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult, LlmUsage,
-    RetryableLlmError,
+    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
+    LlmUsage, RetryableLlmError,
 };
 use serde_json::{Value as JsonValue, json};
 
@@ -37,8 +39,9 @@ use crate::config::models::{
 
 const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
-/// The fields a read's answer carries, as measured.
-const RESPONSE_FIELDS: [&str; 7] = [
+/// The fields each answer carries: as measured, and the prompt it answers.
+const RESPONSE_FIELDS: [&str; 8] = [
+    "index",
     "content",
     "completion_probabilities",
     "timings",
@@ -83,35 +86,39 @@ impl DecisionReadDoor {
         }
     }
 
-    /// What one read of `request` may reserve: the prompt the recipe renders
-    /// for it (no tokenizer makes more tokens than bytes) and the one position
-    /// read, twice when the recipe retries a read. A read the recipe cannot
-    /// render is refused here, before anything is admitted. A host's own
-    /// reader reserves what the request carries, each option once per joint
-    /// row.
+    /// What one read of `request` may reserve: each question's prompt as the
+    /// recipe renders it (no tokenizer makes more tokens than bytes) and the
+    /// one position read, twice when the recipe retries a question. A read the
+    /// recipe cannot render is refused here, before anything is admitted. A
+    /// host's own reader reserves what each question carries with the state.
     pub fn reserve(&self, request: &LabelReadRequest<'_>) -> LlmResult<u64> {
-        let prompt = prompt_of(request);
-        let (bytes, calls) = match &self.recipe {
-            Some(recipe) => (
-                recipe.render(&prompt).map_err(refused)?.len(),
-                1 + u64::from(recipe.n_probs_full().is_some()),
-            ),
-            None => {
-                let options = prompt
-                    .options
-                    .map_or(0, |options| options.iter().map(String::len).sum::<usize>());
-                let bytes = prompt.question.len()
-                    + options.saturating_mul(4)
-                    + prompt.paired.len()
-                    + prompt.person.map_or(0, str::len)
-                    + prompt.state.to_string().len();
-                (bytes, 1)
-            }
-        };
-        Ok(u64::try_from(bytes)
-            .unwrap_or(u64::MAX)
-            .saturating_add(1)
-            .saturating_mul(calls))
+        let state = request.state.to_string();
+        let mut total = 0_u64;
+        for question in request.questions {
+            let (bytes, calls) = match &self.recipe {
+                Some(recipe) => (
+                    recipe
+                        .render(&prompt_of(request.state, question))
+                        .map_err(refused)?
+                        .len(),
+                    1 + u64::from(recipe.n_probs_full().is_some()),
+                ),
+                None => {
+                    let options = match question.labels {
+                        LabelSet::Noul => 0,
+                        LabelSet::Choice(options) => options.iter().map(String::len).sum(),
+                    };
+                    (question.text.len() + options + state.len(), 1)
+                }
+            };
+            total = total.saturating_add(
+                u64::try_from(bytes)
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1)
+                    .saturating_mul(calls),
+            );
+        }
+        Ok(total)
     }
 
     /// The reader a host fills `DecisionReadProvider` with. Its `read` blocks
@@ -293,15 +300,16 @@ impl DecisionReader {
         }
     }
 
-    /// One completion of `prompt` forced to end at once, listing the top
-    /// `n_probs` tokens.
-    async fn complete(&self, prompt: &str, eos: u64, n_probs: u64) -> LlmResult<JsonValue> {
+    /// One completion of `prompt` (one prompt, or an array of them) forced
+    /// to end at once, listing the top `n_probs` tokens. Any free slot takes
+    /// each prompt, and each slot's prompt cache keeps what it last read.
+    async fn complete(&self, prompt: JsonValue, eos: u64, n_probs: u64) -> LlmResult<JsonValue> {
         let body = json!({
             "prompt": prompt,
             "n_predict": 1,
             "temperature": 0.0,
             "cache_prompt": true,
-            "id_slot": 0,
+            "id_slot": -1,
             "stop": [],
             "response_fields": RESPONSE_FIELDS,
             "n_probs": n_probs,
@@ -322,39 +330,50 @@ impl DecisionReader {
         Ok(reply.body)
     }
 
-    async fn read_prompt(
+    /// The pack's prompts in one completion, each answer read over its own
+    /// question's labels; a question that misses a label below the top
+    /// `n_probs` is sent once more alone over the whole vocabulary, its checks
+    /// and its cost the read's own.
+    async fn read_pack(
         &self,
-        prompt: String,
-        rows: usize,
-        options: usize,
-        person: bool,
+        prompts: &[String],
+        questions: &[LabelReadout<'_>],
     ) -> LlmResult<LabelReadResponse> {
         let ids = self.ids().await?;
-        let (labels, tokens) = (&ids.labels[..rows], &self.recipe.tokens()[..rows]);
-        let mut reply = self
-            .complete(&prompt, ids.eos, self.recipe.n_probs())
+        let prompt_array = JsonValue::from(prompts.to_vec());
+        let first = self
+            .complete(prompt_array, ids.eos, self.recipe.n_probs())
             .await?;
-        let mut logprobs = label_logprobs(&reply, labels, tokens);
-        let mut spent = None;
-        // A label below the top `n_probs`: the same prompt once more over the
-        // whole vocabulary, its checks and its cost the read's own.
-        if let Some(full) = self.recipe.n_probs_full()
-            && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
-        {
-            spent = Some(usage(&reply)?);
-            reply = self.complete(&prompt, ids.eos, full).await?;
-            logprobs = label_logprobs(&reply, labels, tokens);
-        }
-        let (primary, paired_yes, person_yes) = joint(&logprobs?, options, person);
-        let usage = usage(&reply)?;
-        Ok(LabelReadResponse {
-            primary,
-            paired_yes,
-            person_yes,
-            usage: match spent {
+        let replies = answers(first, prompts.len())?;
+        let mut readouts = Vec::with_capacity(prompts.len());
+        let mut reads = Vec::with_capacity(prompts.len());
+        for ((prompt, question), mut reply) in prompts.iter().zip(questions).zip(replies) {
+            let count = question.labels.len();
+            let (labels, tokens) = (&ids.labels[..count], &self.recipe.tokens()[..count]);
+            let mut logprobs = label_logprobs(&reply, labels, tokens);
+            let mut spent = None;
+            if let Some(full) = self.recipe.n_probs_full()
+                && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
+            {
+                spent = Some(usage(&reply)?);
+                reply = self.complete(json!(prompt), ids.eos, full).await?;
+                logprobs = label_logprobs(&reply, labels, tokens);
+            }
+            let mut readout = normalized(&logprobs?);
+            // A readout reports yes, then no, whichever the prompt lists first.
+            if question.labels == LabelSet::Noul && self.recipe.no_first() {
+                readout.reverse();
+            }
+            readouts.push(readout);
+            let usage = usage(&reply)?;
+            reads.push(match spent {
                 Some(first) => retried(first, usage),
                 None => usage,
-            },
+            });
+        }
+        Ok(LabelReadResponse {
+            readouts,
+            usage: pack_usage(reads),
         })
     }
 }
@@ -368,6 +387,11 @@ impl LabelReadModel for DecisionReader {
         &self.revision
     }
 
+    /// One label per recipe token.
+    fn max_labels(&self) -> usize {
+        self.recipe.tokens().len()
+    }
+
     /// Blocks on the server's runtime until the model answers, so it runs on
     /// a blocking thread, never on one of that runtime's workers. Its caller
     /// owns the lease and settles it.
@@ -376,12 +400,16 @@ impl LabelReadModel for DecisionReader {
         request: &LabelReadRequest<'_>,
         _lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
-        let read = prompt_of(request);
-        let count = read.options.map_or(2, <[String]>::len);
-        let person = request.person.is_some();
-        let rows = self.recipe.rows(count, person).map_err(refused)?;
-        let prompt = self.recipe.render(&read).map_err(refused)?;
-        let read = self.read_prompt(prompt, rows, count, person);
+        if request.questions.is_empty() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let prompts = request
+            .questions
+            .iter()
+            .map(|question| self.recipe.render(&prompt_of(request.state, question)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(refused)?;
+        let read = self.read_pack(&prompts, request.questions);
         // One bound for the tokenizer and completion waits: the decision's work cutoff.
         match request.work_until {
             Some(until) => self.runtime.block_on(async {
@@ -394,18 +422,43 @@ impl LabelReadModel for DecisionReader {
     }
 }
 
-/// What the recipe renders for `request`.
-fn prompt_of<'a>(request: &LabelReadRequest<'a>) -> ReadPrompt<'a> {
+/// What the recipe renders for one question of a pack over `state`.
+fn prompt_of<'a>(state: &'a JsonValue, question: &LabelReadout<'a>) -> ReadPrompt<'a> {
     ReadPrompt {
-        question: request.primary.text,
-        options: match request.primary.labels {
+        question: question.text,
+        options: match question.labels {
             LabelSet::Noul => None,
             LabelSet::Choice(options) => Some(options),
         },
-        paired: request.paired,
-        person: request.person,
-        state: request.state,
+        state,
     }
+}
+
+/// The pack's answers in prompt order. llama.cpp answers one prompt with an
+/// object and several with an array; each answer names the prompt it answers.
+fn answers(body: JsonValue, prompts: usize) -> LlmResult<Vec<JsonValue>> {
+    let malformed = || failed(LabelReadFailure::Malformed);
+    let replies = match body {
+        JsonValue::Array(replies) => replies,
+        reply @ JsonValue::Object(_) => vec![reply],
+        _ => return Err(malformed()),
+    };
+    let mut ordered: Vec<Option<JsonValue>> = vec![None; prompts];
+    for reply in replies {
+        let slot = reply
+            .get("index")
+            .and_then(JsonValue::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| ordered.get_mut(index))
+            .ok_or_else(malformed)?;
+        if slot.replace(reply).is_some() {
+            return Err(malformed());
+        }
+    }
+    ordered
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(malformed)
 }
 
 /// The label rows' log-probabilities, in row order, after the read's checks:
@@ -472,28 +525,12 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
         .ok_or_else(|| failed(LabelReadFailure::MissingLabels))
 }
 
-/// Normalizes the rows over the joint labels alone and reads the marginals:
-/// each option's mass, P(more thinking) (rows with odd `j`) and, with the
-/// person question, P(ask a person) (rows with odd `k`), at row `4i + 2k + j`
-/// or `2i + j`.
-fn joint(logprobs: &[f64], options: usize, person: bool) -> (Vec<f64>, f64, Option<f64>) {
+/// One question's labels normalized over its labels alone.
+fn normalized(logprobs: &[f64]) -> Vec<f64> {
     let top = logprobs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let weights: Vec<f64> = logprobs.iter().map(|lp| (lp - top).exp()).collect();
     let total: f64 = weights.iter().sum();
-    let per_option = if person { 4 } else { 2 };
-    let mut primary = vec![0.0; options];
-    let (mut think, mut ask) = (0.0, 0.0);
-    for (row, weight) in weights.iter().enumerate() {
-        let q = weight / total;
-        primary[row / per_option] += q;
-        if row % 2 == 1 {
-            think += q;
-        }
-        if (row / 2) % 2 == 1 {
-            ask += q;
-        }
-    }
-    (primary, think, person.then_some(ask))
+    weights.iter().map(|weight| weight / total).collect()
 }
 
 /// Prompt tokens in, and at least the one position read out: a read that
@@ -534,6 +571,31 @@ fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider: json!({"top_k": top_k.raw_provider, "full": full.raw_provider}),
+    }
+}
+
+/// A pack's cost: every question's tokens, retries included, and each
+/// question's own timings. The answers ran side by side, so their times
+/// overlap and are kept apart, not summed.
+fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
+    let (mut input, mut output) = (0_u64, 0_u64);
+    let mut timings = Vec::with_capacity(reads.len());
+    for read in reads {
+        input = input.saturating_add(read.input.total);
+        output = output.saturating_add(read.output.total);
+        timings.push(read.raw_provider);
+    }
+    LlmUsage {
+        input: LlmInputUsage {
+            total: input,
+            ..LlmInputUsage::default()
+        },
+        output: LlmOutputUsage {
+            total: output,
+            text: 0,
+            reasoning: 0,
+        },
+        raw_provider: json!({ "questions": timings }),
     }
 }
 
