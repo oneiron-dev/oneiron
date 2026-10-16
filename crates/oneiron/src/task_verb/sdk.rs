@@ -240,8 +240,10 @@ pub struct RecallRequest {
 pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
 pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
+pub use super::sdk_disclosure::*;
 pub use super::sdk_host::*;
 pub use super::sdk_self::*;
+pub use super::sdk_share::*;
 pub use super::sdk_shared::*;
 
 /// `vault.writes.pending`'s one input.

@@ -178,6 +178,12 @@ impl OneironClient {
                 "vault.lenses.default" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>,
                 >(client, verb, &input),
+                "vault.disclosure.offer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::DisclosureOffered,
+                >(client, verb, &input),
+                "vault.shares.create" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ShareCreated,
+                >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::HookReplayRow>,
                 >(client, verb, &input),
@@ -1031,6 +1037,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.lenses.default", value)
+    }
+    pub fn vault_disclosure_offer(
+        &self,
+        input: &oneiron::task_verb::sdk::DisclosureOfferRequest,
+    ) -> Result<oneiron::task_verb::sdk::DisclosureOffered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.disclosure.offer", value)
+    }
+    pub fn vault_shares_create(
+        &self,
+        input: &oneiron::task_verb::sdk::ShareCreateRequest,
+    ) -> Result<oneiron::task_verb::sdk::ShareCreated, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shares.create", value)
     }
     pub fn vault_hooks_replay(
         &self,

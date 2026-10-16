@@ -60,6 +60,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
         .route("/vault.lenses.list", post(vault_lenses_list))
         .route("/vault.lenses.default", post(vault_lenses_default))
+        .route("/vault.disclosure.offer", post(vault_disclosure_offer))
+        .route("/vault.shares.create", post(vault_shares_create))
         .route("/vault.hooks.replay", post(vault_hooks_replay))
         .route("/vault.artifacts.view", post(vault_artifacts_view))
         .route("/vault.artifacts.export", post(vault_artifacts_export))
@@ -1018,6 +1020,46 @@ async fn vault_lenses_default(
         actor,
         class,
         "vault.lenses.default",
+        value,
+    )?))
+}
+async fn vault_disclosure_offer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.disclosure.offer",
+        value,
+    )?))
+}
+async fn vault_shares_create(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.shares.create",
         value,
     )?))
 }
