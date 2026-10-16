@@ -156,6 +156,9 @@ pub(super) struct TaskVerbBody {
     pub(super) state: Option<TaskExecutionState>,
     pub(super) provenance: Value,
     pub(super) created_at: u64,
+    /// OF-220: the typed brief and its revision. Engine-internal minters
+    /// (consult, reconciliation) carry none.
+    pub(super) brief: Option<super::brief::StoredBrief>,
 }
 
 impl TaskVerbBody {

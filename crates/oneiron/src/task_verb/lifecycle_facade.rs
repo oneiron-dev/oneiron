@@ -42,6 +42,9 @@ impl Memory<'_> {
                 Some(TaskExecutionState::Working {
                     started_at: already,
                 }) => return Ok((already, true)),
+                // A blocked task already started; a re-delivered start while
+                // it waits is not a restart.
+                Some(TaskExecutionState::Blocked { since, .. }) => return Ok((since, true)),
                 Some(TaskExecutionState::Terminal(_)) => {
                     return Err(consult_refusal(
                         MEMORY_CODE_INVALID_STATE,

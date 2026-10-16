@@ -272,6 +272,14 @@ fn task_execution_state_value(state: &TaskExecutionState) -> Value {
                 Value::from(*consent_required),
             ),
         ]),
+        TaskExecutionState::Blocked { since, on } => Value::Map(vec![
+            (Value::from("state"), Value::from("blocked")),
+            (Value::from("since"), Value::from(*since)),
+            (
+                Value::from("on"),
+                Value::Array(on.iter().copied().map(entity_ref_value).collect()),
+            ),
+        ]),
         TaskExecutionState::Terminal(record) => Value::Map(vec![
             (Value::from("state"), Value::from("terminal")),
             (Value::from("terminal"), task_terminal_record_value(record)),
@@ -331,7 +339,22 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
         (Value::from("provenance"), body.provenance),
         (Value::from("created_at"), Value::from(body.created_at)),
     ]);
+    // OF-220: the brief key is written only when a brief exists, so a TASK
+    // without one keeps its exact bytes.
+    let value = match (value, body.brief.as_ref()) {
+        (Value::Map(mut entries), Some(brief)) => {
+            entries.push((Value::from("brief"), stored_brief_value(brief)));
+            Value::Map(entries)
+        }
+        (value, _) => value,
+    };
     canonical_bytes(&value)
+}
+
+/// The stored brief as named MessagePack, the shape `mirror_fields` uses.
+pub(super) fn stored_brief_value(brief: &super::brief::StoredBrief) -> Value {
+    let encoded = rmp_serde::to_vec_named(brief).expect("a typed brief always encodes");
+    rmpv::decode::read_value(&mut encoded.as_slice()).expect("typed brief MessagePack")
 }
 
 pub(super) fn encode_task_realization_input(spec: &Value) -> Result<Vec<u8>> {
