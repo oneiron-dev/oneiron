@@ -15,8 +15,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, SideRestoreSource};
+use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
 use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
@@ -500,18 +502,23 @@ pub(crate) struct Restored {
 /// Once the swap is done the restore has happened, so a failed sync of the
 /// directory after it is reported in `durability_warning`, never as an error
 /// that would hide where the previous vault went.
+///
+/// The backup opens with `keystore`, the install's configured one, or the
+/// platform's at its defaults when there is none.
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
 ) -> anyhow::Result<Restored> {
-    restore_over_syncing(backup, vault_path, config, exchange, sync_dir)
+    restore_over_syncing(backup, vault_path, config, keystore, exchange, sync_dir)
 }
 
 fn restore_over_syncing(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
     swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
@@ -535,9 +542,14 @@ fn restore_over_syncing(
         .to_string_lossy()
         .into_owned();
     // The backup opens before anything is made: this install's keystore
-    // unlocks its key from the device wrap it carries.
-    let key = CheckpointKey::unlock_on_this_device(backup, vault_path)
-        .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?;
+    // unlocks its key from the device wrap it carries, and trusts the signers
+    // it holds.
+    let key = match keystore {
+        Some(keystore) => CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
+            .map(|key| key.trusting_device(keystore)),
+        None => CheckpointKey::unlock_on_this_device(backup, vault_path),
+    }
+    .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?;
     let stamp = file_stamp(now_unix_ms());
     let previous = vault_path.with_file_name(format!("{name}.pre-restore-{stamp}"));
     anyhow::ensure!(

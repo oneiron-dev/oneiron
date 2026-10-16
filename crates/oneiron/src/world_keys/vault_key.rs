@@ -245,9 +245,7 @@ impl CarriedVaultKey {
                         &UnlockSecret::Kek(Kek::from_bytes(*seed)),
                     );
                 }
-                Err(refused(
-                    "this keystore holds no device wrap of the vault key",
-                ))
+                Err(refused("this keystore holds no device wrap of the vault key"))
             }
             VaultKeyUnlock::Password(password) => {
                 let passphrase = Passphrase::new(password)
@@ -528,13 +526,50 @@ impl Vault {
         ))
     }
 
-    /// Unlocks the vault data key with this device's keystore wrap.
+    /// Unlocks the vault data key with this device's keystore wrap. A vault
+    /// restored as a new machine on this device has no wrap of its own yet: it
+    /// unlocks with the device wrap of an install it was copied from whose
+    /// slot this keystore holds, then wraps the key to itself.
     pub fn unlock_vault_key(&self) -> Result<()> {
         if self.held_vault_key().is_some() {
             return Ok(());
         }
         let (kek, kind) = self.device_kek()?;
-        self.unlock_vault_key_with(&kind.id(), &UnlockSecret::Kek(kek))
+        let id = kind.id();
+        let carried = {
+            let txn = self.store.env.read_txn()?;
+            if WRAPS.get(&self.store, &txn, &id)?.is_some() {
+                None
+            } else {
+                let state = STATE
+                    .get(&self.store, &txn, &())?
+                    .ok_or_else(|| refused("the vault has no data key"))?;
+                let wraps = WRAPS
+                    .scan(&self.store, &txn)?
+                    .into_iter()
+                    .map(|(_, stored)| stored)
+                    .collect();
+                Some(CarriedVaultKey {
+                    commitment: state.commitment,
+                    wraps,
+                })
+            }
+        };
+        let Some(carried) = carried else {
+            return self.unlock_vault_key_with(&id, &UnlockSecret::Kek(kek));
+        };
+        let keystore = self.device_keystore()?;
+        let key = carried.open(
+            self.vault_id().as_bytes(),
+            &VaultKeyUnlock::Device(keystore.as_ref()),
+        )?;
+        self.hold_vault_key(key);
+        // Held either way; a vault that takes no write (archived) wraps it
+        // to itself on a later unlock.
+        if let Err(error) = self.add_vault_key_wrap(kind, &WrapSecret::Kek(kek)) {
+            tracing::warn!(%error, "the vault key was not wrapped to this install");
+        }
+        Ok(())
     }
 
     /// Unlocks the vault data key with the vault password.

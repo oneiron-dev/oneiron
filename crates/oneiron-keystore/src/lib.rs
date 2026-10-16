@@ -42,6 +42,9 @@ pub enum SlotKind {
     DeviceSigning,
     /// The key that unlocks the vault data key on this device (OF-570 E1).
     VaultUnlock,
+    /// The seed this install's checkpoint signing keys are remade from: an Ed25519
+    /// key and an SLH-DSA-SHA2-256s key (OF-570 (e)).
+    CheckpointSigning,
 }
 
 impl SlotKind {
@@ -52,6 +55,7 @@ impl SlotKind {
             Self::MachineEncryption => "machine-encryption",
             Self::DeviceSigning => "device-signing",
             Self::VaultUnlock => "vault-unlock",
+            Self::CheckpointSigning => "checkpoint-signing",
         }
     }
 }
