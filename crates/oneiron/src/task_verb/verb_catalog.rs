@@ -40,6 +40,7 @@ pub enum AgentVerb {
     VaultArtifactsProposals,
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
+    VaultArtifactsReviewSlides,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -160,6 +161,7 @@ impl AgentVerb {
         Self::VaultArtifactsProposals,
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
+        Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -283,6 +285,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
+            Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -402,6 +405,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -529,6 +533,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -692,6 +697,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -786,6 +792,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -884,6 +891,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -1005,6 +1013,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],

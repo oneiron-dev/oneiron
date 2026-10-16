@@ -232,6 +232,8 @@ export class Oneiron {
       waits: (request: ArtifactRefRequest): OrganWaitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsWaits(keyedJson(request))) as OrganWaitView[]; return result.map(item => item) }),
       /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
       release_wait: (request: ProposalSettleRequest): ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as ReleasedWait; return result }),
+      /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
+      review_slides: (request: SlideReviewSubmit): SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as SlideReviewOutcome; return result }),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
