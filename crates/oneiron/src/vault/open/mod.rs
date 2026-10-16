@@ -126,6 +126,11 @@ impl Vault {
 
     fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
         let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
+        // Only the lease holder writes bodies, so what a writer left half
+        // done is debris now: unfinished temp files and the bodies of
+        // off-record sessions, none of which outlived its process.
+        #[cfg(unix)]
+        store.sweep_body_debris()?;
         let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
         vault.writer_lease = Some(lease);
         Ok(vault)

@@ -178,6 +178,13 @@ impl Store {
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
             limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
+            result_memory: std::sync::RwLock::new(std::sync::Arc::new(
+                crate::result_memory::ResultMemoryPool::new(
+                    config
+                        .limits
+                        .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
+                ),
+            )),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             group_commit: crate::store::GroupCommit::default(),

@@ -7,7 +7,8 @@ use crate::{Error, Result};
 use super::payload::self_effect_from_str;
 use super::replay::{
     CODE_RUN_REPLAY_SCHEMA_VERSION, CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism,
-    CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayRecord, CodeRunStepCheckpoint,
+    CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayRecord,
+    CodeRunStepCheckpoint,
 };
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, bool_value,
@@ -36,8 +37,16 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 6] = [
 ];
 pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
     ["seq", "label", "state_hash", "created_at_ms"];
-pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 5] =
-    ["handle", "path", "raw_sha256", "raw_len", "preview"];
+pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 8] = [
+    "handle",
+    "path",
+    "raw_blake3",
+    "raw_len",
+    "kind",
+    "lines",
+    "complete",
+    "preview",
+];
 pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
 pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
     ["name", "schema_version", "fields", "layout_hash"];
@@ -66,9 +75,12 @@ const KEY_CREATED_AT_MS: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[3];
 
 const KEY_HANDLE: &str = CODE_RUN_RAW_OUTPUT_KEYS[0];
 const KEY_PATH: &str = CODE_RUN_RAW_OUTPUT_KEYS[1];
-const KEY_RAW_SHA256: &str = CODE_RUN_RAW_OUTPUT_KEYS[2];
+const KEY_RAW_BLAKE3: &str = CODE_RUN_RAW_OUTPUT_KEYS[2];
 const KEY_RAW_LEN: &str = CODE_RUN_RAW_OUTPUT_KEYS[3];
-const KEY_PREVIEW: &str = CODE_RUN_RAW_OUTPUT_KEYS[4];
+const KEY_KIND: &str = CODE_RUN_RAW_OUTPUT_KEYS[4];
+const KEY_LINES: &str = CODE_RUN_RAW_OUTPUT_KEYS[5];
+const KEY_COMPLETE: &str = CODE_RUN_RAW_OUTPUT_KEYS[6];
+const KEY_PREVIEW: &str = CODE_RUN_RAW_OUTPUT_KEYS[7];
 
 const KEY_CODEC: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[0];
 const KEY_TEXT: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[1];
@@ -269,10 +281,13 @@ fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
         (Value::from(KEY_HANDLE), Value::from(output.handle.as_str())),
         (Value::from(KEY_PATH), Value::from(output.path.as_str())),
         (
-            Value::from(KEY_RAW_SHA256),
-            Value::Binary(output.raw_sha256.to_vec()),
+            Value::from(KEY_RAW_BLAKE3),
+            Value::Binary(output.raw_blake3.to_vec()),
         ),
         (Value::from(KEY_RAW_LEN), Value::from(output.raw_len)),
+        (Value::from(KEY_KIND), Value::from(output.kind.as_str())),
+        (Value::from(KEY_LINES), Value::from(output.lines)),
+        (Value::from(KEY_COMPLETE), Value::Boolean(output.complete)),
         (
             Value::from(KEY_PREVIEW),
             encode_output_preview(&output.preview),
@@ -285,12 +300,16 @@ fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
     let output = CodeRunRawOutput {
         handle: str_value(required(fields[0], "missing output handle")?)?.to_owned(),
         path: str_value(required(fields[1], "missing output path")?)?.to_owned(),
-        raw_sha256: fixed_binary(
-            required(fields[2], "missing output raw_sha256")?,
-            "raw_sha256",
+        raw_blake3: fixed_binary(
+            required(fields[2], "missing output raw_blake3")?,
+            "raw_blake3",
         )?,
         raw_len: u64_value(required(fields[3], "missing output raw_len")?)?,
-        preview: decode_output_preview(required(fields[4], "missing output preview")?)?,
+        kind: CodeRunOutputKind::parse(str_value(required(fields[4], "missing output kind")?)?)
+            .ok_or_else(|| invalid_code_run_replay("unknown output kind"))?,
+        lines: u64_value(required(fields[5], "missing output lines")?)?,
+        complete: bool_value(required(fields[6], "missing output complete")?)?,
+        preview: decode_output_preview(required(fields[7], "missing output preview")?)?,
     };
     validate_raw_output(&output)?;
     Ok(output)
@@ -418,11 +437,11 @@ pub(super) fn validate_raw_output(output: &CodeRunRawOutput) -> Result<()> {
     )?;
     let expected_handle = format!(
         "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
-        crate::entity_id::bytes_to_hex_lower(&output.raw_sha256)
+        crate::entity_id::bytes_to_hex_lower(&output.raw_blake3)
     );
     if output.handle != expected_handle {
         return Err(invalid_code_run_replay(
-            "raw output handle must match raw_sha256",
+            "raw output handle must match raw_blake3",
         ));
     }
     if output.preview.codec != crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC {

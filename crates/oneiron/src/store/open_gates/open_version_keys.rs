@@ -10,6 +10,14 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v22 (OF-597, OF-190 B++): a code-mode result body past
+/// `[limits] code_result_inline_bytes` is a file in `bodies/` beside
+/// `data.mdb`, named by its BLAKE3; the `code_run:raw_output:v1:` row holds
+/// the body inline or the length of that file, and the replay record's output
+/// manifest carries the BLAKE3, kind, line count and completion. Checkpoint
+/// images list and carry the body files. ABI 21 vaults fail closed at the ABI
+/// gate; there is no migration.
+///
 /// v21: every deterministic id is derived by one rule, `EntityId::derive`
 /// (BLAKE3 derive-key over the domain, length-prefixed parts, UUID version 8).
 /// Ids derived before it (the owner PERSON and its facets, bootstrap skills,
@@ -107,7 +115,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 21;
+pub const STORAGE_ABI_VERSION: u16 = 22;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 

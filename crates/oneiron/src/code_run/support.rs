@@ -6,7 +6,7 @@ use crate::{EdgeKind, EntityId, Error, Result};
 use super::replay::CODE_RUN_REPLAY_HASH_LEN;
 use crate::error::ArtifactError;
 
-pub(super) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:sha256:";
+pub(super) const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:blake3:";
 pub(super) const CODE_RUN_LAYOUT_HASH_DOMAIN: &[u8] = b"oneiron:code-run-replay-layout:v1";
 
 pub(super) const CODE_RUN_REPLAY_MAX_LABEL_BYTES: usize = 512;
@@ -169,10 +169,6 @@ pub(super) fn validate_text(value: &str, max_bytes: usize, field: &'static str) 
         return Err(invalid_code_run_replay(field));
     }
     Ok(())
-}
-
-pub(super) fn sha256_bytes(bytes: &[u8]) -> [u8; CODE_RUN_REPLAY_HASH_LEN] {
-    Sha256::digest(bytes).into()
 }
 
 pub(super) fn code_run_layout_hash<I, S>(

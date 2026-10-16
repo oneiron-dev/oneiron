@@ -7,6 +7,7 @@ mod speech_identity;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub use self::records::CodeRunModelHealCount;
+pub(crate) use self::records::code_run_body_file_of_row;
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;

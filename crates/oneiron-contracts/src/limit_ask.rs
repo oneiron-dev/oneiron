@@ -9,7 +9,11 @@
 //! crossing asks nobody.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
+
+/// What a memory-derived row comes to when the machine's memory cannot be
+/// read.
+const MEMORY_FALLBACK_BYTES: u64 = 256 << 20;
 
 /// One engine `[limits]` row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -17,25 +21,114 @@ pub enum EngineLimit {
     /// Serialized bytes of one keyed-memory search filter
     /// (`key_value_search`).
     KeyedFilterJsonBytes,
+    /// Bytes of one code-mode result kept inline in its LMDB row. A body past
+    /// it is written to the vault's file-backed body store instead; the row
+    /// picks where a result lives and never refuses one.
+    CodeResultInlineBytes,
+    /// Free disk the result body store keeps. Writing a body that leaves less
+    /// asks whether everything is okay and stores the body whole anyway.
+    CodeResultDiskFloorBytes,
+    /// Bytes one result read (a search or query facet) scans before it
+    /// answers with a cursor, never a false "no match".
+    CodeResultScanBytes,
+    /// Bytes of result bodies every code-mode run in the process keeps in
+    /// memory at once: an eighth of the machine's memory (the least of its
+    /// RAM and its container limit, [`machine_memory_bytes`]), 256 MiB when
+    /// that cannot be read. Past it, a body stays in its file and is read
+    /// from there by range.
+    CodeResultMemoryBytes,
+    /// Bytes of result bodies one run keeps in memory at once: a sixty-fourth
+    /// of the machine's memory, 256 MiB when that cannot be read. A run's
+    /// live share is the least of this and the pool split between the runs
+    /// open on it.
+    CodeResultSessionMemoryBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 1] = [Self::KeyedFilterJsonBytes];
+    pub const ALL: [Self; 6] = [
+        Self::KeyedFilterJsonBytes,
+        Self::CodeResultInlineBytes,
+        Self::CodeResultDiskFloorBytes,
+        Self::CodeResultScanBytes,
+        Self::CodeResultMemoryBytes,
+        Self::CodeResultSessionMemoryBytes,
+    ];
 
     /// The config key that sets the row.
     pub const fn key(self) -> &'static str {
         match self {
             Self::KeyedFilterJsonBytes => "limits.keyed_filter_json_bytes",
+            Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
+            Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
+            Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
+            Self::CodeResultMemoryBytes => "limits.code_result_memory_bytes",
+            Self::CodeResultSessionMemoryBytes => "limits.code_result_session_memory_bytes",
         }
     }
 
     /// What the row is set to when nothing sets it.
-    pub const fn default_bound(self) -> u64 {
+    pub fn default_bound(self) -> u64 {
         match self {
             Self::KeyedFilterJsonBytes => 64 << 20,
+            Self::CodeResultInlineBytes => 1 << 20,
+            Self::CodeResultDiskFloorBytes => 1 << 30,
+            Self::CodeResultScanBytes => 256 << 20,
+            Self::CodeResultMemoryBytes => memory_share(8),
+            Self::CodeResultSessionMemoryBytes => memory_share(64),
         }
     }
+}
+
+/// `1/divisor` of the machine's memory, or the fallback when it cannot be
+/// read.
+fn memory_share(divisor: u64) -> u64 {
+    machine_memory_bytes()
+        .map(|memory| memory / divisor)
+        .filter(|bytes| *bytes > 0)
+        .unwrap_or(MEMORY_FALLBACK_BYTES)
+}
+
+/// The memory this process may use: the least of the machine's RAM and the
+/// limit of the container it runs in (cgroup v2 `memory.max`, or v1
+/// `memory.limit_in_bytes`). Read once. `None` when neither can be read.
+pub fn machine_memory_bytes() -> Option<u64> {
+    static MEMORY: OnceLock<Option<u64>> = OnceLock::new();
+    *MEMORY.get_or_init(|| match (physical_memory_bytes(), container_memory_bytes()) {
+        (Some(physical), Some(container)) => Some(physical.min(container)),
+        (physical, container) => physical.or(container),
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn physical_memory_bytes() -> Option<u64> {
+    // SAFETY: `sysconf` reads a system constant: it takes no pointer and has
+    // no precondition, and a negative answer is read as unknown below.
+    let (pages, page_bytes) = unsafe {
+        (
+            libc::sysconf(libc::_SC_PHYS_PAGES),
+            libc::sysconf(libc::_SC_PAGESIZE),
+        )
+    };
+    u64::try_from(pages)
+        .ok()?
+        .checked_mul(u64::try_from(page_bytes).ok()?)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn physical_memory_bytes() -> Option<u64> {
+    None
+}
+
+/// The container's memory limit. An unlimited group reads `max` (v2) or a
+/// number past any RAM (v1), which the minimum above discards.
+fn container_memory_bytes() -> Option<u64> {
+    [
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ]
+    .iter()
+    .find_map(|path| std::fs::read_to_string(path).ok()?.trim().parse().ok())
 }
 
 /// What each engine row is set to: its default, unless set.
@@ -47,7 +140,10 @@ pub struct EngineLimits {
 impl EngineLimits {
     /// What `row` is set to.
     pub fn bound(&self, row: EngineLimit) -> u64 {
-        self.set.get(&row).copied().unwrap_or(row.default_bound())
+        self.set
+            .get(&row)
+            .copied()
+            .unwrap_or_else(|| row.default_bound())
     }
 
     /// Sets `row` to `bound`.
@@ -98,9 +194,24 @@ impl LimitWatch {
     /// work either way.
     pub fn measure(&self, row: EngineLimit, measured: u64) {
         let bound = self.bound(row);
-        if measured <= bound {
-            return;
+        if measured > bound {
+            self.crossed(row, bound, measured);
         }
+    }
+
+    /// A floor measured `measured` against `row`: below what the row is set
+    /// to, the installed port is asked. It never refuses either.
+    pub fn floor(&self, row: EngineLimit, measured: u64) {
+        let bound = self.bound(row);
+        if measured < bound {
+            self.crossed(row, bound, measured);
+        }
+    }
+
+    /// Tells the installed port that `row`, standing at `bound` for this
+    /// work, measured `measured`: for a bound computed at the site, such as a
+    /// run's live share of a memory pool.
+    pub fn crossed(&self, row: EngineLimit, bound: u64, measured: u64) {
         let ask = self
             .ask
             .read()

@@ -11,8 +11,6 @@ use std::collections::BTreeSet;
 
 const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 
-const TEXT_OUTPUT_PREFIX: &[u8] = b"oneiron-engine-executor-text-output-v1\n";
-
 pub(super) const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 
 const TERMINAL_OUTPUT_SUFFIX: &str = ".terminal.json";
@@ -31,8 +29,12 @@ pub(super) fn record_output(
     if record.outputs.iter().any(|output| output.path == path) {
         return Err(Error::InvalidClaimBody("duplicate executor output path").into());
     }
-    let output = CodeRunRawOutput::from_bytes(path, raw)?;
-    storage.put_code_run_raw_output(&output, raw)?;
+    // The body streams into its store as it is measured: past the inline
+    // bound it is a file beside data.mdb, whole on disk before its row and
+    // this manifest are published.
+    let mut sink = storage.code_run_output_sink()?;
+    sink.write(raw)?;
+    let output = storage.publish_code_run_output(path, sink, true)?;
     record.outputs.push(output);
     Ok(())
 }
@@ -51,7 +53,8 @@ pub(super) fn validate_runtime_outputs(
         {
             return Err(Error::InvalidClaimBody("duplicate executor output path").into());
         }
-        let _ = CodeRunRawOutput::from_bytes(path.clone(), &output.bytes)?;
+        // Checks the path alone; the body is measured once, as it is stored.
+        let _ = CodeRunRawOutput::from_bytes(path.clone(), &[])?;
         paths.push(path);
     }
     Ok(paths)
@@ -63,30 +66,11 @@ pub(super) fn record_text_output(
     path: String,
     text: &str,
 ) -> EngineExecutorResult<()> {
-    let raw = text_output_bytes(&path, text);
-    record_output(storage, record, path, &raw)
+    record_output(storage, record, path, text.as_bytes())
 }
 
-fn text_output_bytes(path: &str, text: &str) -> Vec<u8> {
-    let mut raw = Vec::with_capacity(TEXT_OUTPUT_PREFIX.len() + path.len() + 1 + text.len());
-    raw.extend_from_slice(TEXT_OUTPUT_PREFIX);
-    raw.extend_from_slice(path.as_bytes());
-    raw.push(b'\n');
-    raw.extend_from_slice(text.as_bytes());
-    raw
-}
-
-pub(super) fn decode_text_output(path: &str, raw: Vec<u8>) -> Result<String> {
-    let Some(rest) = raw.strip_prefix(TEXT_OUTPUT_PREFIX) else {
-        return Err(Error::CorruptedIndex(
-            "executor replay text output envelope",
-        ));
-    };
-    let path_header = format!("{path}\n");
-    let Some(text) = rest.strip_prefix(path_header.as_bytes()) else {
-        return Err(Error::CorruptedIndex("executor replay text output path"));
-    };
-    String::from_utf8(text.to_vec())
+pub(super) fn decode_text_output(raw: Vec<u8>) -> Result<String> {
+    String::from_utf8(raw)
         .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))
 }
 
@@ -98,34 +82,14 @@ pub(super) struct ObservationRef {
     pub(super) overview: String,
 }
 
-/// Derives an observation's reference in one pass over its stored bytes,
-/// read in place: the digest is checked, nothing body-sized is copied.
-pub(super) fn observation_ref(
-    storage: &ExecutorStorage<'_>,
-    output: &CodeRunRawOutput,
-) -> EngineExecutorResult<ObservationRef> {
-    let observation = storage.with_code_run_raw_output_bytes(output, |raw| {
-        output.verify_bytes(raw)?;
-        let text = std::str::from_utf8(text_output_body(&output.path, raw)?)
-            .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))?;
-        Ok(ObservationRef {
-            source: OutputRef::from_bytes(text.as_bytes()),
-            overview: text.chars().take(128).collect(),
-        })
-    })?;
-    Ok(observation.ok_or(Error::CorruptedIndex("executor replay output bytes"))?)
-}
-
-/// The text a stored text envelope carries, borrowed.
-pub(super) fn text_output_body<'a>(path: &str, raw: &'a [u8]) -> Result<&'a [u8]> {
-    let rest = raw
-        .strip_prefix(TEXT_OUTPUT_PREFIX)
-        .ok_or(Error::CorruptedIndex(
-            "executor replay text output envelope",
-        ))?;
-    rest.strip_prefix(path.as_bytes())
-        .and_then(|rest| rest.strip_prefix(b"\n"))
-        .ok_or(Error::CorruptedIndex("executor replay text output path"))
+/// An observation's reference, from its manifest alone: the body's digest
+/// and length are the reference, and its preview the overview. No body byte
+/// is read.
+pub(super) fn observation_ref(output: &CodeRunRawOutput) -> ObservationRef {
+    ObservationRef {
+        source: output.output_ref(),
+        overview: output.preview.text.chars().take(128).collect(),
+    }
 }
 
 pub(super) fn load_utf8_output(
@@ -141,7 +105,41 @@ pub(super) fn load_utf8_output(
     let raw = storage
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-    decode_text_output(path, raw)
+    decode_text_output(raw)
+}
+
+/// Bytes of one observation a compaction window carries. Past it, the window
+/// carries the observation's head and the reference to its whole body, so a
+/// summary never claims to cover bytes it was not given.
+pub(super) const COMPACTION_OBSERVATION_WINDOW_BYTES: usize = 256 * 1024;
+
+/// An observation for a compaction window: whole within `cap` bytes, else
+/// its first `cap` bytes, read by range, and the reference to the rest.
+pub(super) fn load_observation_window(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    path: &str,
+    cap: usize,
+) -> Result<String> {
+    let output = record
+        .outputs
+        .iter()
+        .find(|output| output.path == path)
+        .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+    if output.raw_len <= cap as u64 {
+        return load_utf8_output(storage, record, path);
+    }
+    let head = storage
+        .read_code_run_raw_output_range(output, 0, cap)?
+        .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+    Ok(format!(
+        "{}\n[the first {} of {} bytes; the whole result is stored as output:blake3:{}:{}]",
+        String::from_utf8_lossy(&head),
+        head.len(),
+        output.raw_len,
+        crate::entity_id::bytes_to_hex_lower(&output.raw_blake3),
+        output.raw_len,
+    ))
 }
 
 /// The durable "this step already spoke its last word" marker (ONE-1686).
@@ -164,17 +162,15 @@ pub(super) fn fallback_speech_marker(
         "step_seq": seq,
         "order": order,
     }))?;
-    let raw = text_output_bytes(&path, &text);
-    let marker = CodeRunRawOutput::from_bytes(path, &raw)?;
-    Ok((marker, raw))
+    let marker = CodeRunRawOutput::from_bytes(path, text.as_bytes())?;
+    Ok((marker, text.into_bytes()))
 }
 
 fn fallback_speech_marker_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}{FALLBACK_SPEECH_MARKER_SUFFIX}")
 }
 
-/// Maximum raw bytes handed to one guest read. Worst-case JSON byte-array
-/// encoding is under 262 KiB before the bridge applies its exact wire cap.
+/// Maximum raw bytes handed to one guest read, read by range from the body.
 pub(super) const RECOVERABLE_OUTPUT_CHUNK_BYTES: usize = 64 * 1024;
 
 /// A model-facing, typed read-file affordance in the guest's existing output

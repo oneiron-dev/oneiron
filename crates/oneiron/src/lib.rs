@@ -30,6 +30,7 @@ pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
+pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
 pub mod slim;
