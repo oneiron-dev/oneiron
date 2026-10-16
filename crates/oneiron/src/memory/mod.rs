@@ -29,6 +29,7 @@ mod authorship;
 mod birth_position;
 mod booking;
 mod claim_conflict;
+mod conflict_settle;
 mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;

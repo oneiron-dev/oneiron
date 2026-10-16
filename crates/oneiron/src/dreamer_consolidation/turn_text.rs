@@ -322,6 +322,15 @@ fn collect_with(
     withheld: &mut usize,
     read_rows: impl FnOnce(&[EntityId]) -> Result<Vec<Option<SourceRow>>>,
 ) -> Result<TurnText> {
+    // A TURN whose words a deletion withdrew has none, inline or joined, as
+    // `Vault::get_raw` reads it.
+    if crate::ports::withdrawn_in_txn(&vault.store, txn, turn)? {
+        return Ok(TurnText {
+            text: None,
+            messages: None,
+            layout: Vec::new(),
+        });
+    }
     let facts = decode_turn_body(turn_body);
     if facts.text.is_some() {
         return Ok(TurnText {
