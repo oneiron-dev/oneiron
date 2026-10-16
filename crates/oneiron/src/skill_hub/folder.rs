@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 /// Reads the common scalar frontmatter subset. Complex YAML is refused, not guessed.
 /// Hosts can normalize richer YAML before publication, without changing this parser's trust floor.
-pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
+pub(crate) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
     validate_source_files(&files)?;
     let front = source_frontmatter(instruction_text(&files)?)?
         .ok_or_else(|| invalid("SKILL.md needs frontmatter"))?;

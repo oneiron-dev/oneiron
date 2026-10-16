@@ -178,7 +178,9 @@ pub fn execute_callable_skill(
             run_id,
             seq,
             script: &script,
-            boundary: SandboxBoundaryContract::for_tier(tier),
+            // A callable keeps its tier's imports but never the host file or
+            // credential services: the cut #1491 made for the executor.
+            boundary: SandboxBoundaryContract::for_tier(tier).without_host_services(),
             determinism,
         },
         &mut SkillHost(host),
