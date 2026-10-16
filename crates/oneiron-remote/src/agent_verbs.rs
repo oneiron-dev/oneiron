@@ -267,7 +267,7 @@ impl OneironClient {
             deadline_ms,
         };
         oneiron::memory::caps::check_query(&input.query)?;
-        oneiron::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+        oneiron::memory::caps::check_limit_nonzero(input.limit.unwrap_or(10))?;
         oneiron::memory::caps::check_as_of(input.as_of)?;
         oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(&input).map_err(|_| {
