@@ -250,10 +250,10 @@ impl SyncServer {
         }
     }
 
-    /// Waits on this blocking thread for a git exchange permit, asking again
-    /// each poll, until one is free or the host stops. An exchange that wants
-    /// one meanwhile takes it first.
-    fn wait_for_git_permit(&self) -> Option<Permit<String>> {
+    /// Waits on this blocking thread for a git exchange permit, behind every
+    /// exchange in line, each wait up to the queue deadline, until it is
+    /// given one or the host stops.
+    fn wait_for_git_permit(&self) -> Option<Permit> {
         loop {
             if self.housekeeping_passes.stopping() {
                 return None;

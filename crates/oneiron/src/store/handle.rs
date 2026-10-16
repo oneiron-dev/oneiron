@@ -178,6 +178,14 @@ impl StoreCore {
     pub(in crate::store) fn gate_custody_archived(&self) -> bool {
         self.gate_custody_archived_at_open || self.env.is_sealed()
     }
+
+    /// The page size this store writes in: the creating host's, which LMDB
+    /// keeps with the file. A value too large for a leaf takes whole pages
+    /// of it.
+    pub(crate) fn page_size(&self) -> Result<u64> {
+        let txn = self.env.read_txn()?;
+        Ok(u64::from(self.raw.entities.stat(&txn)?.page_size))
+    }
 }
 
 /// Arc-shared substrate of an open vault (ARCH-0052 store split).
@@ -241,6 +249,11 @@ pub struct StoreCore {
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
+    /// A stale-stamp sweep is owed (H213): set when one fails after its
+    /// authority commit, cleared by the next sweep that runs. A handle opens
+    /// owing one, so a stop between a commit and its sweep heals at the
+    /// open's own first write, before any caller holds the vault.
+    pub(crate) federation_stale_sweep_owed: std::sync::atomic::AtomicBool,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
     /// What the authority store doors read of one committed generation.

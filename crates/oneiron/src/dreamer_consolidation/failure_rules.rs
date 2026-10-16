@@ -7,7 +7,10 @@ use crate::error::{Error, Result};
 use crate::llm::{CallClass, FinishReason, LlmRequest, LlmResponse};
 use crate::side_table::{self, Raw, SideTable};
 use crate::write_envelope::WriteActor;
-use crate::{ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, Vault};
+use crate::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
+    Vault,
+};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -54,6 +57,11 @@ struct Rule {
 #[serde(deny_unknown_fields)]
 struct StoredRules {
     author: String,
+    /// The admitted claim the rules were copied from; `None` for host
+    /// configuration. Claim-backed rules stay in force only while that claim
+    /// does (H398).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim: Option<String>,
     rules: FailureRules,
 }
 
@@ -176,34 +184,55 @@ pub(crate) fn admitted_authored_claim(
     if !valid_resident_actor(vault, actor)? {
         return Ok(false);
     }
-    let Some(body) = vault.get_claim(id)? else {
+    let txn = vault.store.env.read_txn()?;
+    claim_still_admitted_in_txn(vault, &txn, id, actor.entity_ref())
+}
+
+/// The claim half of the admission, read in the caller's snapshot: the rule
+/// claim is the author's own, Generated, Active, not rejected, and its latest
+/// gate decision is the author's `allow`. Load re-runs it at every use, so a
+/// retracted, superseded or rejected claim takes its rules out of force.
+fn claim_still_admitted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    author: EntityId,
+) -> Result<bool> {
+    let Some(body) = vault.get_claim_in_txn(txn, id)? else {
         return Ok(false);
     };
     if body.predicate != PREDICATE
-        || body.subject != ClaimSubject::Entity(actor.entity_ref())
+        || body.subject != ClaimSubject::Entity(author)
         || body.source != Some(ClaimSource::Generated)
         || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.approval == ClaimApprovalStatus::Rejected
     {
         return Ok(false);
     }
-    let txn = vault.store.env.read_txn()?;
     let decisions = vault
         .store
-        .gate_decisions_for_claim_in_txn(&txn, id.as_bytes())?;
+        .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?;
     Ok(decisions.last().is_some_and(|record| {
         record.outcome == "allow"
             && record.content_kind == "claim"
-            && record.actor_ref.as_deref() == Some(actor.entity_ref().to_hex().as_str())
+            && record.actor_ref.as_deref() == Some(author.to_hex().as_str())
     }))
 }
 
-pub(crate) fn resident_record(actor: WriteActor, json: &[u8]) -> Result<Vec<u8>> {
+/// The stored record for `actor`'s rules; `claim` names the admitted claim
+/// they came from, `None` for host configuration.
+pub(crate) fn resident_record(
+    actor: WriteActor,
+    json: &[u8],
+    claim: Option<&EntityId>,
+) -> Result<Vec<u8>> {
     if actor.actor_class() != EdgeActorClass::Agent {
         return Err(invalid());
     }
     let rules = FailureRules::parse(json)?;
     serde_json::to_vec(&StoredRules {
         author: actor.entity_ref().to_hex(),
+        claim: claim.map(EntityId::to_hex),
         rules,
     })
     .map_err(|_| invalid())
@@ -214,16 +243,24 @@ pub(super) fn load(vault: &Vault) -> Result<Option<FailureRules>> {
     load_in_txn(vault, &txn)
 }
 
+/// The rules in force: host configuration, or a resident's rules whose
+/// authoring claim is still admitted in this snapshot. Rules whose claim was
+/// retracted, superseded or rejected load as absent, so the manifest's own
+/// failure policy decides (H398).
 fn load_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<FailureRules>> {
-    DREAMER_FAILURE_RULES
-        .get(&vault.store, txn, &())?
-        .map(|bytes| {
-            let stored: StoredRules = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-            EntityId::from_hex(&stored.author).map_err(|_| invalid())?;
-            stored.rules.validate()?;
-            Ok(stored.rules)
-        })
-        .transpose()
+    let Some(bytes) = DREAMER_FAILURE_RULES.get(&vault.store, txn, &())? else {
+        return Ok(None);
+    };
+    let stored: StoredRules = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    let author = EntityId::from_hex(&stored.author).map_err(|_| invalid())?;
+    stored.rules.validate()?;
+    if let Some(claim) = &stored.claim {
+        let claim = EntityId::from_hex(claim).map_err(|_| invalid())?;
+        if !claim_still_admitted_in_txn(vault, txn, &claim, author)? {
+            return Ok(None);
+        }
+    }
+    Ok(Some(stored.rules))
 }
 
 /// A fallback from either consolidation call site cannot turn an authored
@@ -269,7 +306,27 @@ impl Vault {
     /// Host configuration door. Agent-authored rows use the first-party
     /// `self.memory.put_claim` trap, with the resident actor bound by its host.
     pub fn set_dreamer_failure_rules(&self, actor: WriteActor, json: &[u8]) -> Result<()> {
-        let bytes = resident_record(actor, json)?;
+        self.put_dreamer_failure_rules(actor, json, None)
+    }
+
+    /// The trap's door: rules copied from the admitted claim `claim`, in force
+    /// only while that claim is.
+    pub(crate) fn set_claimed_dreamer_failure_rules(
+        &self,
+        actor: WriteActor,
+        json: &[u8],
+        claim: &EntityId,
+    ) -> Result<()> {
+        self.put_dreamer_failure_rules(actor, json, Some(claim))
+    }
+
+    fn put_dreamer_failure_rules(
+        &self,
+        actor: WriteActor,
+        json: &[u8],
+        claim: Option<&EntityId>,
+    ) -> Result<()> {
+        let bytes = resident_record(actor, json, claim)?;
         if !valid_resident_actor(self, actor)? {
             return Err(invalid());
         }
