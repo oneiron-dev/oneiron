@@ -731,8 +731,18 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/origin.rs",
+     "purpose": "OF-221: the conversation that started a dispatch",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -848,9 +858,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 6,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "struct": 8
      }
     },
@@ -1341,7 +1351,7 @@
      "path": "src/attempt_queue/completion.rs",
      "purpose": "Attempt completion inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -22177,12 +22187,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "NotificationMark",
+      "NotificationPage",
+      "NotificationRow"
+     ],
+     "path": "src/inbox/list.rs",
+     "purpose": "OF-221: the actor-bound inbox page over NOTIFICATION records, and the one write door that marks a…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/inbox/mod.rs",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue",
      "surface": {
       "crate-vis": 1,
-      "re-export": 1
+      "re-export": 3
      }
     },
     {
@@ -22210,6 +22237,25 @@
       "enum": 3,
       "fn": 5,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "NotificationBody",
+      "NotificationEvent",
+      "NotificationKind",
+      "NotificationSource"
+     ],
+     "path": "src/inbox/notification.rs",
+     "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
+     "surface": {
+      "const": 4,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -40023,6 +40069,8 @@
       "BoardSubscriptionRequest",
       "DescribeRequest",
       "EmptyRequest",
+      "InboxListRequest",
+      "InboxMarkRequest",
       "RecallRequest",
       "ReceiptsRequest",
       "RoomClaimRequest",
@@ -40044,7 +40092,7 @@
       "enum": 1,
       "fn": 6,
       "re-export": 1,
-      "struct": 17
+      "struct": 19
      }
     },
     {
@@ -43890,7 +43938,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44583,7 +44631,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 5,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45306,7 +45354,7 @@
    },
    "over_bar": 67,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2717,
+   "source_files": 2720,
    "test_files": 903
   },
   "oneiron-android": {
