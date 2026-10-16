@@ -13,7 +13,11 @@
 //! - `generated_ui` — the Generated-UI card/segment/`$state` protocol.
 //! - `mediation` — host mediation: principals, backing refs, [`LensRenderFrame`].
 //! - `validate` — cross-cutting validators and the surface compiler.
+//! - `proposal`, `activation` — pack lens proposals and the owner's slot
+//!   selection (`vault.lenses.*`); `sdk` — the default vault projection verb.
+//! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
+mod activation;
 mod atom;
 mod default_vault;
 pub use default_vault::{DefaultVaultInput, DefaultVaultItem, compose_default_vault};
@@ -30,6 +34,21 @@ mod generated_ui;
 mod mediation;
 mod mount;
 pub use mount::LensMount;
+mod proposal;
+pub use activation::{
+    LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
+};
+pub use proposal::{
+    LENS_LIST_MAX_PAGE, LENS_PROPOSAL_MAX_BYTES, LensListPage, LensListRequest, LensListRow,
+    LensProposalState, LensProposeRequest, LensSlot,
+};
+mod sdk;
+pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};
+mod record_ref;
+pub use record_ref::{
+    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordRef,
+    RecordRefPreview, ResolveRecordRefRequest,
+};
 mod self_ui;
 mod validate;
 mod wire_ids;

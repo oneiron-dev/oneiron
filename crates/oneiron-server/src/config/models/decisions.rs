@@ -4,11 +4,12 @@
 //! The ladder is built once at serve start from what `[models]` already
 //! binds: the rule table first, the house model's decision read
 //! (`[models.decision_read]`) on the escalation rung, and the vault owner's
-//! ask queue last. These rows add the System One seat and word the host's
-//! own questions; a question with no wording is not asked, and its hook stays
+//! ask queue last. These rows add the System One seat and the big model, and
+//! word the host's own questions; a question with no wording is not asked, and its hook stays
 //! unbound. No question text lives in the server.
 use std::time::Duration;
 
+use oneiron::llm::manifest::ModelRole;
 use serde::Deserialize;
 
 /// A seat pick's anytime budget when the file names none.
@@ -22,6 +23,7 @@ pub(super) struct DecisionsFile {
     auto_check: Option<String>,
     seat: Option<SeatPickFile>,
     system_one: Option<SystemOneFile>,
+    big: Option<BigFile>,
 }
 
 /// `[models.decisions.seat]`: the code-mode seat pick.
@@ -52,6 +54,32 @@ struct SystemOneFile {
     budget_units: Option<u64>,
 }
 
+/// `[models.decisions.big]`: the big model on the Big rung, through a seat
+/// `[models]` already fills.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BigFile {
+    /// The seat whose model answers; the generative reasoner when unset.
+    role: Option<ModelRole>,
+    /// The revision the rung's pin names.
+    version: String,
+    /// The host's framing of every question: the call's system message.
+    wording: String,
+    /// How the model is asked to reply: `json` (the default) or `lines`.
+    reply: Option<BigReply>,
+    budget_units: Option<u64>,
+}
+
+/// How the big model writes its answer and its probability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BigReply {
+    /// One JSON object: `{"answer", "probability"}`.
+    Json,
+    /// Two lines: `answer: ...` and `probability: ...`.
+    Lines,
+}
+
 /// The resolved section.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DecisionsSettings {
@@ -59,6 +87,17 @@ pub struct DecisionsSettings {
     pub auto_check: Option<String>,
     pub seat: Option<SeatPickSettings>,
     pub system_one: Option<SystemOneSettings>,
+    pub big: Option<BigSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BigSettings {
+    pub role: ModelRole,
+    pub version: String,
+    pub wording: String,
+    pub reply: BigReply,
+    /// The rung's own meter; the raw routes' units when unset.
+    pub budget_units: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,10 +163,26 @@ impl DecisionsFile {
                 })
             })
             .transpose()?;
+        let big = self
+            .big
+            .map(|big| -> anyhow::Result<_> {
+                if big.budget_units == Some(0) {
+                    anyhow::bail!("models budget units must be greater than zero");
+                }
+                Ok(BigSettings {
+                    role: big.role.unwrap_or(ModelRole::GenerativeReasoner),
+                    version: filled("big.version", big.version)?,
+                    wording: filled("big.wording", big.wording)?,
+                    reply: big.reply.unwrap_or(BigReply::Json),
+                    budget_units: big.budget_units,
+                })
+            })
+            .transpose()?;
         Ok(DecisionsSettings {
             auto_check,
             seat,
             system_one,
+            big,
         })
     }
 }

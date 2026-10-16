@@ -26,8 +26,20 @@ pub(super) fn sets(selection: &BoardSelection) -> [&BTreeSet<EntityId>; 5] {
     ]
 }
 
-pub(super) fn value(items: &BTreeSet<EntityId>, anchor: RevisionRef) -> Value {
-    Value::Map(vec![
+/// Base reality's flag per predicate: each world tier carries one, the
+/// activation tiers none.
+pub(super) fn bases(selection: &BoardSelection) -> [Option<bool>; 5] {
+    [
+        Some(selection.allowed_base),
+        Some(selection.default_on_base),
+        Some(selection.active_base),
+        None,
+        None,
+    ]
+}
+
+pub(super) fn value(items: &BTreeSet<EntityId>, base: Option<bool>, anchor: RevisionRef) -> Value {
+    let mut fields = vec![
         (
             Value::from("items"),
             Value::Array(
@@ -41,17 +53,24 @@ pub(super) fn value(items: &BTreeSet<EntityId>, anchor: RevisionRef) -> Value {
             Value::from("source_revision_ref"),
             Value::Binary(anchor.0.to_vec()),
         ),
-    ])
+    ];
+    if let Some(base) = base {
+        fields.push((Value::from("include_base"), Value::Boolean(base)));
+    }
+    Value::Map(fields)
 }
 
-pub(super) fn decode_value(value: &Value) -> Result<(BTreeSet<EntityId>, RevisionRef)> {
+pub(super) fn decode_value(
+    value: &Value,
+) -> Result<(BTreeSet<EntityId>, Option<bool>, RevisionRef)> {
     let Value::Map(fields) = value else {
         return Err(Error::InvalidClaimBody("board claim value must be a map"));
     };
-    if fields.len() != 2 {
+    if !(2..=3).contains(&fields.len()) {
         return Err(Error::InvalidClaimBody("board claim field count"));
     }
     let mut items = None;
+    let mut base = None;
     let mut anchor = None;
     for (key, value) in fields {
         match (key.as_str(), value) {
@@ -80,11 +99,15 @@ pub(super) fn decode_value(value: &Value) -> Result<(BTreeSet<EntityId>, Revisio
                     Error::InvalidClaimBody("board frontier reference length")
                 })?));
             }
+            (Some("include_base"), Value::Boolean(flag)) if base.is_none() => {
+                base = Some(*flag);
+            }
             _ => return Err(Error::InvalidClaimBody("invalid board claim field")),
         }
     }
     Ok((
         items.ok_or(Error::InvalidClaimBody("board items missing"))?,
+        base,
         anchor.ok_or(Error::InvalidClaimBody("board frontier missing"))?,
     ))
 }
@@ -102,6 +125,11 @@ pub(crate) fn validate_board_claim(body: &ClaimBody) -> Result<()> {
     if body.valid_to.is_some_and(|to| to < from) {
         return Err(Error::InvalidClaimBody("board validity is inverted"));
     }
-    decode_value(&body.value)?;
+    let (_, base, _) = decode_value(&body.value)?;
+    if base.is_some() != body.predicate.starts_with("world_access.") {
+        return Err(Error::InvalidClaimBody(
+            "board include_base belongs to exactly the world tiers",
+        ));
+    }
     Ok(())
 }

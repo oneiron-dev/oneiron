@@ -37,6 +37,7 @@ pub use leader_starter::{
 mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
+mod project_proposal;
 mod resident;
 mod room_join;
 mod spend_calibration;
@@ -61,6 +62,8 @@ pub use self::widen_record::ContextWidenProposal;
 pub use self::fanout_statement::{
     ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass,
 };
+pub use self::project_proposal::{ProjectDetection, ProjectDetectionRun};
+
 pub use self::launch::{
     LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,
 };
@@ -73,11 +76,11 @@ pub use self::spend_record::{
     SpendSignal, SpendState,
 };
 
+pub(crate) use self::codec::attempt_task_type_ref;
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
     encode_agent_dispatch_input,
 };
-pub(crate) use self::codec::attempt_task_type_ref;
 pub use self::dispatch::AgentDispatcher;
 pub use self::planner::{
     AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,

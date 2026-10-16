@@ -18,7 +18,9 @@ pub enum WeaveReader<'a> {
     Agent(EntityId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum WeaveSectionKind {
     Changes,
@@ -65,6 +67,14 @@ pub enum WeaveItem {
         source: EntityId,
         kind: EdgeKind,
         target: EntityId,
+    },
+    /// A resident's own dreaming, in its own Digest section only: when it
+    /// last dreamed and how many entries its dreaming has written. Never
+    /// an entry's id or text, and never in another reader's report.
+    DreamProgress {
+        resident: EntityId,
+        dreamed_at: u64,
+        entries: u64,
     },
 }
 
@@ -276,6 +286,25 @@ impl ScopedRead<'_> {
                             body: Box::new(body),
                         });
                     }
+                }
+            }
+            // Each resident gets its own digest through its dreaming
+            // (ARCH-0063 §6): its progress leads its own Digest section.
+            if spec.kind == WeaveSectionKind::Digest
+                && let WeaveReader::Agent(resident) = reader
+            {
+                let progress = crate::dreamer_consolidation::resident_dream_progress_in_txn(
+                    self.vault, txn, resident,
+                )?;
+                if progress.entries > 0 {
+                    items.insert(
+                        0,
+                        WeaveItem::DreamProgress {
+                            resident,
+                            dreamed_at: progress.dreamed_at,
+                            entries: progress.entries,
+                        },
+                    );
                 }
             }
             if spec.kind == WeaveSectionKind::Links && !spec.edge_kinds.is_empty() {

@@ -18,7 +18,10 @@ impl UsageLedger {
         event.validate()?;
         // A meter records facts for every payer. A source never turns a
         // quantity into a wallet debit, and an unknown price is not zero.
-        let cost = event.cost_input().map(|input| input.calculate()).transpose()?;
+        let cost = event
+            .cost_input()
+            .map(|input| input.calculate())
+            .transpose()?;
         let key = usage_event_key(&event.owner, &event.vault_id, &event.idempotency_key);
         let rollup_key = vault_rollup_key(&event.owner, &event.vault_id);
         self.vault

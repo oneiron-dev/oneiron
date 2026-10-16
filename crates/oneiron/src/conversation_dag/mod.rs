@@ -42,10 +42,10 @@ pub(crate) use graph::{
     actor_in_txn, conversation_of, edge_ids, is_sub_session_record, keeps_dag_topology,
     parent as retained_parent, record_has_dag_topology, require_type,
 };
-pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };
+pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
 pub use reply::{ReplyStrip, Thread, ThreadMeta};
 pub(crate) use reply::{
     invalidate_thread_meta, invalidate_thread_meta_for_turn_put,

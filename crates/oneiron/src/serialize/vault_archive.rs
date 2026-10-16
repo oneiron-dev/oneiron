@@ -8,8 +8,7 @@ use serde_json::Value;
 
 use crate::batch::export::{
     ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ArchiveSecretCustody,
-    VAULT_ARCHIVE_MANIFEST_PATH,
-    WholeVaultDocumentManifest, archive_file_path, blake3_hex,
+    VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path, blake3_hex,
 };
 use crate::error::{Error, Result};
 
@@ -18,9 +17,10 @@ use crate::error::{Error, Result};
 pub(super) fn write_vault_archive(
     mut document: Value,
     secrets: &[ArchiveSecretCustody],
+    mut binary_bodies: BTreeMap<String, Vec<u8>>,
 ) -> Result<(Vec<u8>, WholeVaultDocumentManifest)> {
     let mut files = BTreeMap::new();
-    detach_result_bodies(&mut document, &mut files);
+    detach_result_bodies(&mut document, &mut files, &mut binary_bodies);
     for tree in source_trees(&mut document) {
         detach_tree(tree, &mut files);
     }
@@ -37,7 +37,9 @@ pub(super) fn write_vault_archive(
             .get("entity_type")
             .and_then(Value::as_u64)
             .and_then(|byte| u8::try_from(byte).ok())
-            .ok_or(Error::InvariantViolation("archive entity row without a type"))?;
+            .ok_or(Error::InvariantViolation(
+                "archive entity row without a type",
+            ))?;
         push(
             ArchiveRecordKind::entity_path(entity_type),
             ArchiveRecordKind::Entity,
@@ -50,11 +52,20 @@ pub(super) fn write_vault_archive(
         (ArchiveRecordKind::Skill, &["skills"][..]),
         (ArchiveRecordKind::Pack, &["packs"][..]),
         (ArchiveRecordKind::AgentPack, &["agent_packs"][..]),
-        (ArchiveRecordKind::DerivationEnvelope, &["derivation_envelopes"][..]),
+        (
+            ArchiveRecordKind::DerivationEnvelope,
+            &["derivation_envelopes"][..],
+        ),
         (ArchiveRecordKind::Run, &["run_results", "runs"][..]),
-        (ArchiveRecordKind::ResultBody, &["run_results", "bodies"][..]),
+        (
+            ArchiveRecordKind::ResultBody,
+            &["run_results", "bodies"][..],
+        ),
     ] {
-        let fixed = kind.fixed_path().map(str::to_owned).ok_or_else(encode_failed)?;
+        let fixed = kind
+            .fixed_path()
+            .map(str::to_owned)
+            .ok_or_else(encode_failed)?;
         for row in take_array(&mut document, path) {
             push(fixed.clone(), kind, &row)?;
         }
@@ -109,10 +120,15 @@ pub(super) fn write_vault_archive(
     Ok((bytes, manifest))
 }
 
-/// Each result body's text becomes the file named by its digest. A body the
+/// Each result body becomes the file named by its digest: its text, or the
+/// bytes of a binary body that passed the release scan. A text body the
 /// nulling pass changed no longer matches that digest, so it is withheld as
 /// a credential rather than shipped under a name it does not hash to.
-fn detach_result_bodies(document: &mut Value, files: &mut BTreeMap<String, Vec<u8>>) {
+fn detach_result_bodies(
+    document: &mut Value,
+    files: &mut BTreeMap<String, Vec<u8>>,
+    binary_bodies: &mut BTreeMap<String, Vec<u8>>,
+) {
     let Some(bodies) = document
         .pointer_mut("/run_results/bodies")
         .and_then(Value::as_array_mut)
@@ -124,7 +140,10 @@ fn detach_result_bodies(document: &mut Value, files: &mut BTreeMap<String, Vec<u
             continue;
         };
         let content = fields.get_mut("content").map(Value::take);
-        if fields.get("withheld").is_some_and(|reason| !reason.is_null()) {
+        if fields
+            .get("withheld")
+            .is_some_and(|reason| !reason.is_null())
+        {
             continue;
         }
         let digest = fields
@@ -134,6 +153,15 @@ fn detach_result_bodies(document: &mut Value, files: &mut BTreeMap<String, Vec<u
         match (content, digest) {
             (Some(Value::String(text)), Some(digest)) if blake3_hex(text.as_bytes()) == digest => {
                 files.insert(digest, text.into_bytes());
+            }
+            (Some(Value::Null) | None, Some(digest))
+                if binary_bodies
+                    .get(&digest)
+                    .is_some_and(|bytes| blake3_hex(bytes) == digest) =>
+            {
+                if let Some(bytes) = binary_bodies.remove(&digest) {
+                    files.insert(digest, bytes);
+                }
             }
             _ => {
                 fields.insert("withheld".to_owned(), Value::from("credential"));

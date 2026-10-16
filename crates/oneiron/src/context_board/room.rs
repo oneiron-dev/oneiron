@@ -1,5 +1,6 @@
 //! Stateless ROOM projection and the one roster-to-Scope function.
 
+use super::people::{PeopleView, PersonKind, PersonRow};
 use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
 use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::pipeline::WorldAuthoritySet;
@@ -7,6 +8,9 @@ use crate::{EntityId, Result};
 
 #[cfg(test)]
 mod tests;
+
+/// Most persons the ROOM `invite?:` line names; the rest are counted.
+const ROOM_INVITE_CAP: usize = 5;
 
 /// One roster entry. The engine builds every entry from the Conversation's
 /// `memberIds` and each member's own grants; no request supplies one.
@@ -169,19 +173,61 @@ pub struct RoomSection {
 }
 
 impl RoomSection {
-    /// Roster, scope, posture, host and rules only. Values are escaped again by
-    /// the board frame; flattening here only prevents row/control-character
-    /// tricks. An undecided host renders as no host with its candidates.
-    pub fn board_section(&self) -> std::result::Result<BoardSection, BoardFrameError> {
+    /// Roster, invitees, scope, posture, host and rules only. Values are
+    /// escaped again by the board frame; flattening here only prevents
+    /// row/control-character tricks. An undecided host renders as no host
+    /// with its candidates. Persons are named by handle (PEOPLE, ARCH-0067),
+    /// with their name inline when the reader's cached roster lacks them.
+    pub fn board_section(
+        &self,
+        people: &PeopleView<'_>,
+    ) -> std::result::Result<BoardSection, BoardFrameError> {
         let mut rows = vec![format!("room: {}", self.room.to_hex())];
         rows.extend(self.roster.iter().map(|member| {
-            format!(
-                "{} {} {}",
-                member.actor.to_hex(),
-                if member.present { "present" } else { "away" },
-                one_line_token(&member.label)
-            )
+            let kind = people
+                .kind(member.actor)
+                .or(match member.actor_class {
+                    Some(crate::EdgeActorClass::Human) => Some(PersonKind::Human),
+                    Some(crate::EdgeActorClass::Agent) => Some(PersonKind::Agent),
+                    _ => None,
+                })
+                .map_or("agent", PersonKind::as_str);
+            let state = if member.present { "present" } else { "away" };
+            match people.mention(member.actor) {
+                Some(mention) => format!("{mention} {state} {kind}"),
+                None => format!(
+                    "{} {state} {kind} {}",
+                    member.actor.to_hex(),
+                    one_line_token(&member.label)
+                ),
+            }
         }));
+        let members: std::collections::BTreeSet<EntityId> = self
+            .roster
+            .iter()
+            .filter_map(|member| people.people.get(member.actor).map(|row| row.person))
+            .collect();
+        let invitees: Vec<&PersonRow> = people
+            .people
+            .rows()
+            .iter()
+            .filter(|row| !members.contains(&row.person))
+            .collect();
+        if !invitees.is_empty() {
+            let mut line = format!(
+                "invite?: {}",
+                invitees
+                    .iter()
+                    .take(ROOM_INVITE_CAP)
+                    .map(|row| people.label(row.person))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            if invitees.len() > ROOM_INVITE_CAP {
+                line.push_str(&format!(" +{}", invitees.len() - ROOM_INVITE_CAP));
+            }
+            rows.push(line);
+        }
         let base = ScopeId(crate::claim::base_world_id());
         rows.push(format!(
             "scope: base={} worlds={}",
@@ -214,13 +260,13 @@ impl RoomSection {
         });
         if let Some(hosting) = &self.host {
             rows.push(match hosting.host {
-                Some(host) => format!("host: {}", host.to_hex()),
+                Some(host) => format!("host: {}", people.label(host)),
                 None => format!(
                     "host: none candidates={}",
                     hosting
                         .candidates
                         .iter()
-                        .map(EntityId::to_hex)
+                        .map(|candidate| people.label(*candidate))
                         .collect::<Vec<_>>()
                         .join(",")
                 ),

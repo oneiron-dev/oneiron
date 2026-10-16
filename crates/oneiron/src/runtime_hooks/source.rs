@@ -259,10 +259,6 @@ impl SettledRow {
 
 /// Appends one settlement to the feed, in the settling door's transaction.
 /// The sequence is allocated there, so feed order is commit order.
-#[allow(
-    dead_code,
-    reason = "the gate's settlement doors call this once their seam lands"
-)]
 pub(crate) fn record_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -305,7 +301,9 @@ pub(super) fn read_after(
         (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
             settlements_after(vault, Some(position), max_entries)
         }
-        _ => Err(Error::InvariantViolation("hook cursor names another source")),
+        _ => Err(Error::InvariantViolation(
+            "hook cursor names another source",
+        )),
     }
 }
 
@@ -420,7 +418,10 @@ pub(super) fn head(vault: &Vault, source: FactSource) -> Result<Option<FactPosit
 
 /// The changelog position of a binding claim's latest write: where a new or
 /// re-enabled binding starts following the claim changelog.
-pub(super) fn binding_written_at(vault: &Vault, binding: &EntityId) -> Result<Option<FactPosition>> {
+pub(super) fn binding_written_at(
+    vault: &Vault,
+    binding: &EntityId,
+) -> Result<Option<FactPosition>> {
     let rtxn = vault.store.env.read_txn()?;
     let changes = vault
         .store

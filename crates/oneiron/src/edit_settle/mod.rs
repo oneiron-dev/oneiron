@@ -90,6 +90,7 @@
 
 mod codec;
 mod keys;
+mod organ_wait;
 mod pending;
 mod receipts;
 mod records;
@@ -99,6 +100,7 @@ mod undo;
 pub use pending::{
     NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind, PendingProposalView,
 };
+pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
 pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};
 

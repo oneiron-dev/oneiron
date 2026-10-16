@@ -369,6 +369,25 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 outcome => outcome,
             };
+            // Then each resident's own dreaming (OF-490), on the same pass.
+            let cleanup = match cleanup {
+                DreamerAdmissionOutcome::Empty
+                    if !self.consolidation_only
+                        && input.trigger == WakeTrigger::Timer
+                        && input.scope == DreamerConsolidationScope::Macro =>
+                {
+                    self.store.admit_next_resident_dream(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
             let priority = match cleanup {
                 DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
                     self.store.admit_next_skill_optimize(AdmitDreamerAttempt {

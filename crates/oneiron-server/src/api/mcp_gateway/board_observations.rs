@@ -7,7 +7,7 @@ use super::{
 use crate::{mcp::McpResolvedActor, server::SyncServer};
 use oneiron::context_board::{
     BoardBlockHeader, BoardBudgetRequest, BoardFrame, BoardLegend, BoardStreamFrame, CapabilityHit,
-    ChangedLine, DeltaRow, FrameKind, SessionReadSet, ShedRank, SkillsSection,
+    ChangedLine, DeltaRow, FrameKind, SessionReadSet, SkillsSection,
 };
 use tokio::sync::{MappedMutexGuard, MutexGuard};
 
@@ -116,7 +116,7 @@ pub(super) async fn ride(
         return Ok(None);
     };
     if let FrameKind::Delta(rows) = &mut frame.kind {
-        rows.retain(|row| !matches!(row.key.as_str(), "changed" | "SKILLS" | "AGENTS:cand"));
+        rows.retain(|row| !matches!(row.key.as_str(), "changed" | "SKILLS"));
     }
     let (observations, changed, _) = state(server, actor).await?;
     let frame = changed
@@ -133,18 +133,10 @@ fn ride_capabilities(
     hits: &[CapabilityHit],
     observations: &SessionReadSet,
 ) -> Result<BoardStreamFrame, McpGatewayError> {
+    // Skills and agent definitions the channel found share SKILLS `found`
+    // (PEOPLE, ARCH-0067: the AGENTS section is gone).
     let skills = SkillsSection::project(hits, observations);
-    let agents = oneiron::context_board::render_agents_section(&[], &[]).with_candidates(hits);
-    let tasks = oneiron::context_board::TasksSection {
-        rows: Vec::new(),
-        overflow: None,
-    };
-    let [_, agent_section] = oneiron::context_board::assemble_task_agent_sections(&tasks, &agents)
-        .map_err(mcp_board_frame_error)?;
-    let sections = [
-        skills.board_section().map_err(mcp_board_frame_error)?,
-        agent_section,
-    ];
+    let sections = [skills.board_section().map_err(mcp_board_frame_error)?];
     let header = BoardBlockHeader {
         epoch: frame.epoch,
         scope: "carrier".to_owned(),
@@ -176,11 +168,6 @@ fn ride_capabilities(
     )
     .map_err(mcp_board_frame_error)?;
     let skill_rows = &render.shed.sections[0].rows;
-    let candidate_rows: Vec<_> = if render.shed.applied.contains(&ShedRank::CapabilityDiscovery) {
-        Vec::new()
-    } else {
-        agents.rows.iter().map(|row| row.line.clone()).collect()
-    };
     match &mut frame.kind {
         FrameKind::Delta(rows) => {
             // Whole-lane replacement clears prior-turn discoveries, including
@@ -188,10 +175,6 @@ fn ride_capabilities(
             rows.push(DeltaRow {
                 key: "SKILLS".to_owned(),
                 line: skill_rows.join(" "),
-            });
-            rows.push(DeltaRow {
-                key: "AGENTS:cand".to_owned(),
-                line: candidate_rows.join(" "),
             });
         }
         FrameKind::Keyframe(text) => {
@@ -203,10 +186,6 @@ fn ride_capabilities(
             if let Some(at) = text.find("\nlegend:") {
                 let mut lines = vec!["SKILLS".to_owned()];
                 lines.extend(skill_rows.iter().cloned());
-                if !candidate_rows.is_empty() {
-                    lines.push("AGENTS".to_owned());
-                    lines.extend(candidate_rows);
-                }
                 text.insert_str(
                     at,
                     &format!(
