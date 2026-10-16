@@ -8,9 +8,12 @@
 //! [`SettingRow`] — a SEED replaces the shipped value, a PIN fixes the value
 //! in force — and nobody hand-writes the value itself.
 //!
-//! The fitted half (`learning.setting`, refit from audit receipts) is not
-//! built yet: with no fit, a seed is the estimate, so the value in force is
-//! the pin, else the owner's seed, else the catalog seed.
+//! The fitted half is `learning.setting` ([`crate::learning`]): fitting checks
+//! enter through [`record_setting_check`], the projector folds them over the
+//! seed (the owner's, else the catalog's at the shipped weight) and caches the
+//! vault-scope fit beside its claim. The value in force is the pin, else the
+//! fit once it has own runs, else the owner's seed, else the catalog seed. A
+//! pin fixes the value used while the fit keeps learning underneath it.
 
 use serde::{Deserialize, Serialize};
 
@@ -65,11 +68,61 @@ pub const GROUP_COMMIT_MAX_WRITES: SettingSpec = SettingSpec {
     seed: 256.0,
 };
 
+/// The share of credit a used lineage hop passes up (ARCH-0003
+/// #learning-settings `credit_decay`): halving per hop by default.
+pub const CREDIT_DECAY: SettingSpec = SettingSpec {
+    key: "credit_decay",
+    min: 0.0,
+    max: 1.0,
+    seed: 0.5,
+};
+
+/// The probability of a random audit (`audit_rate`). Its floor is strictly
+/// above zero: the honesty floor never samples nothing.
+pub const AUDIT_RATE: SettingSpec = SettingSpec {
+    key: "audit_rate",
+    min: 0.001,
+    max: 1.0,
+    seed: 0.05,
+};
+
+/// The `learning.*` window: old runs halve in weight every this many days, so
+/// a silent vendor update under one model id shows up in the estimate.
+pub const LEARNING_WINDOW_HALF_LIFE_DAYS: SettingSpec = SettingSpec {
+    key: "learning_window_half_life_days",
+    min: 1.0,
+    max: 3650.0,
+    seed: 90.0,
+};
+
+/// The weight in runs a catalog seed carries as a `learning.setting` prior
+/// when the owner has seeded nothing.
+pub const LEARNING_SHIPPED_PRIOR_RUNS: SettingSpec = SettingSpec {
+    key: "learning_shipped_prior_runs",
+    min: 0.0,
+    max: 100.0,
+    seed: 2.0,
+};
+
+/// The most runs a borrowed reading (a parent type's, another executor's)
+/// counts as: carried weakly, so a cell's own runs soon outweigh it.
+pub const LEARNING_BORROWED_PRIOR_RUNS: SettingSpec = SettingSpec {
+    key: "learning_borrowed_prior_runs",
+    min: 0.0,
+    max: 100.0,
+    seed: 2.0,
+};
+
 /// Every learned knob the engine reads.
 pub const SETTING_CATALOG: &[SettingSpec] = &[
     ATTRIBUTION_UNCLEAR_FLOOR,
     GROUP_COMMIT_WINDOW_MS,
     GROUP_COMMIT_MAX_WRITES,
+    CREDIT_DECAY,
+    AUDIT_RATE,
+    LEARNING_WINDOW_HALF_LIFE_DAYS,
+    LEARNING_SHIPPED_PRIOR_RUNS,
+    LEARNING_BORROWED_PRIOR_RUNS,
 ];
 
 /// The catalog row named `key`, if the engine knows it.
@@ -207,6 +260,8 @@ pub fn put_setting_row(vault: &Vault, owner: &WriteActor, row: &SettingRow) -> R
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         SETTING.put(&vault.store, wtxn, &row_key(spec.key, row.mode), &stored)?;
+        // A seed is the fit's prior: every fit over this knob refolds from it.
+        crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, spec.key, row.at)?;
         Ok(())
     })
 }
@@ -227,12 +282,16 @@ pub fn clear_setting_row(
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         SETTING.delete(&vault.store, wtxn, &row_key(key, mode))?;
+        if mode == SettingMode::Seed {
+            let now = crate::unix_seconds_now();
+            crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, key, now)?;
+        }
         Ok(())
     })
 }
 
-/// The value in force for `spec`: the owner's pin, else the owner's seed,
-/// else the catalog seed.
+/// The value in force for `spec`: the owner's pin, else the vault-scope fit
+/// once it has own runs, else the owner's seed, else the catalog seed.
 ///
 /// # Errors
 ///
@@ -248,14 +307,95 @@ pub(crate) fn setting_value_in_txn(
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
 ) -> Result<f64> {
-    for mode in [SettingMode::Pin, SettingMode::Seed] {
-        if let Some(row) = SETTING.get(store, txn, &row_key(spec.key, mode))?
-            // A row written under wider bounds than today's catalog is not a
-            // value this reader can stand behind; the next row down is.
-            && (spec.min..=spec.max).contains(&row.value)
-        {
-            return Ok(row.value);
-        }
+    if let Some(value) = owner_row_value(store, txn, spec, SettingMode::Pin)? {
+        return Ok(value);
+    }
+    if let Some(fit) = crate::learning::project::SETTING_FIT.get(store, txn, &spec.key.to_owned())?
+        && fit.runs > 0.0
+        && fit.value.is_finite()
+    {
+        // A fit never leaves the catalog's bounds, so it never widens a floor.
+        return Ok(fit.value.clamp(spec.min, spec.max));
+    }
+    if let Some(value) = owner_row_value(store, txn, spec, SettingMode::Seed)? {
+        return Ok(value);
     }
     Ok(spec.seed)
+}
+
+fn owner_row_value(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    mode: SettingMode,
+) -> Result<Option<f64>> {
+    Ok(SETTING
+        .get(store, txn, &row_key(spec.key, mode))?
+        // A row written under wider bounds than today's catalog is not a
+        // value this reader can stand behind; the next row down is.
+        .filter(|row| (spec.min..=spec.max).contains(&row.value))
+        .map(|row| row.value))
+}
+
+/// The owner's seed over `spec` and its weight in runs, if one stands: the
+/// prior a `learning.setting` fit starts from.
+pub(crate) fn owner_seed_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+) -> Result<Option<(f64, f64)>> {
+    Ok(SETTING
+        .get(store, txn, &row_key(spec.key, SettingMode::Seed))?
+        .filter(|row| (spec.min..=spec.max).contains(&row.value))
+        .and_then(|row| row.weight_runs.map(|weight| (row.value, weight))))
+}
+
+/// One check that fits a named knob: the value the check found best, on the
+/// receipt that ran it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingCheck {
+    /// The skill that uses the knob, or the project.
+    pub subject: crate::entity_id::EntityId,
+    /// The catalog key.
+    pub key: String,
+    /// The task type the check ran under; the vault-scope fit is the root.
+    pub type_ref: crate::learning::TypeRef,
+    pub observed: f64,
+    pub receipt: String,
+    pub at: u64,
+    /// A fitting check, an audit (with its rate) or a held-out run.
+    pub anchor: crate::learning::Anchor,
+}
+
+/// Records one fitting check into `learning.setting` and refits.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a key outside the catalog, an observed
+/// value outside its bounds, or an anchor that does not fit settings; the
+/// evidence door's errors.
+pub fn record_setting_check(
+    vault: &Vault,
+    check: &SettingCheck,
+    now: u64,
+) -> Result<Option<crate::learning::Estimate>> {
+    let spec = setting_spec(&check.key).ok_or(invalid("no learned setting has this key"))?;
+    if !check.observed.is_finite() || check.observed < spec.min || check.observed > spec.max {
+        return Err(invalid(
+            "a fitting check's value lies within its catalog bounds",
+        ));
+    }
+    let cell = crate::learning::LearningCell::new(
+        crate::learning::LearningPredicate::Setting,
+        check.subject,
+    )
+    .setting_key(spec.key)
+    .type_ref(check.type_ref.clone());
+    let evidence = crate::learning::LearningEvidence::anchored(
+        check.receipt.clone(),
+        check.at,
+        check.anchor,
+        crate::learning::Observation::Magnitude(check.observed),
+    );
+    crate::learning::record_evidence(vault, &cell, &evidence, now)
 }

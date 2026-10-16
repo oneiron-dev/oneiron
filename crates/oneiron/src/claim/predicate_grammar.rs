@@ -31,7 +31,7 @@ pub const PREDICATE_LAYER_NAMESPACES: [&str; 4] = [
 /// two they are the namespaces a pack may not take: not as its name, not in
 /// a declaration, and on neither side of a shipped migration map. Append a
 /// namespace when the engine starts writing a new family.
-pub const ENGINE_PREDICATE_NAMESPACES: [&str; 43] = [
+pub const ENGINE_PREDICATE_NAMESPACES: [&str; 44] = [
     "affect",
     "agent",
     "annotation",
@@ -57,6 +57,7 @@ pub const ENGINE_PREDICATE_NAMESPACES: [&str; 43] = [
     "federation",
     "import",
     "judgment",
+    "learning",
     "linkedin",
     "maintenance",
     "merge",
@@ -276,7 +277,7 @@ pub(super) fn is_edge_reserved_predicate(predicate: &str) -> bool {
 }
 
 /// The predicates whose lifecycle the ENGINE drives (`skill.*`, `actor.*`,
-/// `repo.*`, and exactly `person.substrate`), unlike `edge.*`, whose
+/// `repo.*`, the projector-only `learning.*`, and exactly `person.substrate`), unlike `edge.*`, whose
 /// transitions re-stamp provenance-derived edge state and therefore stay
 /// exclusively edge-owned. `repo.*` is the origin's own record of what it
 /// published and admitted: a generic door that could write it could stand in
@@ -292,6 +293,7 @@ pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
         || predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE
         || predicate == super::PREDICATE_VAULT_DEFAULT_FACET
         || namespace == Some("repo")
+        || namespace == Some(crate::learning::LEARNING_NAMESPACE)
 }
 
 /// Whether `prefix` is a well-formed predicate prefix: one or more grammar
