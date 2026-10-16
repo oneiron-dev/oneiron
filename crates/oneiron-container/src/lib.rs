@@ -1,28 +1,34 @@
-//! Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice.
-//!
-//! A session is one long-lived guest process started through a
-//! Docker-compatible CLI. Its stdin and stdout are the only channel to it:
-//! the guest gets no network device (`--network none`), a read-only root, a
-//! non-root user, no capabilities, no new privileges, tmpfs scratch and the
-//! memory, CPU and pid limits its spec names. Nothing is published.
-//!
-//! Canon's container backend also needs a Landlock ruleset and a seccomp
-//! connect relay through the engine's egress proxy (`code-in-oneiron.md`
-//! #sandbox). This slice installs neither, so every manifest it writes says
-//! `fence_unproven`, and the code-sandbox tier selector does not route to it.
+//! Container sessions with an engine-owned Linux Landlock/seccomp fence.
+//! No guest has a network device. The host proxy relays sockets and DNS.
+
+mod egress;
+mod relay_protocol;
+mod transport;
+pub use egress::{EgressRelay, HttpRequest, HttpResponse};
+pub use relay_protocol::{RelayReply, RelayRequest, read_relay, write_relay};
+pub use transport::{SessionLease, SessionTransport};
+#[cfg(target_os = "linux")]
+mod launcher;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+mod supervisor;
+#[cfg(target_os = "linux")]
+mod wire;
+#[cfg(target_os = "linux")]
+pub use launcher::launch as launch_fenced;
+#[cfg(target_os = "linux")]
+pub use supervisor::{NativeFenceGuard, serve_native as serve_native_fence};
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The bytes of guest stderr a session keeps for its error reports.
 const STDERR_TAIL: usize = 4096;
-
-static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -38,6 +44,8 @@ pub enum Error {
     Mount(PathBuf),
     #[error("container runtime failed to start: {0}")]
     Spawn(#[source] std::io::Error),
+    #[error("container fence unavailable: {0}")]
+    Fence(#[source] std::io::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -83,7 +91,7 @@ pub struct GuestLimits {
 }
 
 /// How the guest's own system calls are filtered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GuestSeccomp {
     /// The runtime's default profile.
@@ -92,6 +100,8 @@ pub enum GuestSeccomp {
     /// and seccomp sandbox (Chromium) and the runtime default denies the user
     /// namespace that sandbox needs.
     GuestSandbox,
+    /// Engine Landlock and seccomp user-notification launcher.
+    EngineFence,
 }
 
 /// What one session runs.
@@ -106,18 +116,72 @@ pub struct GuestSpec {
 }
 
 /// What the session proved about its fence, for the session-manifest receipt.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionManifest {
-    pub backend: &'static str,
+    pub backend: String,
     pub runtime: String,
     pub image: String,
     /// blake3 of the full runtime argument list, so a receipt names its flags.
     pub argv_digest: String,
-    pub network: &'static str,
+    pub network: String,
     pub seccomp: GuestSeccomp,
-    pub generation: u64,
-    /// True until the Landlock ruleset and the seccomp connect relay land.
+    pub generation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fence_proof: Option<FenceProof>,
+    /// Non-Linux or explicitly unfenced sessions never claim isolation.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub fence_unproven: bool,
+}
+
+/// Evidence verified before a guest can make its first network call.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FenceProof {
+    pub ruleset_hash: String,
+    pub seccomp_hash: String,
+    pub network_routes: Vec<String>,
+    pub network_evidence_digest: String,
+    pub sandbox_generation: String,
+    pub launcher_digest: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct FenceConfig {
+    pub launcher: PathBuf,
+    pub startup_timeout: std::time::Duration,
+    pub reconnect_window: std::time::Duration,
+}
+impl FenceConfig {
+    /// The engine's companion binary is provisioned by the host, never an
+    /// executable chosen from the guest image or workspace.
+    pub fn from_env() -> Result<Self> {
+        let launcher = std::env::var_os("ONEIRON_FENCE_LAUNCHER")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute() && p.is_file())
+            .ok_or_else(|| {
+                Error::Fence(std::io::Error::other(
+                    "ONEIRON_FENCE_LAUNCHER must name an absolute executable",
+                ))
+            })?;
+        Ok(Self {
+            launcher,
+            startup_timeout: std::time::Duration::from_secs(30),
+            reconnect_window: bridge_reconnect_window()?,
+        })
+    }
+}
+
+/// Host manifest/config row for bridge recovery on either isolated backend.
+pub fn bridge_reconnect_window() -> Result<std::time::Duration> {
+    let millis = std::env::var("ONEIRON_FENCE_RECONNECT_MS")
+        .ok()
+        .map(|s| s.parse::<u64>())
+        .transpose()
+        .map_err(|e| Error::Fence(std::io::Error::other(e)))?
+        .unwrap_or(30_000);
+    if millis == 0 {
+        return Err(Error::ZeroLimit("reconnect_window"));
+    }
+    Ok(std::time::Duration::from_millis(millis))
 }
 
 /// A Docker-compatible container CLI at an absolute path.
@@ -136,7 +200,8 @@ impl ContainerRuntime {
 
     /// Starts one guest. The session owns it: dropping the session removes it.
     pub fn start(&self, spec: &GuestSpec) -> Result<GuestSession> {
-        let name = format!("oneiron-guest-{}", uuid::Uuid::now_v7().simple());
+        let generation = uuid::Uuid::now_v7().simple().to_string();
+        let name = format!("oneiron-guest-{generation}");
         let args = run_args(&name, spec)?;
         let mut digest = blake3::Hasher::new();
         for arg in &args {
@@ -157,13 +222,14 @@ impl ContainerRuntime {
             keep_tail(stderr, Arc::clone(&stderr_tail));
         }
         let manifest = SessionManifest {
-            backend: "container-cli",
+            backend: "container-cli".to_owned(),
             runtime: self.program.display().to_string(),
             image: spec.image.as_str().to_owned(),
             argv_digest: digest.finalize().to_hex().to_string(),
-            network: "none",
+            network: "none".to_owned(),
             seccomp: spec.seccomp,
-            generation: GENERATION.fetch_add(1, Ordering::Relaxed) + 1,
+            generation,
+            fence_proof: None,
             fence_unproven: true,
         };
         Ok(GuestSession {
@@ -172,7 +238,96 @@ impl ContainerRuntime {
             child,
             manifest,
             stderr_tail,
+            #[cfg(target_os = "linux")]
+            supervisor: None,
         })
+    }
+    /// A production Foreign/Untrusted session. Failure to install or prove
+    /// either Linux fence is an error, never an unfenced retry.
+    pub fn start_fenced(
+        &self,
+        spec: &GuestSpec,
+        command: &[OsString],
+        relay: Arc<dyn EgressRelay>,
+    ) -> Result<GuestSession> {
+        #[cfg(target_os = "linux")]
+        {
+            let config = FenceConfig::from_env()?;
+            let generation = uuid::Uuid::now_v7().simple().to_string();
+            let name = format!("oneiron-guest-{generation}");
+            let supervisor = supervisor::Supervisor::bind(&config, generation.clone())?;
+            let mut fenced = spec.clone();
+            fenced.seccomp = GuestSeccomp::EngineFence;
+            let mut args = run_args(&name, &fenced)?;
+            args.pop();
+            args.push(read_only_mount(
+                supervisor.directory(),
+                Path::new("/run/oneiron-fence"),
+            )?);
+            args.push(read_only_mount(
+                &config.launcher,
+                Path::new("/run/oneiron-fence-launcher"),
+            )?);
+            args.extend([
+                OsString::from("--entrypoint=/run/oneiron-fence-launcher"),
+                spec.image.as_str().into(),
+                "/run/oneiron-fence/bridge.sock".into(),
+                generation.clone().into(),
+                config.reconnect_window.as_millis().to_string().into(),
+                "--".into(),
+            ]);
+            args.extend_from_slice(command);
+            let mut digest = blake3::Hasher::new();
+            for arg in &args {
+                digest.update(arg.as_encoded_bytes());
+                digest.update(&[0]);
+            }
+            let mut child = oneiron_spawn::command(&self.program)
+                .args(&args)
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(Error::Spawn)?;
+            let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL)));
+            if let Some(stderr) = child.stderr.take() {
+                keep_tail(stderr, Arc::clone(&stderr_tail));
+            }
+            let manifest = SessionManifest {
+                backend: "landlock-container".into(),
+                runtime: self.program.display().to_string(),
+                image: spec.image.as_str().into(),
+                argv_digest: digest.finalize().to_hex().to_string(),
+                network: "none; engine-egress-relay".into(),
+                seccomp: GuestSeccomp::EngineFence,
+                generation,
+                fence_proof: None,
+                fence_unproven: true,
+            };
+            let mut session = GuestSession {
+                runtime: self.program.clone(),
+                name: name.clone(),
+                child,
+                manifest,
+                stderr_tail,
+                supervisor: None,
+            };
+            let (proof, guard) =
+                supervisor.activate(self.program.clone(), name, &mut session.child, relay)?;
+            session.manifest.fence_proof = Some(proof);
+            session.manifest.fence_unproven = false;
+            session.supervisor = Some(guard);
+            Ok(session)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (spec, command, relay);
+            Err(Error::Fence(std::io::Error::other(
+                "Foreign/Untrusted containers require a proven Linux fence",
+            )))
+        }
     }
 }
 
@@ -215,7 +370,10 @@ fn run_args(name: &str, spec: &GuestSpec) -> Result<Vec<OsString>> {
     .into_iter()
     .map(OsString::from)
     .collect();
-    if spec.seccomp == GuestSeccomp::GuestSandbox {
+    if matches!(
+        spec.seccomp,
+        GuestSeccomp::GuestSandbox | GuestSeccomp::EngineFence
+    ) {
         args.push("--security-opt=seccomp=unconfined".into());
     }
     for (host, guest) in &spec.read_only_mounts {
@@ -257,6 +415,8 @@ pub struct GuestSession {
     child: Child,
     manifest: SessionManifest,
     stderr_tail: Arc<Mutex<VecDeque<u8>>>,
+    #[cfg(target_os = "linux")]
+    supervisor: Option<supervisor::Guard>,
 }
 
 impl GuestSession {
@@ -281,6 +441,20 @@ impl GuestSession {
             .unwrap_or_default()
     }
 
+    #[must_use]
+    pub fn abandoned(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.supervisor
+                .as_ref()
+                .is_some_and(supervisor::Guard::abandoned)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
     /// Whether the runtime client is still running the guest.
     pub fn is_running(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
@@ -289,6 +463,8 @@ impl GuestSession {
 
 impl Drop for GuestSession {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        self.supervisor.take();
         drop(self.child.stdin.take());
         let _ = oneiron_spawn::command(&self.runtime)
             .args(["rm", "--force", &self.name])

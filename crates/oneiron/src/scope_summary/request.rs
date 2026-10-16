@@ -8,16 +8,14 @@ use super::doors::{
     scope_sources_in_txn, standing_composition_in_txn, validate_landing_in_txn,
 };
 use super::purpose::SummaryPurpose;
-use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::AttemptId;
 use crate::conversation_dag::{
     ScopePath, ScopeSelector, actor_in_txn, prove_branch_span, selected_thread_in_txn,
 };
 use crate::dreamer_consolidation::{
     DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, ScopeSummaryEvidence, scope_summary_evidence_in_txn,
 };
-use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerConsolidationScope, encode_dreamer_attempt_payload,
-};
+use crate::dreamer_runner::{DreamerAttemptPayload, DreamerConsolidationScope};
 use crate::error::{Error, Result};
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
@@ -115,40 +113,51 @@ pub(super) fn enqueue_in_txn(
     txn: &mut heed::RwTxn<'_>,
     input: Value,
 ) -> Result<ScopeSummaryQueued> {
+    enqueue_with_lineage_in_txn(
+        vault,
+        txn,
+        input,
+        None,
+        None,
+        vault.store.clock.now_recorded_at(),
+    )
+}
+
+fn enqueue_with_lineage_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    input: Value,
+    parent_attempt: Option<AttemptId>,
+    run_id: Option<&str>,
+    now: u64,
+) -> Result<ScopeSummaryQueued> {
     decode_request(&input)?;
     let encoded = derivation::encode(&input)?;
     let dedupe_key = format!(
-        "{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE}:{}",
-        blake3::hash(&encoded).to_hex()
+        "{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE}:{}:{}",
+        blake3::hash(&encoded).to_hex(),
+        parent_attempt
+            .map(|id| crate::entity_id::bytes_to_hex_lower(id.as_bytes()))
+            .unwrap_or_default()
     );
-    let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
-        attempt_type: DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE.to_owned(),
-        input,
-        parent_attempt: None,
-    })?;
-    let outcome = crate::ports::JobQueue::port_job_enqueue(
-        vault,
+    let outcome = crate::dreamer_runner::DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
         txn,
-        EnqueueAttempt {
-            kind: DreamerConsolidationScope::Micro.attempt_kind().to_owned(),
-            payload,
-            dedupe_key: Some(dedupe_key),
-            run_id: None,
-            now: vault.store.clock.now_recorded_at(),
+        DreamerConsolidationScope::Micro.attempt_kind(),
+        DreamerAttemptPayload {
+            attempt_type: DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE.to_owned(),
+            input,
+            parent_attempt,
         },
+        Some(dedupe_key),
+        run_id.map(str::to_owned),
+        now,
     )?;
-    let (record, coalesced) = match outcome {
-        EnqueueOutcome::Enqueued(record) => (record, false),
-        EnqueueOutcome::Existing(record) => (record, true),
+    let (status, coalesced) = match outcome {
+        crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status) => (status, false),
+        crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status) => (status, true),
     };
-    crate::dreamer_runner::authority::stamp_attempt(
-        vault,
-        txn,
-        &record,
-        DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE,
-    )?;
     Ok(ScopeSummaryQueued {
-        attempt: record.id,
+        attempt: status.attempt.id,
         coalesced,
     })
 }
@@ -223,6 +232,24 @@ impl Vault {
         &self,
         request: &ScopeSummaryRequest,
     ) -> Result<ScopeSummaryQueued> {
+        let now = self.store.clock.now_recorded_at();
+        let queued = self.with_write_txn(|txn| {
+            self.request_scope_summary_in_txn(txn, request, None, None, now)
+        })?;
+        self.store.notify_attempt_observers();
+        Ok(queued)
+    }
+
+    /// A recipe co-commits its declaration, parent/run binding and outbox
+    /// consumption. No nested writer is opened.
+    pub(crate) fn request_scope_summary_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        request: &ScopeSummaryRequest,
+        parent_attempt: Option<AttemptId>,
+        run_id: Option<&str>,
+        now: u64,
+    ) -> Result<ScopeSummaryQueued> {
         let purpose = match &request.target {
             ScopeSummaryTarget::Scope {
                 scope:
@@ -234,7 +261,10 @@ impl Vault {
             } => "sub_agent_merge_artifact",
             _ => "session_recap",
         };
-        self.request_scope_summary_for(request, purpose)
+        let previous = derivation::current_in_txn(self, txn, request, purpose)?;
+        let input = derivation::declaration(request, purpose, previous);
+        plan_in_txn(self, txn, &input)?;
+        enqueue_with_lineage_in_txn(self, txn, input, parent_attempt, run_id, now)
     }
 
     /// Declares the descriptor row as well as the scope. Only approved rows
