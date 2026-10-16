@@ -94,7 +94,8 @@ fn land_in_txn(
     change: PolicyRowChange,
     now: u64,
 ) -> Result<PolicyRowReceipt> {
-    let holder_actor = holder.revalidate_in_txn(vault, txn)?;
+    // Person tier, own holder check: the named holder's grant is the authority.
+    let holder_actor = holder.revalidate_person_in_txn(vault, txn)?;
     let holders = holders_for_change_in_txn(vault, txn, &change, now)?;
     if !holders.contains(&holder_actor) {
         return Err(denied());
@@ -115,7 +116,8 @@ impl Vault {
         now: u64,
     ) -> Result<PolicyRowSubmission> {
         let mut txn = self.store.env.write_txn()?;
-        let actor_id = actor.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: a holder lands, anyone else proposes.
+        let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
         let result = if holders_for_change_in_txn(self, &txn, &change, now)?.contains(&actor_id) {
             PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, now)?)
         } else {
@@ -150,7 +152,8 @@ impl Vault {
         now: u64,
     ) -> Result<Option<PolicyRowReceipt>> {
         let mut txn = self.store.env.write_txn()?;
-        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
         let mut proposal =
             ledger::read_proposal_in(self, &txn, proposal_id)?.ok_or(Error::EntityNotFound)?;
         if !holders_for_change_in_txn(self, &txn, &proposal.change, now)?.contains(&holder_actor) {

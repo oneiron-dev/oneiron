@@ -309,7 +309,7 @@ impl OffRecordSession<'_> {
         learned_at: u64,
     ) -> Result<()> {
         let (vault, landing) = self.base_write_vault(route)?;
-        vault.put_claim_candidate_without_lexical_query_reconcile(
+        vault.put_claim_candidate_with_landing(
             id,
             candidate,
             envelope,

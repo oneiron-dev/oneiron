@@ -85,7 +85,7 @@ fn restore_keeps_live_revocations_and_slips_but_returns_old_content() {
 fn restore_refuses_to_roll_back_a_guarded_grant_before_creating_anything() {
     let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
-    let owner_id = person(&live, b"owner");
+    let owner_id = live.ensure_embedded_owner_actor().unwrap();
     let image = root.path().join("backup");
     live.snapshot_checkpoint(&image, 100).unwrap();
     let owner = live
@@ -146,7 +146,7 @@ fn restore_never_revives_a_spent_approval() {
     };
     let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
-    let owner_id = person(&live, b"owner");
+    let owner_id = live.ensure_embedded_owner_actor().unwrap();
     let owner = live
         .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
         .unwrap();
