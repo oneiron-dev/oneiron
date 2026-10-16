@@ -54,7 +54,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
-pub(crate) use wire_decode::{TaskBinding, task_binding};
+pub(crate) use wire_decode::{TaskBinding, leader_task_body_in, task_binding};
 mod wire_encode;
 
 #[cfg(test)]

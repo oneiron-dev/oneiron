@@ -32,6 +32,29 @@ pub(super) fn task_verb_body(vault: &Vault, task_ref: EntityId) -> Result<Option
     task_verb_body_in(vault, &rtxn, task_ref)
 }
 
+/// The live promise a project leader's already-bound attempt will plan.
+/// Reading it never creates a task, routes an assignee or changes its done bit.
+pub(crate) fn leader_task_body_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+    leader: EntityId,
+) -> Result<(Option<String>, Value)> {
+    let body = task_verb_body_in(vault, txn, task_ref)?.ok_or(Error::EntityNotFound)?;
+    if body.terminal().is_some()
+        || !matches!(
+            body.assignee,
+            Some(TaskAssignee::AgentDef { agent_def_ref }) if agent_def_ref == leader
+        )
+    {
+        return Err(RecordError::InvalidTaskBody(
+            "leader starter requires its open assigned task promise",
+        )
+        .into());
+    }
+    Ok((body.label, body.spec))
+}
+
 /// Transaction-scoped body read. The custody seal `get_raw` applies is not
 /// needed here: a non-TASK type byte returns `None` two lines below, so a
 /// SECRET_CUSTODY row can never be decoded through this door.
