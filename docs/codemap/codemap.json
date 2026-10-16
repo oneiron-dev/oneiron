@@ -15618,7 +15618,7 @@
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -15632,6 +15632,44 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/mod.rs",
+     "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 14,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostOrderHold",
+      "LegalHold",
+      "LegalHoldActorKind",
+      "LegalHoldEvent",
+      "LegalHoldEventKind",
+      "LegalHoldKind",
+      "LegalHoldMaintenance",
+      "LegalHoldReason",
+      "LegalHoldTarget",
+      "LegalHoldUseLimit",
+      "LiftAndEraseOutcome",
+      "LiftAndEraseStatus"
+     ],
+     "path": "src/deletion/legal_hold/types.rs",
+     "purpose": "The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling…",
+     "surface": {
+      "const": 6,
+      "enum": 6,
+      "fn": 3,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -15639,7 +15677,7 @@
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
       "crate-vis": 22,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -19887,6 +19925,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "TextHistoryErase"
+     ],
+     "path": "src/entity_doc/history_erase.rs",
+     "purpose": "The owner's \"erase history\" in a shared vault waits on the vault's `erase` veto window when two or more live…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/entity_doc/message_stream.rs",
      "purpose": "MESSAGE terminal commits join the common EntityDoc storage transaction",
@@ -19915,9 +19967,9 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 2,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -19947,7 +19999,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -28760,7 +28812,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 9
      }
     },
@@ -39554,6 +39606,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/legal_hold/events.rs",
+     "purpose": "The two hold logs (C2, C3): the owner-visible one and the host-only one",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/legal_hold/mod.rs",
+     "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
+     "surface": {
+      "crate-vis": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/local_queue_budget.rs",
      "purpose": "Byte accounting for bounded device-local queues, separate from verdict/rate policy",
      "surface": {
@@ -39577,7 +39649,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 13
      }
@@ -47861,7 +47933,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 28,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47987,7 +48059,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48694,7 +48766,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48906,7 +48978,7 @@
    },
    "over_bar": 99,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2948,
+   "source_files": 2953,
    "test_files": 903
   },
   "oneiron-android": {
