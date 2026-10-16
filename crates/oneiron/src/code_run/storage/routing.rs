@@ -570,15 +570,20 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// Publishes the body `sink` wrote as this run's output at `path`.
+    /// Publishes the body `sink` wrote as run `owner`'s output at `path`. An
+    /// off-record session's body is not registered: it lives in the
+    /// session's spill directory and goes when the session closes.
     pub(crate) fn publish_code_run_output(
         &self,
         path: String,
         sink: BodySink,
         complete: bool,
+        owner: EntityId,
     ) -> Result<CodeRunRawOutput> {
         match self {
-            Self::Canonical(vault) => vault.publish_code_run_output(path, sink, complete),
+            Self::Canonical(vault) => {
+                vault.publish_code_run_output(path, sink, complete, Some(owner))
+            }
             Self::Session(binding) => binding.publish_output(path, sink, complete),
         }
     }

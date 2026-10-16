@@ -405,6 +405,28 @@ impl CodeRunRawOutput {
         })
     }
 
+    /// The manifest a context reference names, for reading its body by
+    /// digest and length; it carries no occurrence facts.
+    pub(crate) fn of_ref(source: crate::compaction::output::OutputRef) -> Self {
+        Self {
+            handle: format!(
+                "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
+                crate::entity_id::bytes_to_hex_lower(&source.hash)
+            ),
+            path: String::new(),
+            raw_blake3: source.hash,
+            raw_len: source.byte_len,
+            kind: CodeRunOutputKind::Binary,
+            lines: 0,
+            complete: true,
+            preview: CodeRunOutputPreview {
+                codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
+                text: String::new(),
+                truncated: false,
+            },
+        }
+    }
+
     /// The model-context reference of this body: its digest and length.
     #[must_use]
     pub fn output_ref(&self) -> crate::compaction::output::OutputRef {
