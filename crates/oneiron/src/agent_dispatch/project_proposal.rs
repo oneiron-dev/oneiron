@@ -114,9 +114,17 @@ impl AgentDispatcher<'_> {
         match (answer, drafter) {
             (ProjectDetectionAnswer::AskedPerson, _) => Ok(ProjectDetectionRun::AskedPerson),
             (ProjectDetectionAnswer::Yes, None) => Ok(ProjectDetectionRun::NoHouseAgent),
-            (ProjectDetectionAnswer::Yes, Some(house)) => Ok(ProjectDetectionRun::Drafting(
-                Box::new(self.dispatch_drafter(house, &source, now)?),
-            )),
+            (ProjectDetectionAnswer::Yes, Some(house)) => {
+                match self.dispatch_drafter(house, &source, now) {
+                    Ok(outcome) => Ok(ProjectDetectionRun::Drafting(Box::new(outcome))),
+                    // The question is settled and its yes kept; only the
+                    // drafting attempt is missing.
+                    Err(error) => {
+                        tracing::warn!(%error, "house mind not dispatched to draft a project card");
+                        Ok(ProjectDetectionRun::NoHouseAgent)
+                    }
+                }
+            }
         }
     }
 

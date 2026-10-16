@@ -383,11 +383,8 @@ impl Vault {
             return Err(refused("a dismissed card never mints"));
         }
         let card = &record.card;
+        // Only a fresh birth runs its step; an exact retry runs nothing.
         let mut fresh = false;
-        let mark = |txn: &mut heed::RwTxn<'_>, receipt: &ProjectMintReceipt| {
-            fresh = true;
-            mark_minted_in_txn(self, txn, &key, receipt)
-        };
         let receipt = if card.source_thread_ref.is_some() {
             self.convert_thread_with_card(
                 card,
@@ -396,11 +393,17 @@ impl Vault {
                 signer,
                 EntityId::now(),
                 tap.occurred_at,
-                mark,
+                |txn, receipt| {
+                    fresh = true;
+                    mark_minted_in_txn(self, txn, &key, receipt)
+                },
             )?
             .1
         } else {
-            self.mint_card_with(card, tap, owner, signer, mark)?
+            self.mint_card_with(card, tap, owner, signer, |txn, receipt| {
+                fresh = true;
+                mark_minted_in_txn(self, txn, &key, receipt)
+            })?
         };
         if fresh && let Err(error) = self.dispatch_goal_intake(card, &receipt, tap.occurred_at) {
             tracing::warn!(project = %receipt.project_id, %error, "goal-intake interview not dispatched");
