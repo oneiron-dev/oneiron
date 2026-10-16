@@ -39545,6 +39545,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/project_ask.rs",
+     "purpose": "Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a proposal on a project's task goes to…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -41553,6 +41563,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectAsk"
+     ],
+     "path": "src/workspace_roster/project/asks.rs",
+     "purpose": "A project's asks queue (ARCH-0067 tasks and asks)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -41629,7 +41653,7 @@
      "path": "src/workspace_roster/project/fold.rs",
      "purpose": "The fold over a project's held revisions (decisions 5-7)",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 57,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -41728,15 +41752,16 @@
      "notable": [
       "ProjectCycleQuestion",
       "ProjectHistoryOverBudget",
-      "ProjectHistoryPolicy"
+      "ProjectHistoryPolicy",
+      "ProjectHistoryQuestion"
      ],
      "path": "src/workspace_roster/project/history_policy.rs",
      "purpose": "The per-project history budget (decision 9, ruling F2 (a))",
      "surface": {
       "const": 2,
       "crate-vis": 15,
-      "fn": 4,
-      "struct": 3
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -41796,11 +41821,13 @@
      "notable": [
       "ProjectAnchor",
       "ProjectAuthority",
+      "ProjectParentWitness",
       "ProjectProofVersion",
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
       "ProjectRoomChange",
+      "ProjectWriteOutcome",
       "ProjectWriteProof",
       "RoomOriginCard"
      ],
@@ -41808,11 +41835,11 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 41,
-      "enum": 2,
-      "fn": 16,
-      "re-export": 11,
-      "struct": 7
+      "crate-vis": 42,
+      "enum": 3,
+      "fn": 17,
+      "re-export": 13,
+      "struct": 8
      }
     },
     {
@@ -41823,6 +41850,20 @@
      "purpose": "Durable origin proof and local secondary indexes for converted projects",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerProjectSigner"
+     ],
+     "path": "src/workspace_roster/project/owner_signer.rs",
+     "purpose": "The owner-project signer (decision 3): every owner door signs the project state it writes through one…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -41878,6 +41919,16 @@
      "purpose": "The batch-end refresh of each touched project (sections 2 and 6 of the PR 3 contract)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/reparent.rs",
+     "purpose": "The board's typed re-parent (ARCH-0079 stacking: \"each parent leader sits on its board with a slice of…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -42076,13 +42127,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/validity.rs",
      "purpose": "Whether one held revision is valid on its own lineage, and the board's resolutions at one node (decisions 5…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -44649,7 +44700,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44761,7 +44812,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 63,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44782,9 +44833,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 64,
+   "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2686,
+   "source_files": 2690,
    "test_files": 903
   },
   "oneiron-android": {
