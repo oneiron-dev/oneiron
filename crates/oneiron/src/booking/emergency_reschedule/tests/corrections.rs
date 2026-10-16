@@ -509,7 +509,8 @@ fn an_emergency_cancel_reaches_a_lone_held_confirmed_booking_and_an_update_does_
     };
     assert_eq!(affected(&update), vec![event]);
 
-    crate::test_util::hold_claim_for_critical_confirm(&vault, status_head(&vault, event), 0x84);
+    let held = status_head(&vault, event);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, held, 0x84);
     assert!(affected(&update).is_empty());
     assert_eq!(affected(&plan.request), vec![event]);
     crate::booking::lifecycle::commit_emergency_item(
@@ -520,6 +521,15 @@ fn an_emergency_cancel_reaches_a_lone_held_confirmed_booking_and_an_update_does_
     )
     .unwrap();
     assert_eq!(live_status(&vault, event), Some(BookingStatus::Cancelled));
+    // Closing the held head is not the owner's answer: its confirm stands.
+    let rtxn = vault.store.env.read_txn().unwrap();
+    assert!(
+        vault
+            .store
+            .pending_gate_consent_in_txn(&rtxn, &held)
+            .unwrap()
+            .is_some()
+    );
 }
 
 /// The booking's one live status head.

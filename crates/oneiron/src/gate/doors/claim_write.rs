@@ -626,6 +626,13 @@ fn check_claim_policy_for_write_with_record_inner(
             )?;
         }
 
+        // A verified close of the stored row (a retract or supersession that
+        // keeps its value) is a narrowing, not the owner's answer: it lands and
+        // leaves a held claim's pending confirm and obligation standing, where
+        // redeeming them would fail on a binding to the body it closes.
+        let resolve_pending = mode.resolve_pending
+            && !attach_critical_confirm
+            && !closes_stored_value(store, &*wtxn, id, body, transition);
         enforce_claim_gate_decision_with_consent(
             store,
             wtxn,
@@ -634,7 +641,7 @@ fn check_claim_policy_for_write_with_record_inner(
             body.approval,
             &binding,
             GateWriteMode {
-                resolve_pending: mode.resolve_pending && !attach_critical_confirm,
+                resolve_pending,
                 ..mode
             },
             owner_write,
