@@ -97,8 +97,12 @@ impl People {
     ) -> Result<Self> {
         let agents = vault.entities_by_type(ENTITY_TYPE_AGENT_DEF)?;
         let persons = vault.entities_by_type(ENTITY_TYPE_PERSON)?;
-        let members: BTreeSet<EntityId> = vault
-            .authority_fold()?
+        let fold = vault.authority_fold()?;
+        let tag = fold.vault_id.map_or_else(
+            || "home".to_owned(),
+            |id| format!("vt{}", crate::entity_id::bytes_to_hex_lower(&id[..8])),
+        );
+        let members: BTreeSet<EntityId> = fold
             .actor_bindings
             .values()
             .filter(|binding| {
@@ -126,7 +130,9 @@ impl People {
                 }
             }
         }
-        let mut rows = Vec::new();
+        // Every read below the roster's own transaction opens its own, so the
+        // census is taken first and the reader's read runs after it closes.
+        let mut found = Vec::new();
         for person in persons {
             if hidden.contains(&person) && !agent_of.contains_key(&person) {
                 continue;
@@ -144,6 +150,11 @@ impl People {
             else {
                 continue;
             };
+            found.push((person, handle, body));
+        }
+        drop(rtxn);
+        let mut rows = Vec::new();
+        for (person, handle, body) in found {
             if !admit(person)? {
                 continue;
             }
@@ -196,7 +207,7 @@ impl People {
             rows.push(row);
         }
         rows.sort_by_key(|row| (handle_number(&row.handle), row.person));
-        Ok(Self::from_rows(vault_tag(vault), rows))
+        Ok(Self::from_rows(tag, rows))
     }
 
     fn from_rows(vault: String, rows: Vec<PersonRow>) -> Self {
@@ -443,18 +454,6 @@ fn person_name(body: &[u8]) -> Option<String> {
             .map(str::to_owned)
     })
     .filter(|name| !name.trim().is_empty())
-}
-
-/// The vault tag the prefix groups people under.
-fn vault_tag(vault: &Vault) -> String {
-    vault
-        .authority_fold()
-        .ok()
-        .and_then(|fold| fold.vault_id)
-        .map_or_else(
-            || "home".to_owned(),
-            |id| format!("vt{}", crate::entity_id::bytes_to_hex_lower(&id[..8])),
-        )
 }
 
 fn handle_number(handle: &str) -> u64 {
