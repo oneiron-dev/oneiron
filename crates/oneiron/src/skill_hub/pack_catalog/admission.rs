@@ -25,6 +25,19 @@ const PACK_PREDICATE: SideTable<String, String, Raw> =
 const PACK_CANDIDATE: SideTable<String, PackInstallReceipt, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_PACK_CANDIDATE);
 
+/// What one install commits, from a hub ask or the owner's own put.
+pub(super) struct PackCommit<'a> {
+    pub(super) source_id: EntityId,
+    pub(super) hub: &'a HubRef,
+    pub(super) publisher: &'a str,
+    /// The admitted publisher each bundled skill's import receipt names;
+    /// None for the owner's own put.
+    pub(super) foreign: Option<&'a ForeignSkillPublisher>,
+    pub(super) verdict: PackFitVerdict,
+    pub(super) permissions: &'a PackPermissions,
+    pub(super) qualification: Option<&'a PackQualification>,
+}
+
 impl Vault {
     /// Evaluate the immutable source and permission card outside the writer lock.
     /// The host owns the fit ladder; the engine binds its answer to source and hub.
@@ -39,6 +52,7 @@ impl Vault {
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
         refuse_engine_namespace(&source)?;
+        refuse_local_name(&source)?;
         let prior = {
             let txn = self.store.env.read_txn()?;
             self.installed_pack_in_txn(&txn, &source.manifest.name)?
@@ -122,6 +136,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
             refuse_engine_namespace(&source)?;
+            refuse_local_name(&source)?;
             if let Some(reason) = self.screen_pack_in_txn(
                 txn,
                 &source,
@@ -130,181 +145,201 @@ impl Vault {
             )? {
                 return Ok(PackInstallDisposition::Blocked { reason });
             }
-            let at = crate::unix_seconds_now();
-            let (skills, skill_sources) =
-                self.import_pack_skills_in_txn(txn, &source, &ask.hub, at)?;
-            let candidate_reason = if ask.verdict.rules_hit {
-                Some(PackCandidateReason::RulesHit)
-            } else if source.has_code() && !ask.verdict.code_auto_install {
-                Some(PackCandidateReason::CodeAutoInstallOff)
-            } else {
-                None
-            };
-            let status = if candidate_reason.is_some() {
-                PackInstallStatus::Candidate
-            } else {
-                PackInstallStatus::Active
-            };
-            // One transition owns each bundled skill's admission and final receipt.
-            // No intermediate Candidate label can escape this transaction.
-            for source in &skill_sources {
-                let record = self.read_skill_record_in_txn(txn, &source.entity)?;
-                let capabilities = self
-                    .read_admitted_capability_surface_in_txn(txn, &source.entity)?
-                    .ok_or_else(|| invalid("bundled skill capability surface missing"))?;
-                let plan = InstallPlan::pack(
-                    &record,
-                    InstallBinding::new(&source.reference, source.hash, &capabilities),
-                    status == PackInstallStatus::Active,
-                    candidate_reason == Some(PackCandidateReason::RulesHit),
-                    candidate_reason != Some(PackCandidateReason::CodeAutoInstallOff),
-                );
-                let result = self.execute_hub_install_plan_in_txn(
-                    txn,
-                    &source.entity,
-                    &plan,
-                    crate::TimeRange { start: at, end: at },
-                    at,
-                    None,
-                )?;
-                if status == PackInstallStatus::Active
-                    && !matches!(
-                        result.disposition,
-                        InstallDisposition::Installed | InstallDisposition::AlreadyInstalled
-                    )
-                {
-                    return Err(invalid("pack cannot install an unloadable bundled skill"));
-                }
-                self.write_hub_import_receipt_in_txn(
-                    txn,
-                    &source.entity,
-                    source.hash,
-                    &source.reference,
-                    Some((&ask.publisher, result, "")),
-                    at,
-                )?;
-            }
-            if status == PackInstallStatus::Active
-                && let Some(prior) = self.installed_pack_in_txn(txn, &source.manifest.name)?
-            {
-                self.supersede_pack_skills_in_txn(txn, &prior, &skills, at)?;
-            }
-            let receipt = PackInstallReceipt {
-                source_id: ask.source_id.to_hex(),
-                pack_name: source.manifest.name.clone(),
-                content_hash: source.content_hash().to_hex(),
-                kind: source.manifest.kind,
-                adapter: source.manifest.adapter.clone(),
-                engine_version: None,
-                status,
-                candidate_reason,
-                hub_id: ask.hub.hub_id.to_hex(),
-                hub_ref: ask.hub.ref_string.clone(),
-                pin_type: ask.hub.pin.pin_type().to_owned(),
-                pin_value: match &ask.hub.pin {
-                    HubPin::Semver(value)
-                    | HubPin::Tag(value)
-                    | HubPin::Commit(value)
-                    | HubPin::ContentHash(value) => value.clone(),
-                    HubPin::None => {
-                        return Err(invalid("pack install requires a pinned hub reference"));
-                    }
+            self.commit_pack_install_in_txn(
+                txn,
+                &source,
+                &PackCommit {
+                    source_id: ask.source_id,
+                    hub: &ask.hub,
+                    publisher: ask.publisher.identity(),
+                    foreign: Some(&ask.publisher),
+                    verdict: ask.verdict,
+                    permissions: &ask.permissions,
+                    qualification: ask.qualification.as_ref(),
                 },
-                publisher: ask.publisher.identity().to_owned(),
-                permissions: ask.permissions.clone(),
-                qualification_report_hash: ask
-                    .qualification
-                    .as_ref()
-                    .map(|q| q.report_hash.clone()),
-                runtime: if status == PackInstallStatus::Active {
-                    ask.qualification.as_ref().and_then(|q| q.runtime.clone())
-                } else {
-                    None
-                },
-                sections: source.sections().to_vec(),
-                predicates: source.manifest.predicates.iter().cloned().collect(),
-                kinds: source.manifest.kinds.iter().cloned().collect(),
-                skills: skills.into_iter().map(|id| id.to_hex()).collect(),
-                installed_at: at,
-            };
-            if status == PackInstallStatus::Candidate {
-                PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;
-                return Ok(PackInstallDisposition::Candidate(Box::new(receipt)));
-            }
-            let identities = source.kind_identities()?;
-            self.install_pack_kinds_in_txn(txn, &identities)?;
-            for predicate in &source.manifest.predicates {
-                if let Some(prior) =
-                    PACK_PREDICATE
-                        .get(&self.store, txn, predicate)
-                        .map_err(|error| {
-                            if error.kind() == crate::error::ErrorKind::SideTableRow {
-                                invalid("pack predicate catalog corrupt")
-                            } else {
-                                error
-                            }
-                        })?
-                    && prior != source.manifest.name
-                {
-                    return Err(Error::Registry(RegistryError::PackPredicateNameCollision {
-                        predicate: predicate.clone(),
-                        installed_pack: prior,
-                        installing_pack: source.manifest.name.clone(),
-                    }));
-                }
-            }
-            let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
-            // The first-party model catalog activates its rows for inference
-            // admission here; rows the prior pack shipped follow the update.
-            let model_catalog = receipt.pack_name == crate::skill_hub::MODEL_PACK_NAME
-                && receipt.hub_id == crate::skill_hub::default_skill_hub_id()?.to_hex()
-                && receipt.hub_ref == crate::skill_hub::MODEL_PACK_SUBTREE;
-            let prior_catalog = if model_catalog && prior.is_some() {
-                crate::llm::registry::CatalogSeed::from_installed_pack_in_txn(self, txn).ok()
-            } else {
-                None
-            };
-            if let Some(old) = &prior {
-                for predicate in &old.predicates {
-                    PACK_PREDICATE.delete(&self.store, txn, predicate)?;
-                }
-            }
-            for predicate in &source.manifest.predicates {
-                PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
-            }
-            PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
-            PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
-            if model_catalog {
-                self.activate_installed_model_catalog_in_txn(txn, prior_catalog.as_ref())?;
-            }
-            if let Some(old) = prior
-                && old.content_hash != receipt.content_hash
-            {
-                let from_version = self
-                    .pack_source_in_txn(txn, &EntityId::from_hex(&old.source_id)?)?
-                    .map(|old_source| old_source.manifest.version)
-                    .unwrap_or_default();
-                let from_predicates = old.predicates.into_iter().collect();
-                crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
-                    self,
-                    txn,
-                    &crate::saved_query::PackMove {
-                        pack: &source.manifest.name,
-                        from_version: &from_version,
-                        to_version: &source.manifest.version,
-                        from_source: &old.content_hash,
-                        to_source: &receipt.content_hash,
-                        from_predicates: &from_predicates,
-                        to_predicates: &source.manifest.predicates,
-                        shipped: source
-                            .manifest
-                            .migration_from(&from_version, &old.content_hash),
-                    },
-                    self.now_recorded_at(),
-                )?;
-            }
-            Ok(PackInstallDisposition::Installed(Box::new(receipt)))
+            )
         })
+    }
+    /// Commits one screened install, from a hub ask or the owner's own put:
+    /// bundled skills, the receipt, and for Active the kinds, predicate
+    /// ownership and the pack-drift repair of an update.
+    pub(super) fn commit_pack_install_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source: &PackSource,
+        commit: &PackCommit<'_>,
+    ) -> Result<PackInstallDisposition> {
+        let at = crate::unix_seconds_now();
+        let (skills, skill_sources) =
+            self.import_pack_skills_in_txn(txn, &source, &commit.hub, at)?;
+        let candidate_reason = if commit.verdict.rules_hit {
+            Some(PackCandidateReason::RulesHit)
+        } else if source.has_code() && !commit.verdict.code_auto_install {
+            Some(PackCandidateReason::CodeAutoInstallOff)
+        } else {
+            None
+        };
+        let status = if candidate_reason.is_some() {
+            PackInstallStatus::Candidate
+        } else {
+            PackInstallStatus::Active
+        };
+        // One transition owns each bundled skill's admission and final receipt.
+        // No intermediate Candidate label can escape this transaction.
+        for source in &skill_sources {
+            let record = self.read_skill_record_in_txn(txn, &source.entity)?;
+            let capabilities = self
+                .read_admitted_capability_surface_in_txn(txn, &source.entity)?
+                .ok_or_else(|| invalid("bundled skill capability surface missing"))?;
+            let plan = InstallPlan::pack(
+                &record,
+                InstallBinding::new(&source.reference, source.hash, &capabilities),
+                status == PackInstallStatus::Active,
+                candidate_reason == Some(PackCandidateReason::RulesHit),
+                candidate_reason != Some(PackCandidateReason::CodeAutoInstallOff),
+            );
+            let result = self.execute_hub_install_plan_in_txn(
+                txn,
+                &source.entity,
+                &plan,
+                crate::TimeRange { start: at, end: at },
+                at,
+                None,
+            )?;
+            if status == PackInstallStatus::Active
+                && !matches!(
+                    result.disposition,
+                    InstallDisposition::Installed | InstallDisposition::AlreadyInstalled
+                )
+            {
+                return Err(invalid("pack cannot install an unloadable bundled skill"));
+            }
+            self.write_hub_import_receipt_in_txn(
+                txn,
+                &source.entity,
+                source.hash,
+                &source.reference,
+                commit.foreign.map(|publisher| (publisher, result, "")),
+                at,
+            )?;
+        }
+        if status == PackInstallStatus::Active
+            && let Some(prior) = self.installed_pack_in_txn(txn, &source.manifest.name)?
+        {
+            self.supersede_pack_skills_in_txn(txn, &prior, &skills, at)?;
+        }
+        let receipt = PackInstallReceipt {
+            source_id: commit.source_id.to_hex(),
+            pack_name: source.manifest.name.clone(),
+            content_hash: source.content_hash().to_hex(),
+            kind: source.manifest.kind,
+            adapter: source.manifest.adapter.clone(),
+            engine_version: None,
+            status,
+            candidate_reason,
+            hub_id: commit.hub.hub_id.to_hex(),
+            hub_ref: commit.hub.ref_string.clone(),
+            pin_type: commit.hub.pin.pin_type().to_owned(),
+            pin_value: match &commit.hub.pin {
+                HubPin::Semver(value)
+                | HubPin::Tag(value)
+                | HubPin::Commit(value)
+                | HubPin::ContentHash(value) => value.clone(),
+                HubPin::None => {
+                    return Err(invalid("pack install requires a pinned hub reference"));
+                }
+            },
+            publisher: commit.publisher.to_owned(),
+            permissions: commit.permissions.clone(),
+            qualification_report_hash: commit.qualification.map(|q| q.report_hash.clone()),
+            runtime: if status == PackInstallStatus::Active {
+                commit.qualification.and_then(|q| q.runtime.clone())
+            } else {
+                None
+            },
+            sections: source.sections().to_vec(),
+            predicates: source.manifest.predicates.iter().cloned().collect(),
+            kinds: source.manifest.kinds.iter().cloned().collect(),
+            skills: skills.into_iter().map(|id| id.to_hex()).collect(),
+            installed_at: at,
+        };
+        if status == PackInstallStatus::Candidate {
+            PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;
+            return Ok(PackInstallDisposition::Candidate(Box::new(receipt)));
+        }
+        let identities = source.kind_identities()?;
+        self.install_pack_kinds_in_txn(txn, &identities)?;
+        for predicate in &source.manifest.predicates {
+            if let Some(prior) =
+                PACK_PREDICATE
+                    .get(&self.store, txn, predicate)
+                    .map_err(|error| {
+                        if error.kind() == crate::error::ErrorKind::SideTableRow {
+                            invalid("pack predicate catalog corrupt")
+                        } else {
+                            error
+                        }
+                    })?
+                && prior != source.manifest.name
+            {
+                return Err(Error::Registry(RegistryError::PackPredicateNameCollision {
+                    predicate: predicate.clone(),
+                    installed_pack: prior,
+                    installing_pack: source.manifest.name.clone(),
+                }));
+            }
+        }
+        let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
+        // The first-party model catalog activates its rows for inference
+        // admission here; rows the prior pack shipped follow the update.
+        let model_catalog = receipt.pack_name == crate::skill_hub::MODEL_PACK_NAME
+            && receipt.hub_id == crate::skill_hub::default_skill_hub_id()?.to_hex()
+            && receipt.hub_ref == crate::skill_hub::MODEL_PACK_SUBTREE;
+        let prior_catalog = if model_catalog && prior.is_some() {
+            crate::llm::registry::CatalogSeed::from_installed_pack_in_txn(self, txn).ok()
+        } else {
+            None
+        };
+        if let Some(old) = &prior {
+            for predicate in &old.predicates {
+                PACK_PREDICATE.delete(&self.store, txn, predicate)?;
+            }
+        }
+        for predicate in &source.manifest.predicates {
+            PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
+        }
+        PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
+        PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
+        if model_catalog {
+            self.activate_installed_model_catalog_in_txn(txn, prior_catalog.as_ref())?;
+        }
+        if let Some(old) = prior
+            && old.content_hash != receipt.content_hash
+        {
+            let from_version = self
+                .pack_source_in_txn(txn, &EntityId::from_hex(&old.source_id)?)?
+                .map(|old_source| old_source.manifest.version)
+                .unwrap_or_default();
+            let from_predicates = old.predicates.into_iter().collect();
+            crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
+                self,
+                txn,
+                &crate::saved_query::PackMove {
+                    pack: &source.manifest.name,
+                    from_version: &from_version,
+                    to_version: &source.manifest.version,
+                    from_source: &old.content_hash,
+                    to_source: &receipt.content_hash,
+                    from_predicates: &from_predicates,
+                    to_predicates: &source.manifest.predicates,
+                    shipped: source
+                        .manifest
+                        .migration_from(&from_version, &old.content_hash),
+                },
+                self.now_recorded_at(),
+            )?;
+        }
+        Ok(PackInstallDisposition::Installed(Box::new(receipt)))
     }
     /// Each pack name whose install receipt selects a script, with the source
     /// it selects, read without the catalog listing's bound: a restore asks
@@ -596,6 +631,13 @@ pub(super) fn pack_permissions(
     }
     let grants: Vec<_> = source.manifest.requested_grants.iter().cloned().collect();
     let wakes: Vec<_> = source.manifest.wake_subscriptions.iter().cloned().collect();
+    let hooks: Vec<_> = source
+        .hooks()
+        .iter()
+        .flat_map(super::PackHook::capability_tokens)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let section_verbs: Vec<_> = section_verbs.into_iter().collect();
     let section_authorities: Vec<_> = section_authorities.into_iter().collect();
     let added = |requested: &[String], previous: &[String]| {
@@ -670,6 +712,7 @@ pub(super) fn pack_permissions(
         widening_bundled_skills,
         widening_grants: added(&grants, prior.map_or(empty, |row| &row.permissions.grants)),
         widening_wakes: added(&wakes, prior.map_or(empty, |row| &row.permissions.wakes)),
+        widening_hooks: added(&hooks, prior.map_or(empty, |row| &row.permissions.hooks)),
         widening_section_verbs: added(
             &section_verbs,
             prior.map_or(empty, |row| &row.permissions.section_verbs),
@@ -680,6 +723,7 @@ pub(super) fn pack_permissions(
         ),
         grants,
         wakes,
+        hooks,
         section_verbs,
         section_authorities,
     })
@@ -719,6 +763,14 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
 /// a declaration, so no shipped migration map can move an owner's query over
 /// engine state (ARCH-0059 §4). Checked where a source is admitted, not where
 /// a stored one is decoded, so a source stored before the rule still reads.
+/// The vault's own `local` pack is written only through the owner's put; it
+/// never comes from a hub.
+fn refuse_local_name(source: &PackSource) -> Result<()> {
+    if source.manifest.name == super::LOCAL_PACK_NAME {
+        return Err(invalid("the local pack never comes from a hub"));
+    }
+    Ok(())
+}
 pub(super) fn refuse_engine_namespace(source: &PackSource) -> Result<()> {
     let manifest = &source.manifest;
     if manifest.kind != PackKind::Agent

@@ -38,7 +38,7 @@ mod topology;
 
 use std::sync::Arc;
 
-use crate::sync::client::SyncClientConfig;
+use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
@@ -68,20 +68,159 @@ pub struct SyncConnection {
     manager: Arc<WindowManager>,
     queue: SyncQueue,
     config: ConnectionConfig,
+    /// The residence mode this machine runs now. A change closes the live
+    /// socket; the next connect negotiates the new hello.
+    mode: tokio::sync::watch::Sender<SyncResidenceMode>,
+}
+
+/// What switching this machine's residence mode did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResidenceModeChange {
+    /// The mode the machine runs now; the elected home always runs All.
+    pub mode: SyncResidenceMode,
+    /// Held windows the home granted again, kept as promoted opened windows.
+    pub retained: Vec<crate::sync::WindowKey>,
+    /// Held windows the home did not grant again: still on disk, unsynced.
+    pub unsynced: Vec<crate::sync::WindowKey>,
+    /// Opened-item read caches dropped on the way to sync-all.
+    pub pruned_items: usize,
 }
 
 impl SyncConnection {
-    /// Creates a new connection manager over manager-owned windows.
+    /// Creates a new connection manager over manager-owned windows. An own
+    /// device runs its persisted residence choice (the elected home runs
+    /// All); the configured mode stands when the owner never chose.
     pub fn new(
         manager: Arc<WindowManager>,
         config: ConnectionConfig,
     ) -> crate::error::Result<Self> {
         let queue = SyncQueue::new(Arc::clone(manager.vault()))?;
+        let mode = if config.client_config.federation_peer.is_some() {
+            config.client_config.residence_mode
+        } else {
+            crate::sync::residence::resolve_residence_mode(
+                manager.vault(),
+                config.client_config.residence_mode,
+            )?
+        };
         Ok(Self {
             manager,
             queue,
             config,
+            mode: tokio::sync::watch::channel(mode).0,
         })
+    }
+
+    /// The client configuration with the residence mode this machine runs now.
+    fn client_config(&self) -> SyncClientConfig {
+        let mut config = self.config.client_config.clone();
+        config.residence_mode = *self.mode.borrow();
+        config
+    }
+
+    fn client(&self) -> Result<crate::sync::SyncClient, crate::sync::TransportError> {
+        crate::sync::SyncClient::new(Arc::clone(&self.manager), self.client_config())
+            .map(|(client, _events)| client)
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// The residence mode this machine runs now.
+    pub fn residence_mode(&self) -> SyncResidenceMode {
+        *self.mode.borrow()
+    }
+
+    /// Switch this machine between sync-all and sync-what-you-opened. The
+    /// choice persists; the live socket closes and reconnects with the new
+    /// hello. To sync-all, the opened read caches are dropped (full windows
+    /// replace them). To opened, each window held in full is granted again
+    /// by the home before it keeps syncing as a promoted window; that needs
+    /// the home reachable, and an offline home leaves the mode unchanged.
+    /// Nothing held is erased. The elected home always stays All.
+    pub async fn set_residence_mode(
+        &self,
+        mode: SyncResidenceMode,
+    ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
+        let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
+        if self.config.client_config.federation_peer.is_some() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "a federation lane has no residence mode",
+            ));
+        }
+        let vault = self.manager.vault();
+        let effective = crate::sync::residence::effective_residence_mode(
+            None,
+            mode,
+            crate::sync::residence::local_is_elected_home(vault).map_err(storage)?,
+        );
+        let mut change = ResidenceModeChange {
+            mode: effective,
+            retained: Vec::new(),
+            unsynced: Vec::new(),
+            pruned_items: 0,
+        };
+        if effective != *self.mode.borrow() {
+            match effective {
+                SyncResidenceMode::All => {
+                    // A cached id refuses local writes until promoted; the
+                    // full windows supersede every read cache.
+                    change.pruned_items =
+                        crate::sync::residence::prune_thin_items(vault, u64::MAX)
+                            .map_err(storage)?;
+                }
+                SyncResidenceMode::Opened => {
+                    let mut config = self.client_config();
+                    config.residence_mode = SyncResidenceMode::Opened;
+                    let (mut client, _events) =
+                        crate::sync::SyncClient::new(Arc::clone(&self.manager), config)
+                            .map_err(storage)?;
+                    for window in
+                        crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
+                    {
+                        if client.retain_window(&window).await? {
+                            change.retained.push(window);
+                        } else {
+                            change.unsynced.push(window);
+                        }
+                    }
+                }
+            }
+        }
+        crate::sync::residence::set_device_sync_preference(vault, mode).map_err(storage)?;
+        self.mode.send_replace(effective);
+        Ok(change)
+    }
+
+    /// Open one item for a person: its read cache, its local canonical row,
+    /// or a first touch at the home. See [`crate::sync::SyncClient::open_item`].
+    pub async fn open_item(
+        &self,
+        window: &crate::sync::WindowKey,
+        item: crate::EntityId,
+    ) -> Result<crate::sync::OpenedItem, crate::sync::TransportError> {
+        self.client()?.open_item(window, item).await
+    }
+
+    /// Fetch the current windows' thin index again and return it.
+    pub async fn refresh_residence_index(
+        &self,
+        now_secs: u64,
+    ) -> Result<Vec<crate::sync::ResidenceIndexWindow>, crate::sync::TransportError> {
+        self.client()?.refresh_residence_index(now_secs).await
+    }
+
+    /// The thin index this device holds.
+    pub fn residence_index(
+        &self,
+    ) -> Result<Vec<crate::sync::ResidenceIndexWindow>, crate::sync::TransportError> {
+        self.client()?.residence_index()
+    }
+
+    /// Drop read caches of opened items last touched before `before`
+    /// (recorded-clock seconds). Promoted and sync-all windows are not
+    /// pruned here: demoting a canonical window is not available yet.
+    pub fn prune_opened_items(&self, before: u64) -> Result<usize, crate::sync::TransportError> {
+        crate::sync::residence::prune_thin_items(self.manager.vault(), before)
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
     }
 
     /// Fetch one grant-selected item into this device's observed CRDT window.
@@ -90,11 +229,7 @@ impl SyncConnection {
         window: &crate::sync::WindowKey,
         item: crate::EntityId,
     ) -> Result<(), crate::sync::TransportError> {
-        let (mut client, _events) = crate::sync::SyncClient::new(
-            Arc::clone(&self.manager),
-            self.config.client_config.clone(),
-        )
-        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        let mut client = self.client()?;
         client.fetch_item(window, item).await
     }
 
@@ -105,11 +240,7 @@ impl SyncConnection {
         window: &crate::sync::WindowKey,
         item: crate::EntityId,
     ) -> Result<(), crate::sync::TransportError> {
-        let (mut client, _events) = crate::sync::SyncClient::new(
-            Arc::clone(&self.manager),
-            self.config.client_config.clone(),
-        )
-        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        let mut client = self.client()?;
         client.promote_window(window, item).await
     }
 
@@ -185,11 +316,7 @@ impl SyncConnection {
         &self,
         item: crate::EntityId,
     ) -> Result<Option<crate::sync::ThinItem>, crate::sync::TransportError> {
-        let (client, _events) = crate::sync::SyncClient::new(
-            Arc::clone(&self.manager),
-            self.config.client_config.clone(),
-        )
-        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        let client = self.client()?;
         client.thin_item(item)
     }
 
@@ -200,11 +327,7 @@ impl SyncConnection {
         query: &str,
         limit: usize,
     ) -> Result<crate::sync::ResidenceSearch, crate::sync::TransportError> {
-        let (client, _events) = crate::sync::SyncClient::new(
-            Arc::clone(&self.manager),
-            self.config.client_config.clone(),
-        )
-        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        let client = self.client()?;
         client.search_resident(query, limit).await
     }
 

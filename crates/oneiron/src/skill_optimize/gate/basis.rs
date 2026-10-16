@@ -280,7 +280,7 @@ pub struct HeldOutReplayCase<'a> {
 ///
 /// The production tier is a host-supplied implementation over the engine's LLM
 /// surface under [`skill_edit_score_call_purpose`]; this module constructs no
-/// client (the [`crate::skill_attribution::AttributionJudge`] /
+/// client (the [`crate::skill_attribution::AttributionDecisions`] /
 /// [`crate::skill_optimize::SkillOptimizeAuthor`] posture). There is deliberately no in-engine
 /// default: any scalar this crate could compute without a replay would be the
 /// optimizer grading its own edit, which is the one thing the gate exists to

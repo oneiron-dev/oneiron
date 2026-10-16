@@ -21,8 +21,8 @@ use crate::attempt_queue::AttemptId;
 use crate::llm::decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
-    AttributionJudge, AttributionSweepReport, ReceiptAttributionSource,
-    run_task_attribution_sweep_with_judge,
+    AttributionDecisions, AttributionSweepReport, ReceiptAttributionSource,
+    run_task_attribution_sweep_with_decisions,
 };
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
@@ -41,6 +41,9 @@ pub const COACH_PERSON_THRESHOLD_FACET: &str = "coach.person_threshold";
 /// Observe, read-side hardening: the retrieval-miss detector over the stored
 /// retrieval runs.
 pub const COACH_READ_HARDENING_FACET: &str = "coach.read_hardening";
+/// Observe, tier-1 detection: the nightly sweep of the signed tripwires and
+/// its proposed-only repairs (ARCH-0066 §4).
+pub const COACH_TRIPWIRES_FACET: &str = "coach.tripwires";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 
@@ -115,6 +118,23 @@ impl DreamerRunnerStore<'_> {
                     blake3::hash(key.as_bytes()).to_hex()
                 )
             }),
+            run_id.clone(),
+            now,
+        )?;
+        self.enqueue_kind_in_txn(
+            txn,
+            MAINTENANCE_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: COACH_TRIPWIRES_FACET.into(),
+                input: Value::Nil,
+                parent_attempt,
+            },
+            wake_key.map(|key| {
+                format!(
+                    "{COACH_TRIPWIRES_FACET}:{}",
+                    blake3::hash(key.as_bytes()).to_hex()
+                )
+            }),
             run_id,
             now,
         )?;
@@ -151,16 +171,17 @@ impl Vault {
     }
 
     /// Skill discovery as the Coach: one bounded page of the task-attribution
-    /// sweep under a leased `coach.skill_discovery` attempt.
+    /// sweep under a leased `coach.skill_discovery` attempt, through the host's
+    /// decisions (`None` is the rule tier).
     pub fn run_coach_skill_discovery(
         &self,
         attempt: &DreamerAdmittedAttempt,
         limit: usize,
         source: &dyn ReceiptAttributionSource,
-        judge: &dyn AttributionJudge,
+        decisions: Option<&AttributionDecisions<'_>>,
     ) -> Result<AttributionSweepReport> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISCOVERY_FACET)?;
-        run_task_attribution_sweep_with_judge(self, limit, source, judge)
+        run_task_attribution_sweep_with_decisions(self, limit, source, decisions)
     }
 
     /// Keeps one case where a person changed the ladder's answer (from
@@ -289,8 +310,16 @@ impl Vault {
 }
 
 /// The nightly read-side pass. Detector ids are stable, so a night that sees
-/// the same runs writes the same events again.
-pub(super) fn run_read_hardening(vault: &Vault) -> Result<()> {
-    vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE, READ_HARDENING_RUNS)?;
+/// the same runs writes the same events again, and a miss already answered
+/// files no second reindex.
+pub(super) fn run_read_hardening(vault: &Vault, now: u64) -> Result<()> {
+    let misses = vault.run_retrieval_miss_detector(READ_HARDENING_SCOPE, READ_HARDENING_RUNS)?;
+    vault.propose_tier1_repairs(&misses, now)?;
+    Ok(())
+}
+
+/// The nightly tier-1 sweep, as the Coach.
+pub(super) fn run_tripwires(vault: &Vault, now: u64) -> Result<()> {
+    vault.run_tier1_sweep(now)?;
     Ok(())
 }

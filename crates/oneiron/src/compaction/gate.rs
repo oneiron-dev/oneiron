@@ -440,9 +440,15 @@ pub enum CompactionOff {
     SeatTooSmall,
     /// The host's backend failed in a way no retry fixes.
     BackendFailed,
-    /// The run lives in an off-record room, whose overlay compaction is not
-    /// built; its window stays raw.
+    /// The run lives in a room whose stretch keeps no summary of its own: an
+    /// anonymous room retains nothing, and a room already on record when the
+    /// run entered writes through its saver, which no epoch mint reaches. Its
+    /// window stays raw. A run in an off-record room compacts into the room's
+    /// overlay instead.
     OffRecordRun,
+    /// The run's agent profile gives its window to its own harness, which
+    /// compacts it: Oneiron never compacts it twice.
+    HarnessCompacts,
 }
 
 impl CompactionOff {
@@ -457,6 +463,7 @@ impl CompactionOff {
             Self::SeatTooSmall => "compaction_seat_too_small",
             Self::BackendFailed => "backend_failed",
             Self::OffRecordRun => "off_record_run",
+            Self::HarnessCompacts => "harness_compacts",
         }
     }
 }

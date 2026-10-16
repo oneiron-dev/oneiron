@@ -20,6 +20,7 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, Sc
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
+use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
 use crate::llm::{BudgetLease, BudgetRead, BudgetThreshold, CallPurpose, LlmCapability, ModelId};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
@@ -126,6 +127,70 @@ impl Memory<'_> {
                 &[],
             )
         })?;
+        self.land_generated_image(&response, &description, occurred_at)
+    }
+
+    /// Generates one image through the host's `ai.image` door, admitted,
+    /// sent and settled under its run, and lands it
+    /// ([`Self::land_generated_image`]). Each of `reference_assets` is read
+    /// as an image through the bound actor's lane and sent, in order, as a
+    /// reference: the call is then an edit, and an edit's instruction does
+    /// not describe its result, so its caller's `description` is required.
+    /// A generation without one is described by its instruction.
+    pub async fn render_image_asset(
+        &self,
+        door: &dyn AiMediaDoor,
+        mut request: MediaRequest,
+        reference_assets: &[String],
+        description: Option<&str>,
+        occurred_at: u64,
+    ) -> MemoryResult<LandedImage> {
+        if request.operation != AiOperation::Image {
+            return Err(MemoryError::bad_request("an image asset renders an image call"));
+        }
+        let reader = AssetConsumer {
+            capabilities: vec![LlmCapability::ImageInput],
+            purpose: request.envelope.purpose.clone(),
+        };
+        for asset_ref in reference_assets {
+            let image = self
+                .resolve_asset(asset_ref, &reader, None)?
+                .value
+                .image
+                .ok_or_else(|| no_form(asset_ref))?;
+            request.references.push(MediaPart::Image {
+                media_type: image.media_type,
+                bytes: image.bytes,
+            });
+        }
+        let description = match description {
+            Some(description) => description.to_owned(),
+            None if request.references.is_empty() => request.text(),
+            None => {
+                return Err(MemoryError::bad_request(
+                    "an image edit lands with its caller's description of the result",
+                ));
+            }
+        };
+        let response = door.call(request).await.map_err(|error| {
+            MemoryError::new(
+                MEMORY_CODE_MODEL_UNAVAILABLE,
+                format!("image generation failed: {error}"),
+                &[],
+            )
+        })?;
+        let image = response.image().ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_MODEL_UNAVAILABLE,
+                "image generation returned no image".to_owned(),
+                &[],
+            )
+        })?;
+        let response = ImageResponse {
+            image,
+            model: response.model,
+            metadata: std::collections::BTreeMap::new(),
+        };
         self.land_generated_image(&response, &description, occurred_at)
     }
 

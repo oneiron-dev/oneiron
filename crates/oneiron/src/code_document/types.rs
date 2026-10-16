@@ -88,7 +88,8 @@ pub enum CodeSpanResolution {
 /// Who and why behind one operation: the turn and activity that made it, the
 /// intent it serves and the model that ran. The actor itself is on the receipt.
 /// Absent fields are unrecorded, never inferred.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CodeOpProvenance {
     /// The TURN (a Dreamer or agent turn) that made the operation.
     pub turn: Option<EntityId>,
@@ -99,6 +100,18 @@ pub struct CodeOpProvenance {
     /// The MODEL entity that produced the operation.
     pub substrate_ref: Option<EntityId>,
     pub reasoning_effort: Option<String>,
+}
+
+impl CodeOpProvenance {
+    /// A recorded reasoning effort is a short non-empty scalar.
+    pub(crate) fn validate(&self) -> crate::error::Result<()> {
+        if self.reasoning_effort.as_ref().is_some_and(|effort| {
+            effort.is_empty() || effort.len() > crate::provenance::REASONING_EFFORT_MAX_BYTES
+        }) {
+            return Err(super::codec::invalid());
+        }
+        Ok(())
+    }
 }
 
 /// One operation as blame and diff name it.
