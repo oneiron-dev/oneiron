@@ -141,6 +141,13 @@ pub struct RecoverWindowArgs {
     /// The sync window: `YYYY-MM`, or `YYYY-MM@<world id>`.
     pub window: String,
 
+    /// Also re-bootstrap the window (a pathological history): its CRDT state
+    /// becomes the rebuilt state with no history behind it, and every device
+    /// behind it resyncs from a replacement. Refused while a legal hold names
+    /// any row the window carries.
+    #[arg(long)]
+    pub rebootstrap: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
