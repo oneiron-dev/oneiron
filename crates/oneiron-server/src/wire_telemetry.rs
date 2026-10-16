@@ -582,6 +582,24 @@ impl WireTelemetry {
         }
         Ok(question)
     }
+    /// Every call-volume question kept, by key, oldest window first: what the
+    /// health check reads (OF-520).
+    pub(crate) fn kept_questions(&self) -> Result<Vec<(String, WireQuestion)>> {
+        self.kept(QUESTION)
+    }
+    /// Every limit question kept, by key: each row's windows, oldest first.
+    pub(crate) fn kept_limit_questions(&self) -> Result<Vec<(String, WireLimitQuestion)>> {
+        self.kept(LIMIT_QUESTION)
+    }
+    fn kept<T: serde::de::DeserializeOwned>(&self, prefix: &str) -> Result<Vec<(String, T)>> {
+        let mut kept = Vec::new();
+        for key in self.vault.sync_state_keys_with_prefix(prefix)? {
+            if let Some(bytes) = self.vault.sync_state_get(&key)? {
+                kept.push((key, decode(&bytes)?));
+            }
+        }
+        Ok(kept)
+    }
 }
 impl Drop for WireTelemetry {
     fn drop(&mut self) {

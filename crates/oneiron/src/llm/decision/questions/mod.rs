@@ -2,6 +2,7 @@
 
 mod arrival;
 mod graph_ask;
+mod health_ask;
 mod outcomes;
 mod recipe;
 mod records;
@@ -18,6 +19,9 @@ pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskResult, GraphContextSource, GraphPrediction,
     GraphTypeSelection, GraphUnitContext, run_graph_ask, run_graph_ask_by_type,
     select_graph_units_by_type,
+};
+pub use health_ask::{
+    HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
 };
 pub use outcomes::{calibration_pairs, person_changed_pairs, project_bound_outcomes};
 pub(crate) use recipe::run_graph_question_with_proposals;

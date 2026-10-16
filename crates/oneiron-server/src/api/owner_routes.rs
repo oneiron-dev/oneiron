@@ -49,6 +49,7 @@ mod peer_confidence_routes;
 mod proactivity_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
+mod wire_health_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -94,6 +95,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(decision_ask_routes::routes())
         .merge(peer_confidence_routes::routes())
         .merge(skill_judge_routes::routes())
+        .merge(wire_health_routes::routes())
         .merge(handoff_alarm_routes::routes())
         .merge(space_posting_routes::routes())
         .merge(super::owner_origin::routes())
