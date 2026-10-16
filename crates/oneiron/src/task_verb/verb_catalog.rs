@@ -6,6 +6,8 @@ pub enum AgentVerb {
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
     SelfMemoryDiary,
+    SelfMemoryDiaryReads,
+    SelfMemoryDiaryReview,
     Cancel,
     Steer,
     Describe,
@@ -106,6 +108,8 @@ impl AgentVerb {
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
         Self::SelfMemoryDiary,
+        Self::SelfMemoryDiaryReads,
+        Self::SelfMemoryDiaryReview,
         Self::Cancel,
         Self::Steer,
         Self::Describe,
@@ -209,6 +213,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
             Self::SelfMemoryDiary => "self.memory.diary",
+            Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
+            Self::SelfMemoryDiaryReview => "self.memory.diary.review",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
             Self::Describe => "describe",
@@ -308,6 +314,8 @@ impl AgentVerb {
             self,
             Self::Report
                 | Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReads
+                | Self::SelfMemoryDiaryReview
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -415,6 +423,8 @@ impl AgentVerb {
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
                 | Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReads
+                | Self::SelfMemoryDiaryReview
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -558,6 +568,8 @@ impl AgentVerb {
         matches!(
             self,
             Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReads
+                | Self::SelfMemoryDiaryReview
                 | Self::Steer
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -649,6 +661,7 @@ impl AgentVerb {
         matches!(
             self,
             Self::SelfMemoryDiary
+                | Self::SelfMemoryDiaryReview
                 | Self::Cancel
                 | Self::Steer
                 | Self::TasksCreate
@@ -717,6 +730,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
             Self::SelfMemoryDiary => &["spec"],
+            Self::SelfMemoryDiaryReads => &["spec"],
+            Self::SelfMemoryDiaryReview => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
@@ -818,6 +833,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
             Self::SelfMemoryDiary => &["spec"],
+            Self::SelfMemoryDiaryReads => &["spec"],
+            Self::SelfMemoryDiaryReview => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &[],
