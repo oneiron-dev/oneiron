@@ -13,8 +13,7 @@ mod session;
 mod standing;
 
 pub(crate) use board::{
-    ContextBoardProjectControls, ContextBoardRenderBudget,
-    ContextBoardRoomControls,
+    ContextBoardProjectControls, ContextBoardRenderBudget, ContextBoardRoomControls,
 };
 pub(crate) use cursor::*;
 pub(crate) use explain::*;
@@ -500,12 +499,7 @@ pub(crate) async fn context_board_hydrate(
             } else if req.describe_self {
                 Some(
                     run.render
-                        .describe_self(
-                            &server.vault,
-                            &run.state,
-                            &observed_reads,
-                            Some(&people),
-                        )
+                        .describe_self(&server.vault, &run.state, &observed_reads, Some(&people))
                         .map_err(|error| super::core_engine_error("self brief failed", error))?,
                 )
             } else {

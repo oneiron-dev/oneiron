@@ -183,8 +183,10 @@ impl Vault {
         locality: CallerLocality,
     ) -> MemoryResult<MemoryExport> {
         // A host-root export reads diaries as the vault's owner (OF-490).
-        let reader =
-            WriteActor::new(crate::vault::embedded_owner_actor_id()?, EdgeActorClass::Human);
+        let reader = WriteActor::new(
+            crate::vault::embedded_owner_actor_id()?,
+            EdgeActorClass::Human,
+        );
         render_export(self, opts, "host", locality, reader, |txn| {
             validate_verified_owner(self, txn, proof)?;
             if proof.claims().holder_ref != "host" {

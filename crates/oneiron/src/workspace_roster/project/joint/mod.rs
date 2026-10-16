@@ -196,8 +196,8 @@ impl Solver<'_, '_, '_> {
             return Ok(member);
         }
         if facts.seals.len() > 1 {
-            // Conflicting owner seals, each tip valid on its own lineage: no
-            // authority, and no state of it reads a parent (Astra #1434c F2).
+            // Conflicting owner seals, none of them retired: no authority,
+            // and no state of it reads a parent (Astra #1434c F2).
             member.fixed = Some(ProjectFrontier {
                 id,
                 disposition: ProjectDisposition::ConflictingSeals {
