@@ -129,6 +129,9 @@ side_tables! {
     DREAMER_PROJECTION_RIDES: VaultMeta b"dreamer:projection:rides:v1:" Named;
     /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
     DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
+    /// The refusal dial an agent last woke under (OF-533), so its next wake notes a change in its
+    /// own diary. Key: id16(agent).
+    DREAMER_REFUSAL_DIAL_SEEN: VaultMeta b"dreamer:refusal-dial:seen:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
