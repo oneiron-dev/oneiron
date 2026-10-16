@@ -593,3 +593,17 @@ pub(crate) fn register_custody_in_txn(
     NAME_INDEX.put(write.store, wtxn, &rec.name, id)?;
     Ok(())
 }
+
+/// OF-222: restores one custody record from the owner's own whole-vault
+/// archive under its archived id, inside the import's write transaction and
+/// through every check registration makes. The owner's own archive carries
+/// custody records so a re-import keeps every key (owner ruling 2026-10-17);
+/// no export to a contact or share carries one.
+pub(crate) fn restore_secret_custody_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rec: &mut SecretCustodyRecord,
+) -> Result<()> {
+    register_secret_in_txn(vault, wtxn, id, rec)
+}

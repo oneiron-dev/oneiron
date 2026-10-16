@@ -81,6 +81,7 @@ pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
+    restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 pub use self::owner_door::{
