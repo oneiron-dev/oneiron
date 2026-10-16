@@ -36870,7 +36870,34 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 11
+      "re-export": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ComputeDestination",
+      "OfferAnswer",
+      "OfferAnswerRecord",
+      "OfferCandidate",
+      "OfferCheck",
+      "OfferCheckInput",
+      "OfferCost",
+      "OfferEvidence",
+      "OfferIntent",
+      "OfferModelPin",
+      "OfferOption",
+      "SeatWorkload",
+      "TrainingOffer",
+      "TrainingOfferDraft"
+     ],
+     "path": "src/skill_optimize/offer.rs",
+     "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
+     "surface": {
+      "enum": 4,
+      "fn": 7,
+      "struct": 10
      }
     },
     {
@@ -45790,7 +45817,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46023,7 +46050,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2766,
+   "source_files": 2767,
    "test_files": 903
   },
   "oneiron-android": {
