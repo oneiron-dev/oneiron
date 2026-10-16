@@ -60,6 +60,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_MACHINE_SK, LIVE),
     (&t::IDENTITY_PINNED_ROOT, LIVE),
     (&t::DELETION_WINDOW_LABEL, CONTENT),
+    (&t::DELETION_PENDING_SWEEP_REFS, CONTENT),
     (&t::SYNC_M_U_SEQ_E, CONTENT),
     (&t::SYNC_M_U_SEQ_W, CONTENT),
     (&t::MANAGED_CANARY_MARKER, LIVE),

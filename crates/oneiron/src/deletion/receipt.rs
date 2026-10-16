@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 
+use super::erase::take_staged_sweep_refs_in_txn;
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone::DeleteReason;
 
@@ -704,11 +705,14 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         receipt_id: &EntityId,
         mut input: RedactionReceiptInput,
-        sweep_extras: HardEraseSweepExtras,
+        mut sweep_extras: HardEraseSweepExtras,
     ) -> Result<Vec<u8>> {
         let mut ids = std::collections::BTreeSet::new();
         for hex in &input.scope.entity_ids {
             let holder = EntityId::from_hex(hex)?;
+            if input.sweep_queued_at.is_some() {
+                take_staged_sweep_refs_in_txn(self, wtxn, &holder, &mut sweep_extras)?;
+            }
             ids.insert(holder);
             ids.extend(crate::skill_hub::source_carriers_for_holder_in_txn(
                 &self.store,

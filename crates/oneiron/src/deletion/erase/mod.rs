@@ -76,6 +76,78 @@ pub(super) fn sweep_extras(captured: Option<&CapturedProvenanceDelete>) -> HardE
     }
 }
 
+/// The refs a hard delete captured before its SoftErase emptied the Claim body, by erased id, until
+/// a purge queues its sweep (F25 H10): a purge refused or cut off after that commit captures
+/// nothing on retry. Each record is a kind byte and the 16-byte ref.
+const PENDING_SWEEP_REFS: crate::side_table::SideTable<HexId, Vec<u8>, crate::side_table::Raw> =
+    crate::side_table::SideTable::new(&crate::side_table::DELETION_PENDING_SWEEP_REFS);
+const SWEEP_REF_REVISION: u8 = 1;
+const SWEEP_REF_BODY_SNAPSHOT: u8 = 2;
+const SWEEP_REF_RECORD_LEN: usize = 17;
+
+/// Stages `captured`'s sweep refs in the SoftErase transaction that empties their Claim body.
+pub(super) fn stage_sweep_refs_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    captured: &CapturedProvenanceDelete,
+) -> Result<()> {
+    let key = HexId(*id);
+    let mut value = PENDING_SWEEP_REFS
+        .get(&vault.store, wtxn, &key)?
+        .unwrap_or_default();
+    for (kind, reference) in [
+        (SWEEP_REF_REVISION, captured.source_revision_ref),
+        (SWEEP_REF_BODY_SNAPSHOT, captured.body_snapshot_ref),
+    ] {
+        let Some(reference) = reference else {
+            continue;
+        };
+        let mut record = vec![kind];
+        record.extend_from_slice(&reference);
+        if !value
+            .chunks(SWEEP_REF_RECORD_LEN)
+            .any(|staged| staged == record.as_slice())
+        {
+            value.extend(record);
+        }
+    }
+    if value.is_empty() {
+        return Ok(());
+    }
+    PENDING_SWEEP_REFS.put(&vault.store, wtxn, &key, &value)
+}
+
+/// Adds the refs staged for `id` to the sweep being queued, and drops them in the same commit.
+pub(super) fn take_staged_sweep_refs_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    extras: &mut HardEraseSweepExtras,
+) -> Result<()> {
+    let key = HexId(*id);
+    let Some(value) = PENDING_SWEEP_REFS.get(&vault.store, wtxn, &key)? else {
+        return Ok(());
+    };
+    if value.len() % SWEEP_REF_RECORD_LEN != 0 {
+        return Err(Error::CorruptedIndex("pending sweep refs"));
+    }
+    for record in value.chunks_exact(SWEEP_REF_RECORD_LEN) {
+        let (kind, reference) = record.split_at(1);
+        let slot = match kind {
+            [SWEEP_REF_REVISION] => &mut extras.revision_ids,
+            [SWEEP_REF_BODY_SNAPSHOT] => &mut extras.body_snapshot_refs,
+            _ => return Err(Error::CorruptedIndex("pending sweep refs")),
+        };
+        let hex = bytes_to_hex_lower(reference);
+        if !slot.contains(&hex) {
+            slot.push(hex);
+        }
+    }
+    PENDING_SWEEP_REFS.delete(&vault.store, wtxn, &key)?;
+    Ok(())
+}
+
 mod active_store;
 mod markers;
 mod provenance;
