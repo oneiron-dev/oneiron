@@ -1,9 +1,10 @@
-//! Bounded, retained OPC archives. A no-op returns the original archive, and
-//! narrow XML text edits preserve every other part's original ZIP records.
+//! Bounded, retained OPC archives. A no-op returns the original archive;
+//! narrow XML edits and added parts preserve every other part's original
+//! ZIP records.
 mod package;
 mod xml;
 
-pub use package::{Editability, Limits, Package};
+pub use package::{Editability, Limits, Package, Relationship, rels_name};
 pub use xml::XmlLimits;
 
 /// An archive or edit that cannot be proven safe to retain.
