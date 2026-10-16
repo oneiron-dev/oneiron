@@ -4,6 +4,7 @@
 use super::*;
 use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::entity_id::derived_domains::KEY_VALUE;
+use crate::limit_ask::EngineLimit;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 use std::sync::atomic::Ordering;
@@ -78,8 +79,11 @@ impl Memory<'_> {
                 value: input.value.clone(), created_at: prior.as_ref().map_or(now, |(_, old)| old.created_at),
                 request_id: input.request_id.clone() };
             let value = serde_json::to_value(&stored).map_err(|_| MemoryError::bad_request("invalid JSON value"))?;
-            super::super::caps::check_payload_bytes("keyed claim", serde_json::to_vec(&value)
-                .map_err(|_| MemoryError::bad_request("invalid JSON value"))?.len())?;
+            // A value of any size is kept whole; past its row, the row asks.
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|_| MemoryError::bad_request("invalid JSON value"))?.len();
+            self.vault.limit_watch().measure(EngineLimit::KeyedValueJsonBytes,
+                u64::try_from(bytes).unwrap_or(u64::MAX));
             let candidate = ClaimCandidate::new(PREDICATE.to_owned(), ClaimSubject::Entity(self.actor),
                 json_to_rmpv(&value), 1.0).with_scope(self.key_value_scope(&address));
             let mut envelope = self.claim_envelope(source, "key_value_put", ClaimApprovalStatus::Auto)?;

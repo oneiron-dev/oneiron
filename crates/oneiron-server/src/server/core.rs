@@ -246,6 +246,10 @@ impl SyncServer {
             &config,
         );
         let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        // The engine's `[limits]` rows on this vault ask where the server's do.
+        let questions: Arc<crate::wire_telemetry::LimitQuestions> =
+            Arc::clone(wire_telemetry.limit_questions());
+        vault.set_limit_ask(questions);
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(

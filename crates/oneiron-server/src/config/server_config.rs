@@ -443,6 +443,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
             deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {
