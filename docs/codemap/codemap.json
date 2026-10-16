@@ -14033,7 +14033,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/delete/facade.rs",
@@ -21095,9 +21095,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/identity.rs",
-     "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140)",
+     "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 19
      }
     },
     {
@@ -41174,6 +41174,7 @@
      "path": "src/world_keys/machine.rs",
      "purpose": "This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid…",
      "surface": {
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -41316,10 +41317,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/vault_doors.rs",
-     "purpose": "The vault-handle doors for this install's own keys: installing the keystore and reading this install's…",
+     "purpose": "The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 2
+      "crate-vis": 4,
+      "fn": 5
      }
     },
     {
@@ -42879,7 +42880,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140)"
+     "purpose": "Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world…"
     },
     "identity_redirect": {
      "files": 2,
@@ -43596,7 +43597,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 50,
+   "over_bar": 51,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2615,
    "test_files": 901
@@ -49146,8 +49147,9 @@
      "path": "src/lib.rs",
      "purpose": "This-device-only key slots for one install",
      "surface": {
+      "const": 1,
       "enum": 3,
-      "fn": 3,
+      "fn": 5,
       "re-export": 3,
       "struct": 1,
       "trait": 1,
@@ -55487,12 +55489,12 @@
       "KeystoreConfig"
      ],
      "path": "src/config/keystore.rs",
-     "purpose": "The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b)",
+     "purpose": "The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b, P6c)",
      "surface": {
-      "const": 1,
       "crate-vis": 4,
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
      }
     },

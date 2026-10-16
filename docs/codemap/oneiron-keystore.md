@@ -13,5 +13,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/apple.rs` | src | s | 1 struct · 1 fn | AppleKeychain | Apple: the data-protection keychain, one generic-password item per slot |
 | `src/file.rs` | src | s | 1 struct · 1 fn | LocalFileKeystore | Unix (not Apple): one 0600 file per slot in a 0700 directory of its own |
-| `src/lib.rs` | src | s | 1 struct · 3 enum · 1 trait · 3 fn · 1 type · 3 re-export | DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, SlotKind | This-device-only key slots for one install |
+| `src/lib.rs` | src | s | 1 struct · 3 enum · 1 trait · 5 fn · 1 type · 1 const · 3 re-export | DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, SlotKind | This-device-only key slots for one install |
 | `src/memory.rs` | src | s | 1 struct · 1 fn | MemoryKeystore | Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here |
