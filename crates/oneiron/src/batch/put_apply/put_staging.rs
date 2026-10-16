@@ -57,6 +57,7 @@ pub(in crate::batch) fn stage_entity_body_row(
     payload.0.extend_from_slice(data);
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
+    crate::vault::entity_revision::index_name_phonetic(store, wtxn, id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
     Ok(())
 }

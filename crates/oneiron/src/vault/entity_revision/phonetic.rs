@@ -1,8 +1,8 @@
-//! Host-derived phonetic codes publish with the same indexed text frontier.
+//! Supplied and generated name codes publish with the indexed text frontier.
 use super::RevisionRef;
 use super::storage::state;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{ManifestDbs, Store};
+use crate::store::ManifestDbs;
 use crate::{EntityId, Error, Result};
 const PENDING: SideTable<EntityId, Pending, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_PENDING_PHONETIC);
@@ -12,8 +12,27 @@ struct Pending {
     codes: Vec<String>,
 }
 
+/// Births publish immediately. Edits are generated from the exact body that
+/// the idle indexer later publishes, not from the live name ahead of it.
+pub(crate) fn index_name_phonetic(
+    store: &impl ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    if state(store, txn, id)?.is_some_and(|current| current.live != current.indexed) {
+        return Ok(());
+    }
+    let codes = crate::batch::phonetic_codes::codes_for_body(entity_type, body);
+    if !codes.is_empty() {
+        crate::batch::apply_phonetic(store, txn, *id, &codes)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn defer_phonetic(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     codes: &[String],
@@ -44,17 +63,22 @@ pub(crate) fn defer_phonetic(
     Ok(true)
 }
 pub(super) fn take_phonetic(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     revision: RevisionRef,
+    entity_type: u8,
+    body: &[u8],
 ) -> Result<Vec<String>> {
     let pending = PENDING.get(store, txn, id)?;
     PENDING.delete(store, txn, id)?;
-    Ok(pending
-        .filter(|pending| pending.revision == revision)
-        .map(|pending| pending.codes)
-        .unwrap_or_default())
+    let mut codes = crate::batch::phonetic_codes::codes_for_body(entity_type, body);
+    if let Some(pending) = pending.filter(|pending| pending.revision == revision) {
+        codes.extend(pending.codes);
+    }
+    codes.sort();
+    codes.dedup();
+    Ok(codes)
 }
 pub(super) fn clear_phonetic(
     store: &impl ManifestDbs,

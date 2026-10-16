@@ -203,6 +203,8 @@ impl Vault {
                 &mut txn,
                 &input.entity,
                 input.source_revision_ref,
+                input.entity_type,
+                &input.body,
             )?;
             crate::batch::delete_from_phonetic_postings(&self.store, &mut txn, &input.entity)?;
             // Publish the stamp before the batch vector door in this SAME

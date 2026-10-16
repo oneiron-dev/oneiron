@@ -8,7 +8,7 @@ pub(crate) use idle::drop_vector_state;
 mod pending_index;
 mod phonetic;
 pub(crate) use pending_index::{defer_index_inputs, drop_staged_vectors};
-pub(crate) use phonetic::defer_phonetic;
+pub(crate) use phonetic::{defer_phonetic, index_name_phonetic};
 mod storage;
 mod turn_text;
 #[cfg(test)]
