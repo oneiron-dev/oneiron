@@ -323,7 +323,7 @@ fn mailbox_verification_clock_observation_does_not_invalidate_its_own_revision()
         .store
         .clock
         .observe_floor(vault.now_recorded_at().saturating_add(10))?;
-    let revision = verify_mailbox_revision(&vault, &intent, Some(&owner))?;
+    let revision = verify_mailbox_revision(&vault, &intent, MailboxProofs::one(Some(&owner)))?;
     require_mailbox_revision(&vault, revision)?;
     Ok(())
 }

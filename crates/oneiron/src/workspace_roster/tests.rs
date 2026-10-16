@@ -45,8 +45,9 @@ const PROFILE_GRANT: u8 = 0xC5;
 const MAILBOX_IDENTITY: u8 = 0xC6;
 
 /// The onboarding member: the vault's embedded owner onboarding their own
-/// mailbox. A non-owner member's onboarding needs the owner's separate
-/// authority downstream (F18 tier flip follow-up).
+/// mailbox, so one proof consents and authorizes. A member who owns nothing
+/// onboards with the owner's separate proof
+/// (`a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorization`).
 fn member_person() -> EntityId {
     crate::vault::embedded_owner_actor_id().expect("owner id")
 }
