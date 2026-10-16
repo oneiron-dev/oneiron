@@ -10,10 +10,16 @@
 //! evidence ref, read at the Local-vision rung on the caller's own run; a
 //! `locate` question finds its target there as a Box. The subgoal's steps
 //! share one clock through `until_ms`.
+//!
+//! A screenshot the calling code run's browser holds is named by its
+//! `blake3:` ref. The run reads it from its own browser and hands it in as
+//! [`HELD_IMAGE`], an evidence ref on that run: no scoped read pulls it, and
+//! a ref no browser of the run holds is refused.
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::claim::ScopedRead;
+use oneiron::llm::image::ImageBytes;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
@@ -31,13 +37,64 @@ use crate::server::SyncServer;
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";
 
+/// The ref prefix of a screenshot a code run's browser holds.
+pub(crate) const HELD_PREFIX: &str = "blake3:";
+
+tokio::task_local! {
+    /// The screenshot an `ai.verdict` in this task names by its `blake3:`
+    /// ref, as the calling code run's browser holds it (OF-523).
+    pub(crate) static HELD_IMAGE: Option<HeldImage>;
+}
+
+/// A held browser screenshot as a decision reads it: an evidence ref on the
+/// code run that holds it, versioned by its bytes.
+#[derive(Debug, Clone)]
+pub(crate) struct HeldImage {
+    handle: String,
+    image: DecisionImage,
+}
+
+impl HeldImage {
+    /// The PNG `png` that code run `run`'s browser holds under `handle`.
+    pub(crate) fn new(run: EntityId, handle: &str, png: Vec<u8>) -> Self {
+        Self {
+            handle: handle.to_owned(),
+            image: DecisionImage {
+                name: IMAGE.to_owned(),
+                evidence: EvidenceVersion {
+                    id: run,
+                    body_hash: *blake3::hash(&png).as_bytes(),
+                },
+                image: ImageBytes {
+                    bytes: png,
+                    media_type: "image/png".to_owned(),
+                },
+            },
+        }
+    }
+
+    /// The held image `handle` names, when this task holds it.
+    pub(crate) fn in_task(handle: Option<&str>) -> Option<DecisionImage> {
+        let handle = handle?;
+        HELD_IMAGE
+            .try_with(|held| {
+                held.as_ref()
+                    .filter(|held| held.handle == handle)
+                    .map(|held| held.image.clone())
+            })
+            .ok()
+            .flatten()
+    }
+}
+
 /// Asks `request` through the host's ladder for `principal`, under one clock
 /// started here (or the subgoal's, when the request names `until_ms`). Each
 /// evidence ref is read under `reader`, the caller's own scoped read: a ref
 /// it cannot read is refused as a missing one is, and the providers read the
 /// views it can in the call's state, beside the caller's own `state`. An
 /// image is pulled through `lane`, the same caller's scoped read; a caller
-/// with none reads no image. The dial climbs from the first filled rung (the
+/// with none reads no image. A `held` image is the run's own screenshot,
+/// read from its browser. The dial climbs from the first filled rung (the
 /// Local-vision seat for an image) to the request's ceiling (`big` when
 /// absent); a verdict never queues an owner ask.
 ///
@@ -49,6 +106,7 @@ pub(crate) fn run_verdict(
     class: EdgeActorClass,
     reader: &Memory<'_>,
     lane: Option<&ScopedRead<'_>>,
+    held: Option<DecisionImage>,
     request: &AiVerdictRequest,
 ) -> MemoryResult<AiVerdict> {
     let started = Instant::now();
@@ -107,9 +165,16 @@ pub(crate) fn run_verdict(
             &["Name fewer or smaller evidence refs, or a smaller state."],
         ));
     }
-    let images = match &request.image {
-        Some(handle) => vec![pull(lane, handle)?],
-        None => Vec::new(),
+    let images = match (&request.image, held) {
+        (Some(_), Some(held)) => vec![readable(held)?],
+        (Some(handle), None) if handle.starts_with(HELD_PREFIX) => {
+            return Err(MemoryError::bad_request_with(
+                format!("no browser of this run holds image {handle}"),
+                &["Take the screenshot again in this run, and name the ref it gave."],
+            ));
+        }
+        (Some(handle), None) => vec![pull(lane, handle)?],
+        (None, _) => Vec::new(),
     };
     evidence.extend(images.iter().map(|image| image.evidence.id));
     let (budget, until_ms) = clock(request);
@@ -256,14 +321,18 @@ fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionIma
     let mut pulled = oneiron::memory::pull_image(lane, &request, true)?.value;
     let image = pulled.image.take().ok_or_else(internal)?;
     let asset = EntityId::from_hex(&pulled.asset_ref).map_err(|_| internal())?;
-    let image = DecisionImage {
+    readable(DecisionImage {
         name: IMAGE.to_owned(),
         evidence: EvidenceVersion {
             id: asset,
             body_hash: *blake3::hash(&image.bytes).as_bytes(),
         },
         image,
-    };
+    })
+}
+
+/// `image`, when it is one a decision reads.
+fn readable(image: DecisionImage) -> MemoryResult<DecisionImage> {
     DecisionImage::validate_all(std::slice::from_ref(&image)).map_err(|_| {
         MemoryError::bad_request_with(
             "the image is not one a decision reads",

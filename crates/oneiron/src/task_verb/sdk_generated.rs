@@ -646,6 +646,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ClickInput>(),
             ),
             (
+                "self.browser.click_at",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::PointInput>(),
+            ),
+            (
                 "self.browser.type",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::TypeInput>(),
             ),
@@ -2376,6 +2380,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.click" => {
             let _input: oneiron_browser::ClickInput = decode(value.clone())?;
         }
+        "self.browser.click_at" => {
+            let _input: oneiron_browser::PointInput = decode(value.clone())?;
+        }
         "self.browser.type" => {
             let _input: oneiron_browser::TypeInput = decode(value.clone())?;
         }
@@ -2732,6 +2739,10 @@ pub fn invoke_browser(
             serde_json::from_value(value).map_err(invalid)?,
         )?),
         "self.browser.click" => serde_json::to_value(self_browser_click(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.click_at" => serde_json::to_value(self_browser_click_at(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -3864,6 +3875,12 @@ pub fn self_browser_click(
     input: oneiron_browser::ClickInput,
 ) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
     driver.click(input)
+}
+pub fn self_browser_click_at(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::PointInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.click_at(input)
 }
 pub fn self_browser_type(
     driver: &mut dyn oneiron_browser::BrowserDriver,

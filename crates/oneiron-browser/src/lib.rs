@@ -111,6 +111,19 @@ pub struct ClickInput {
     pub target: String,
 }
 
+/// A click at a point of a held image, as a routine Box's centre gives it:
+/// `x`, `y` are fractions of the image from its top-left. The image must
+/// still show the page as it is (the same page, scrolled the same); the
+/// point maps through it onto the viewport, and the row there takes the
+/// click under the press a click on that row would take.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PointInput {
+    pub image: String,
+    pub x: f64,
+    pub y: f64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TypeInput {
@@ -379,6 +392,40 @@ pub enum BatchStep {
     Screenshot {
         trigger: ScreenshotTrigger,
     },
+    /// A routine step: the host's decider picks the step's target, and the
+    /// step acts on it.
+    Decide(DecideStep),
+}
+
+/// A routine step (the CUA-S1 pattern): a small decider takes the step's
+/// choice under the subgoal's one clock. It picks one of the rows `targets`
+/// names (or, with none named, the rows `role` and `name` match, as `find`
+/// matches them) and the step clicks it, types `text` into it or selects
+/// `option` in it. With `locate`, the decider finds the target in a
+/// screenshot instead and the step clicks at its centre.
+///
+/// The decider may answer NONE or reobserve: the step looks again, with a
+/// screenshot from the second such answer in a row, up to
+/// [`ROUTINE_LOOKS`] looks. "Too complicated, ask up", or a decider with no
+/// answer, stops the batch for the planner.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecideStep {
+    pub question: String,
+    #[serde(default)]
+    pub targets: Vec<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub locate: bool,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub clear: bool,
+    #[serde(default)]
+    pub option: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -388,6 +435,11 @@ pub struct BatchInput {
     #[serde(default)]
     pub subgoal: Option<String>,
     pub steps: Vec<BatchStep>,
+    /// The subgoal's one clock, as the Unix milliseconds it ends at, when an
+    /// earlier batch of the subgoal started it. Absent, the first routine
+    /// step starts it; every later step reads the same one.
+    #[serde(default)]
+    pub until_ms: Option<u64>,
 }
 
 /// How a batched subgoal program ended. The big model is the fallback only:
@@ -415,6 +467,74 @@ pub struct BatchOutput {
     pub observation: Option<Observation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub receipts: Vec<EffectReceipt>,
+    /// Each routine step's decision, with its receipt, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<serde_json::Value>,
+    /// The subgoal's clock, once a routine step started it: the next batch
+    /// of the subgoal passes it on as its `until_ms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_ms: Option<u64>,
+}
+
+/// Looks one routine step takes before it goes up to the planner.
+pub const ROUTINE_LOOKS: u32 = 4;
+
+/// One routine step's question to the host's decider.
+pub struct RoutineAsk<'a> {
+    pub question: &'a str,
+    /// The step's candidates (a Choice), or none for a locate step (a Box
+    /// over `image`).
+    pub options: Vec<String>,
+    /// The screenshot the step read, by its held ref, with its PNG bytes.
+    pub image: Option<(&'a str, &'a [u8])>,
+    /// The page the step reads: its URL and title.
+    pub state: serde_json::Value,
+    /// NONE or reobserve answers the subgoal's steps gave in a row before.
+    pub misses: u32,
+    /// The subgoal's one clock, once started.
+    pub until_ms: Option<u64>,
+}
+
+/// The decider's answer, as the driver acts on it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RoutineAnswer {
+    /// Act on this candidate.
+    Act { candidate: String },
+    /// Act at this point of the step's screenshot, in fractions of it.
+    Point { x: f64, y: f64 },
+    None,
+    Reobserve,
+    /// The step goes back to the planner, with the ladder's reason.
+    AskUp { reason: Option<String> },
+}
+
+#[derive(Clone, Debug)]
+pub struct RoutineReply {
+    pub answer: RoutineAnswer,
+    /// The routine trail's word: NONE or reobserve came twice in a row, so
+    /// the next look takes a screenshot (`decider_reobserve`).
+    pub screenshot: bool,
+    /// The subgoal's clock, as the decider ran it.
+    pub until_ms: Option<u64>,
+    /// The decision with its receipt, for the batch's answer.
+    pub decision: serde_json::Value,
+}
+
+/// The host's routine decider: the engine's decision ladder, behind the
+/// driver. A driver without one sends every routine step up.
+pub trait RoutineDecider: Send {
+    fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError>;
+}
+
+/// No decider: a routine step cannot run, so it goes up.
+pub struct NoDecider;
+
+impl RoutineDecider for NoDecider {
+    fn decide(&mut self, _ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
+        Err(BrowserError::Decider(
+            "this browser host has no routine decider".to_owned(),
+        ))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -448,6 +568,12 @@ pub enum BrowserError {
     Timeout(String),
     #[error("browser protocol: {0}")]
     Protocol(String),
+    #[error("image {0} no longer shows the page as it is; take a new screenshot")]
+    StaleImage(String),
+    #[error("the routine step went up to the planner: {0}")]
+    AskUp(String),
+    #[error("the routine decider gave no answer: {0}")]
+    Decider(String),
 }
 
 /// Steps one batched subgoal program may hold.
@@ -460,6 +586,7 @@ pub trait BrowserDriver: Send {
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError>;
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError>;
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError>;
+    fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError>;
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError>;
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError>;
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError>;
@@ -468,11 +595,24 @@ pub trait BrowserDriver: Send {
     fn view(&mut self, input: ViewInput) -> Result<ImageOutput, BrowserError>;
     fn crop(&mut self, input: CropInput) -> Result<ImageOutput, BrowserError>;
     fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError>;
+    /// The PNG bytes of a held image, while the driver holds them.
+    fn image_bytes(&self, image: &str) -> Option<Vec<u8>>;
+
+    /// Runs one batched program for a subgoal; a routine step has no
+    /// decider here, so it goes up.
+    fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
+        self.batch_with(input, &mut NoDecider)
+    }
 
     /// Runs one batched program for a subgoal, step by step through this
-    /// driver's own verbs, so a host wrapper's door still gates each effect.
-    /// The batch stops at the first refused, timed-out or unmet step.
-    fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
+    /// driver's own verbs, so a host wrapper's door still gates each effect,
+    /// and its routine steps through `decider` under the subgoal's one clock.
+    /// The batch stops at the first refused, timed-out, unmet or sent-up step.
+    fn batch_with(
+        &mut self,
+        input: BatchInput,
+        decider: &mut dyn RoutineDecider,
+    ) -> Result<BatchOutput, BrowserError> {
         if input.steps.is_empty() || input.steps.len() > BATCH_MAX_STEPS {
             return Err(BrowserError::Input(format!(
                 "a batch holds 1 to {BATCH_MAX_STEPS} steps"
@@ -485,6 +625,14 @@ pub trait BrowserDriver: Send {
             error: None,
             observation: None,
             receipts: Vec::new(),
+            decisions: Vec::new(),
+            until_ms: input.until_ms,
+        };
+        let mut routine = Routine {
+            decider,
+            until_ms: input.until_ms,
+            misses: 0,
+            decisions: Vec::new(),
         };
         for (index, step) in input.steps.into_iter().enumerate() {
             let outcome: Result<Option<Observation>, BrowserError> = match step {
@@ -545,7 +693,10 @@ pub trait BrowserDriver: Send {
                 BatchStep::Screenshot { trigger } => {
                     self.screenshot(ScreenshotInput { trigger }).map(|_| None)
                 }
+                BatchStep::Decide(step) => routine.step(self, step).map(Some),
             };
+            output.decisions.append(&mut routine.decisions);
+            output.until_ms = routine.until_ms;
             match outcome {
                 Ok(observation) => {
                     output.completed += 1;
@@ -577,6 +728,158 @@ pub trait BrowserDriver: Send {
     }
 }
 
+/// Candidates one routine Choice may offer: the contract's 64 options less
+/// NONE, reobserve and "too complicated, ask up".
+pub const ROUTINE_MAX_CANDIDATES: usize = 61;
+
+/// A batch's routine steps: the decider, the subgoal's one clock, the NONE
+/// and reobserve answers in a row, and the decisions taken.
+struct Routine<'d> {
+    decider: &'d mut dyn RoutineDecider,
+    until_ms: Option<u64>,
+    misses: u32,
+    decisions: Vec<serde_json::Value>,
+}
+
+impl Routine<'_> {
+    /// One routine step: look, ask, act. A look reads the outline, and a
+    /// screenshot too for a locate step or once the trail says so.
+    fn step<D: BrowserDriver + ?Sized>(
+        &mut self,
+        driver: &mut D,
+        step: DecideStep,
+    ) -> Result<Observation, BrowserError> {
+        if (step.text.is_some() && step.option.is_some())
+            || (step.locate
+                && (step.text.is_some() || step.option.is_some() || !step.targets.is_empty()))
+        {
+            return Err(BrowserError::Input(
+                "a decide step types text or selects an option, and a locate step only clicks"
+                    .to_owned(),
+            ));
+        }
+        let query = FindInput {
+            role: step.role.clone(),
+            name: step.name.clone(),
+        };
+        let mut trigger = step.locate.then_some(ScreenshotTrigger::OutlineThin);
+        for _ in 0..ROUTINE_LOOKS {
+            let page = driver.observe(ObserveInput::default())?;
+            let candidates: Vec<(String, Row)> = if step.locate {
+                Vec::new()
+            } else {
+                page.rows
+                    .iter()
+                    .filter(|row| {
+                        if step.targets.is_empty() {
+                            query.matches(row)
+                        } else {
+                            step.targets.contains(&row.target)
+                        }
+                    })
+                    .map(|row| (candidate(row), row.clone()))
+                    .collect()
+            };
+            if !step.locate && candidates.is_empty() {
+                return Err(BrowserError::AskUp(
+                    "no row on the page matches the step".to_owned(),
+                ));
+            }
+            if candidates.len() > ROUTINE_MAX_CANDIDATES {
+                return Err(BrowserError::Input(format!(
+                    "a decide step offers at most {ROUTINE_MAX_CANDIDATES} rows; name its targets, role or name"
+                )));
+            }
+            let shot = match trigger {
+                Some(trigger) => {
+                    let shot = driver.screenshot(ScreenshotInput { trigger })?;
+                    let png = driver
+                        .image_bytes(&shot.image)
+                        .ok_or_else(|| BrowserError::NoImage(shot.image.clone()))?;
+                    Some((shot.image, png))
+                }
+                None => None,
+            };
+            let reply = self.decider.decide(RoutineAsk {
+                question: &step.question,
+                options: candidates.iter().map(|(label, _)| label.clone()).collect(),
+                image: shot
+                    .as_ref()
+                    .map(|(image, png)| (image.as_str(), png.as_slice())),
+                state: serde_json::json!({"url": page.url, "title": page.title}),
+                misses: self.misses,
+                until_ms: self.until_ms,
+            })?;
+            self.until_ms = reply.until_ms.or(self.until_ms);
+            self.decisions.push(reply.decision);
+            match reply.answer {
+                RoutineAnswer::Act { candidate } if !step.locate => {
+                    self.misses = 0;
+                    let target = candidates
+                        .into_iter()
+                        .find(|(label, _)| *label == candidate)
+                        .map(|(_, row)| row.target)
+                        .ok_or_else(|| {
+                            BrowserError::Decider(format!("{candidate} is not a candidate"))
+                        })?;
+                    return match (step.text, step.option) {
+                        (Some(text), _) => driver.type_text(TypeInput {
+                            target,
+                            text,
+                            clear: step.clear,
+                        }),
+                        (None, Some(option)) => driver.select(SelectInput { target, option }),
+                        (None, None) => driver.click(ClickInput { target }),
+                    };
+                }
+                RoutineAnswer::Point { x, y } if step.locate => {
+                    self.misses = 0;
+                    let (image, _) = shot.ok_or_else(|| {
+                        BrowserError::Decider("a point without a screenshot".to_owned())
+                    })?;
+                    return driver.click_at(PointInput { image, x, y });
+                }
+                RoutineAnswer::None | RoutineAnswer::Reobserve => {
+                    self.misses = self.misses.saturating_add(1);
+                    trigger = if reply.screenshot {
+                        Some(ScreenshotTrigger::DeciderReobserve)
+                    } else {
+                        step.locate.then_some(ScreenshotTrigger::OutlineThin)
+                    };
+                }
+                RoutineAnswer::AskUp { reason } => {
+                    return Err(BrowserError::AskUp(
+                        reason.unwrap_or_else(|| "the decider asked up".to_owned()),
+                    ));
+                }
+                other => {
+                    return Err(BrowserError::Decider(format!(
+                        "{other:?} does not answer this step"
+                    )));
+                }
+            }
+        }
+        Err(BrowserError::AskUp(format!(
+            "no target after {ROUTINE_LOOKS} looks"
+        )))
+    }
+}
+
+/// A row as a routine Choice offers it: its role and name, then its ref,
+/// which tells twins apart. An option holds at most 256 bytes.
+fn candidate(row: &Row) -> String {
+    let mut label = format!("{} \"{}\"", row.role, row.name);
+    if label.len() > 200 {
+        let mut end = 200;
+        while !label.is_char_boundary(end) {
+            end -= 1;
+        }
+        label.truncate(end);
+        label.push('…');
+    }
+    format!("{label} [{}]", row.target)
+}
+
 impl BrowserError {
     /// The stable code a refused verb call answers with. A program reads only
     /// this; the detail stays in the host's log.
@@ -597,6 +900,9 @@ impl BrowserError {
             Self::Navigation(_) => "browser_navigation_failed",
             Self::Timeout(_) => "browser_timeout",
             Self::Protocol(_) => "browser_protocol",
+            Self::StaleImage(_) => "browser_stale_image",
+            Self::AskUp(_) => "routine_ask_up",
+            Self::Decider(_) => "routine_decider_failed",
         }
     }
 }
