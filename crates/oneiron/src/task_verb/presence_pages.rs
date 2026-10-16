@@ -3,7 +3,7 @@
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TASK;
 
 #[derive(Debug)]
@@ -116,15 +116,18 @@ where
 
 /// One page of up to `limit` TASKs a reader off this device may read
 /// (DEC-0005). The index is walked past the others on its own cursor,
-/// `index_after`, and a page is short only where the index ends.
+/// `index_after`, and a page is short only where the index ends. `read`
+/// counts every index row read.
 pub(super) fn device_admitted_task_page(
     vault: &Vault,
     index_after: &mut Option<EntityId>,
     limit: usize,
+    read: &mut usize,
 ) -> Result<Vec<EntityId>> {
     let mut page = Vec::new();
     loop {
         let rows = vault.entities_by_type_page(ENTITY_TYPE_TASK, index_after.as_ref(), limit)?;
+        *read += rows.len();
         let exhausted = rows.len() < limit;
         let Some(&last) = rows.last() else {
             return Ok(page);
@@ -144,25 +147,42 @@ pub(super) fn device_admitted_task_page(
     }
 }
 
-/// The TASK index read in `txn` in the presence scan's bounded pages, for a
-/// reader at `locality`. Off this device a TASK a device-local world keeps
-/// is passed over before it takes a place in a page or counts toward the
-/// scan cap (DEC-0005).
-pub(super) fn scan_admitted_tasks_in(
+/// Every TASK admitted at `locality`, for a census that must see them all
+/// (rule 5): past the threshold row the walk raises the owner's check for
+/// `scope` and reads on. `txn` is the caller's, so a crossing is deferred.
+pub(super) fn all_admitted_tasks_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     locality: crate::claim::CallerLocality,
-) -> Result<TaskEntityPageScan> {
-    scan_admitted_tasks_with_limits_in(
+    scope: &[u8],
+) -> Result<Vec<EntityId>> {
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::TaskCensusRows,
+        scope,
+    )?;
+    let scan = scan_admitted_tasks_with_limits_in(
         vault,
         txn,
         locality,
         super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
-        super::presence_scan::TASK_PRESENCE_SCAN_CAP,
-    )
+        usize::MAX,
+    )?;
+    if !scan.source_exhausted {
+        return Err(Error::InvariantViolation(
+            "an unbounded task census stopped",
+        ));
+    }
+    let tasks: Vec<EntityId> = scan.pages.into_iter().flatten().collect();
+    tasks.iter().for_each(|_| count.row());
+    count.defer(&vault.store);
+    Ok(tasks)
 }
 
-/// Testable body of [`scan_admitted_tasks_in`]: tests inject small limits.
+/// The admitted-TASK walk under explicit page and cap limits: a TASK a
+/// device-local world keeps at `locality` takes no place in a page or the
+/// cap (DEC-0005). Tests inject small limits.
 pub(super) fn scan_admitted_tasks_with_limits_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

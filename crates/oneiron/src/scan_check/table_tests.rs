@@ -138,7 +138,8 @@ const REMAT_MARKERS: crate::side_table::SideTable<String, (), crate::side_table:
 /// origin's table (`origin::smart_http::scan_cap_tests::
 /// no_origin_scan_refuses_for_its_row_count`), the mesh bind
 /// (`authority::tests::machine_identity::a_mesh_bind_reads_past_the_old_machine_cap`),
-/// the temporal channel's two scans
+/// the task, ask and room scans (their own `task_verb`, `context_board` and
+/// `workspace_roster::rooms` tests), the temporal channel's two scans
 /// (`pipeline::tests::temporal::temporal_scans_read_past_their_threshold_rows_and_check_once`)
 /// and the synced edge map's walk, which runs inside a sync observer
 /// (`it_sync`'s `child_of_arbitration_walks_the_whole_map_past_its_threshold_row`)
@@ -155,6 +156,13 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
             None
         }
         EngineScan::MachineRows
+        | EngineScan::TaskCensusRows
+        | EngineScan::AskWordRows
+        | EngineScan::RoomThreadTasks
+        | EngineScan::ReadSetRows
+        | EngineScan::RoomPageRows
+        | EngineScan::RoomHistoryRows
+        | EngineScan::TaskBoardRows
         | EngineScan::TemporalSpannerRows
         | EngineScan::OccurredRangeRows
         | EngineScan::ChildOfMapEntries

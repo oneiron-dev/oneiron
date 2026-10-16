@@ -94,11 +94,26 @@ pub enum EngineScan {
     DreamerRetryPeers,
     /// The pending gate-consent tray a consent list walks.
     PendingGateConsentRows,
+    /// The tasks an omitted ask target or task context is resolved from, for
+    /// one asking actor.
+    TaskCensusRows,
+    /// One ask's words.
+    AskWordRows,
+    /// The room members' tasks a thread census reads, for one reader.
+    RoomThreadTasks,
+    /// The rows one session's read set holds.
+    ReadSetRows,
+    /// One room's history rows a message page passes over.
+    RoomPageRows,
+    /// One room's history rows a liveness snapshot reads.
+    RoomHistoryRows,
+    /// The TASK rows one board assembly reads.
+    TaskBoardRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 32] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -124,6 +139,13 @@ impl EngineScan {
         Self::BlendTuningRuns,
         Self::DreamerRetryPeers,
         Self::PendingGateConsentRows,
+        Self::TaskCensusRows,
+        Self::AskWordRows,
+        Self::RoomThreadTasks,
+        Self::ReadSetRows,
+        Self::RoomPageRows,
+        Self::RoomHistoryRows,
+        Self::TaskBoardRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -163,6 +185,13 @@ impl EngineScan {
             Self::BlendTuningRuns => "blend_tuning_runs",
             Self::DreamerRetryPeers => "dreamer_retry_peers",
             Self::PendingGateConsentRows => "pending_gate_consent_rows",
+            Self::TaskCensusRows => "task_census_rows",
+            Self::AskWordRows => "ask_word_rows",
+            Self::RoomThreadTasks => "room_thread_tasks",
+            Self::ReadSetRows => "read_set_rows",
+            Self::RoomPageRows => "room_page_rows",
+            Self::RoomHistoryRows => "room_history_rows",
+            Self::TaskBoardRows => "task_board_rows",
         }
     }
 
@@ -193,6 +222,13 @@ impl EngineScan {
             Self::BlendTuningRuns => 57,
             Self::DreamerRetryPeers => 58,
             Self::PendingGateConsentRows => 25,
+            Self::TaskCensusRows => 32,
+            Self::AskWordRows => 33,
+            Self::RoomThreadTasks => 34,
+            Self::ReadSetRows => 35,
+            Self::RoomPageRows => 36,
+            Self::RoomHistoryRows => 37,
+            Self::TaskBoardRows => 38,
         }]
     }
 }
@@ -257,6 +293,13 @@ impl ScanCount {
     /// Counts one row read.
     pub(crate) fn row(&mut self) {
         self.rows = self.rows.saturating_add(1);
+    }
+
+    /// Counts `rows` rows read at once, for a scan that holds its rows.
+    pub(crate) fn rows(&mut self, rows: usize) {
+        self.rows = self
+            .rows
+            .saturating_add(u64::try_from(rows).unwrap_or(u64::MAX));
     }
 
     /// Raises the scan's check when it read past its row, once per scope:
