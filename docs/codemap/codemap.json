@@ -15450,7 +15450,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ByoEndpointBackendFactory",
@@ -15462,7 +15462,7 @@
      "path": "src/dispatch_byoa/dispatcher.rs",
      "purpose": "Dispatcher organ with dispatch, execute, authorize, and capture doors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 10,
       "struct": 2,
       "trait": 3
@@ -34928,7 +34928,7 @@
      "path": "src/self_heal/healer_host.rs",
      "purpose": "External healer capability, durable propose receipts, and human-only PR release",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 10,
       "struct": 5
@@ -34986,6 +34986,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DevRunnerDispatch",
+      "DevRunnerFailure",
+      "DevRunnerRequest",
+      "DevRunnerTarget"
+     ],
+     "path": "src/self_heal/repair/dev_runner.rs",
+     "purpose": "Dev-time Coach jobs over the existing BYO runner and human patch-review doors",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HealerInvocationStamp"
      ],
      "path": "src/self_heal/repair/invocation.rs",
@@ -35015,7 +35032,7 @@
       "crate-vis": 2,
       "enum": 3,
       "fn": 8,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 4,
       "trait": 1
      }
@@ -46150,7 +46167,7 @@
     "dispatch_byoa": {
      "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…"
     },
@@ -46834,7 +46851,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47149,9 +47166,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 75,
+   "over_bar": 76,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2838,
+   "source_files": 2839,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57077,6 +57094,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/api/anonymous_chat.rs",
+     "purpose": "A single memory-free turn on the house configuration or a plain model",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
@@ -61662,7 +61689,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 7,
       "struct": 1
      }
@@ -63175,7 +63202,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 227,
+     "files": 228,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63422,7 +63449,7 @@
    },
    "over_bar": 20,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 423,
+   "source_files": 424,
    "test_files": 182
   },
   "oneiron-spawn": {
