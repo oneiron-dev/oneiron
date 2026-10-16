@@ -12,7 +12,7 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
-use crate::runtime_hooks::{InvocationId, VerbHookStop};
+use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
@@ -67,11 +67,10 @@ impl HostSelfDispatcher<'_> {
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?);
         // The call's step names the logical verb its hooks fire once for, the
-        // same across replays of the step (ARCH-0080 §3). A hook's stop goes
-        // back to the dispatcher as `Error::VerbHook`.
-        let invocation = site.map_or_else(InvocationId::mint, |site| {
-            InvocationId::of_run_step(site.run_id.as_bytes(), site.seq)
-        });
+        // same across replays of the step, and a call a hook's ask parked
+        // keeps its invocation into a later step (ARCH-0080 §3). A hook's
+        // stop goes back to the dispatcher as `Error::VerbHook`.
+        let invocation = self.verb_invocation(&SelfCall::AgentVerb(call.clone()), site)?;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             return Ok(answered(door.call(&call, &origin, invocation)?));
         };
