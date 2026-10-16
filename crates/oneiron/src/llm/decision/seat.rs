@@ -100,9 +100,10 @@ pub trait DecisionSeat: Send + Sync {
 /// access-scoped state and subsequent escalation; uncertainty or disagreement is a
 /// hold, never an accepted verdict. No measurement starts once the work time is spent.
 /// A reply after the answer's time, or a failure once the work time is spent, is the
-/// cut: its lease is charged its reservation, since the provider may still bill. At
-/// the cut a reversible step takes the answer it holds and an irreversible one
-/// abstains; with no answer the call abstains.
+/// cut. A late reply is charged the usage it reports; a failed one is charged its
+/// lease's reservation, since the provider may still bill. At the cut a reversible
+/// step takes the answer it holds and an irreversible one abstains; with no answer
+/// the call abstains.
 #[expect(
     clippy::too_many_arguments,
     reason = "the call's clock and its step's reversibility join the seat's request"

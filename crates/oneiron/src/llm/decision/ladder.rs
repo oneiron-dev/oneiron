@@ -250,8 +250,9 @@ impl DecisionLadder<'_> {
     /// deadline). The first permitted rung answers first; a stronger rung starts only
     /// while work time is left, and only for a cause: a small margin under an enforced
     /// band, or a paired reading at its row. At a cut a reversible step takes the
-    /// answer it holds and an irreversible one abstains and asks; with no answer the
-    /// call abstains. The last quarter of the time stays the answer's.
+    /// answer it holds and an irreversible one abstains and asks; with no answer, or
+    /// an answer inside its enforced band, the call abstains. The last quarter of the
+    /// time stays the answer's.
     #[expect(
         clippy::too_many_arguments,
         reason = "the call's clock joins the question, its scope, the dial and the policy"
@@ -333,9 +334,12 @@ impl DecisionLadder<'_> {
             }
         }
         // At a cut an irreversible step never takes an unfinished answer, and no step
-        // takes an answer the call does not have.
+        // takes an answer the call does not have, or one its enforced band does not
+        // accept as it stands (an in-band answer is not eligible).
         let abstains_at_cut = stop == StopCause::Deadline
-            && (prior.is_none() || reversibility == Reversibility::OutboundEffect);
+            && (prior.is_none()
+                || reversibility == Reversibility::OutboundEffect
+                || in_band && row.mode == BandMode::Enforce);
         if abstains_at_cut && dial.ceiling == DecisionRung::Human {
             rung = DecisionRung::Human;
         }
