@@ -7,6 +7,7 @@ use super::{
     AuthorityFold, AuthorityKey, AuthorityOp, HostSlipIssuer, SlipClaims, invalid_authority,
     roster_has_live_owner,
 };
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{
     EntityId, Vault,
     error::Result,
@@ -26,7 +27,9 @@ use std::{
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
 const BIND_DOMAIN: &[u8] = b"oneiron/mesh-machine-binding/v1\0";
-const MAX_MACHINES: usize = 1024;
+/// MACHINE rows a lookup any endpoint key can make reads before it refuses:
+/// a stranger's work stays bounded until an endpoint index serves it.
+const MAX_LOOKUP_MACHINES: usize = 1024;
 const MAX_ALPNS: usize = 32;
 
 /// Address hints. This structure has no authority by itself.
@@ -133,26 +136,32 @@ impl Vault {
         self.mesh_machine_in_txn(&txn, machine)
     }
     /// Resolve against a single snapshot, including the type index and all bodies.
+    /// Any key may ask, so this read raises no owner check.
     pub fn mesh_machine_by_endpoint(
         &self,
         key: [u8; 32],
     ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
         let txn = self.store.env.read_txn()?;
-        self.mesh_machine_by_endpoint_in_txn(&txn, key)
+        self.mesh_machine_by_endpoint_in_txn(&txn, key, None)
     }
+    /// The owner's bind reads every MACHINE, however many the owner keeps
+    /// (rule 5), and counts them in `count`. A lookup any endpoint key can
+    /// make (`count` is `None`) is a stranger's work and stays bounded.
     fn mesh_machine_by_endpoint_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         key: [u8; 32],
+        mut count: Option<&mut ScanCount>,
     ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
         let mut found = None;
-        let mut seen = 0;
-        for id in
+        for (seen, id) in
             EntityStoreRead::port_entity_ids_by_type(&self.store, txn, ENTITY_TYPE_MACHINE, None)?
+                .enumerate()
         {
-            seen += 1;
-            if seen > MAX_MACHINES {
-                return Err(invalid_authority());
+            match count.as_deref_mut() {
+                Some(count) => count.row(),
+                None if seen >= MAX_LOOKUP_MACHINES => return Err(invalid_authority()),
+                None => {}
             }
             let id = id?;
             if let Some(row) = self.mesh_machine_in_txn(txn, id)?
@@ -246,7 +255,8 @@ impl Vault {
         alpn: &[u8],
     ) -> Result<super::PeerMachine> {
         let txn = self.store.env.read_txn()?;
-        let Some((machine, _)) = self.mesh_machine_by_endpoint_in_txn(&txn, endpoint_key)? else {
+        let Some((machine, _)) = self.mesh_machine_by_endpoint_in_txn(&txn, endpoint_key, None)?
+        else {
             return Ok(super::PeerMachine::Unknown);
         };
         let paired = self
@@ -392,8 +402,9 @@ impl Vault {
                 return Err(invalid_authority());
             }
         }
+        let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
         if self
-            .mesh_machine_by_endpoint_in_txn(&txn, address.endpoint_key)?
+            .mesh_machine_by_endpoint_in_txn(&txn, address.endpoint_key, Some(&mut count))?
             .is_some_and(|(id, _)| id != machine)
         {
             return Err(invalid_authority());
@@ -415,6 +426,7 @@ impl Vault {
         )?;
         self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
+        count.finish(self);
         Ok(())
     }
     /// Authorized ALPN grant or revocation. A revoked MACHINE cannot be re-enabled.

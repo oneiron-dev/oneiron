@@ -27,7 +27,6 @@ pub(crate) fn is_vault_agent_in(
         member,
         EdgeKind::About,
         Some(ENTITY_TYPE_COUNTERPARTY_CONTACT),
-        "vault agents",
     )?;
     if !contacts.is_empty() {
         return Ok(false);

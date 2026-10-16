@@ -624,21 +624,7 @@ fn peers(
     kind: EdgeKind,
     peer_type: Option<u8>,
 ) -> Result<Vec<EntityId>> {
-    vault
-        .filtered_edge_peers(
-            txn,
-            direction,
-            id,
-            kind,
-            peer_type,
-            "witnessed turn message scan",
-        )
-        .map_err(|error| match error {
-            Error::IndexOverflow(_) => {
-                invalid_consolidation("witnessed turn message graph limit exceeded")
-            }
-            error => error,
-        })
+    vault.filtered_edge_peers(txn, direction, id, kind, peer_type)
 }
 
 /// MESSAGE rows are read as the same actor under the relationship gate:

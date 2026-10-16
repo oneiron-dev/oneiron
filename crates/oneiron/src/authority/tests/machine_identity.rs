@@ -706,3 +706,33 @@ fn a_mesh_address_bind_keeps_the_mark() {
         PeerMachine::Unknown
     );
 }
+
+/// H336: an owner keeps binding mesh addresses past the 1,024 MACHINE rows
+/// the endpoint read once refused at (rule 5). Past the scan's threshold row
+/// the bind raises the owner's check. A lookup any endpoint key may make is
+/// a stranger's work: it stays bounded and raises none.
+#[test]
+fn a_mesh_bind_reads_past_the_old_machine_cap() {
+    const PAST_THE_OLD_CAP: usize = 1_025;
+    let host = host();
+    let at = TimeRange { start: 1, end: 1 };
+    for _ in 0..PAST_THE_OLD_CAP {
+        host.vault
+            .put_entity(&EntityId::now(), ENTITY_TYPE_MACHINE, at, 1, b"machine")
+            .unwrap();
+    }
+    let scan = crate::scan_check::EngineScan::MachineRows;
+    host.vault.set_scan_threshold(scan, 2).unwrap();
+    assert!(host.vault.mesh_machine_by_endpoint([0x5c; 32]).is_err());
+    assert!(host.vault.scan_checks().unwrap().is_empty());
+
+    let install_key = ed_key(66);
+    let machine = EntityId::now();
+    let request = request_for(host.vault_id, machine, &install_key);
+    let address = pair_and_bind(&host, machine, &request, &install_key, &ed_key(67));
+    let bound = host.vault.mesh_machine(machine).unwrap().expect("bound");
+    assert_eq!(bound.endpoint_key, address.endpoint_key);
+    let checks = host.vault.scan_checks().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].scan, scan.code());
+}

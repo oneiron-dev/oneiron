@@ -13,6 +13,7 @@ use crate::error::{Error, RecordError, Result, StoreError};
 use crate::outbound_intent_ledger::IntentId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -139,17 +140,18 @@ pub(crate) fn validated_local_record_for_canonical(
 /// which local audit events capture may see. The index is rebuildable from
 /// accepted records and contains no ordinary ASSET rows. `admit` sees each
 /// window record before it is kept, and refuses one the caller cannot hold.
+/// Every index row is read: past its threshold row the walk raises one check
+/// (deferred: `txn` is the caller's) and reads on.
 pub(crate) fn canonical_records_in_window(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     window: &str,
     mut admit: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    let mut count = ScanCount::start(store, txn, EngineScan::ReceiptRecordRows, &[])?;
     let mut records = Vec::new();
-    for (count, row) in INDEX.iter_raw_from(store, txn, &[])?.enumerate() {
-        if count >= MAX_RECEIPT_QUERY_SCAN {
-            return Err(Error::IndexOverflow("canonical receipt record scan"));
-        }
+    for row in INDEX.iter_raw_from(store, txn, &[])? {
+        count.row();
         let (key, value) = row?;
         let id_bytes: [u8; 16] = key
             .as_slice()
@@ -173,6 +175,7 @@ pub(crate) fn canonical_records_in_window(
             records.push((id, raw));
         }
     }
+    count.defer(store);
     Ok(records)
 }
 

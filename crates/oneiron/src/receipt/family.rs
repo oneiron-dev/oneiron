@@ -153,7 +153,8 @@ impl Vault {
         &self,
         query: ReceiptQuery,
     ) -> Result<Vec<CounterpartyReceiptProjection>> {
-        if query.limit == 0 {
+        let limit = query.limit;
+        if limit == 0 {
             return Ok(Vec::new());
         }
         let receipts = self.receipts(projection_scan_query(query))?;
@@ -161,6 +162,7 @@ impl Vault {
         Ok(project_receipts_by_counterparty_with_contacts(
             receipts,
             &contact_records,
+            limit,
         ))
     }
 
@@ -449,7 +451,18 @@ fn commitment_lifecycle_receipts(
     Ok(receipts)
 }
 
+/// Reads every gate decision, newest selection by event time. Past the
+/// ledger's threshold row the walk raises one check and reads on (rule 5).
 fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
+    let mut count = {
+        let txn = vault.store.env.read_txn()?;
+        crate::scan_check::ScanCount::start(
+            &vault.store,
+            &txn,
+            crate::scan_check::EngineScan::GateDecisionRows,
+            &[],
+        )?
+    };
     let mut receipts = Vec::new();
     let mut before = None;
     loop {
@@ -461,6 +474,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         let page_len = decisions.len();
         before = decisions.last().map(|decision| decision.decision_id);
         for decision in decisions {
+            count.row();
             let receipt = gate_decision_receipt_from_base(&decision);
             if query.matches(&receipt) {
                 if query.job_ref.is_none() {
@@ -481,6 +495,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
             break;
         }
     }
+    count.finish(vault);
     Ok(receipts)
 }
 

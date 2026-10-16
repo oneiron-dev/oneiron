@@ -3,15 +3,17 @@
 use super::*;
 use crate::error::RegistryError;
 
-#[test]
-fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
-    const TYPE_CAP: usize = 100_000;
+/// One row past the 100,000 the type, learned-range and edge scans once
+/// refused at (rule 5: a scan never refuses for count).
+const PAST_THE_OLD_CAP: usize = 100_001;
 
+#[test]
+fn entities_by_type_serves_past_the_old_cap() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), large_test_config())?;
 
     vault.with_write_txn(|wtxn| {
-        for i in 0..TYPE_CAP {
+        for i in 0..PAST_THE_OLD_CAP {
             let id = seeded_entity_id(i as u128);
             let key = Store::encode_type_key(ENTITY_TYPE_TASK_LIST, &id);
             vault.store.type_index.put(wtxn, &key, &[])?;
@@ -19,27 +21,50 @@ fn entities_by_type_allows_exact_cap_and_overflows_on_next_row() -> Result<()> {
         Ok(())
     })?;
 
-    let ids = vault.entities_by_type(ENTITY_TYPE_TASK_LIST)?;
-    assert_eq!(ids.len(), TYPE_CAP);
-
-    let overflow_id = seeded_entity_id(TYPE_CAP as u128);
-    vault.with_write_txn(|wtxn| {
-        let key = Store::encode_type_key(ENTITY_TYPE_TASK_LIST, &overflow_id);
-        vault.store.type_index.put(wtxn, &key, &[])?;
-        Ok(())
-    })?;
-
-    let err = vault
-        .entities_by_type(ENTITY_TYPE_TASK_LIST)
-        .expect_err("type scan should fail loud once cap is exceeded");
-    assert_matches!(err, Error::IndexOverflow("entities_by_type"));
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_TASK_LIST)?.len(),
+        PAST_THE_OLD_CAP
+    );
+    assert_eq!(
+        vault
+            .entities_by_type_at(
+                ENTITY_TYPE_TASK_LIST,
+                crate::claim::CallerLocality::OffDevice
+            )?
+            .len(),
+        PAST_THE_OLD_CAP
+    );
     Ok(())
 }
 
 #[test]
-fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result<()> {
-    const EDGE_CAP: usize = 100_000;
+fn entities_in_learned_range_serves_past_the_old_cap() -> Result<()> {
+    const LEARNED_AT: u64 = 1_700_000_000;
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), large_test_config())?;
 
+    vault.with_write_txn(|wtxn| {
+        for i in 0..PAST_THE_OLD_CAP {
+            let id = seeded_entity_id(i as u128);
+            let key = [&LEARNED_AT.to_be_bytes()[..], id.as_bytes()].concat();
+            vault.store.temporal_learned.put(wtxn, &key, &[])?;
+        }
+        Ok(())
+    })?;
+
+    let ids = vault.entities_in_learned_range(LEARNED_AT, LEARNED_AT + 1)?;
+    assert_eq!(ids.len(), PAST_THE_OLD_CAP);
+    assert_eq!(
+        ids.last(),
+        Some(&seeded_entity_id(PAST_THE_OLD_CAP as u128 - 1))
+    );
+    Ok(())
+}
+
+/// A type-filtered peer read walks every edge of its kind, however many of
+/// another type come first, and finds the one that matches.
+#[test]
+fn targets_and_sources_serve_past_the_old_cap() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), large_test_config())?;
     let src = seeded_entity_id(100_000);
@@ -47,7 +72,7 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
     let value = valid_edge_value();
 
     vault.with_write_txn(|wtxn| {
-        for i in 0..EDGE_CAP {
+        for i in 0..PAST_THE_OLD_CAP - 1 {
             let peer = seeded_entity_id(300_000 + i as u128);
             let row = encoded_entity_record(ENTITY_TYPE_TASK, &task_body(TaskRole::Task));
             let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &peer);
@@ -56,8 +81,10 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
             vault.store.edges_out.put(wtxn, &out_key, &value)?;
             vault.store.edges_in.put(wtxn, &in_key, &value)?;
         }
-
-        let matching_peer = seeded_entity_id(400_001);
+        Ok(())
+    })?;
+    let matching_peer = seeded_entity_id(400_001);
+    vault.with_write_txn(|wtxn| {
         let matching_row = encoded_entity_record(ENTITY_TYPE_TASK_LIST, b"peer");
         let out_key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &matching_peer);
         let in_key = Store::encode_edge_key(&tgt, EdgeKind::BelongsTo, &matching_peer);
@@ -70,15 +97,14 @@ fn targets_and_sources_fail_loud_when_type_filter_overscans_peer_cap() -> Result
         Ok(())
     })?;
 
-    let targets_err = vault
-        .targets(&src, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))
-        .expect_err("type-filtered targets should fail loud once scan cap is exceeded");
-    assert_matches!(targets_err, Error::IndexOverflow("targets"));
-
-    let sources_err = vault
-        .sources(&tgt, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))
-        .expect_err("type-filtered sources should fail loud once scan cap is exceeded");
-    assert_matches!(sources_err, Error::IndexOverflow("sources"));
+    assert_eq!(
+        vault.targets(&src, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))?,
+        vec![matching_peer]
+    );
+    assert_eq!(
+        vault.sources(&tgt, EdgeKind::BelongsTo, Some(ENTITY_TYPE_TASK_LIST))?,
+        vec![matching_peer]
+    );
     Ok(())
 }
 

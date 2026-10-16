@@ -8,17 +8,13 @@ use crate::error::{Error, Result};
 
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::ports::EntityStoreRead;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use std::time::Instant;
 
-/// Cap for `entities_by_type` to prevent unbounded allocation on large indexes.
+/// Most ids one [`Vault::entities_by_type_page`] hands back.
 pub(crate) const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
-
-/// Cap for `entities_in_learned_range` to prevent unbounded allocation on
-/// wide time-range queries. Distinct from `MAX_TYPE_QUERY_RESULTS` so the two
-/// APIs can be tuned independently.
-pub(super) const MAX_LEARNED_RANGE_RESULTS: usize = 100_000;
 
 pub(crate) fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
     require_key_len(key, 17, "type index key")?;
@@ -470,56 +466,59 @@ impl Vault {
 
     /// Returns all entity IDs of a given type via prefix scan on type_index.
     ///
-    /// Returns all matching entity IDs, or `Err(IndexOverflow("entities_by_type"))`
-    /// if the scan would exceed `MAX_TYPE_QUERY_RESULTS`.
+    /// Every row is read: past the type's threshold row the scan raises one
+    /// [`crate::scan_check::ScanCheck`] and reads on (rule 5).
     pub fn entities_by_type(&self, entity_type: u8) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
+        let mut count = ScanCount::start(
+            &self.store,
+            &rtxn,
+            EngineScan::TypeIndexRows,
+            &[entity_type],
+        )?;
         let mut ids = Vec::new();
         for entry in self
             .store
             .port_entity_ids_by_type(&rtxn, entity_type, None)?
         {
-            if ids.len() >= MAX_TYPE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("entities_by_type"));
-            }
+            count.row();
             ids.push(entry?);
         }
+        drop(rtxn);
+        count.finish(self);
         Ok(ids)
     }
 
     /// [`Self::entities_by_type`] for a caller at `locality`. Off this device
-    /// a row a device-local world keeps is skipped before it counts toward
-    /// the cap, so neither the ids nor an overflow hint at one (DEC-0005).
+    /// a row a device-local world keeps is skipped (DEC-0005); it is still a
+    /// row read, so the owner-local check counts it.
     pub fn entities_by_type_at(
         &self,
         entity_type: u8,
         locality: crate::claim::CallerLocality,
     ) -> Result<Vec<EntityId>> {
-        self.entities_by_type_at_with_cap(entity_type, locality, MAX_TYPE_QUERY_RESULTS)
-    }
-
-    pub(crate) fn entities_by_type_at_with_cap(
-        &self,
-        entity_type: u8,
-        locality: crate::claim::CallerLocality,
-        cap: usize,
-    ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
         let flagged = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
+        let mut count = ScanCount::start(
+            &self.store,
+            &rtxn,
+            EngineScan::TypeIndexRows,
+            &[entity_type],
+        )?;
         let mut ids = Vec::new();
         for entry in self
             .store
             .port_entity_ids_by_type(&rtxn, entity_type, None)?
         {
+            count.row();
             let id = entry?;
             if crate::settings::device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
                 continue;
             }
-            if ids.len() >= cap {
-                return Err(Error::IndexOverflow("entities_by_type"));
-            }
             ids.push(id);
         }
+        drop(rtxn);
+        count.finish(self);
         Ok(ids)
     }
 

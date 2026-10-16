@@ -89,7 +89,6 @@ impl ClaimStore for Vault {
             subject,
             EdgeKind::ClaimOf,
             Some(ENTITY_TYPE_CLAIM),
-            "claims for subject",
         )
     }
     fn port_claim_list_by_predicate(

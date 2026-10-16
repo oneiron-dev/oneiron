@@ -293,50 +293,32 @@ pub(crate) fn collect_live_entity_page<F>(
     mut fetch: F,
 ) -> Result<(Vec<oneiron::EntityId>, Option<String>), EnvelopedApiError>
 where
-    F: FnMut(
-        Option<&oneiron::EntityId>,
-        usize,
-    ) -> Result<Vec<oneiron::EntityId>, EnvelopedApiError>,
+    F: FnMut(Option<&oneiron::EntityId>, usize) -> Result<oneiron::IdScanPage, EnvelopedApiError>,
 {
     if limit == 0 {
         return Ok((Vec::new(), None));
     }
 
-    let mut cursor = after;
+    // One bounded run of edges per page: deleted shells are read too, and a
+    // page they leave short resumes where the run stopped (F13).
+    let fetched = fetch(after.as_ref(), limit.saturating_add(1))?;
     let mut ids = Vec::with_capacity(limit);
-    let mut next_cursor = None;
-
-    while next_cursor.is_none() {
-        let remaining = limit.saturating_sub(ids.len());
-        let fetch_limit = if remaining == 0 {
-            1
-        } else {
-            remaining.saturating_add(1)
-        };
-        let fetched = fetch(cursor.as_ref(), fetch_limit)?;
-        if fetched.is_empty() {
-            break;
+    for id in fetched.ids {
+        if is_deleted_shell_for_core_list(vault, &id)? {
+            continue;
         }
-
-        let fetched_len = fetched.len();
-        for id in fetched {
-            cursor = Some(id);
-            if is_deleted_shell_for_core_list(vault, &id)? {
-                continue;
-            }
-            if ids.len() < limit {
-                ids.push(id);
-            } else {
-                next_cursor = ids.last().map(oneiron::EntityId::to_hex);
-                break;
-            }
+        if ids.len() == limit {
+            let next_cursor = ids.last().map(oneiron::EntityId::to_hex);
+            return Ok((ids, next_cursor));
         }
-
-        if fetched_len < fetch_limit {
-            break;
-        }
+        ids.push(id);
     }
-
+    // A full page resumes after its last item, as the list always has; a page
+    // the run left short resumes where the run stopped.
+    let next_cursor = fetched.resume_after.map(|resume_after| {
+        let last_served = ids.last().filter(|_| ids.len() == limit);
+        last_served.unwrap_or(&resume_after).to_hex()
+    });
     Ok((ids, next_cursor))
 }
 

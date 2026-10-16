@@ -423,8 +423,8 @@ pub(crate) fn discover_response(
             continue;
         }
 
-        // Off this device a device-local row never counts toward the scan's
-        // cap, so no overflow hints at one.
+        // Off this device a device-local row is never named. Past the type's
+        // threshold row the scan raises the owner's check and reads on.
         let ids = server
             .vault
             .entities_by_type_at(entity_type, locality)

@@ -465,7 +465,6 @@ pub(crate) fn mark_on_publication_in_txn(
                 entity,
                 EdgeKind::PartOf,
                 Some(ENTITY_TYPE_TURN),
-                "tagging frontier turns",
             )?;
             for turn in turns {
                 mark_turn_in_txn(vault, wtxn, turn)?;

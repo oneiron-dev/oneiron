@@ -132,6 +132,5 @@ fn turns_of(vault: &Vault, txn: &heed::RoTxn<'_>, message: &EntityId) -> Result<
         message,
         EdgeKind::PartOf,
         Some(ENTITY_TYPE_TURN),
-        "embedding frontier turns",
     )
 }

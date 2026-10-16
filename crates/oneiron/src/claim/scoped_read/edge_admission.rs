@@ -3,6 +3,7 @@ use super::{ScopedRead, ScopedReadResult, admission::ReadAdmission};
 use crate::edge::{EdgeInfo, EdgeKind};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Error, Result};
 use std::collections::HashSet;
 
@@ -114,9 +115,20 @@ impl ScopedRead<'_> {
                 return Err(Error::InvariantViolation("directed scoped edge read"));
             }
         };
+        // Every row read counts, withheld or not: the check is the owner's,
+        // never the reader's, so it spends no visible slot (DEC-0005).
+        let scope = [
+            &[direction as u8][..],
+            center.as_bytes(),
+            &[kind.map_or(u8::MAX, |kind| kind as u8)][..],
+        ]
+        .concat();
+        let mut count =
+            ScanCount::start(&self.vault.store, txn, EngineScan::ScopedEdgeRows, &scope)?;
         let mut seen = HashSet::new();
         seen.insert(*center);
         for row in rows {
+            count.row();
             let edge = row?;
             let peer = edge.target;
             let (src, tgt) = if direction == EdgeDirection::Out {
@@ -144,6 +156,7 @@ impl ScopedRead<'_> {
                 }
             }
         }
+        count.defer(&self.vault.store);
         Ok(result)
     }
 

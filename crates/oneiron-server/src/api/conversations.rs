@@ -555,7 +555,7 @@ pub(crate) fn count_live_conversation_turns(
     let mut after = None;
     let mut total = 0_u64;
     loop {
-        let ids = vault
+        let page = vault
             .sources_page(
                 conversation,
                 EdgeKind::ChildOf,
@@ -567,18 +567,16 @@ pub(crate) fn count_live_conversation_turns(
                 tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns count failed");
                 core_engine_error("core conversation turns count failed", error)
             })?;
-        if ids.is_empty() {
-            break;
-        }
-        for id in &ids {
+        for id in &page.ids {
             if !is_deleted_shell_for_core_list(vault, id)? {
                 total = total.saturating_add(1);
             }
         }
-        after = ids.last().copied();
-        if ids.len() < CORE_MAX_LIST_LIMIT {
+        // An exact count reads every page: a short page is not the end.
+        let Some(resume_after) = page.resume_after else {
             break;
-        }
+        };
+        after = Some(resume_after);
     }
     Ok(total)
 }

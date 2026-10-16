@@ -228,7 +228,6 @@ fn members_in_txn(
         turn,
         EdgeKind::PartOf,
         Some(ENTITY_TYPE_MESSAGE),
-        "tagging input messages",
     )?;
     let mut rows = Vec::new();
     for id in children {

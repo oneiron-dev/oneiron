@@ -221,7 +221,6 @@ impl Vault {
             id,
             EdgeKind::MergedInto,
             None,
-            "identity topology",
         )?;
         let split = self.filtered_edge_peers(
             rtxn,
@@ -229,7 +228,6 @@ impl Vault {
             id,
             EdgeKind::SplitInto,
             None,
-            "identity topology",
         )?;
         match (merged.len(), split.is_empty()) {
             // No shell edge: live, UNLESS the ledger holds a zero-head split
