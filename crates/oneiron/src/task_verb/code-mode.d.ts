@@ -87,6 +87,11 @@ declare const vault: {
     view(input: { artifact_ref: string }): Promise<unknown>;
     waits(input: { artifact_ref: string }): Promise<unknown>;
   };
+  authority: {
+    handoff_alarms: ((input: object) => Promise<unknown>) & {
+      acknowledge(input: { signer: string }): Promise<unknown>;
+    };
+  };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
     history(input: { claim_ref: string }): Promise<unknown>;
@@ -138,6 +143,11 @@ declare const vault: {
     default(input: { dossiers?: object[]; ledger?: string[]; threads?: string[]; title: string }): Promise<unknown>;
     list(input: { after?: string | null; limit?: number | null; pack_name?: string | null; with_compiled?: boolean }): Promise<unknown>;
     propose(input: { compiled: unknown; intent_prompt: string; pack_content_hash: string; slot: object }): Promise<unknown>;
+  members: {
+    add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
+    change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
+    leave(input: { vault_id: number }): Promise<unknown>;
+    remove(input: { member: string; vault_id: number }): Promise<unknown>;
   };
   neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
   notes: {
@@ -180,6 +190,15 @@ declare const vault: {
   };
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
+  };
+  shared: {
+    deletion(input: object): Promise<unknown>;
+    execute(input: { act_id: string }): Promise<unknown>;
+    outcomes(input: { vault_id: number }): Promise<unknown>;
+    propose_delete(input: { vault_id: number }): Promise<unknown>;
+    propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
+    propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
+    receipt(input: { receipt_id: string }): Promise<unknown>;
   };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
