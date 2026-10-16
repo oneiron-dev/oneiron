@@ -39,6 +39,7 @@ vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined): MemoryPack
 vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined): FacadeReceipt[]
+vaultReceiptsGet(input: unknown): unknown
 vaultKvGet(requestJson: string): string
 vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
@@ -90,7 +91,28 @@ aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
+vaultCommit(input: unknown): unknown
+vaultRemember(input: unknown): unknown
+vaultClaimsRetract(input: unknown): unknown
+vaultForget(input: unknown): unknown
+vaultClaimsList(input: unknown): unknown
+vaultClaimsHistory(input: unknown): unknown
+vaultDelete(input: unknown): unknown
+vaultWritesPending(input: unknown): unknown
+vaultHydrate(input: unknown): unknown
+vaultGet(input: unknown): unknown
+vaultSearchBm25(input: unknown): unknown
+vaultNeighbors(input: unknown): unknown
+vaultStructuralPut(input: unknown): unknown
+vaultHabitsCheckin(input: unknown): unknown
+vaultClaimsAdmit(input: unknown): unknown
+vaultArtifactsPut(input: unknown): unknown
+vaultArtifactsAppend(input: unknown): unknown
+vaultArtifactsRead(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
+vaultNotesCreate(input: unknown): unknown
+vaultNotesFromEntity(input: unknown): unknown
+vaultNotesEdit(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

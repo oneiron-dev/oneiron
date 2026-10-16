@@ -2,9 +2,12 @@
 //!
 //! RS1 is intentionally a projection over existing event substrates. This
 //! module does not mint a new receipt store and does not change emitter schema.
+//! The one store it keeps is the call receipt table: the lasting receipt
+//! every wire reply carries (OF-538), which no other substrate records.
 
 mod authority_audit;
 mod brief_share;
+mod call;
 mod direct_dispatch;
 mod dispatch_observation;
 mod family;
@@ -28,6 +31,10 @@ pub use self::authority_audit::{
     AUTHORITY_AUDIT_DEFAULT_LIMIT, AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW,
     AuthorityAuditEventKind, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery,
     AuthorityAuditRow, authority_audit_embedded,
+};
+pub use self::call::{
+    CALL_RECEIPT_REF_PREFIX, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
+    CallTransport, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
 };
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{

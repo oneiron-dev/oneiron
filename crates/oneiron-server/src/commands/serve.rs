@@ -70,6 +70,10 @@ pub(super) async fn serve_with_config(
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
     config.keystore.install_on(&vault, &config.vault_path);
+    #[cfg(unix)]
+    if let Err(error) = vault.collect_result_bodies(4096) {
+        tracing::warn!(%error, "result body collection at start failed");
+    }
 
     let server_config = config.sync_server_config();
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {

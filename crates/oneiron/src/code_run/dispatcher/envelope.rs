@@ -272,6 +272,10 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // Reaches a counterparty outside the vault; the durable wait it parks
         // on is exactly the boundary crossing lineage records.
         SelfEffect::OutboundFixture => true,
+        // A callable skill's answer is its code's, and imported code runs on
+        // the foreign tier with egress: what the run writes after it may carry
+        // what the outside world said (OF-353).
+        SelfEffect::SkillsCall => true,
         // Vault-local: memory access is not a tool effect, the destructive
         // fixture and delegation park on authority rather than on leaving the
         // vault, and the speech/context family never leaves the run.
