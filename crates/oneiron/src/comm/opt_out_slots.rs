@@ -8,6 +8,7 @@ use super::claims::{CommResult, PREDICATE_COMM_OPT_OUT};
 use super::projection_writes::matching_claims_in_txn;
 use super::records::{CommRecord, put_comm_record_in_txn};
 use crate::Vault;
+use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 
 /// One standing `comm.opt_out` head on a (party, channel) slot.
@@ -55,8 +56,9 @@ pub(super) fn opt_out_slot_heads_in_txn(
     Ok(heads)
 }
 
-/// When a pending clear gate for `channel_class` on one of `subjects` was
-/// requested; `None` for every other record.
+/// When a pending clear gate for the normalized `channel_class` on one of
+/// `subjects` was requested; `None` for every other record. A gate keeps the
+/// spelling it was written with, so it is compared normalized (F06 R3-F3).
 pub(super) fn pending_clear_request_at(
     record: &CommRecord,
     subjects: &BTreeSet<EntityId>,
@@ -69,7 +71,11 @@ pub(super) fn pending_clear_request_at(
             created_at,
             pending: true,
             ..
-        } if subjects.contains(party_ref) && candidate == channel_class => Some(*created_at),
+        } if subjects.contains(party_ref)
+            && normalize_channel_class(candidate) == channel_class =>
+        {
+            Some(*created_at)
+        }
         _ => None,
     }
 }

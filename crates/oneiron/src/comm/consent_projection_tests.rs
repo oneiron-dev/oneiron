@@ -423,12 +423,13 @@ fn merge_read_through(vault: &Vault, source: EntityId, survivor: EntityId) -> Co
     Ok(())
 }
 
-/// An unprojected email STOP naming `party_ref` directly, as a delayed or
-/// replicated event still does after its party was merged away.
+/// An unprojected STOP naming `party_ref` directly, as a delayed or replicated
+/// event still does after its party was merged away.
 fn put_stop_naming(
     vault: &Vault,
     event_id: EntityId,
     party_ref: EntityId,
+    channel_class: &str,
     sequence: u64,
     occurred_at: u64,
 ) -> CommResult<()> {
@@ -436,7 +437,7 @@ fn put_stop_naming(
         sequence,
         kind: CommEventKind::InboundStop,
         party_ref,
-        channel_class: Some("email".to_owned()),
+        channel_class: Some(channel_class.to_owned()),
         thread_ref: None,
         occurred_at,
         projected: false,
@@ -448,7 +449,10 @@ fn put_stop_naming(
 /// clear must reach it. The request read only the survivor's own slot and
 /// answered `ActiveOptOutNotFound`, leaving no way to lift the hold. The
 /// restrictive-wins rule holds across the twins too: a STOP on the shell after
-/// the request refuses the ruling.
+/// the request refuses the ruling. R3-F3: that STOP, and a twin's pending gate,
+/// may carry a provider spelling of the channel. Both were compared raw, so the
+/// stale request cleared the later STOP, and a ruling older than the shell's
+/// gate went through.
 #[test]
 fn a_human_clear_reaches_a_merged_twins_stop() -> CommResult<()> {
     let (_dir, vault) = open_vault();
@@ -462,7 +466,7 @@ fn a_human_clear_reaches_a_merged_twins_stop() -> CommResult<()> {
     let [survivor, loser] = sorted;
     point_party_index(&vault, party, survivor)?;
     email_contact(&vault, entity(0x91), entity(0x9A), party)?;
-    put_stop_naming(&vault, entity(0x7B), loser, 0, 30)?;
+    put_stop_naming(&vault, entity(0x7B), loser, "email", 0, 30)?;
     run_comm_projector(&vault)?;
     assert_eq!(
         vault.entity_lifecycle_state(&loser)?,
@@ -475,7 +479,7 @@ fn a_human_clear_reaches_a_merged_twins_stop() -> CommResult<()> {
         request_opt_out_clear(&vault, party, "email", 60)?,
         CommClearOptOutOutcome::PendingHumanRuling
     );
-    put_stop_naming(&vault, entity(0x7C), loser, 1, 70)?;
+    put_stop_naming(&vault, entity(0x7C), loser, "email_ses", 1, 70)?;
     run_comm_projector(&vault)?;
     let error = approve_pending_opt_out_clear(&vault, party, "email", human, 71)
         .expect_err("a STOP on the shell after the request refuses the ruling");
@@ -486,7 +490,20 @@ fn a_human_clear_reaches_a_merged_twins_stop() -> CommResult<()> {
         request_opt_out_clear(&vault, party, "email", 80)?,
         CommClearOptOutOutcome::PendingHumanRuling
     );
-    approve_pending_opt_out_clear(&vault, party, "email", human, 81)?;
+    let twin_gate = CommRecord::Gate {
+        party_ref: loser,
+        channel_class: "email_ses".to_owned(),
+        claim_ref: entity(0x7E),
+        created_at: 90,
+        pending: true,
+    };
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_record_in_txn(&vault, wtxn, entity(0x7F), &twin_gate)
+    })?;
+    let error = approve_pending_opt_out_clear(&vault, party, "email", human, 85)
+        .expect_err("a ruling older than the twin's gate is refused");
+    assert!(matches!(error, CommError::RulingPredatesGate));
+    approve_pending_opt_out_clear(&vault, party, "email", human, 91)?;
     assert!(!contact_cache_opted_out(&vault, entity(0x9A))?);
     assert!(!gate_holds_for_counterparty_opt_out(&vault, party)?);
     assert_eq!(contact_view_opt_outs(&vault, party)?, 0);
@@ -499,33 +516,82 @@ fn a_human_clear_reaches_a_merged_twins_stop() -> CommResult<()> {
 /// STOP naming the merged party projects onto its shell, and the survivor's
 /// fold reads it through, but the refresh followed only the shell's own key,
 /// so the survivor's contact row stayed not opted out and its send passed.
+/// R3-F1: the refresh then took the survivor from the redirect table alone.
+/// With the table dropped (a supported door; the fold still reads the shell
+/// edges) it missed the survivor again, on the STOP and on the clear.
 #[test]
 fn delayed_stop_on_a_merged_alias_refreshes_the_survivors_contacts() -> CommResult<()> {
+    for dropped in [false, true] {
+        let (_dir, vault) = open_vault();
+        put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
+        put_email_identity(&vault, entity(0x91), "owner@example.com")?;
+        let alias = mint_comm_person(&vault, "old@example.com")?;
+        let survivor = mint_comm_person(&vault, "new@example.com")?;
+        point_party_index(&vault, "new@example.com", survivor)?;
+        email_contact(&vault, entity(0x91), entity(0x9B), "new@example.com")?;
+        merge_read_through(&vault, alias, survivor)?;
+        if dropped {
+            vault.drop_redirect_projection()?;
+        }
+        assert!(!contact_cache_opted_out(&vault, entity(0x9B))?);
+
+        put_stop_naming(&vault, entity(0x7D), alias, "email", 0, 30)?;
+        run_comm_projector(&vault)?;
+        assert!(comm_event_is_projected(&vault, entity(0x7D))?);
+        assert_eq!(
+            contact_view_opt_outs(&vault, "new@example.com")?,
+            1,
+            "the survivor's view reads the alias's STOP (table dropped: {dropped})"
+        );
+        assert!(
+            contact_cache_opted_out(&vault, entity(0x9B))?,
+            "the survivor's contact row follows that STOP (table dropped: {dropped})"
+        );
+        assert!(gate_holds_for_counterparty_opt_out(
+            &vault,
+            "new@example.com"
+        )?);
+
+        assert_eq!(
+            request_opt_out_clear(&vault, "new@example.com", "email", 60)?,
+            CommClearOptOutOutcome::PendingHumanRuling
+        );
+        let human = WriteActor::new(survivor, EdgeActorClass::Human);
+        approve_pending_opt_out_clear(&vault, "new@example.com", "email", human, 61)?;
+        assert!(
+            !contact_cache_opted_out(&vault, entity(0x9B))?,
+            "the clear refreshes the survivor's contact row (table dropped: {dropped})"
+        );
+    }
+    Ok(())
+}
+
+/// R3-F2: the refresh resolved the STOP's subject forward, and forward
+/// resolution errors at 64 hops. Each merge of a chain is accepted on its own,
+/// so a delayed STOP naming the chain's first link rolled back and was never
+/// projected, while the head's fold still reads that link.
+#[test]
+fn a_stop_on_the_first_link_of_a_64_merge_chain_projects() -> CommResult<()> {
     let (_dir, vault) = open_vault();
     put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
     put_email_identity(&vault, entity(0x91), "owner@example.com")?;
-    let alias = mint_comm_person(&vault, "old@example.com")?;
-    let survivor = mint_comm_person(&vault, "new@example.com")?;
-    point_party_index(&vault, "new@example.com", survivor)?;
-    email_contact(&vault, entity(0x91), entity(0x9B), "new@example.com")?;
-    merge_read_through(&vault, alias, survivor)?;
-    assert!(!contact_cache_opted_out(&vault, entity(0x9B))?);
+    let first = mint_comm_person(&vault, "link-0@example.com")?;
+    let mut head = first;
+    for link in 1..=64 {
+        let next = mint_comm_person(&vault, &format!("link-{link}@example.com"))?;
+        merge_read_through(&vault, head, next)?;
+        head = next;
+    }
+    point_party_index(&vault, "link-64@example.com", head)?;
+    email_contact(&vault, entity(0x91), entity(0x9C), "link-64@example.com")?;
 
-    put_stop_naming(&vault, entity(0x7D), alias, 0, 30)?;
+    put_stop_naming(&vault, entity(0x7E), first, "email", 0, 30)?;
     run_comm_projector(&vault)?;
-    assert!(comm_event_is_projected(&vault, entity(0x7D))?);
-    assert_eq!(
-        contact_view_opt_outs(&vault, "new@example.com")?,
-        1,
-        "the survivor's view reads the alias's STOP through"
-    );
-    assert!(
-        contact_cache_opted_out(&vault, entity(0x9B))?,
-        "the survivor's contact row follows the STOP it reads through"
-    );
+    assert!(comm_event_is_projected(&vault, entity(0x7E))?);
+    assert!(contact_cache_opted_out(&vault, entity(0x9C))?);
     assert!(gate_holds_for_counterparty_opt_out(
         &vault,
-        "new@example.com"
+        "link-64@example.com"
     )?);
     Ok(())
 }

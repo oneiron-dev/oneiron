@@ -212,7 +212,8 @@ pub fn approve_pending_opt_out_clear(
         //       (gate.created_at < head_valid_from), or
         //   (b) a later projected InboundStop on any of the party's subjects
         //       re-asserted this channel past the heads, at or after the
-        //       request.
+        //       request. The event keeps its source spelling, so it is
+        //       compared normalized, as the projector read it (F06 R3-F3).
         // This is the approve-time half of the restrictive-wins rule the
         // projector enforces at :1013.
         if let Some(newest_head) = heads.iter().map(|head| head.valid_from).max() {
@@ -226,7 +227,7 @@ pub fn approve_pending_opt_out_clear(
                         projected: true,
                         ..
                     } if subjects.contains(event_party)
-                        && event_channel == channel_class
+                        && normalize_channel_class(event_channel) == channel_class
                         && *occurred_at >= oldest_request
                         && *occurred_at > newest_head)
                 });
@@ -706,11 +707,15 @@ pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
 /// A contact folds the heads of the party its key resolves to, and that party
 /// reads its shells through, so a head on a shell reaches the contacts of the
 /// shell's own `party_key` (whatever its lifecycle, F06 H170) AND of every
-/// canonical head the shell resolves to: a merge of two different keys puts the
-/// survivor's contacts under the shell's heads (F06 R2-F3). Each key's contacts
-/// come from the full scan the send gate also uses: the party-channel index
-/// (ONE-1868) cannot prove it lists every contact. Channel scope stays the
-/// fold's class match, so an email STOP never re-derives a telegram contact.
+/// entity the shell points at: a merge of two different keys puts the
+/// survivor's contacts under the shell's heads (F06 R2-F3). Those entities come
+/// from the witnesses the fold's inbound walk reads, not the redirect table
+/// alone, and the walk has no depth or cycle error, so a dropped table or a
+/// long chain can neither narrow the refresh nor refuse the STOP (F06 R3-F1,
+/// R3-F2). Each key's contacts come from the full scan the send gate also uses:
+/// the party-channel index (ONE-1868) cannot prove it lists every contact.
+/// Channel scope stays the fold's class match, so an email STOP never
+/// re-derives a telegram contact.
 fn rematerialize_subject_contacts_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -718,12 +723,15 @@ fn rematerialize_subject_contacts_in_txn(
     channel_class: &str,
     now: u64,
 ) -> CommResult<()> {
+    let mut parties = subjects.clone();
+    parties.extend(crate::identity_redirect::outbound_redirect_heads_in_txn(
+        &vault.store,
+        &*wtxn,
+        subjects,
+    )?);
     let mut party_keys = BTreeSet::new();
-    for subject in subjects {
-        let canonical = vault.resolve_entity_in_txn(&*wtxn, subject)?;
-        for party in std::iter::once(*subject).chain(canonical) {
-            party_keys.extend(comm_party_key_in_txn(vault, &*wtxn, party)?);
-        }
+    for party in parties {
+        party_keys.extend(comm_party_key_in_txn(vault, &*wtxn, party)?);
     }
     let channel_class = normalize_channel_class(channel_class);
     for party_key in party_keys {
