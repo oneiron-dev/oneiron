@@ -261,6 +261,20 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             }
             let verb =
                 AgentVerb::from_name(&args.verb).ok_or_else(|| failure("unknown SDK verb"))?;
+            // The bare `ask` and `wait` rows keep the run's coordination calls:
+            // an ask binds to the run's own task, and a wait reads the run's
+            // replay for the voids it has already seen.
+            if verb == AgentVerb::Ask {
+                let request: crate::task_verb::sdk::TaskAskRequest = decode(args.input)?;
+                let spec = request
+                    .into_spec()
+                    .map_err(|_| failure("invalid ask input"))?;
+                return Ok(SelfCall::TasksAsk(Box::new(spec)));
+            }
+            if verb == AgentVerb::Wait {
+                let request: crate::task_verb::sdk::TaskWaitRequest = decode(args.input)?;
+                return Ok(SelfCall::TasksWait(request.handle));
+            }
             SelfCall::AgentVerb(crate::code_run::SelfAgentVerbCall {
                 verb,
                 input: args.input,

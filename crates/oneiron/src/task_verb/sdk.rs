@@ -32,7 +32,9 @@ pub struct TaskAskShort {
 }
 
 impl TaskAskRequest {
-    fn into_spec(self) -> MemoryResult<TaskAskSpec> {
+    /// The ask spec this request names: a short call's retry key is derived
+    /// from exactly what it requested.
+    pub fn into_spec(self) -> MemoryResult<TaskAskSpec> {
         match self {
             Self::Rich(spec) => Ok(*spec),
             Self::Short(short) => {
