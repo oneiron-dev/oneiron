@@ -43815,7 +43815,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 169
+      "fn": 171
      }
     },
     {
@@ -44134,7 +44134,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "AgentVerb"
@@ -46138,7 +46138,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
       "crate-vis": 11,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -46813,9 +46813,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "HostPin",
+      "HostPinKind",
+      "RoomHostHand",
+      "RoomHostPin",
       "RoomHosting",
       "RoomSpeakingRole",
       "RoomStanding"
@@ -46823,10 +46827,10 @@
      "path": "src/workspace_roster/rooms/hosting.rs",
      "purpose": "Room hosting: the speaking duty, kept apart from the engine's upkeep",
      "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 1,
-      "struct": 2
+      "crate-vis": 6,
+      "enum": 2,
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -57300,7 +57304,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 147
+      "fn": 149
      }
     },
     {
@@ -58313,7 +58317,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 148
+      "fn": 150
      }
     },
     {
