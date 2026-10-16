@@ -9,15 +9,18 @@ mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod hook_args;
 mod owner_args;
+mod wake_args;
 pub use hook_args::{
     HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs,
 };
 pub use owner_args::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
-    SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand, ImportBatchArgs,
+    ImportCommand, ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs, MaintainArgs,
+    RecoverClockArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand,
+    SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs, SecretScanSwitch,
+    SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
+pub use wake_args::{WakeArgs, WakeCommand};
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
 const DEFAULT_SERVER_MAP_SIZE: usize = 1 << 33;
@@ -90,6 +93,9 @@ pub enum Command {
     /// Agent runs waiting for consent: list, review, approve or decline whole.
     #[command(subcommand)]
     Runs(RunsCommand),
+    /// Fork alarms a held root handoff left: list them, or acknowledge one.
+    #[command(subcommand)]
+    HandoffAlarms(HandoffAlarmsCommand),
     /// Move a stopped vault to the configured embedding model: repin it and
     /// queue every record to be embedded again, which the next `serve` does.
     Reembed(Box<ReembedArgs>),
@@ -109,6 +115,8 @@ pub enum Command {
     /// session or the prompt, or queue the session's log. Always exits 0
     /// once parsed; a mistyped command exits 1, never 2.
     Hook(HookArgs),
+    /// Read or acknowledge a host instance wake inbox.
+    Wake(WakeArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
@@ -507,6 +515,12 @@ pub struct McpArgs {
     #[arg(long, value_name = "FILE")]
     pub credential_file: Option<PathBuf>,
 
+    /// Run this instance's wake adapter while the MCP bridge is alive. The
+    /// TOML file's parent is the harness config-dir instance. `inbox = true`
+    /// uses `wake inbox`; otherwise helper, tmux and boot are tried in order.
+    #[arg(long, value_name = "FILE")]
+    pub wake_config: Option<PathBuf>,
+
     /// Environment variable holding the paired slip.
     #[arg(long, default_value = "ONEIRON_SECRET")]
     pub secret_env: String,
@@ -745,6 +759,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Secrets(command) => commands::secrets(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
+        Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.
         Command::Reembed(args) => {
             crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?
@@ -757,6 +772,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
+        Command::Wake(args) => crate::wake_adapters::command(args),
         Command::Hook(args) => {
             crate::logging::off_runtime("hook", move || commands::hook(args)).await
         }

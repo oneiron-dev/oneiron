@@ -54,6 +54,7 @@ pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
+mod wake_adapters;
 pub mod web_client;
 pub mod wire_telemetry;
 // Process-local driver attachment only; this adds no HTTP/MCP route.

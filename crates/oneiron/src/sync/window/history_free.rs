@@ -83,6 +83,9 @@ pub(crate) struct HistoryCheck {
     /// world witness, as the egress claim scrub proves them: carriers no claim door decodes, yet
     /// the live state of the window.
     retained_shells: BTreeSet<(EntityId, Vec<u8>)>,
+    /// The worlds whose keys this replica destroyed, among those the window's
+    /// pads name: such a pad's bytes never ship, live or in history.
+    late_pad_worlds: BTreeSet<EntityId>,
 }
 
 impl HistoryCheck {
@@ -108,6 +111,35 @@ impl HistoryCheck {
             let raw = vault.store.entities.get(&rtxn, id.as_bytes())?;
             if crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, raw.as_deref())? {
                 erased.insert(id);
+            }
+        }
+        let mut pad_worlds = BTreeSet::new();
+        map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
+            if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
+                pad_worlds.insert(world);
+            }
+        });
+        let entities_root = ContainerID::new_root("entities", ContainerType::Map);
+        for op in doc
+            .export_json_updates(&VersionVector::default(), &doc.oplog_vv())
+            .changes
+            .iter()
+            .flat_map(|change| &change.ops)
+        {
+            if op.container == entities_root
+                && let JsonOpContent::Map(MapOp::Insert {
+                    value: LoroValue::Binary(blob),
+                    ..
+                }) = &op.content
+                && let Some(Ok(world)) = crate::world_keys::pad_body_world(blob)
+            {
+                pad_worlds.insert(world);
+            }
+        }
+        let mut late_pad_worlds = BTreeSet::new();
+        for world in pad_worlds {
+            if crate::world_keys::world_keys_destroyed_in_txn(&vault.store, &rtxn, world)? {
+                late_pad_worlds.insert(world);
             }
         }
         let mut retained_shells = BTreeSet::new();
@@ -142,6 +174,7 @@ impl HistoryCheck {
             redacted,
             erased,
             retained_shells,
+            late_pad_worlds,
         })
     }
 
@@ -254,6 +287,9 @@ impl HistoryCheck {
                 .is_ok_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob))
             || crate::identity_topology::attribution_carrier_key(blob)
                 .is_some_and(|author| self.redacted.contains(&author))
+            || crate::world_keys::pad_body_world(blob).is_some_and(|world| {
+                world.is_err() || world.is_ok_and(|world| self.late_pad_worlds.contains(&world))
+            })
     }
 }
 
@@ -352,6 +388,7 @@ fn device_only_history_snapshot(
     doc: &LoroDoc,
     check: Option<&HistoryCheck>,
     baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
 ) -> Result<Vec<u8>> {
     let (bytes, start, frontiers) = newest_rooted_snapshot(doc)?;
     let root_kept = if frontiers.is_empty() {
@@ -359,13 +396,13 @@ fn device_only_history_snapshot(
     } else {
         let at_root = doc.fork();
         at_root.checkout(&frontiers).is_err()
-            || super::device_only::window_withheld(vault, key, &at_root)?
+            || super::device_only::window_withheld_for(vault, key, &at_root, withhold)?
     };
     let clean = baseline.is_none_or(|floor| root_state(&start, &frontiers).includes_vv(floor))
         && check
             .is_none_or(|check| check.root_ships(doc, &frontiers) && check.ships_past(doc, &start))
         && !root_kept
-        && !super::device_only::delta_carries_device_only(vault, doc, &start)?;
+        && !super::device_only::delta_carries_device_only_for(vault, doc, &start, withhold)?;
     if clean {
         Ok(bytes)
     } else {
@@ -413,21 +450,42 @@ pub fn export_window_since(
     remote_vv: &[u8],
     baseline: Option<&VersionVector>,
 ) -> Result<WindowExport> {
+    export_window_since_for(
+        vault,
+        key,
+        doc,
+        remote_vv,
+        baseline,
+        super::Withhold::Unknown,
+    )
+}
+
+/// [`export_window_since`] for the machine the export serves: the worlds
+/// `withhold` names are kept off it, and a private world it may read keeps
+/// flowing to it (OF-534 G6).
+pub fn export_window_since_for(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    remote_vv: &[u8],
+    baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
+) -> Result<WindowExport> {
     let remote = VersionVector::decode(remote_vv).map_err(|source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "decode version vector",
             source,
         })
     })?;
-    if super::device_only::export_withheld(vault, key, doc, &remote)? {
+    if super::device_only::export_withheld_for(vault, key, doc, &remote, withhold)? {
         return super::device_only::withheld_window_update().map(WindowExport::Update);
     }
     let Scrubbed {
         check,
         device_only_history,
-    } = scrub_for_export(vault, key, doc, &remote)?;
+    } = scrub_for_export(vault, key, doc, &remote, withhold)?;
     if device_only_history {
-        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline)
+        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline, withhold)
             .map(WindowExport::Replacement);
     }
     let holds_floor = remote.includes_vv(&doc.shallow_since_vv().to_vv())
@@ -461,16 +519,28 @@ pub fn export_window_replacement(
     doc: &LoroDoc,
     baseline: Option<&VersionVector>,
 ) -> Result<Option<Vec<u8>>> {
+    export_window_replacement_for(vault, key, doc, baseline, super::Withhold::Unknown)
+}
+
+/// [`export_window_replacement`] for the machine the export serves.
+pub fn export_window_replacement_for(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    baseline: Option<&VersionVector>,
+    withhold: super::Withhold<'_>,
+) -> Result<Option<Vec<u8>>> {
     let nothing = VersionVector::default();
-    if super::device_only::export_withheld(vault, key, doc, &nothing)? {
+    if super::device_only::export_withheld_for(vault, key, doc, &nothing, withhold)? {
         return Ok(None);
     }
     let Scrubbed {
         check,
         device_only_history,
-    } = scrub_for_export(vault, key, doc, &nothing)?;
+    } = scrub_for_export(vault, key, doc, &nothing, withhold)?;
     if device_only_history {
-        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline).map(Some);
+        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline, withhold)
+            .map(Some);
     }
     history_free_snapshot(doc, check.as_ref(), baseline).map(Some)
 }
@@ -502,6 +572,7 @@ fn scrub_for_export(
     key: &WindowKey,
     doc: &LoroDoc,
     remote: &VersionVector,
+    withhold: super::Withhold<'_>,
 ) -> Result<Scrubbed> {
     crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
@@ -526,6 +597,6 @@ fn scrub_for_export(
     Ok(Scrubbed {
         check,
         device_only_history: remote.is_empty()
-            && super::device_only::delta_carries_device_only(vault, doc, remote)?,
+            && super::device_only::delta_carries_device_only_for(vault, doc, remote, withhold)?,
     })
 }
