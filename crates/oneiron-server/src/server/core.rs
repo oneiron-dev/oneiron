@@ -160,6 +160,9 @@ pub struct SyncServer {
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
+    /// Managed serve's artifact origin on a unix socket of its own
+    /// (`--artifact-http-socket`), which has no port to advertise.
+    artifact_socket: bool,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -377,6 +380,7 @@ impl SyncServer {
             feedback: None,
             feedback_flood,
             artifact_port: None,
+            artifact_socket: false,
             #[cfg(test)]
             booking_test_now_secs: None,
             #[cfg(test)]
@@ -634,6 +638,21 @@ impl SyncServer {
 
     pub(crate) fn artifact_port(&self) -> Option<u16> {
         self.artifact_port
+    }
+
+    /// Records that the artifact-only router serves this server's `/a/` on a
+    /// unix socket of its own (managed serve, OF-356). As with a port, the
+    /// API's own `/a/` then sandboxes code bundles.
+    #[must_use]
+    pub fn with_artifact_socket(mut self) -> Self {
+        self.artifact_socket = true;
+        self
+    }
+
+    /// Whether an artifact-only listener serves this server's `/a/` on an
+    /// origin apart from the API's.
+    pub(crate) fn has_artifact_origin(&self) -> bool {
+        self.artifact_port.is_some() || self.artifact_socket
     }
 
     /// Returns the vault backing this server (used by integration tests to

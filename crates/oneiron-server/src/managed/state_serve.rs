@@ -25,7 +25,7 @@ use crate::server::SyncServer;
 
 use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
-use super::listener::{ManagedCtl, init_managed_tracing};
+use super::listener::{BoundServeListener, ManagedCtl, ServeListener, init_managed_tracing};
 use super::vault_gates::{open_managed_vault, provision_host_authority};
 use oneiron_vault_contract::host::{Host, HostLimits};
 
@@ -366,6 +366,14 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
     build_app(server).layer(freeze)
 }
 
+/// The managed artifact origin: this vault's `/a/`, and its names under the
+/// artifact domains (`oneiron_vault_contract::artifact_origin`), behind the
+/// same freeze gate as the API socket.
+pub(super) fn build_managed_artifact_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> Router {
+    let freeze = middleware::from_fn_with_state(state, refuse_frozen_writes);
+    crate::build_artifact_app(server).layer(freeze)
+}
+
 /// The freeze gate on the served path.
 ///
 /// Consulted per request, before the handler runs: once `prepare_reap` has
@@ -560,6 +568,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             }
         }));
     sync_server.managed_issuer = Some(issuer);
+    if managed.artifact_socket.is_some() {
+        sync_server = sync_server.with_artifact_socket();
+    }
     let sync_server = Arc::new(sync_server);
 
     // Adoption stays here, after the gates: the listener was only resolved
@@ -567,6 +578,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let http = http.bind().await?;
     let http_owned_path = http.owned_path().map(Path::to_path_buf);
     let ctl = ManagedCtl::bind(&managed.ctl_socket)?;
+    // The artifact origin, on the socket the supervisor routes the vault's
+    // artifact names to (OF-356); this process owns the path it binds.
+    let artifacts = match &managed.artifact_socket {
+        Some(path) => Some(ServeListener::UnixPath(path.clone()).bind().await?),
+        None => None,
+    };
+    let artifacts_owned_path = artifacts
+        .as_ref()
+        .and_then(BoundServeListener::owned_path)
+        .map(Path::to_path_buf);
 
     let ledger = WakeLedger::load(
         Arc::clone(&vault),
@@ -651,12 +672,20 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
     let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
+    let artifact_task = artifacts.map(|listener| {
+        let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
+        let stop = shutdown.triggered();
+        tokio::spawn(async move { listener.serve_until(app, stop).await })
+    });
     // Graceful shutdown couples "stop accepting" and "drain in-flight": the
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.
     let result = http.serve_until(app, shutdown.triggered()).await;
     host.on_stop()?;
     let _ = ctl_task.await;
+    if let Some(task) = artifact_task {
+        let _ = task.await;
+    }
     // Drain observation writes without thawing a previously quiescent process.
     let telemetry_drained = state.freeze();
     // No new durable background work from here on.
@@ -674,6 +703,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         {
             tracing::warn!(%error, path = %path.display(), "http socket unlink failed");
         }
+    }
+    if let Some(path) = artifacts_owned_path
+        && let Err(error) = std::fs::remove_file(&path)
+        && error.kind() != ErrorKind::NotFound
+    {
+        tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
     }
 
     final_ledger_push(&state, &sync_server).await;

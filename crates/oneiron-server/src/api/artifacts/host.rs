@@ -1,4 +1,6 @@
-//! Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`.
+//! Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`,
+//! and one app on an origin of its own, `<app>--<vault>.<domain>/…`, read by
+//! the contract a cloud front forwards by (`oneiron_vault_contract::artifact_origin`).
 //!
 //! DNS, certificates and the edge are static config; the edge sends each
 //! configured domain's subdomains here. The Host header picks the vault, and
@@ -17,15 +19,21 @@ use axum::extract::{OriginalUri, Request};
 use axum::http::header::HOST;
 use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use oneiron_vault_contract::artifact_origin::{
+    ArtifactHost, ArtifactHostRead, normalize_artifact_domain, valid_app_label,
+};
 use tower::ServiceExt;
 
 use crate::error::{ApiError, EnvelopedApiError};
 
-/// Marks a request this router rewrote from `/<artifact>/…` to
-/// `/a/<artifact>/…`, so its redirects keep the vault host's form. Set by
-/// this router alone, never read from a request.
+/// Marks a request this router rewrote from `/<artifact>/…` (or an app
+/// host's `/…`) to `/a/<artifact>/…`, so its redirects keep the host's form.
+/// Set by this router alone, never read from a request.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct VaultHostRoute;
+pub(crate) struct VaultHostRoute {
+    /// Reached at `<app>--<vault>.<domain>`: the path names no artifact.
+    pub(crate) app: bool,
+}
 
 /// The vaults one artifact listener serves by subdomain, and under which domains.
 #[derive(Clone, Default)]
@@ -37,7 +45,8 @@ pub(crate) struct ArtifactHosts {
 enum HostRoute {
     /// Not under a configured domain: local serving.
     Local,
-    Vault(Router),
+    /// A vault served here, and maybe one of its apps.
+    Vault(Router, Option<String>),
     /// Under a configured domain, naming no vault served here.
     Unknown,
 }
@@ -47,18 +56,19 @@ impl ArtifactHosts {
         Self {
             domains: domains
                 .iter()
-                .map(|domain| domain.trim().trim_matches('.').to_ascii_lowercase())
+                .map(|domain| normalize_artifact_domain(domain))
                 .filter(|domain| !domain.is_empty())
                 .collect(),
             vaults: BTreeMap::new(),
         }
     }
 
-    /// Serves one vault's artifact app at `<name>.<domain>` under every domain.
-    /// A name that is not a DNS label is never served.
+    /// Serves one vault's artifact app at `<name>.<domain>`, and its apps at
+    /// `<app>--<name>.<domain>`, under every domain. A name that is not a DNS
+    /// label free of `--` is never served.
     pub(crate) fn with_vault_app(mut self, name: &str, app: Router) -> Self {
         let name = name.to_ascii_lowercase();
-        if oneiron_vault_contract::valid_vault_name(&name) {
+        if valid_app_label(&name) {
             self.vaults.insert(name, app);
         }
         self
@@ -79,41 +89,36 @@ impl ArtifactHosts {
     }
 
     fn route(&self, host: Option<&str>) -> HostRoute {
-        let Some(host) = host.map(normalize_host) else {
+        let Some(host) = host else {
             return HostRoute::Local;
         };
-        for domain in &self.domains {
-            if host == *domain {
-                return HostRoute::Unknown;
-            }
-            let Some(label) = host
-                .strip_suffix(domain.as_str())
-                .and_then(|rest| rest.strip_suffix('.'))
-            else {
-                continue;
-            };
-            return match self.vaults.get(label) {
-                Some(app) if !label.contains('.') => HostRoute::Vault(app.clone()),
-                _ => HostRoute::Unknown,
-            };
+        match ArtifactHost::read(host, &self.domains) {
+            ArtifactHostRead::Outside => HostRoute::Local,
+            ArtifactHostRead::Unnamed => HostRoute::Unknown,
+            ArtifactHostRead::Named(named) => match self.vaults.get(&named.vault) {
+                Some(app) => HostRoute::Vault(app.clone(), named.app),
+                None => HostRoute::Unknown,
+            },
         }
-        HostRoute::Local
     }
 
     async fn dispatch(&self, local: Router, mut request: Request) -> Response {
-        let app = match self.route(request_host(&request)) {
+        let (app, artifact) = match self.route(request_host(&request)) {
             HostRoute::Local => return answer(local, request).await,
             HostRoute::Unknown => return unknown_artifact(),
-            HostRoute::Vault(app) => app,
+            HostRoute::Vault(app, artifact) => (app, artifact),
         };
-        // `<vault>.<domain>/<artifact>/…` is that vault's `/a/<artifact>/…`.
-        let Some(uri) = vault_route_uri(request.uri()) else {
+        // `<vault>.<domain>/<artifact>/…` is that vault's `/a/<artifact>/…`,
+        // and `<app>--<vault>.<domain>/…` is its `/a/<app>/…`.
+        let Some(uri) = vault_route_uri(request.uri(), artifact.as_deref()) else {
             return unknown_artifact();
         };
         // The handlers parse the original URI, which the outer router recorded.
         request.extensions_mut().insert(OriginalUri(uri.clone()));
         *request.uri_mut() = uri;
-        request.extensions_mut().insert(VaultHostRoute);
+        request.extensions_mut().insert(VaultHostRoute {
+            app: artifact.is_some(),
+        });
         let response = answer(app, request).await;
         // A refusal for any reason (credential, tier, selector, binding)
         // must not tell a known vault from an unknown one. Shedding is the
@@ -148,23 +153,16 @@ fn request_host(request: &Request) -> Option<&str> {
         })
 }
 
-fn normalize_host(host: &str) -> String {
-    let host = host.trim();
-    let host = match host.rsplit_once(':') {
-        Some((name, port)) if !name.contains(':') && port.bytes().all(|b| b.is_ascii_digit()) => {
-            name
-        }
-        _ => host,
-    };
-    host.trim_end_matches('.').to_ascii_lowercase()
-}
-
-fn vault_route_uri(uri: &Uri) -> Option<Uri> {
+fn vault_route_uri(uri: &Uri, artifact: Option<&str>) -> Option<Uri> {
     let path_and_query = uri.path_and_query()?.as_str();
-    if !path_and_query.starts_with('/') || uri.path() == "/" {
+    if !path_and_query.starts_with('/') {
         return None;
     }
-    format!("/a{path_and_query}").parse().ok()
+    match artifact {
+        Some(artifact) => format!("/a/{artifact}{path_and_query}").parse().ok(),
+        None if uri.path() == "/" => None,
+        None => format!("/a{path_and_query}").parse().ok(),
+    }
 }
 
 fn unknown_artifact() -> Response {

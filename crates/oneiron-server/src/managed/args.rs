@@ -51,6 +51,12 @@ pub enum ManagedError {
     #[error("--keystore-dir must be an absolute path")]
     RelativeKeystoreDir,
 
+    #[error("--artifact-http-socket must be an absolute path")]
+    RelativeArtifactSocket,
+
+    #[error("--artifact-domains names where the artifact origin answers; it needs --artifact-http-socket")]
+    ArtifactDomainsWithoutSocket,
+
     #[error("--{flag} must be a non-negative file descriptor, got {value}")]
     InvalidFd { flag: &'static str, value: i32 },
 
@@ -133,6 +139,12 @@ pub struct ManagedArgs {
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore.
     pub keystore_dir: Option<PathBuf>,
+    /// The artifact origin's socket (`--artifact-http-socket`), when the
+    /// supervisor gave the vault one.
+    pub artifact_socket: Option<PathBuf>,
+    /// The domains the artifact origin answers under, as the cloud named
+    /// them: `<vault>.<domain>` and `<app>--<vault>.<domain>`.
+    pub artifact_domains: Vec<String>,
 }
 
 impl ManagedArgs {
@@ -220,7 +232,25 @@ impl ManagedArgs {
             credentials_fd,
             vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
+            artifact_socket: args.artifact_http_socket.clone(),
+            artifact_domains: args
+                .artifact_domains
+                .iter()
+                .flatten()
+                .map(|domain| oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain))
+                .filter(|domain| !domain.is_empty())
+                .collect(),
         };
+        if managed
+            .artifact_socket
+            .as_deref()
+            .is_some_and(std::path::Path::is_relative)
+        {
+            return Err(ManagedError::RelativeArtifactSocket);
+        }
+        if managed.artifact_socket.is_none() && !managed.artifact_domains.is_empty() {
+            return Err(ManagedError::ArtifactDomainsWithoutSocket);
+        }
         if managed
             .keystore_dir
             .as_deref()
@@ -307,6 +337,12 @@ impl ManagedArgs {
         };
         if let Some(log_level) = args.log_level.clone() {
             config.log_level = log_level;
+        }
+        // The artifact origin serves this vault at its own name under each
+        // domain the supervisor gave.
+        if self.artifact_socket.is_some() {
+            config.artifact_domains = self.artifact_domains.clone();
+            config.artifact_vault_name = Some(self.vault_name.clone());
         }
         config
     }
@@ -467,7 +503,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "artifact-domains",
         |args| args.artifact_domains.is_some(),
-        ArgvUse::Refused(NO_HOST_PORT_REASON),
+        ArgvUse::Read,
+    ),
+    (
+        "artifact-http-socket",
+        |args| args.artifact_http_socket.is_some(),
+        ArgvUse::Read,
     ),
     (
         "artifact-vault-name",

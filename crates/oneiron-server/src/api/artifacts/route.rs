@@ -47,8 +47,19 @@ pub(super) struct ArtifactRoute {
     pub(super) file: BundlePath,
     form: AddressForm,
     raw_artifact: String,
-    /// Reached at `<vault>.<domain>/<artifact>/…`: redirects drop the `/a`.
-    vault_host: bool,
+    /// Where the request arrived, which its redirects keep.
+    host: HostForm,
+}
+
+/// The address form a request arrived in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HostForm {
+    /// `/a/<artifact>/…`.
+    Local,
+    /// `<vault>.<domain>/<artifact>/…`: redirects drop the `/a`.
+    Vault,
+    /// `<app>--<vault>.<domain>/…`: redirects drop `/a/<artifact>`.
+    App,
 }
 
 impl ArtifactRoute {
@@ -111,12 +122,12 @@ impl ArtifactRoute {
             file: BundlePath::parse(encoded_file)?,
             form,
             raw_artifact: raw_artifact.to_owned(),
-            vault_host: false,
+            host: HostForm::Local,
         })
     }
 
-    pub(super) fn on_vault_host(&mut self) {
-        self.vault_host = true;
+    pub(super) fn on_vault_host(&mut self, app: bool) {
+        self.host = if app { HostForm::App } else { HostForm::Vault };
     }
 
     pub(super) fn path(&self) -> &str {
@@ -140,10 +151,14 @@ impl ArtifactRoute {
             .token
             .as_deref()
             .map_or(String::new(), |v| format!("/_t/{v}"));
-        let base = if self.vault_host { "" } else { "/a" };
+        let artifact = match self.host {
+            HostForm::Local => format!("/a/{}", self.raw_artifact),
+            HostForm::Vault => format!("/{}", self.raw_artifact),
+            HostForm::App => String::new(),
+        };
         Some(format!(
-            "{base}/{}{token}/_s/{selector}/{}",
-            self.raw_artifact, self.file.encoded
+            "{artifact}{token}/_s/{selector}/{}",
+            self.file.encoded
         ))
     }
 }
