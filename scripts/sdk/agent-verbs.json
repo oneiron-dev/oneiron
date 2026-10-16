@@ -231,6 +231,7 @@
     },
     {
       "name": "vault.claims.upsert",
+      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "input": "crate::memory::ClaimInput",
       "output": "crate::memory::CommitReceipt",
       "call": "memory.claim_upsert(&input)?",
@@ -655,6 +656,7 @@
     },
     {
       "name": "vault.artifacts.propose_deck",
+      "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::DeckProposeRequest",
       "output": "crate::blob_artifact::DeckProposeOutcome",
       "call": "memory.artifacts_propose_deck(&input)?",
@@ -678,6 +680,7 @@
     },
     {
       "name": "vault.artifacts.propose_output",
+      "refs": ["/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::NativeOutputRequest",
       "output": "crate::edit_settle::PendingProposalView",
       "call": "memory.artifacts_propose_output(&input)?",
@@ -821,6 +824,7 @@
     },
     {
       "name": "ask",
+      "refs": ["/what/reference/claim", "/what/reference/turn", "/what/context_refs/*/claim", "/what/context_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -846,6 +850,7 @@
     },
     {
       "name": "tasks.answer",
+      "refs": ["/word/provenance_refs/*/claim", "/word/provenance_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",
@@ -1358,6 +1363,7 @@
     },
     {
       "name": "vault.commit",
+      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
@@ -1380,6 +1386,7 @@
     },
     {
       "name": "vault.remember",
+      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "uniffi": {
         "args": {
           "claim": "ClaimInput"
@@ -1571,6 +1578,18 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.refs.resolve",
+      "input": "crate::lens::ResolveRecordRefRequest",
+      "output": "crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>",
+      "call": "memory.resolve_record_ref(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered"
+    },
+    {
       "name": "vault.search.bm25",
       "uniffi": {
         "args": {
@@ -1620,6 +1639,7 @@
     },
     {
       "name": "vault.structural.put",
+      "refs": ["/edges/*/target_ref"],
       "uniffi": {
         "args": {
           "input": "StructuralPutInput"
@@ -1641,6 +1661,7 @@
     },
     {
       "name": "vault.habits.checkin",
+      "refs": ["/habit_ref"],
       "uniffi": {
         "args": {
           "input": "HabitCheckinInput"
@@ -1662,6 +1683,7 @@
     },
     {
       "name": "vault.claims.admit",
+      "refs": ["/subject_ref"],
       "uniffi": {
         "args": {
           "input": "AdmitImportedClaimInput"
@@ -1789,6 +1811,7 @@
     },
     {
       "name": "connector.outbound.schedule",
+      "refs": ["/content_ref"],
       "input": "OutboundScheduleRequest",
       "output": "crate::memory::OutboundIntentReceipt",
       "call": "crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)?",
@@ -1849,6 +1872,7 @@
     },
     {
       "name": "vault.notes.from_entity",
+      "refs": ["/source_ref"],
       "input": "CreateNoteFromEntityRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "memory.create_note_from_entity(&input.source_ref, &input.kind)?",

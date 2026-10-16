@@ -13,6 +13,7 @@
 //! - `generated_ui` — the Generated-UI card/segment/`$state` protocol.
 //! - `mediation` — host mediation: principals, backing refs, [`LensRenderFrame`].
 //! - `validate` — cross-cutting validators and the surface compiler.
+//! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
 mod atom;
 mod default_vault;
@@ -30,6 +31,11 @@ mod generated_ui;
 mod mediation;
 mod mount;
 pub use mount::LensMount;
+mod record_ref;
+pub use record_ref::{
+    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordRef,
+    RecordRefPreview, ResolveRecordRefRequest,
+};
 mod self_ui;
 mod validate;
 mod wire_ids;

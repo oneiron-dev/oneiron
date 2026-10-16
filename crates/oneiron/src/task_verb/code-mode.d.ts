@@ -128,6 +128,9 @@ declare const vault: {
   receipts: ((input: { limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
+  refs: {
+    resolve(input: { reference: string }): Promise<unknown>;
+  };
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   rooms: {
     claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;

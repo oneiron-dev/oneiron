@@ -18,6 +18,7 @@ mod ledgers;
 mod pack_attribution;
 mod projection;
 mod record;
+mod reference_refusal;
 mod send_receipt_txn;
 mod served_form;
 mod session;
@@ -58,6 +59,7 @@ pub use self::projection::{
     ReceiptProjectionIntent, ReceiptProjectionRun, project_receipts_by_brief,
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
+pub(crate) use self::reference_refusal::{ReferenceRefusalFacts, record_reference_refusal};
 pub use self::served_form::ServedForm;
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 
