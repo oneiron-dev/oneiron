@@ -5,10 +5,10 @@
 //! (for example an ABI conformance fixture); it makes no QuickJS provenance
 //! claim. No WASI, environment, filesystem or network imports are linked.
 
+mod isolated;
 #[cfg(test)]
 mod tests;
 mod typed;
-mod isolated;
 mod wire;
 
 /// Types generated from the canonical guest/SDK WIT.
@@ -124,7 +124,10 @@ impl WasmtimeComponentRuntime {
     }
 
     #[must_use]
-    pub fn with_foreign_egress(mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Self {
+    pub fn with_foreign_egress(
+        mut self,
+        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Self {
         self.foreign_egress = Some(relay);
         self
     }
@@ -300,8 +303,12 @@ fn drive_host(
 }
 
 impl JsCodeModeRuntime for WasmtimeComponentRuntime {
-    fn bind_foreign_egress(&mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Result<()> {
-        self.foreign_egress = Some(relay); Ok(())
+    fn bind_foreign_egress(
+        &mut self,
+        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<()> {
+        self.foreign_egress = Some(relay);
+        Ok(())
     }
 
     fn run_step(

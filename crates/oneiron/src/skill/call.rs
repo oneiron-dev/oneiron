@@ -169,9 +169,14 @@ pub fn execute_callable_skill(
         None,
     )?;
     if tier != SandboxGuestTier::FirstPartyDreamer {
-        runtime.bind_foreign_egress(std::sync::Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
-            std::sync::Arc::clone(vault), run_id,
-            crate::code_sandbox::egress::EgressConfig::from_env().map_err(|e| Error::InvalidConfig(e.to_string()))?)))?;
+        runtime.bind_foreign_egress(std::sync::Arc::new(
+            crate::code_sandbox::egress::OpenEgressProxy::new(
+                std::sync::Arc::clone(vault),
+                run_id,
+                crate::code_sandbox::egress::EgressConfig::from_env()
+                    .map_err(|e| Error::InvalidConfig(e.to_string()))?,
+            ),
+        ))?;
     }
     let outcome = runtime.run_step(
         JsCodeModeStep {
