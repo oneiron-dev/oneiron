@@ -414,6 +414,15 @@ above. Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
 
+A run in an off-record room compacts the same way, inside the room: the pass
+reads the room's view, and the summary, its sources and its step coverage
+stay in the room's overlay. Nothing reaches the vault, no summary is embedded
+or exported, and closing the room drops them with the rest of it. A room
+closed or flipped on record while a pass runs refuses its summary, and the
+run keeps its raw window. An anonymous room keeps no summary, and a room
+already on record when the run started does not compact yet: both report
+`sticky` with `why: "off_record_run"`.
+
 ### Type check (shadow mode)
 
 Each generated program can be type-checked before it runs, against the same

@@ -46,17 +46,46 @@ impl CompactionDriver {
         span: &crate::code_run::ExecutorOutputSpan,
     ) -> Result<SwapPlan> {
         let session_ref = gated.request.session_ref;
-        self.integrate_inner(
-            vault,
-            &session_ref,
-            byline,
-            gated,
-            accumulated,
-            |txn, mint| {
-                vault.put_code_run_compaction_coverage_in_txn(txn, span, mint)?;
-                placement.settle_in(&vault.store, txn, mint.summary_id())
-            },
-        )
+        self.integrate_inner(gated, accumulated, |request, product| {
+            mint_epoch_summary_with(
+                vault,
+                &session_ref,
+                byline,
+                request,
+                product,
+                |txn, mint| {
+                    vault.put_code_run_compaction_coverage_in_txn(txn, span, mint)?;
+                    placement.settle_in(&vault.store, txn, mint.summary_id())
+                },
+            )
+        })
+    }
+
+    /// [`Self::integrate_with_coverage`] for a run in an off-record room: the
+    /// summary and the run's coverage land in the room's overlay through
+    /// `session`, on the `route` the run captured at entry, and drop with it
+    /// at close. Such a summary takes no birth stamp: it is never exported.
+    pub(crate) fn integrate_in_overlay(
+        &mut self,
+        session: &crate::off_record::OffRecordSession<'_>,
+        route: &crate::session_overlay::SessionWriteRoute,
+        byline: WriteActor,
+        gated: GatedCompaction,
+        accumulated: &[CompactionWindowMessage],
+        span: &crate::code_run::ExecutorOutputSpan,
+    ) -> Result<SwapPlan> {
+        let session_ref = gated.request.session_ref;
+        self.integrate_inner(gated, accumulated, |request, product| {
+            mint_epoch_summary_in_overlay(
+                session,
+                route,
+                &session_ref,
+                byline,
+                request,
+                product,
+                |view, txn, mint| span.put_coverage_in(view, txn, mint),
+            )
+        })
     }
 
     /// Integrates a finished compaction: mints the epoch summary and returns
@@ -80,24 +109,17 @@ impl CompactionDriver {
         gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
     ) -> Result<SwapPlan> {
-        self.integrate_inner(
-            vault,
-            session_ref,
-            byline,
-            gated,
-            accumulated,
-            |_, _| Ok(()),
-        )
+        self.integrate_inner(gated, accumulated, |request, product| {
+            mint_epoch_summary_with(vault, session_ref, byline, request, product, |_, _| Ok(()))
+        })
     }
 
+    /// Checks `gated` is the active flight, then `mint`s its summary.
     fn integrate_inner(
         &mut self,
-        vault: &Vault,
-        session_ref: &EntityId,
-        byline: WriteActor,
         gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
-        extra: impl FnOnce(&mut heed::RwTxn<'_>, &crate::compaction::EpochMint) -> Result<()>,
+        mint: impl FnOnce(&CompactionRequest, &CompactionProduct) -> Result<(u64, EntityId)>,
     ) -> Result<SwapPlan> {
         let CompactionState::Compacting {
             request: active, ..
@@ -117,8 +139,7 @@ impl CompactionDriver {
                 "compaction result does not match the active request",
             ));
         }
-        let (epoch, summary_id) =
-            mint_epoch_summary_with(vault, session_ref, byline, request, &product, extra)?;
+        let (epoch, summary_id) = mint(request, &product)?;
         self.margin.observe_latency(product.latency);
         self.completed_watermark = Some(request.watermark);
         self.state = CompactionState::Idle;
