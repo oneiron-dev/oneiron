@@ -83,6 +83,18 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Replaces the vault's affect retrieval policy for this pack (OF-423).
+    pub fn affect_policy(mut self, policy: crate::pipeline::AffectRetrievalPolicy) -> Self {
+        self.pipeline = self.pipeline.affect_policy(policy);
+        self
+    }
+
+    /// The current turn's VAD, the query side of emotion congruence.
+    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+        self.pipeline = self.pipeline.query_affect(vad);
+        self
+    }
+
     /// Narrows claims to the manifest's critical (`true`) or normal (`false`)
     /// tier. It never promotes a predicate or bypasses visibility checks.
     pub fn criticality(mut self, critical: bool) -> Self {

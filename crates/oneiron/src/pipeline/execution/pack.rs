@@ -63,6 +63,18 @@ impl PipelineBuilder<'_> {
         if self.ppr_search.is_some() || self.ppr_expand.is_some() {
             crate::config::validate_ppr_vad_alpha(self.vault.config.ppr_vad_alpha)?;
         }
+        self.affect_policy.validate()?;
+        if let Some(query) = self.query_affect {
+            query.validate()?;
+        } else if self.affect_policy.emotion_weight > 0.0
+            && let Some(turn_bytes) = self.retrieval_turn.as_ref().map(|turn| turn.turn_id)
+        {
+            let turn_id = crate::entity_id::EntityId::from_bytes(turn_bytes)?;
+            self.query_affect = self
+                .vault
+                .get_turn_vad_annotation(&turn_id)?
+                .map(|annotation| annotation.vad);
+        }
         if self.ppr_expand.is_some() && self.vault.config.ppr_community.beta != 0.0 {
             crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
         }

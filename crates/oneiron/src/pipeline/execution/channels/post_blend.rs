@@ -3,6 +3,7 @@
 use crate::context_pack::EmptyReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::pipeline::affect::{apply_score_multipliers, emotion_congruence_multipliers};
 use crate::pipeline::authority;
 use crate::pipeline::blend::boost_contiguity;
 use crate::pipeline::builder::PipelineBuilder;
@@ -115,6 +116,23 @@ impl PipelineBuilder<'_> {
                     rtxn,
                     metadata_cache,
                 )?;
+            }
+        }
+
+        // OF-423 emotion congruence: a claim's score tilts toward the query
+        // VAD's neighbourhood, replayed onto the ladder like contiguity.
+        if let Some(query) = self.affect_policy.congruence_query(self.query_affect) {
+            let multipliers = emotion_congruence_multipliers(
+                scores,
+                query,
+                self.affect_policy.emotion_weight,
+                &self.read,
+                rtxn,
+                metadata_cache,
+            )?;
+            apply_score_multipliers(scores, &multipliers);
+            if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
+                apply_score_multipliers(ladder_scores, &multipliers);
             }
         }
 
