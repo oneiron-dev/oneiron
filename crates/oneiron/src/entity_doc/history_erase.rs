@@ -92,8 +92,7 @@ pub(crate) fn admit_history_erase_in_txn(
         ));
     }
     let receipt = receipt.to_hex();
-    vault
-        .claim_completed_authority_act_in_txn(txn, act, receipt.clone(), Some(receipt))
+    vault.claim_completed_authority_act_in_txn(txn, act, receipt.clone(), Some(receipt))
 }
 
 impl Vault {

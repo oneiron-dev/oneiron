@@ -242,7 +242,8 @@ impl Vault {
         let receipt = self.with_write_txn_grouped(|txn| {
             let owner_actor = super::forks::owner_in_txn(self, txn, owner)?;
             // A held record keeps its history (OF-470).
-            self.store.reject_legal_hold_in_txn(txn, entity.as_bytes())?;
+            self.store
+                .reject_legal_hold_in_txn(txn, entity.as_bytes())?;
             let receipt_id = EntityId::now();
             super::admit_history_erase_in_txn(
                 self,
