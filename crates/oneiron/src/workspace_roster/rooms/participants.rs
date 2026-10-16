@@ -193,19 +193,22 @@ impl Memory<'_> {
             if fact.cause.kind() != key.cause.0 || fact.cause.key_id() != key.cause.1 {
                 return Err(Error::CorruptedIndex("participation fact names another cause").into());
             }
-            match folded.last_mut() {
-                Some(last) if last.subject == key.subject => last.facts.push(fact),
-                _ if folded.len() == window => {
-                    exhausted = false;
-                    break;
-                }
-                _ => folded.push(Folded {
-                    subject: key.subject,
-                    facts: vec![fact],
-                    currently_eligible: false,
-                    standing_receipt: None,
-                }),
+            if let Some(last) = folded.last_mut()
+                && last.subject == key.subject
+            {
+                last.facts.push(fact);
+                continue;
             }
+            if folded.len() == window {
+                exhausted = false;
+                break;
+            }
+            folded.push(Folded {
+                subject: key.subject,
+                facts: vec![fact],
+                currently_eligible: false,
+                standing_receipt: None,
+            });
         }
         for row in &mut folded {
             match row.subject {

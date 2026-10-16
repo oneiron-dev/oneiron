@@ -292,13 +292,27 @@ pub fn filtered_window_doc(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
-    let position = authorize_selector_export(
+    filtered_window_doc_for(vault, source, key, grant_scope, selector, Withhold::Unknown)
+}
+
+/// Destination-aware selector export. The transport supplies a proven machine,
+/// never the selector's actor id; the proof is rechecked in the export snapshot.
+pub fn filtered_window_doc_for_peer(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    peer: crate::authority::PeerMachine,
+) -> Result<LoroDoc> {
+    filtered_window_doc_for(
         vault,
+        source,
+        key,
         grant_scope,
         selector,
-        vault.store.clock.now_recorded_at(),
-    )?;
-    filter_window_doc(vault, source, key, selector, &position, Withhold::Unknown)
+        Withhold::Peer(peer),
+    )
 }
 
 /// [`filtered_window_doc`] for the machine a residence read serves: the
@@ -321,9 +335,8 @@ pub fn filtered_window_doc_for(
     filter_window_doc(vault, source, key, selector, &position, withhold)
 }
 
-/// What the selector's grant alone covers, before this device's device-only
-/// flags withhold anything. Promotion authority reads it; the export doors
-/// withhold.
+/// What the selector's grant alone covers, before destination policy
+/// withholds anything. Promotion authority reads it; this is not an export.
 pub(in crate::sync) fn granted_window_doc(
     vault: &Vault,
     source: &LoroDoc,
