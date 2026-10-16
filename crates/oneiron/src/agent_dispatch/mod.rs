@@ -37,6 +37,7 @@ pub use leader_starter::{
 mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
+mod project_proposal;
 mod resident;
 mod room_join;
 mod spend_calibration;
@@ -62,6 +63,8 @@ pub use self::widen_record::ContextWidenProposal;
 pub use self::fanout_statement::{
     ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass,
 };
+pub use self::project_proposal::{ProjectDetection, ProjectDetectionRun};
+
 pub use self::launch::{
     LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,
 };
