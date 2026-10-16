@@ -326,11 +326,7 @@ fn an_outranked_key_cannot_revoke_from_a_branch_below_the_floor() {
         &hardware,
         1,
         AuthorityOp::EnrollDevice {
-            device: device(
-                second_key.clone(),
-                ROLE_OWNER | ROLE_ADMIN,
-                AuthorityTier::Hardware,
-            ),
+            device: device(second_key, ROLE_OWNER | ROLE_ADMIN, AuthorityTier::Hardware),
         },
         3,
         None,
