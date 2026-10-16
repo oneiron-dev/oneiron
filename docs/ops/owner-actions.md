@@ -490,6 +490,38 @@ owners sending the same bundle are two sends. The send is an ordinary outbound e
 leaves. A bundle carries no vault text. A written note is refused until the engine redacts notes
 in the vault (OF-420).
 
+A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
+unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET
+/v1/owner/status` shows the effective `feedback` setting. Every send still asks you first.
+
+## Keep an open feedback inbox
+
+A server can take feedback from anyone, with no key and no moderation (ARCH-0056 #open-inbox).
+It is off unless you turn it on:
+
+```toml
+[feedback.inbox]
+enabled = true            # ONEIRON_FEEDBACK_INBOX
+notes_per_sender = 20     # notes one sender may leave in an hour
+notes_per_hour = 2000     # notes the inbox takes in an hour, from everyone
+
+[limits]
+feedback_inbox_bytes = 131072   # the most one note may carry
+```
+
+Then `GET /v1/feedback?text=…` (optionally `&category=bug`, `papercut`, `confusion` or
+`feature-wish`) lands one note, and so does `POST /v1/feedback` with a plain-text, form or JSON
+(`{"text": …}`) body, or the MessagePack bundle another vault's `collector` send delivers. The
+reply is `202 {"received": true}` and nothing else. Past either count a sender gets `429` with
+`retry-after` and `details.state = "feedback_inbox_flood"`; an IPv6 sender is counted by its
+/64. Behind a reverse proxy, list it in `trusted_proxies` so the proxy's `X-Forwarded-For` names
+the sender; otherwise every caller is counted by its own connection. A longer note gets `413`,
+and a disk at its `disk_reserve_bytes` floor gets `507`.
+
+The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inbox?after=<seq>
+&limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
+carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
+
 ## Saved queries after a pack update
 
 When a new source of an installed pack is activated, the saved queries that read a predicate it

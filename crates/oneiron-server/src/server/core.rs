@@ -129,6 +129,8 @@ pub struct SyncServer {
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// Where the owner's feedback goes; `None` until configured.
     pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
+    /// The open feedback inbox's flood cap, counted while the inbox is on.
+    pub(crate) feedback_flood: crate::api::FloodCap,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -241,6 +243,11 @@ impl SyncServer {
             &config,
         );
         let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        let feedback_flood = crate::api::FloodCap::new(
+            config.feedback_inbox.notes_per_sender,
+            config.feedback_inbox.notes_per_hour,
+            std::time::Instant::now(),
+        );
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
@@ -280,6 +287,7 @@ impl SyncServer {
             extraction_egress: None,
             owner_host: None,
             feedback: None,
+            feedback_flood,
             #[cfg(test)]
             booking_test_now_secs: None,
         })
