@@ -226,6 +226,12 @@ export class Oneiron {
       host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
+    conversations: {
+      turn: {
+        continue: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnContinue(input) as unknown),
+        retry: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as unknown),
+      },
+    },
     companions: {
       sharing: {
         get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as unknown),
