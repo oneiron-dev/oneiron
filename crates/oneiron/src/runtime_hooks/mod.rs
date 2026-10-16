@@ -18,6 +18,8 @@ mod outcome;
 mod read;
 mod replay;
 mod runner;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub mod sandbox;
 mod source;
 mod store;
 
