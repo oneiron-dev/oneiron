@@ -74,6 +74,22 @@ impl RawValue for StoredBody {
 const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
 
+/// The secret scan's hit in one raw-output body, keyed by the same handle
+/// and written before or with its row: a secret no custody record holds, so
+/// no taint ref can name it. Absent for a body the scan found nothing in.
+pub(super) const RAW_OUTPUT_SECRETS: SideTable<String, String, Raw> =
+    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_SECRET);
+
+/// A proposal to lift a secret the scan found in a run result into the
+/// vault. It holds no part of the secret: the body's handle, the detector's
+/// reason and a suggested custody name drawn from the handle alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeRunSecretLiftProposal {
+    pub handle: String,
+    pub detector_reason: String,
+    pub suggested_secret_name: String,
+}
+
 /// Replay-adjacent, NODE-LOCAL per-model wire-heal tally (ONE-1929), keyed by
 /// the VALIDATED model id, so two model ids can never share a row.
 pub(super) const MODEL_HEAL_COUNTS: SideTable<String, HealCount, Raw> =
@@ -191,18 +207,48 @@ impl Vault {
         complete: bool,
         owner: Option<EntityId>,
     ) -> Result<CodeRunRawOutput> {
-        let (output, body) = finish_output(path, sink, complete, self.limit_watch())?;
+        let finished = finish_output(path, sink, complete, self.limit_watch())?;
         let mut wtxn = self.store.env.write_txn()?;
-        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &body)?;
+        self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, owner)?;
+        wtxn.commit()?;
+        Ok(finished.output)
+    }
+
+    /// Writes the row of the body `finished` holds, its secret mark, and,
+    /// with an `owner`, `occurrence` as that owner's: the manifest of the
+    /// same bytes at the owner's path.
+    pub(crate) fn put_code_run_output_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        finished: &FinishedOutput,
+        occurrence: &CodeRunRawOutput,
+        owner: Option<EntityId>,
+    ) -> Result<()> {
+        if occurrence.handle != finished.output.handle {
+            return Err(Error::InvariantViolation(
+                "code-run output occurrence names other bytes",
+            ));
+        }
+        RAW_OUTPUTS.put(&self.store, wtxn, &occurrence.handle, &finished.body)?;
+        if let Some(reason) = finished.secret {
+            self.mark_code_run_output_secret_in_txn(wtxn, occurrence, reason)?;
+        }
         if let Some(owner) = owner {
             crate::provenance::body::publish_body_in_txn(
                 &self.store,
-                &mut wtxn,
-                &owned_body(owner, &output, &body)?,
+                wtxn,
+                &owned_body(owner, occurrence, &finished.body)?,
             )?;
         }
-        wtxn.commit()?;
-        Ok(output)
+        Ok(())
+    }
+
+    /// Writes `bytes` as a complete body at `path`: a file, past the inline
+    /// bound, is whole on disk when this returns, and no row names it yet.
+    pub(crate) fn stage_code_run_output(&self, path: String, bytes: &[u8]) -> Result<FinishedOutput> {
+        let mut sink = self.code_run_output_sink()?;
+        sink.write(bytes)?;
+        finish_output(path, sink, true, self.limit_watch())
     }
 
     /// Stores a complete body held whole under its content handle; `output`
@@ -227,8 +273,8 @@ impl Vault {
         validate_taint_refs(taint_refs)?;
         let mut sink = self.code_run_output_sink()?;
         sink.write(raw)?;
-        let (stored, body) = finish_output(output.path.clone(), sink, true, self.limit_watch())?;
-        if stored != *output {
+        let finished = finish_output(output.path.clone(), sink, true, self.limit_watch())?;
+        if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
@@ -239,7 +285,7 @@ impl Vault {
         } else {
             RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &output.handle, &taint_refs.to_vec())?;
         }
-        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &body)?;
+        self.put_code_run_output_in_txn(&mut wtxn, &finished, output, None)?;
         Ok(wtxn.commit()?)
     }
 
@@ -263,15 +309,113 @@ impl Vault {
     /// the output was produced under, `TaintedStale` the moment one rotates
     /// or is revoked. No row is rewritten at rotation time to make that
     /// true.
+    ///
+    /// A body the secret scan marked is `TaintedLive` for good: no custody
+    /// record holds what it found, so nothing can rotate it away.
     pub fn code_run_raw_output_taint_state(
         &self,
         output: &CodeRunRawOutput,
     ) -> Result<ArtifactTaintState> {
         let rtxn = self.store.env.read_txn()?;
+        if RAW_OUTPUT_SECRETS
+            .get(&self.store, &rtxn, &output.handle)?
+            .is_some()
+        {
+            return Ok(ArtifactTaintState::TaintedLive);
+        }
         let refs = RAW_OUTPUT_TAINTS
             .get(&self.store, &rtxn, &output.handle)?
             .unwrap_or_default();
         taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
+    }
+
+    /// The reason the secret scan marked `output`'s body with, if it did.
+    pub fn code_run_raw_output_secret(&self, output: &CodeRunRawOutput) -> Result<Option<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        RAW_OUTPUT_SECRETS.get(&self.store, &rtxn, &output.handle)
+    }
+
+    /// Every run's result manifests in the base vault, from its replay
+    /// record: an off-record run's records live in its room, never here.
+    pub(crate) fn code_run_result_manifests_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, Vec<CodeRunRawOutput>)>> {
+        Ok(REPLAY_RECORDS
+            .scan(&self.store, rtxn)?
+            .into_iter()
+            .map(|(run_id, record)| (run_id, record.outputs))
+            .collect())
+    }
+
+    /// Why `output`'s body is withheld from a view leaving the vault: the
+    /// secret scan marked it, or it carries taint refs, live or stale alike.
+    pub(crate) fn code_run_result_withheld_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<&'static str>> {
+        if RAW_OUTPUT_SECRETS
+            .get(&self.store, rtxn, &output.handle)?
+            .is_some()
+        {
+            return Ok(Some("secret_scan"));
+        }
+        if RAW_OUTPUT_TAINTS
+            .get(&self.store, rtxn, &output.handle)?
+            .is_some_and(|refs| !refs.is_empty())
+        {
+            return Ok(Some("tainted"));
+        }
+        Ok(None)
+    }
+
+    /// The whole body of `output` under `rtxn`, checked against its digest;
+    /// `None` when no row holds it.
+    pub(crate) fn code_run_result_body_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<Vec<u8>>> {
+        RAW_OUTPUTS
+            .get(&self.store, rtxn, &output.handle)?
+            .map(|body| load_whole_body(output, body, || Ok(vec![self.store.body_dir()?])))
+            .transpose()
+    }
+
+    /// The value-free proposals to lift what the secret scan found in run
+    /// results into the vault (ARCH-0069 S5), one per marked body, for the
+    /// owner to take or dismiss. Each names the body by its handle only.
+    pub fn code_run_secret_lift_proposals(&self) -> Result<Vec<CodeRunSecretLiftProposal>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(RAW_OUTPUT_SECRETS
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(handle, detector_reason)| CodeRunSecretLiftProposal {
+                suggested_secret_name: format!(
+                    "code_run.{}",
+                    handle
+                        .strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX)
+                        .unwrap_or(&handle)
+                        .get(..16)
+                        .unwrap_or_default()
+                ),
+                handle,
+                detector_reason,
+            })
+            .collect())
+    }
+
+    /// Marks `output`'s body with the secret scan's `reason`, which files
+    /// its lift proposal. The body stays whole: the mark redacts its views
+    /// and nulls it in an export.
+    fn mark_code_run_output_secret_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        output: &CodeRunRawOutput,
+        reason: &str,
+    ) -> Result<()> {
+        RAW_OUTPUT_SECRETS.put(&self.store, wtxn, &output.handle, &reason.to_owned())
     }
 
     /// Test-only direct tally increment. Production executor commits use the
@@ -361,15 +505,37 @@ impl Vault {
     }
 }
 
-/// Finishes `sink` into the output's manifest and its row. A body that took
-/// the disk below `[limits] code_result_disk_floor_bytes` asks that row's
-/// question; it is stored whole all the same.
+/// A finished body: its manifest, its row and the secret scan's hit. A
+/// spilled body's file is already whole on disk.
+pub(crate) struct FinishedOutput {
+    pub(crate) output: CodeRunRawOutput,
+    pub(super) body: StoredBody,
+    pub(super) secret: Option<&'static str>,
+}
+
+impl FinishedOutput {
+    /// The manifest of these bytes at `path`, as one owner's occurrence.
+    pub(crate) fn at(&self, path: String, complete: bool) -> Result<CodeRunRawOutput> {
+        let output = CodeRunRawOutput {
+            path,
+            complete,
+            ..self.output.clone()
+        };
+        validate_raw_output(&output)?;
+        Ok(output)
+    }
+}
+
+/// Finishes `sink` into the output's manifest, its row and the secret
+/// scan's hit. A body that took the disk below `[limits]
+/// code_result_disk_floor_bytes` asks that row's question; it is stored
+/// whole all the same, as a body the scan marked is.
 pub(super) fn finish_output(
     path: String,
     sink: BodySink,
     complete: bool,
     watch: &LimitWatch,
-) -> Result<(CodeRunRawOutput, StoredBody)> {
+) -> Result<FinishedOutput> {
     let (facts, sunk) = sink.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS)?;
     let output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
     let body = match sunk {
@@ -381,7 +547,11 @@ pub(super) fn finish_output(
             StoredBody::File { len: facts.len }
         }
     };
-    Ok((output, body))
+    Ok(FinishedOutput {
+        output,
+        body,
+        secret: facts.secret,
+    })
 }
 
 /// `output` as an occurrence `owner` holds: one per owner and path.

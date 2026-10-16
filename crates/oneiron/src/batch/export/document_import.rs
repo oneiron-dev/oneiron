@@ -1,7 +1,9 @@
 //! Validating JSON import through ordinary admission doors, never sync replay.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{ExportEdge, ExportEntity, WholeVaultDocument, WholeVaultImportReceipt};
+use super::{
+    ExportEdge, ExportEntity, ExportRunResults, WholeVaultDocument, WholeVaultImportReceipt,
+};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
@@ -20,7 +22,7 @@ use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
 impl Vault {
-    /// Validates a JSON document and its six-part shape without writing anything.
+    /// Validates a JSON document and its seven-part shape without writing anything.
     /// The returned data remains untrusted. A manifest is not an approval grant.
     pub fn read_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
         let document: WholeVaultDocument = serde_json::from_slice(bytes)
@@ -84,6 +86,9 @@ impl Vault {
             .iter()
             .map(|entry| parse_id(&entry.entity_id))
             .collect::<Result<_>>()?;
+        // Run result bodies are written whole before any row names them; the
+        // rows commit with the rest below, or not at all.
+        let staged_results = stage_run_results(self, &document.run_results)?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -329,6 +334,8 @@ impl Vault {
                 )?;
             }
         }
+        let (imported_results, withheld_results) =
+            put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {
             authority,
@@ -341,8 +348,83 @@ impl Vault {
                 .filter(|(a, b)| a != b)
                 .map(|(a, b)| (a.to_hex(), b.to_hex()))
                 .collect(),
+            imported_results,
+            withheld_results,
         })
     }
+}
+
+/// Writes each run result body the archive carries once, checked against
+/// its digest and length, so the manifests and line indexes are rebuilt
+/// from the bytes; the secret scan reads them again as they go in. No row
+/// names a body yet.
+fn stage_run_results(
+    vault: &Vault,
+    results: &ExportRunResults,
+) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
+    let contents: BTreeMap<&str, &str> = results
+        .bodies
+        .iter()
+        .filter_map(|body| Some((body.blake3.as_str(), body.content.as_deref()?)))
+        .collect();
+    let mut staged = BTreeMap::new();
+    for output in results.runs.iter().flat_map(|run| &run.outputs) {
+        let digest = parse_digest(&output.blake3)?;
+        if staged.contains_key(&digest) {
+            continue;
+        }
+        let Some(content) = contents.get(output.blake3.as_str()) else {
+            continue;
+        };
+        if content.len() as u64 != output.bytes || *blake3::hash(content.as_bytes()).as_bytes() != digest
+        {
+            return Err(invalid("run result body does not match its digest"));
+        }
+        staged.insert(
+            digest,
+            vault.stage_code_run_output(output.path.clone(), content.as_bytes())?,
+        );
+    }
+    Ok(staged)
+}
+
+/// Writes each run's results whose bodies came back as that run's
+/// occurrences; a result the export withheld stays a manifest in the
+/// archive. Returns the counts of both.
+fn put_run_results_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    results: &ExportRunResults,
+    staged: &BTreeMap<[u8; 32], crate::code_run::FinishedOutput>,
+) -> Result<(usize, usize)> {
+    let (mut imported, mut withheld) = (0, 0);
+    for run in &results.runs {
+        let run_id = parse_id(&run.run_id)?;
+        for output in &run.outputs {
+            let Some(finished) = staged.get(&parse_digest(&output.blake3)?) else {
+                withheld += 1;
+                continue;
+            };
+            let occurrence = finished.at(output.path.clone(), output.complete)?;
+            vault.put_code_run_output_in_txn(wtxn, finished, &occurrence, Some(run_id))?;
+            imported += 1;
+        }
+    }
+    Ok((imported, withheld))
+}
+
+fn parse_digest(text: &str) -> Result<[u8; 32]> {
+    let mut digest = [0; 32];
+    if text.len() != 64 {
+        return Err(invalid("run result digest"));
+    }
+    for (byte, pair) in digest.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        *byte = std::str::from_utf8(pair)
+            .ok()
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+            .ok_or_else(|| invalid("run result digest"))?;
+    }
+    Ok(digest)
 }
 
 fn validate_existing_source(

@@ -44,8 +44,8 @@ pub use self::replay::{
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
     code_run_replay_abi_layout_checks,
 };
-pub use self::storage::CodeRunModelHealCount;
-pub(crate) use self::storage::code_run_body_file_of_row;
+pub use self::storage::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
+pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row};
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
