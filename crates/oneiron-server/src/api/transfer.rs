@@ -111,6 +111,7 @@ pub(crate) struct Transfers {
     /// Bytes uploads in flight have reserved against `lfs_quota`.
     lfs_reserved: Arc<Mutex<u64>>,
     /// The vault disk's floor, and the room uploads in flight claim on it.
+    /// What a git exchange holds past memory keeps it too.
     pub(crate) disk: DiskFloor,
     /// The page size the vault's object plane is stored in, which each
     /// stored chunk rounds up to; the largest LMDB writes in when it cannot
@@ -121,9 +122,23 @@ pub(crate) struct Transfers {
     shown_page: Mutex<Option<u64>>,
     pub(crate) questions: Arc<LimitQuestions>,
     pub(crate) idle: Duration,
+    /// Bytes of one push's status report held in memory while its landing is
+    /// journaled; the rest is held on disk, above `disk`'s reserve.
+    pub(crate) git_status_memory: usize,
     /// The floors a push's door scan keeps.
     pub(crate) scan: ScanBounds,
     pub(crate) wait: Duration,
+}
+
+/// Bytes of one push's status report held in memory: a 512th of the
+/// machine's memory, 8 MiB when that cannot be read. A push holds two such
+/// copies at most, the report and its rewrite, and only its exchange's worker
+/// holds them, under the exchange's permit until the report is sent; so every
+/// git exchange holding both at once keeps to a small share of memory.
+fn git_status_memory() -> usize {
+    crate::machine::memory_bytes().map_or(8 * 1024 * 1024, |bytes| {
+        usize::try_from(bytes / 512).unwrap_or(usize::MAX)
+    })
 }
 
 impl Transfers {
@@ -172,6 +187,7 @@ impl Transfers {
             shown_page: Mutex::default(),
             questions,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
+            git_status_memory: git_status_memory(),
             scan: limits.scan_bounds()?,
             wait,
         })
