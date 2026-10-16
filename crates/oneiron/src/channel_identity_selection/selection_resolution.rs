@@ -30,6 +30,28 @@ pub struct ChannelIdentityThreadPin {
     pub facet_ref: Option<EntityId>,
 }
 
+impl ChannelIdentityThreadPin {
+    /// The pin a thread's first passport set, in the shape the selection
+    /// query takes (OF-272). `None` while no passport has landed.
+    ///
+    /// # Errors
+    /// As [`crate::Vault::sticky_thread_mask`].
+    pub fn for_thread(vault: &crate::Vault, thread_ref: &str) -> crate::Result<Option<Self>> {
+        use crate::thread_passport::StickyMaskDecision;
+        let mask = match vault.sticky_thread_mask(thread_ref, None)? {
+            StickyMaskDecision::Keep(mask) | StickyMaskDecision::Conflict { pinned: mask, .. } => {
+                mask
+            }
+            StickyMaskDecision::Unset => return Ok(None),
+        };
+        Ok(Some(Self {
+            thread_ref: vault.canonical_thread_ref(thread_ref)?,
+            identity_ref: mask.identity_ref,
+            facet_ref: mask.facet_ref,
+        }))
+    }
+}
+
 /// One selection question.
 pub struct ChannelIdentitySelectionQuery<'a> {
     pub relationship: RelationshipContext,

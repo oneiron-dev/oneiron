@@ -105,7 +105,7 @@ impl PreparedOutboundDispatch {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
             read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
         };
-        request.channel_identity_ref = resolve_dispatch_sender(
+        (request.channel_identity_ref, request.facet_ref) = resolve_dispatch_sender(
             vault,
             &request,
             replay
@@ -191,6 +191,8 @@ impl PreparedOutboundDispatch {
             requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
             policy_risk: self.policy_risk.as_str(),
             originating_session_ref: request.originating_session_ref.as_deref(),
+            reply_thread_ref: request.reply_thread_ref.as_deref(),
+            facet_ref: request.facet_ref.map(|id| id.to_hex()),
         })
         .map_err(|_| Error::InvariantViolation("outbound intent freeze failed"))?;
         if let Some(record) = self.replay.as_ref() {
@@ -342,34 +344,85 @@ pub(super) fn invalid_replay() -> OutboundDispatchError {
     ))
 }
 
+/// The sender identity and facet a send goes out as. A replay reads both
+/// from its frozen binding; a new send on a reply thread wears the thread's
+/// pin (OF-272); any other new send enriches by connector and actor.
 fn resolve_dispatch_sender(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     replay_payload: Option<&[u8]>,
-) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
+) -> std::result::Result<(Option<EntityId>, Option<EntityId>), OutboundDispatchError> {
     if let Some(payload) = replay_payload {
         let frozen: serde_json::Value =
             serde_json::from_slice(payload).map_err(|_| invalid_replay())?;
-        let sender = match frozen.get("channel_identity_ref") {
-            Some(serde_json::Value::Null) => None,
-            Some(serde_json::Value::String(value)) => {
-                Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
-            }
-            _ => return Err(invalid_replay()),
-        };
-        if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
+        let sender = frozen_entity(frozen.get("channel_identity_ref"), true)?;
+        let facet = frozen_entity(frozen.get("facet_ref"), false)?;
+        if (request.channel_identity_ref.is_some() && request.channel_identity_ref != sender)
+            || (request.facet_ref.is_some() && request.facet_ref != facet)
+        {
             return Err(invalid_replay());
         }
-        Ok(sender)
-    } else {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        enrich_dispatch_channel_identity(
-            &vault.store,
-            &txn,
-            &request.intent.channel,
-            request.actor.actor_entity_ref.as_ref(),
-            request.channel_identity_ref,
-        )
-        .map_err(Into::into)
+        return Ok((sender, facet));
     }
+    let (requested, facet) = match request.reply_thread_ref.as_deref() {
+        Some(thread_ref) => match reply_thread_pin(vault, request, thread_ref)? {
+            Some(pin) => (Some(pin.identity_ref), pin.facet_ref),
+            None => (request.channel_identity_ref, request.facet_ref),
+        },
+        None => (request.channel_identity_ref, request.facet_ref),
+    };
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let sender = enrich_dispatch_channel_identity(
+        &vault.store,
+        &txn,
+        &request.intent.channel,
+        request.actor.actor_entity_ref.as_ref(),
+        requested,
+    )?;
+    Ok((sender, facet))
+}
+
+/// One frozen entity ref: a hex string, or null where `nullable` (the
+/// sender is frozen even when absent; an absent facet is elided).
+fn frozen_entity(
+    value: Option<&serde_json::Value>,
+    nullable: bool,
+) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
+    match value {
+        Some(serde_json::Value::String(value)) => {
+            Ok(Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?))
+        }
+        Some(serde_json::Value::Null) if nullable => Ok(None),
+        None if !nullable => Ok(None),
+        _ => Err(invalid_replay()),
+    }
+}
+
+/// OF-272 reply selection: the thread's first passport pins who speaks on
+/// it. A reply from another actor, or one that names another identity or
+/// facet, is refused; the composer decides what to say about the pin.
+fn reply_thread_pin(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    thread_ref: &str,
+) -> std::result::Result<Option<crate::thread_passport::ThreadMask>, OutboundDispatchError> {
+    let pin = match vault.sticky_thread_mask(thread_ref, None)? {
+        crate::thread_passport::StickyMaskDecision::Keep(pin)
+        | crate::thread_passport::StickyMaskDecision::Conflict { pinned: pin, .. } => pin,
+        crate::thread_passport::StickyMaskDecision::Unset => return Ok(None),
+    };
+    if request.actor.actor_entity_ref != Some(pin.actor_ref)
+        || request
+            .channel_identity_ref
+            .is_some_and(|identity| identity != pin.identity_ref)
+        || request
+            .facet_ref
+            .is_some_and(|facet| Some(facet) != pin.facet_ref)
+    {
+        return Err(Error::InvalidConfig(
+            "the reply thread is pinned to another identity, facet or actor".to_owned(),
+        )
+        .into());
+    }
+    Ok(Some(pin))
 }

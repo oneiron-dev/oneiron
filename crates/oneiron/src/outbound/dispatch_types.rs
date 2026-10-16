@@ -148,6 +148,14 @@ pub struct OutboundDispatchRequest {
     /// so the connector-send side resolves the same document a retry replays
     /// instead of re-rendering one.
     pub calendar_invite: Option<CalendarInvitePayload>,
+    /// OF-272 reply selection: the thread this send replies on. The thread's
+    /// first passport pins the sender identity and facet; a send that asks
+    /// for another identity or facet on a pinned thread is refused, never
+    /// flipped. Frozen with the payload.
+    pub reply_thread_ref: Option<String>,
+    /// The facet the sender wears on this send, frozen with the payload. A
+    /// reply on a pinned thread takes the pin's facet.
+    pub facet_ref: Option<EntityId>,
 }
 
 impl OutboundDispatchRequest {
@@ -186,7 +194,22 @@ impl OutboundDispatchRequest {
             linkedin_sandbox_policy: None,
             campaign_unsubscribe: None,
             calendar_invite: None,
+            reply_thread_ref: None,
+            facet_ref: None,
         }
+    }
+
+    /// Marks this send as a reply on `thread_ref`; its pin selects the sender.
+    #[must_use]
+    pub fn reply_thread(mut self, thread_ref: impl Into<String>) -> Self {
+        self.reply_thread_ref = Some(thread_ref.into());
+        self
+    }
+
+    #[must_use]
+    pub fn facet_ref(mut self, facet_ref: EntityId) -> Self {
+        self.facet_ref = Some(facet_ref);
+        self
     }
 
     #[must_use]
