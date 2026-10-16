@@ -20,7 +20,7 @@ mod burst_inputs;
 mod call;
 mod defaults;
 pub use defaults::{
-    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable,
+    DEFAULT_ASSET_TEXT_AT, ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable,
     ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane, VoicePrecedence,
     locality_within_extraction_bound,
 };

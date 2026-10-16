@@ -4,10 +4,8 @@
 //! written in the same commit, so every form is ready before anyone reads it.
 //! The resolver then picks, per read, which form a consumer is served: image
 //! bytes for a consumer that reads images, the precomputed text for one that
-//! does not. Budget pressure never swaps one for the other (OF-329, owner
-//! 10-16): a consumer that reads images is served the image. It only picks
-//! the form of what the reader's scope already admits; a read no form fits
-//! fails closed.
+//! does not, and the text under budget pressure. It only picks the form of
+//! what the reader's scope already admits; a read no form fits fails closed.
 
 use base64::Engine as _;
 use rmpv::Value;
@@ -23,7 +21,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
 use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
-use crate::llm::{BudgetLease, BudgetRead, CallPurpose, LlmCapability, ModelId};
+use crate::llm::{BudgetLease, BudgetRead, BudgetThreshold, CallPurpose, LlmCapability, ModelId};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::temporal::TimeRange;
@@ -47,7 +45,7 @@ pub enum ServedAssetForm {
 }
 
 /// Who reads an asset: what the consumer's model takes in, and the call
-/// purpose the read serves.
+/// purpose whose policy row says where budget pressure starts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetConsumer {
     /// The consumer's input capabilities; image bytes need `image_input`.
@@ -262,7 +260,7 @@ impl Memory<'_> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let asset = self.resolve_ref_in_lane(&lane, asset_ref)?;
         let ScopedReadResult { value, receipt } =
-            asset_forms_in_lane(&lane, asset, false, &mut |_| true)?;
+            asset_forms_in_lane(&lane, asset, consumer, false, &mut |_| true)?;
         match value.and_then(|forms| forms.serve(consumer, budget)) {
             Some(value) => {
                 lane.commit_served_forms(&[served_form(asset, &value)?])?;
@@ -391,7 +389,7 @@ pub fn hydrated_asset(
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<HydratedAsset>> {
     let ScopedReadResult { value, receipt } =
-        asset_forms_in_lane(lane, asset, true, admits)?;
+        asset_forms_in_lane(lane, asset, consumer, true, admits)?;
     let value = match value {
         Some(forms) if forms.image.is_some() => forms.hydrated(consumer, budget, admits)?,
         _ => HydratedAsset::Stored,
@@ -405,7 +403,8 @@ fn form_body(body: &impl Serialize) -> MemoryResult<Vec<u8>> {
         .map_err(|_| MemoryError::bad_request("body is not MessagePack-encodable"))
 }
 
-/// The forms one admitted ASSET holds.
+/// The forms one admitted ASSET holds, and where budget pressure starts for
+/// the consumer's purpose.
 pub(crate) struct AssetForms {
     asset: EntityId,
     image: Option<ImageBytes>,
@@ -413,18 +412,19 @@ pub(crate) struct AssetForms {
     text: Option<(EntityId, String)>,
     /// Whether a text's stored body was refused before it decoded.
     omitted: bool,
+    rung: BudgetThreshold,
 }
 
 impl AssetForms {
-    /// The form `consumer` is served; `None` fails closed. A budget under
-    /// pressure picks no form: it is the run's to raise, never a silent swap.
+    /// The form `consumer` is served under `budget`; `None` fails closed.
     fn form(
         &self,
         consumer: &AssetConsumer,
-        _budget: Option<&BudgetRead>,
+        budget: Option<&BudgetRead>,
     ) -> Option<ServedAssetForm> {
         choose_form(
             consumer.reads_images(),
+            under_pressure(budget, self.rung),
             self.image.is_some(),
             self.text.is_some(),
         )
@@ -496,12 +496,13 @@ impl AssetForms {
 pub(crate) fn asset_forms_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
+    consumer: &AssetConsumer,
     images_only: bool,
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
     let vault = lane.vault();
     let ScopedReadResult {
-        value: (row, derived),
+        value: (row, derived, rung),
         mut receipt,
     } = lane.read_projected(&[PointRead::id(asset)], None, |txn, rows| {
         let row = rows
@@ -522,7 +523,10 @@ pub(crate) fn asset_forms_in_lane(
                 derived.push(edge?.target);
             }
         }
-        Ok::<_, MemoryError>((row, derived))
+        let rung = crate::llm::read_effective_defaults(&vault.store, txn)?
+            .table()
+            .asset_text_at(&consumer.purpose);
+        Ok::<_, MemoryError>((row, derived, rung))
     })?;
     let Some(body) = row else {
         return Ok(ScopedReadResult {
@@ -535,6 +539,7 @@ pub(crate) fn asset_forms_in_lane(
         image: image_of(&body)?,
         text: None,
         omitted: false,
+        rung,
     };
     if !(derived.is_empty() || (images_only && forms.image.is_none())) {
         let reads: Vec<_> = derived.iter().map(|id| PointRead::id(*id)).collect();
@@ -567,17 +572,29 @@ pub(crate) fn asset_forms_in_lane(
     })
 }
 
-/// Image bytes go to a consumer that reads images, of an asset that holds
-/// one. Otherwise the precomputed text; otherwise nothing, and the read fails
-/// closed.
-fn choose_form(reads_images: bool, has_image: bool, has_text: bool) -> Option<ServedAssetForm> {
-    if reads_images && has_image {
+/// Image bytes go only to a consumer that reads images, of an asset that
+/// holds one, outside budget pressure. Otherwise the precomputed text;
+/// otherwise nothing, and the read fails closed.
+fn choose_form(
+    reads_images: bool,
+    under_pressure: bool,
+    has_image: bool,
+    has_text: bool,
+) -> Option<ServedAssetForm> {
+    if reads_images && has_image && !under_pressure {
         Some(ServedAssetForm::Image)
     } else if has_text {
         Some(ServedAssetForm::AssetText)
     } else {
         None
     }
+}
+
+/// Pressure starts once the budget has crossed the purpose's rung.
+fn under_pressure(budget: Option<&BudgetRead>, rung: BudgetThreshold) -> bool {
+    budget.is_some_and(|read| {
+        read.fired_thresholds.contains(&rung) || read.depleted_percent() >= rung.percent()
+    })
 }
 
 /// The ASSET body for generated bytes: the canon asset fields beside the
