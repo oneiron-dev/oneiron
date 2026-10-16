@@ -13,8 +13,7 @@ const FOLDS: SideTable<EntityId, FoldLedger, Raw> = SideTable::new(&side_table::
 
 impl RawValue for FoldLedger {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        serde_json::to_vec(self)
-            .map_err(|_| Error::CorruptedIndex("code-run fold ledger").into())
+        serde_json::to_vec(self).map_err(|_| Error::CorruptedIndex("code-run fold ledger").into())
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {

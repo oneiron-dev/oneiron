@@ -238,7 +238,7 @@ pub(crate) fn withdraw_from_lost_source_in_txn(
     {
         return Ok(());
     }
-    withdraw_in_txn(store, txn, summary, &worlds)
+    withdraw_words_in_txn(store, txn, summary, &worlds)
 }
 /// Where the words of `source` sit, read while its row, stamp and edges still
 /// stand, whatever its body holds. A source no one can place is unknown, and
@@ -299,11 +299,24 @@ fn withdraw_in_txn(
     let pending = epoch_dependents_in_txn(store, txn, id)?;
     withdraw_epochs_in_txn(store, txn, pending, worlds)
 }
+/// [`withdraw_in_txn`], then an epoch summary's words leave its row. Its
+/// worlds are recorded and every epoch written from it withdrawn first,
+/// while its body still classifies them.
+fn withdraw_words_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    worlds: &CarriedWorlds,
+) -> Result<()> {
+    withdraw_in_txn(store, txn, id, worlds)?;
+    crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, id)
+}
 
 /// Withdraws the epoch summaries in `pending` for `worlds`, and those written
 /// from them. A worklist, not recursion: no chain's depth reaches the stack.
 /// A stale one is not marked again, and is walked again only when this adds
-/// a world to it.
+/// a world to it. Each one walked keeps only its keyframe once those written
+/// from it are found.
 pub(super) fn withdraw_epochs_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -320,6 +333,7 @@ pub(super) fn withdraw_epochs_in_txn(
             mark_one_stale_in_txn(store, txn, &next)?;
         }
         pending.extend(epoch_dependents_in_txn(store, txn, &next)?);
+        crate::compaction::scrub_withdrawn_epoch_in_txn(store, txn, &next)?;
     }
     Ok(())
 }
@@ -402,7 +416,7 @@ pub(super) fn withdraw_dependent_in_txn(
     {
         return Ok(());
     }
-    withdraw_in_txn(store, txn, dependent, worlds)?;
+    withdraw_words_in_txn(store, txn, dependent, worlds)?;
     let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
     crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
         txn,

@@ -8,10 +8,13 @@ use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
-    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, home_search_candidates,
-    index_selection_revision, promotion_snapshot_with, selected_item_blob_with, window_index_page,
+    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_tail_for,
+    home_search_candidates,
+    index_selection_revision, promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet,
+    selected_item_blob_with, shelve_sealed_window, window_index_page,
     window_index_projection_with,
 };
+use oneiron::world_keys::SealedContentId;
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
@@ -82,6 +85,39 @@ struct SearchRequest {
     selector: String,
 }
 
+/// A sealed packet of one private-world window, for the home to keep
+/// (OF-534 G7).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SealedPutRequest {
+    window: String,
+    packet: String,
+    #[serde(default)]
+    retire_through: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SealedListRequest {
+    #[serde(default)]
+    after: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedGetRequest {
+    id: String,
+}
+
+/// The authority entries a machine holds, as concatenated 32-byte hashes in
+/// base64, and how many missing entries it takes in one page (OF-469).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityTailRequest {
+    held: String,
+    limit: usize,
+}
+
 pub(super) fn run(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -101,6 +137,10 @@ pub(super) fn run(
             "residence.touch" => touch(server, auth, peer, request.params),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.search" => search(server, auth, peer, request.params, budgets),
+            "residence.sealed.put" => sealed_put(server, auth, peer, request.params),
+            "residence.sealed.list" => sealed_list(server, peer, request.params),
+            "residence.sealed.get" => sealed_get(server, peer, request.params),
+            "residence.authority.tail" => authority_tail(server, peer, request.params),
             _ => Err(AppError::bad_request(
                 "unknown residence RPC",
                 Some("method"),
@@ -615,4 +655,85 @@ fn search(
         json!({"hits": hits, "source": "home", "complete": true}),
         Some(rows),
     ))
+}
+
+/// Keeps a sealed packet of a private world's window that the sending
+/// machine reads (OF-534 G7). The home opens nothing; a refused sender,
+/// world or packet looks missing.
+fn sealed_put(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    auth.require(CoreScope::Write)?;
+    let input: SealedPutRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let window = WindowKey::try_new(input.window).ok_or_else(AppError::invalid_params)?;
+    let packet = base64::engine::general_purpose::STANDARD
+        .decode(input.packet)
+        .map_err(|_| AppError::invalid_params())?;
+    let (id, seq) =
+        shelve_sealed_window(&server.vault, peer, &window, &packet, input.retire_through)
+            .map_err(|_| AppError::not_found("sealed window", None))?;
+    Ok((json!({"id": id.to_hex(), "seq": seq}), Some(Vec::new())))
+}
+
+/// The live sealed packets after one arrival, of the worlds the proved
+/// machine reads.
+fn sealed_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: SealedListRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let entries = sealed_shelf_after(&server.vault, peer, input.after)
+        .map_err(|_| AppError::not_found("sealed shelf", None))?;
+    let entries: Vec<Value> = entries
+        .into_iter()
+        .map(|entry| {
+            json!({"id": entry.id.to_hex(), "window": entry.window.as_str(), "seq": entry.seq})
+        })
+        .collect();
+    Ok((json!({"entries": entries}), Some(Vec::new())))
+}
+
+/// One live or retired sealed packet, for a proved machine that reads its
+/// world.
+fn sealed_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: SealedGetRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let id = SealedContentId::from_hex(&input.id).map_err(|_| AppError::invalid_params())?;
+    let (window, packet) = sealed_shelf_packet(&server.vault, peer, &id)
+        .map_err(|_| AppError::not_found("sealed packet", None))?
+        .ok_or_else(|| AppError::not_found("sealed packet", None))?;
+    Ok((
+        json!({
+            "id": id.to_hex(),
+            "window": window.as_str(),
+            "packet": base64::engine::general_purpose::STANDARD.encode(packet),
+        }),
+        Some(Vec::new()),
+    ))
+}
+
+/// The signed authority entries the proved machine lacks, parents first
+/// (OF-469). Only a machine of the owner's is served; any other looks missing.
+fn authority_tail(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: AuthorityTailRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(input.held)
+        .map_err(|_| AppError::invalid_params())?;
+    if raw.len() % 32 != 0 {
+        return Err(AppError::invalid_params());
+    }
+    let held: std::collections::BTreeSet<oneiron::authority::AuthorityEntryHash> = raw
+        .chunks_exact(32)
+        .map(|hash| <[u8; 32]>::try_from(hash).map_err(|_| AppError::invalid_params()))
+        .collect::<Result<_, _>>()?;
+    let entries = authority_tail_for(&server.vault, peer, &held, input.limit)
+        .map_err(|_| AppError::not_found("authority history", None))?;
+    let entries: Vec<String> = entries
+        .iter()
+        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+        .collect();
+    Ok((json!({"entries": entries}), Some(Vec::new())))
 }
