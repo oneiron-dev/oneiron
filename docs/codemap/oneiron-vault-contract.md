@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `src/lib/artifact_origin.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 const | ArtifactHost, ArtifactHostRead | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
 | `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
 | `src/lib/ctl.rs` | src | s | 1 struct · 4 enum · 2 fn | CtlRequest, CtlResponse, ShedBlockerWire, ShedCause, ShedStatus | Supervisor ctl request/response wire types and shed/slim validation |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |
@@ -22,11 +23,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
 | `src/lib/managed_holder.rs` | src | s | 1 struct · 2 fn | ManagedWidenAction | Host-attested account action for one managed widen request |
-| `src/lib/mod.rs` | src | s | 6 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 7 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/preview.rs` | src | s | 3 struct · 1 enum · 2 fn | PreviewEndpoint, PreviewPortDeclaration, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
 | `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
 | `src/lib/tenancy.rs` | src | s | 2 struct · 1 enum · 16 fn | VaultBinding, VaultHost, VaultTenancy | Single-vault identity and lifecycle for account and organization hosts |
 | `src/lib/tests.rs` | test | m | — | — | Wire-compat and validation test suite |
 | `src/lib/version.rs` | src | s | 1 fn · 2 const | — | Wire version constants and SLIM gating |
-| `src/lib/vm.rs` | src | s | 2 enum · 4 fn · 7 const | VmGuestFrame, VmHostFrame | The vault-VM wire: vsock ports and boot-channel frames |
+| `src/lib/vm.rs` | src | s | 2 enum · 4 fn · 8 const | VmGuestFrame, VmHostFrame | The vault-VM wire: vsock ports and boot-channel frames |
 | `src/lib/wake.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 crate-vis | Schedule, WakeEntry | Vault naming, timestamps, wake schedule and entry validation |
