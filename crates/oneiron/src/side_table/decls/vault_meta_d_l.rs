@@ -2,6 +2,9 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// One typed-decision ask the ladder queued for the vault owner role, and its answer once
+    /// given. Key: u64be(sequence).
+    DECISION_ASK: VaultMeta b"decision:ask:v1:" Named;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
@@ -15,6 +18,15 @@ side_tables! {
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
+    /// OF-490: one read of an agent's diary: reader, stated reason, entries and Grants (the agent
+    /// sees it). Key: id16 (agent) + id16 (read).
+    DIARY_READ_LOG: VaultMeta b"diary:read_log:v1:" Named;
+    /// OF-490: a reader's reason waiting on, or answered by, the agent's Y/N review. Key: id16
+    /// (agent) + id16 (request).
+    DIARY_READ_REQUEST: VaultMeta b"diary:read_request:v1:" Named;
+    /// OF-490: an agent reviews each read of its diary before it is read (on for Eiri; absent
+    /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
+    DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw;
     /// Enforcement-truth per-counterparty-contact disclosure scope row (rmpv-encoded), dual-written
     /// with an owner-visible claim. Key: id16.
     DISCLOSURE_SCOPE: VaultMeta b"disclosure.scope.v1:" Raw;
@@ -90,6 +102,15 @@ side_tables! {
     /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
     /// lists the same ones. Ids only, never their text. Key: id16.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
+    /// Atomic merge/narrative outputs for one nightly fan-in receipt. Key: id16.
+    DREAMER_NIGHTLY_MERGED: VaultMeta b"dreamer:nightly:merged:v1:" Named;
+    /// Promoted/attached proposal ids returned by one nightly child. Key: id16.
+    DREAMER_NIGHTLY_OUTPUT: VaultMeta b"dreamer:nightly:output:v1:" Named;
+    /// The NOTE review's page cursor: the last NOTE id a review finished. Key: ().
+    DREAMER_NOTE_REVIEW_CURSOR: VaultMeta b"dreamer:note-review:cursor:v1" Named;
+    /// BLAKE3 of the markdown a NOTE review last read for one NOTE, so an unchanged NOTE is not
+    /// read again. Key: id16.
+    DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
@@ -125,22 +146,41 @@ side_tables! {
     DREAMER_PROJECTION_RIDES: VaultMeta b"dreamer:projection:rides:v1:" Named;
     /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
     DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
+    /// The refusal dial an agent last woke under (OF-533), so its next wake notes a change in its
+    /// own diary. Key: id16(agent).
+    DREAMER_REFUSAL_DIAL_SEEN: VaultMeta b"dreamer:refusal-dial:seen:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
     /// id16.
     DREAMER_REPRESENTATION_PROPOSAL: VaultMeta b"dreamer:representation:v1:proposal:" LegacyJson;
+    /// OF-490: the resident one dreaming attempt runs as, its own stamp, and the Gate receipt that
+    /// admitted it. Key: id16 (attempt).
+    DREAMER_RESIDENT_ATTEMPT: VaultMeta b"dreamer:resident:attempt:v1:" Named;
+    /// OF-490: the diary entry one resident dreaming attempt landed, so a replay writes none.
+    /// Key: id16 (attempt).
+    DREAMER_RESIDENT_LANDED: VaultMeta b"dreamer:resident:landed:v1:" Named;
+    /// OF-490: a sealed scratchpad a resident's dreaming already read. Value: one byte. Key:
+    /// id16 (resident) + id16 (pad).
+    DREAMER_RESIDENT_PADS: VaultMeta b"dreamer:resident:pads:v1:" Raw;
+    /// OF-490: what a resident's dreaming has read so far: newest receipt and INBOX times, last
+    /// dreaming, entries written. Key: id16 (resident).
+    DREAMER_RESIDENT_PROGRESS: VaultMeta b"dreamer:resident:progress:v1:" Named;
     /// Parent/child attempt-tree edge row (parent_attempt, created_at) keyed by attempt id. Key:
     /// id16.
     DREAMER_RUN_TREE: VaultMeta b"dreamer:run_tree:" Raw;
     /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
     /// successors. Key: id16.
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
+    /// Sample audit grade per durable rung attempt. Key: id16.
+    DREAMER_SIEVE_AUDIT: VaultMeta b"dreamer:sieve:audit:v1:" Named;
     /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
     /// Key: id16(turn).
     DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;
     /// Where the continuous sieve stands on the TURN timeline. Key: ().
     DREAMER_SIEVE_CURSOR: VaultMeta b"dreamer:sieve:cursor:v1" Named;
+    /// Retained original cheap span readings, for sampled expensive-path audits. Key: turn id16 + span hash32.
+    DREAMER_SIEVE_HISTORY: VaultMeta b"dreamer:sieve:history:v1:" Named;
     /// A TURN owed a new sieve read (new, changed words or saved tags). Key: id16(turn).
     DREAMER_SIEVE_OWED: VaultMeta b"dreamer:sieve:owed:v1:" Raw;
     /// The sieve's interest queue, one span per row. Key: u32be(inverted score) + hash32(span).
@@ -159,6 +199,9 @@ side_tables! {
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
     DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw;
+    /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
+    /// value: u64be.
+    DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;
     /// Per-round branch tournament evidence row (verdict, synthesis/critique/veto artifact ids) for
     /// one candidate. Key: u16be+string(run_id) + id16 + u16be + u8 + u16be+string(candidate_ref).
     DREAMER_TOURNAMENT_EVIDENCE: VaultMeta b"dreamer:tournament:v1:" Named;
@@ -175,6 +218,8 @@ side_tables! {
     DREAMER_WAKE_STATE: VaultMeta b"dreamer:wake-policy:state:v1" LegacyJson;
     /// Digest (32 bytes) of the last queued wake projector image. Key: ().
     DREAMER_WAKE_PROJECTION: VaultMeta b"dreamer:wake:projection:v1" Raw;
+    /// Owner-authored wake recipe budgets and rung instructions. Key: ().
+    DREAMER_WAKE_RECIPE_POLICY: VaultMeta b"dreamer:wake:recipe_policy:v1" LegacyJson;
     /// Per-scope (micro/meso/macro) consolidation watermark: last learned_at/turn_id progress. Key:
     /// u8.
     DREAMER_WATERMARK: VaultMeta b"dreamer:watermark:v1:" Raw;
@@ -241,6 +286,9 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// An organ call held until one of the owner's nodes can run it (OF-575 MESH): the call's
+    /// bytes, why it waits, and its tries. Key: id16 + hash32 (blake3 of the run ref).
+    EDIT_SETTLE_ORGAN_WAIT: VaultMeta b"edit_settle:organ_wait:v1:" Named;
     /// A proposal retained beside its artifact until Keep or Discard: an edit proposal or a native
     /// organ output. Key: id16 + hash32 (blake3 of the proposal ref).
     EDIT_SETTLE_PENDING_PROPOSAL: VaultMeta b"edit_settle:pending:v1:" Named;
@@ -328,6 +376,14 @@ side_tables! {
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
     /// it. Key: hex64.
     FEEDBACK_RECEIVED_DIGEST: VaultMeta b"feedback:received:v1:" Raw;
+    /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
+    FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
+    /// T2 report membership and vectors, keyed by the first ISSUE id.
+    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    /// Owner disclosure preference, keyed by the resolved publisher reference.
+    FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
+    /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
+    FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
     /// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent introduction.
     /// Key: id16.
     GATE_FOREIGN_AGENT_INTRODUCTION: VaultMeta b"gate.foreign-agent.v1:" Named;
@@ -464,6 +520,30 @@ side_tables! {
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
     INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
+    /// A hook block: the rows one AddBlock pins for a recipient's board deliveries, its lifetime
+    /// and its consumption. Key: id16 (block).
+    HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named;
+    /// An owner check a hook's causal chain raised (a cycle or a deep chain). Key: hash32 (run key).
+    HOOKS_CHECK: VaultMeta b"hooks:check:v1:" Named;
+    /// A fact hook's cursor in one source. Key: id16 (binding) + u8 (source).
+    HOOKS_CURSOR: VaultMeta b"hooks:cursor:v1:" Named;
+    /// The vault's `hooks.enabled` switch; absent is on. Key: ().
+    HOOKS_ENABLED: VaultMeta b"hooks:enabled:v1" Named;
+    /// The owner's grant on one hook binding. Key: id16 (binding).
+    HOOKS_GRANT: VaultMeta b"hooks:grant:v1:" Named;
+    /// Queued work a hook run saved before its cursor moved, and whether it landed. Key: hash32
+    /// (run key).
+    HOOKS_INTENT: VaultMeta b"hooks:intent:v1:" Named;
+    /// The hook chain behind a row a hook landed. Key: id16 (row).
+    HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
+    /// A hook run's saved result and pinned input. Key: hash32 (run key).
+    HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named;
+    /// A hook run's Hook receipt. Key: hash32 (run key).
+    HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named;
+    /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
+    HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
+    /// The last settlement sequence handed out. Key: ().
+    HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;
@@ -531,6 +611,13 @@ side_tables! {
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
+    /// One proposed pack lens: its frozen compiled tree, the pack/skill slot and pack content
+    /// hash it is bound to, and who proposed it. It mounts only once the owner selects it. Key:
+    /// id16 (lens).
+    LENS_PROPOSAL: VaultMeta b"lens/proposal/v1\0" Named;
+    /// The owner's consented selection of one proposed lens revision for a pack/skill slot.
+    /// Key: string (pack name "\0" skill id hex).
+    LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
@@ -554,12 +641,16 @@ side_tables! {
     LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson;
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
+    /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
+    LLM_ENCODER_EXPORT: VaultMeta b"llm:encoder_export:v1" Named;
     /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
     LLM_EXTRACTION_TEACHER_PROBE: VaultMeta b"llm:extraction_teacher_probe:v1" LegacyJson;
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson;
+    /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
+    LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model

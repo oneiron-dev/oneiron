@@ -13,8 +13,8 @@
 //!   entity, keeps the lifecycle clock fields (`started_at`,
 //!   `last_activity`, `ended_at`, `end_reason`) in a `vault_meta` record
 //!   (the `off_record` pattern — high-churn activity bumps never rewrite
-//!   the entity blob or its indexes), and tracks the single open session
-//!   behind an open-pointer row.
+//!   the entity blob or its indexes), and keeps one open pointer per
+//!   actor and machine (OF-536).
 //! * **The driver owns policy** (`oneiron-driver::SessionLifecycleDriver`):
 //!   the 20-minute idle floor, the hard lifetime ceiling, hint handling,
 //!   and firing SessionEnd → Meso consolidation. The engine owns no timer
@@ -28,11 +28,9 @@
 //!   calls `bump_open_session_activity_in_txn` so a witnessed turn and its
 //!   activity bump commit atomically.
 //!
-//! At most ONE session is open per vault: hints carry no app identity (the
-//! typed `HintPusher` channel is deliberately payload-thin, H-S4), so a
-//! second app-open while a session is open is a presence re-signal
-//! ([`SessionMintOutcome::AlreadyOpen`]) — the driver bumps instead of
-//! splitting the sitting. Ended records are retained for audit.
+//! Many sessions may be open together. A second app-open by the same actor
+//! on the same machine is a presence re-signal, not a split sitting. Closing
+//! one session never closes another key's sitting. Ended records stay for audit.
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
@@ -40,9 +38,8 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::actor_claims::register_session_end_distill_in_txn;
 use crate::dreamer_consolidation::{
-    ConsolidationPartitionPlan, advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
-    enqueue_partition_attempts_in_txn, plan_partitions_in_txn, read_partition_turns_in_txn,
-    read_watermark_in_txn, register_substitution_mine_in_txn,
+    ConsolidationPartitionPlan, enqueue_partition_attempts_in_txn, plan_partitions_in_txn,
+    read_partition_turns_in_txn, read_watermark_in_txn, register_substitution_mine_in_txn,
 };
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
@@ -54,14 +51,30 @@ use crate::temporal::TimeRange;
 
 pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
-/// The single open-session pointer (value = 16-byte session id). Key: `()`.
-const OPEN_POINTER: SideTable<(), EntityId, Raw> =
+/// Open pointers keyed by actor and machine; values are session ids.
+const OPEN_POINTER: SideTable<(EntityId, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::SESSION_LIFECYCLE_OPEN);
 /// Per-session lifecycle records. Key: the session id.
 const RECORDS: SideTable<EntityId, SessionLifecycleRecord, Named> =
     SideTable::new(&side_table::SESSION_LIFECYCLE_RECORD);
+const SESSION_TURNS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
+    SideTable::new(&side_table::SESSION_TURNS);
 
 const SESSION_LIFECYCLE_RECORD_VERSION: u8 = 1;
+
+/// One sitting's identity. Hosts bind it from their actor and machine context;
+/// it confers no write authority and cannot shape a Dreamer pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SessionKey {
+    pub actor: EntityId,
+    pub machine: EntityId,
+}
+
+impl SessionKey {
+    fn pointer(self) -> (EntityId, EntityId) {
+        (self.actor, self.machine)
+    }
+}
 
 /// Why a session ended. `Explicit` is the app's own end hint; `IdleFloor`
 /// is the driver's inactivity backstop; `LifetimeCeiling` is the hard
@@ -104,6 +117,7 @@ pub struct SessionActivityPeriod {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionLifecycleRecord {
     pub version: u8,
+    pub key: SessionKey,
     /// Stamped by the app-open hint — not by the first turn.
     pub started_at: u64,
     /// Bumped by turn-witness or an activity hint; never rewinds.
@@ -131,6 +145,7 @@ pub struct SessionLifecycleRecord {
 /// The currently open session, if any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpenSession {
+    pub key: SessionKey,
     pub session: EntityId,
     pub started_at: u64,
     pub last_activity: u64,
@@ -203,43 +218,28 @@ impl SessionClosePredicate {
     }
 }
 
-/// The pre-planned SessionEnd → Meso wake for [`Vault::end_session_with_wake`]:
-/// the output of the production planning trio (`read_watermark` →
-/// `scan_dirty_turns` → `plan_partitions`) run OUTSIDE the end transaction,
-/// plus the facts the transaction needs to guard and settle the round.
+/// Preview of one sitting's SessionEnd → Meso work. Closing re-reads this
+/// session's membership and rebuilds the plans in its own writer snapshot.
+/// Another open sitting's turns and the global Meso watermark stay untouched.
 #[derive(Debug, Clone)]
 pub struct SessionEndWake {
-    /// Preview partition plans over the dirty-turn backlog — the SAME payload
-    /// and dedupe shape the production `ConsolidationExecutor` decodes. Close
-    /// rebuilds the plans and receipts together from the fenced IDs, so policy
-    /// or body changes after this preview cannot contradict the committed work.
-    /// Empty when nothing is dirty: a zero-turn sitting has nothing to dream
-    /// about, so no attempt is minted for it.
-    ///
-    /// These carry only the turns the OF-361 pre-extraction screen KEPT
-    /// (`dreamer_prefilter`). `planned_turn_ids` below is deliberately the
-    /// PRE-screen scan: it is the fence's identity set and the watermark's
-    /// settlement basis, so a screened-out turn is still consumed by this
-    /// round rather than left dirty forever.
+    pub session: EntityId,
     pub plans: Vec<ConsolidationPartitionPlan>,
-    /// The Meso watermark the plans were taken against. The transaction
-    /// re-reads the watermark and skips the enqueue + advance when it
-    /// moved — another planner already owns those turns.
+    /// The Meso watermark this preview was taken against. Close rebuilds
+    /// the round in its own transaction, so a late arrival or a competing
+    /// planner cannot make this preview skip consolidation.
     pub planned_watermark: u64,
-    /// Admissible dirty-turn IDs in the planned watermark window, in
-    /// deterministic `(learned_at, id)` scan order. The transaction
-    /// re-collects and exactly compares this identity set before settling.
     pub planned_turn_ids: Vec<EntityId>,
-    /// Where the watermark advances after the enqueue (the scan's max
-    /// `learned_at`), if the scan found dirty turns.
+    /// Preview of this sitting's newest effective dirty key, bounded by store
+    /// time. This never advances the global Meso watermark.
     pub advance_watermark_to: Option<u64>,
 }
 
 impl SessionEndWake {
-    /// The empty wake: close with nothing dirty to plan.
     #[must_use]
-    pub const fn none(planned_watermark: u64) -> Self {
+    pub const fn none(session: EntityId, planned_watermark: u64) -> Self {
         Self {
+            session,
             plans: Vec::new(),
             planned_watermark,
             planned_turn_ids: Vec::new(),
@@ -263,15 +263,20 @@ fn validated_record(record: SessionLifecycleRecord) -> Result<SessionLifecycleRe
 /// pointer whose record row is missing is corruption, not "no session".
 fn open_session_in_txn(
     store: &Store,
-    txn: &RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
+    key: SessionKey,
 ) -> Result<Option<(EntityId, SessionLifecycleRecord)>> {
-    let Some(id) = OPEN_POINTER.get(store, txn, &())? else {
+    let Some(id) = OPEN_POINTER.get(store, txn, &key.pointer())? else {
         return Ok(None);
     };
     let Some(record) = RECORDS.get(store, txn, &id)? else {
         return Err(Error::CorruptedIndex("session lifecycle record"));
     };
-    Ok(Some((id, validated_record(record)?)))
+    let record = validated_record(record)?;
+    if record.key != key || record.ended_at.is_some() {
+        return Err(Error::CorruptedIndex("session lifecycle open pointer"));
+    }
+    Ok(Some((id, record)))
 }
 
 /// Bumps the open session's `last_activity` (monotonic — never rewinds)
@@ -285,9 +290,10 @@ fn open_session_in_txn(
 pub(crate) fn bump_open_session_activity_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
+    key: SessionKey,
     now: u64,
 ) -> Result<Option<EntityId>> {
-    let Some((id, mut record)) = open_session_in_txn(store, wtxn)? else {
+    let Some((id, mut record)) = open_session_in_txn(store, wtxn, key)? else {
         return Ok(None);
     };
     if now > record.last_activity {
@@ -298,22 +304,47 @@ pub(crate) fn bump_open_session_activity_in_txn(
 }
 
 impl Vault {
-    /// The currently open session, if any.
-    pub fn open_session(&self) -> Result<Option<OpenSession>> {
-        let rtxn = self.store.env.read_txn()?;
-        let Some(id) = OPEN_POINTER.get(&self.store, &rtxn, &())? else {
-            return Ok(None);
-        };
-        let Some(record) = RECORDS.get(&self.store, &rtxn, &id)? else {
-            return Err(Error::CorruptedIndex("session lifecycle record"));
-        };
-        let record = validated_record(record)?;
-        Ok(Some(OpenSession {
-            session: id,
-            started_at: record.started_at,
-            last_activity: record.last_activity,
-            last_effective_ms: record.last_effective_ms,
-        }))
+    /// Bind an actor's sitting on this install. No roster or write authority
+    /// is inferred from this local identity.
+    pub fn local_session_key(&self, actor: EntityId) -> Result<SessionKey> {
+        self.with_write_txn_grouped(|txn| {
+            let machine = crate::identity::load_or_mint_machine_id_in_txn(self, txn)?;
+            Ok(SessionKey { actor, machine })
+        })
+    }
+
+    /// The currently open sitting for this actor and machine, if any.
+    pub fn open_session(&self, key: SessionKey) -> Result<Option<OpenSession>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(
+            open_session_in_txn(&self.store, &txn, key)?.map(|(session, record)| OpenSession {
+                key,
+                session,
+                started_at: record.started_at,
+                last_activity: record.last_activity,
+                last_effective_ms: record.last_effective_ms,
+            }),
+        )
+    }
+
+    /// All open sittings, for the driver's independent expiry timers.
+    pub fn open_sessions(&self) -> Result<Vec<OpenSession>> {
+        let txn = self.store.env.read_txn()?;
+        let mut sessions = Vec::new();
+        for row in OPEN_POINTER.iter_from(&self.store, &txn, &[])? {
+            let ((actor, machine), _) = row?;
+            let key = SessionKey { actor, machine };
+            let (session, record) = open_session_in_txn(&self.store, &txn, key)?
+                .ok_or(Error::CorruptedIndex("session lifecycle open pointer"))?;
+            sessions.push(OpenSession {
+                key,
+                session,
+                started_at: record.started_at,
+                last_activity: record.last_activity,
+                last_effective_ms: record.last_effective_ms,
+            });
+        }
+        Ok(sessions)
     }
 
     /// Reads the lifecycle record for one session id (open or ended).
@@ -335,13 +366,16 @@ impl Vault {
     /// If a session is already open this mints NOTHING and returns
     /// [`SessionMintOutcome::AlreadyOpen`]: the open sitting continues and
     /// the caller's policy decides whether the re-open counts as activity.
-    pub fn mint_session(&self, now: u64) -> Result<SessionMintOutcome> {
+    pub fn mint_session(&self, key: SessionKey, now: u64) -> Result<SessionMintOutcome> {
         let timestamp_ms = now.saturating_mul(1_000);
-        self.mint_session_from_hint(SessionHintTimestamp {
-            claimed_ms: None,
-            arrival_ms: timestamp_ms,
-            effective_ms: timestamp_ms,
-        })
+        self.mint_session_from_hint(
+            key,
+            SessionHintTimestamp {
+                claimed_ms: None,
+                arrival_ms: timestamp_ms,
+                effective_ms: timestamp_ms,
+            },
+        )
     }
 
     /// Mints and opens a canonical SESSION entity from an app-open hint whose
@@ -350,15 +384,17 @@ impl Vault {
     pub(crate) fn mint_session_from_hint_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
+        key: SessionKey,
         timestamp: SessionHintTimestamp,
     ) -> Result<SessionMintOutcome> {
         let now = timestamp.effective_ms / 1_000;
         let id = self.store.clock.entity_id()?;
-        if let Some(existing) = OPEN_POINTER.get(&self.store, wtxn, &())? {
+        if let Some(existing) = OPEN_POINTER.get(&self.store, wtxn, &key.pointer())? {
             return Ok(SessionMintOutcome::AlreadyOpen(existing));
         }
         let record = SessionLifecycleRecord {
             version: SESSION_LIFECYCLE_RECORD_VERSION,
+            key,
             started_at: now,
             last_activity: now,
             ended_at: None,
@@ -370,8 +406,20 @@ impl Vault {
             explicit_end_hint: None,
         };
         let mut body = Vec::new();
-        rmpv::encode::write_value(&mut body, &rmpv::Value::Map(Vec::new()))
-            .map_err(|_| Error::InvariantViolation("session entity body encode failed"))?;
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("actor"),
+                    rmpv::Value::Binary(key.actor.as_bytes().to_vec()),
+                ),
+                (
+                    rmpv::Value::from("machine"),
+                    rmpv::Value::Binary(key.machine.as_bytes().to_vec()),
+                ),
+            ]),
+        )
+        .map_err(|_| Error::InvariantViolation("session entity body encode failed"))?;
         self.batch_in()
             .put(
                 &id,
@@ -385,24 +433,25 @@ impl Vault {
             )
             .apply(wtxn)?;
         RECORDS.put(&self.store, wtxn, &id, &record)?;
-        OPEN_POINTER.put(&self.store, wtxn, &(), &id)?;
+        OPEN_POINTER.put(&self.store, wtxn, &key.pointer(), &id)?;
         Ok(SessionMintOutcome::Minted(id))
     }
 
     pub fn mint_session_from_hint(
         &self,
+        key: SessionKey,
         timestamp: SessionHintTimestamp,
     ) -> Result<SessionMintOutcome> {
-        self.with_write_txn_grouped(|wtxn| self.mint_session_from_hint_in_txn(wtxn, timestamp))
+        self.with_write_txn_grouped(|wtxn| self.mint_session_from_hint_in_txn(wtxn, key, timestamp))
     }
 
     /// Bumps the open session's `last_activity` to `now` (unix seconds,
     /// monotonic). Returns `None` when no session is open — an activity
     /// hint alone never mints a session (fail-closed: presence is signaled
     /// by app-open only).
-    pub fn bump_session_activity(&self, now: u64) -> Result<Option<EntityId>> {
+    pub fn bump_session_activity(&self, key: SessionKey, now: u64) -> Result<Option<EntityId>> {
         self.with_write_txn_grouped(|wtxn| {
-            bump_open_session_activity_in_txn(&self.store, wtxn, now)
+            bump_open_session_activity_in_txn(&self.store, wtxn, key, now)
         })
     }
 
@@ -410,10 +459,11 @@ impl Vault {
     /// decisional activity clock to the point's effective time.
     pub fn record_session_app_open_hint(
         &self,
+        key: SessionKey,
         timestamp: SessionHintTimestamp,
     ) -> Result<Option<EntityId>> {
         self.with_write_txn_grouped(|wtxn| {
-            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
+            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn, key)? else {
                 return Ok(None);
             };
             record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
@@ -430,11 +480,12 @@ impl Vault {
     /// period losslessly.
     pub fn record_session_activity_period(
         &self,
+        key: SessionKey,
         period: SessionActivityPeriod,
         rollup_gap_ms: u64,
     ) -> Result<Option<EntityId>> {
         self.with_write_txn_grouped(|wtxn| {
-            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
+            let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn, key)? else {
                 return Ok(None);
             };
             record.last_effective_ms = record.last_effective_ms.max(period.last.effective_ms);
@@ -464,55 +515,71 @@ impl Vault {
         })
     }
 
-    /// Plans the standard session-end consolidation wake from current durable turns.
-    pub fn plan_session_end_wake(&self) -> Result<SessionEndWake> {
-        self.with_write_txn_grouped(|wtxn| self.plan_session_end_wake_in_txn(wtxn))
+    /// Plans only the turns witnessed in this sitting. Each actor/machine
+    /// session ends independently; an active neighbour is never swept into it.
+    pub fn plan_session_end_wake(&self, session: &EntityId) -> Result<SessionEndWake> {
+        self.with_write_txn_grouped(|txn| self.plan_session_end_wake_in_txn(txn, session))
     }
 
-    /// The production planning trio (`read_watermark` → dirty scan →
-    /// `plan_partitions`) run over the CALLER's write transaction, so a close
-    /// plans the turns its own transaction just staged (in-transaction readers
-    /// see staged index rows — `batch::stage_entity_index_rows`).
-    ///
-    /// It is the SAME selection the driver's out-of-transaction close runs, and
-    /// deliberately so:
-    ///
-    /// * selection is [`collect_dirty_turn_ids_in_txn`] — temporal
-    ///   `(learned_at, id)` order, GATE-10 role admissibility, the compound
-    ///   watermark lower bound and the Meso round cap, all shared with the
-    ///   snapshot fence in [`Self::end_session_with_wake_and_hint_in_txn`];
-    /// * an edge-less turn is left out of the plans and parked on the shared
-    ///   re-dirty carrier by the round's settlement, so it stops no later
-    ///   turn and is planned under its own conversation once its edge lands;
-    /// * roles decode through the shared turn-body decoder, never a bespoke
-    ///   alias preference;
-    /// * partitions come from [`plan_partitions_in_txn`], which keeps the
-    ///   production `world_ref`/`facet_ref` fallback chain (turn body key →
-    ///   conversation body key → None).
-    ///
-    /// Because plan and fence are then the same read in one transaction, their
-    /// identity comparison holds by construction rather than by luck.
-    pub(crate) fn plan_session_end_wake_in_txn(&self, wtxn: &RwTxn<'_>) -> Result<SessionEndWake> {
+    fn session_turn_ids_in_txn(
+        &self,
+        txn: &RwTxn<'_>,
+        session: &EntityId,
+        admission_time: u64,
+    ) -> Result<Vec<EntityId>> {
+        let mut turns = Vec::new();
+        for row in SESSION_TURNS.iter_from(&self.store, txn, session.as_bytes())? {
+            let ((_, turn), _) = row?;
+            let Some(raw) = self.get_raw_in(txn, &turn)? else {
+                continue;
+            };
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+                continue;
+            };
+            if header.entity_type != crate::registry::ENTITY_TYPE_TURN
+                || header.learned_at > admission_time
+            {
+                continue;
+            }
+            let facts = crate::dreamer_consolidation::decode_turn_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            );
+            let role = crate::dreamer_runner::dreamer_turn_role(
+                facts.speaker.as_deref(),
+                &self.config.assistant_display_names,
+            );
+            if crate::dreamer_runner::dreamer_extraction_role_admissible(role) {
+                turns.push((header.learned_at, turn));
+            }
+        }
+        turns.sort_unstable();
+        Ok(turns.into_iter().map(|(_, turn)| turn).collect())
+    }
+
+    pub(crate) fn plan_session_end_wake_in_txn(
+        &self,
+        txn: &RwTxn<'_>,
+        session: &EntityId,
+    ) -> Result<SessionEndWake> {
         let scope = DreamerConsolidationScope::Meso;
-        let watermark = read_watermark_in_txn(self, wtxn, scope)?;
-        let dirty_ids =
-            collect_dirty_turn_ids_in_txn(self, wtxn, scope, watermark.last_learned_at, u64::MAX)?;
-
-        let dirty = read_partition_turns_in_txn(self, wtxn, scope, &dirty_ids)?;
-
-        // The driver's exact rule: a turn without its structural CONVERSATION
-        // edge is not planned, and the settlement parks it.
-        let edged: Vec<_> = dirty
+        let watermark = read_watermark_in_txn(self, txn, scope)?;
+        let admission_time = crate::ports::job_recorded_at_in_txn(&self.store, txn)?;
+        let ids = self.session_turn_ids_in_txn(txn, session, admission_time)?;
+        let mut turns = read_partition_turns_in_txn(self, txn, scope, &ids)?;
+        turns.retain(|turn| turn.learned_at <= admission_time);
+        let ids = turns.iter().map(|turn| turn.turn_id).collect();
+        let edged: Vec<_> = turns
             .iter()
             .filter(|turn| turn.conversation.is_some())
             .copied()
             .collect();
-        let plans = plan_partitions_in_txn(self, scope, wtxn, &edged, &watermark)?;
+        let plans = plan_partitions_in_txn(self, scope, txn, &edged, &watermark)?;
         Ok(SessionEndWake {
+            session: *session,
             plans,
             planned_watermark: watermark.last_learned_at,
-            planned_turn_ids: dirty.iter().map(|turn| turn.turn_id).collect(),
-            advance_watermark_to: dirty.iter().map(|turn| turn.learned_at).max(),
+            planned_turn_ids: ids,
+            advance_watermark_to: turns.iter().map(|turn| turn.learned_at).max(),
         })
     }
 
@@ -528,8 +595,9 @@ impl Vault {
     /// * **(c) stamp**: `ended_at` is clamped not to precede activity; the
     ///   predicate-named reason lands on the retained record and the open
     ///   pointer clears;
-    /// * **(d) wake**: the pre-planned SessionEnd → Meso partition attempts are
-    ///   enqueued and the Meso watermark advanced in the SAME transaction;
+    /// * **(d) wake**: this sitting's SessionEnd → Meso partition attempts are
+    ///   planned and enqueued in the SAME transaction, without consuming
+    ///   another open sitting's turns;
     /// * **(e) distill job**: the CHAT-lane `actor.*` distill job is registered
     ///   for this sitting (ONE-1739), also in the SAME transaction;
     /// * **(f) substitution mine**: ED-04's recurring-substitution miner pass
@@ -564,7 +632,15 @@ impl Vault {
         wake: &SessionEndWake,
         end_hint: Option<SessionHintTimestamp>,
     ) -> Result<Option<EndedSession>> {
-        let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
+        if wake.session != *expected {
+            return Err(Error::InvalidKey);
+        }
+        let Some(record) = RECORDS.get(&self.store, wtxn, expected)? else {
+            return Ok(None);
+        };
+        let record = validated_record(record)?;
+        let key = record.key;
+        let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn, key)? else {
             return Ok(None);
         };
         if id != *expected {
@@ -581,7 +657,7 @@ impl Vault {
             record.explicit_end_hint = Some(timestamp);
         }
         RECORDS.put(&self.store, wtxn, &id, &record)?;
-        OPEN_POINTER.delete(&self.store, wtxn, &())?;
+        OPEN_POINTER.delete(&self.store, wtxn, &key.pointer())?;
 
         // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
         // same commit as the close: "this sitting is over and not yet
@@ -599,49 +675,21 @@ impl Vault {
         // dirty turns behind.
         register_substitution_mine_in_txn(self, wtxn, &id, now)?;
 
-        // (d) The durable wake, same commit. Skipped wholesale when the
-        // Meso watermark or bounded dirty snapshot moved since the plan
-        // was taken: those turns belong to a later planning round.
+        // Re-plan this sitting in the close transaction, including a witness
+        // that arrived after the preview. Never advance the global watermark
+        // past another still-open session's turns.
         let scope = DreamerConsolidationScope::Meso;
+        let wake = self.plan_session_end_wake_in_txn(wtxn, &id)?;
         let current = read_watermark_in_txn(self, wtxn, scope)?;
-        if current.last_learned_at == wake.planned_watermark {
-            let dirty_snapshot_matches = match wake.advance_watermark_to {
-                Some(advance_to) => {
-                    let in_txn_ids = collect_dirty_turn_ids_in_txn(
-                        self,
-                        wtxn,
-                        scope,
-                        wake.planned_watermark,
-                        advance_to,
-                    )?;
-                    // EXACT identity is the only matching leg: a round whose
-                    // turns vanished between plan and close is a stale round,
-                    // and enqueuing it would settle the watermark COMPLETE past
-                    // every key at that second — including turns no planner ever
-                    // saw. Plan and fence are the same in-transaction read, so
-                    // for a live round this holds by construction.
-                    in_txn_ids.as_slice() == wake.planned_turn_ids.as_slice()
-                }
-                None => wake.planned_turn_ids.is_empty(),
-            };
-            if dirty_snapshot_matches {
-                // Rebuild both extraction and accounting from the fenced IDs
-                // under this transaction's policy, bodies, and partition facts.
-                // Preview plans are not authority after policy/body drift.
-                enqueue_partition_attempts_in_txn(
-                    self,
-                    wtxn,
-                    scope,
-                    &wake.planned_turn_ids,
-                    &current,
-                    None,
-                    now,
-                )?;
-                if let Some(advance_to) = wake.advance_watermark_to {
-                    advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
-                }
-            }
-        }
+        enqueue_partition_attempts_in_txn(
+            self,
+            wtxn,
+            scope,
+            &wake.planned_turn_ids,
+            &current,
+            None,
+            now,
+        )?;
 
         Ok(Some(EndedSession {
             session: id,

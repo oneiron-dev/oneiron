@@ -75,6 +75,14 @@ use super::{
     TextSearchQuery, TurnVadAnnotateQuery, TurnVadAnnotateRequest, TurnVadAnnotateResponse,
     TurnVadAnnotationSource, VadPayload, VectorSearchQuery,
 };
+use super::{
+    __path_context_board_scratchpad, ContextBoardScratchpadMark, ContextBoardScratchpadRequest,
+    ContextBoardScratchpadResponse,
+};
+use super::{
+    __path_core_explain_gate, __path_core_explain_memory, ExplainGateNotice, ExplainGateResponse,
+    ExplainMemoryResponse,
+};
 use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, ErrorCode};
 use crate::projection::View;
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
@@ -129,6 +137,9 @@ use utoipa::OpenApi;
         core_context_pack,
         context_board_hydrate,
         context_board_turn_history,
+        context_board_scratchpad,
+        core_explain_memory,
+        core_explain_gate,
         core_run_tree,
         core_run_tree_observe,
         core_run_tree_intervene,
@@ -280,6 +291,7 @@ use utoipa::OpenApi;
         ContextPackRetrievalBudgetControls,
         ContextPackBudgetControls,
         ContextPackReaderControls,
+        super::ContextPackMediaQuery,
         ContextBoardMemoriesControls,
         ContextBoardMemoriesSlotControls,
         ContextBoardSessionControls,
@@ -300,6 +312,12 @@ use utoipa::OpenApi;
         ContextBoardTurnControls,
         ContextBoardTurnHistory,
         ContextBoardTurnRecord,
+        ContextBoardScratchpadMark,
+        ContextBoardScratchpadRequest,
+        ExplainMemoryResponse,
+        ExplainGateResponse,
+        ExplainGateNotice,
+        ContextBoardScratchpadResponse,
         ContextBoardSession,
         ContextBoardNotification,
         ContextBoardUnprocessedItem,

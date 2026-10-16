@@ -144,7 +144,9 @@ pub enum AttemptState {
 }
 
 impl AttemptState {
-    pub(crate) const fn as_str(self) -> &'static str {
+    /// Returns the stable wire string for this attempt state.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",
             Self::Leased => "leased",
@@ -400,7 +402,7 @@ pub struct AttemptRecord {
 }
 
 impl AttemptRecord {
-    pub(super) fn accepts_worker(&self, worker: &str) -> bool {
+    pub(crate) fn accepts_worker(&self, worker: &str) -> bool {
         self.placement
             .as_ref()
             .and_then(|p| p.worker.as_deref())

@@ -4,7 +4,7 @@
 //! A mixed non-floor goal vector is a pending tradeoff. When the goal holds
 //! tradeoff preferences, three rungs may settle it, in order: a stored
 //! preference rule (authored or learned) for the exact gained and lost axes,
-//! then a Jev verdict bound to the exact question at or above the goal's high
+//! then a typed decision bound to the exact question at or above the goal's high
 //! band, then a durable A/B ask to the responsible person, whose pick becomes a
 //! learned preference. Every settlement is a resolution row that answers the
 //! pending row, written by the decision door. A goal without preferences waits
@@ -13,7 +13,7 @@
 //! Preferences are part of the goal record. They are keyed by the portable goal
 //! identity and hashed into the goal revision, so a successor revision on any
 //! replica inherits them, and every pending ask, acceptance and verdict binds
-//! the preferences it was ruled under. The host supplies the Jev verdict; the
+//! the preferences it was ruled under. The host supplies the shared decision ladder; the
 //! engine owns rule order, binding, the pending question and the learned picks.
 //!
 //! A goal joined to a project's goal record ([`super::project_goal`]) climbs
@@ -30,7 +30,7 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::ArtifactError;
 use crate::gate::{SkillTradeoffLimits, skill_tradeoff_limits_in_txn};
-use crate::llm::decision::{DecisionBand, DecisionRung, ProviderPin};
+use crate::llm::decision::{DecisionAnswer, DecisionBand, DecisionRung, ProviderPin};
 use serde::{Deserialize, Serialize};
 
 const PREFERENCES_PREFIX: &[u8] = b"skill_optimize/tradeoff_preferences/v1\0";
@@ -194,7 +194,11 @@ impl JevTradeoffVerdict {
                 .all(|byte| byte.is_ascii_hexdigit())
             || !matches!(
                 self.pin.rung,
-                DecisionRung::SystemOne | DecisionRung::Escalation
+                DecisionRung::Rule
+                    | DecisionRung::Local
+                    | DecisionRung::SystemOne
+                    | DecisionRung::Escalation
+                    | DecisionRung::Big
             )
             || self.pin.model.trim().is_empty()
             || self.pin.version.trim().is_empty()
@@ -449,6 +453,29 @@ pub fn skill_tradeoff_asks_for(vault: &Vault, person: &EntityId) -> Result<Vec<S
     Ok(asks)
 }
 
+/// Every bound ask still pending, whoever may answer it, for the scheduler
+/// that climbs them past their reminder ([`escalate_skill_tradeoff_ask`]).
+/// # Errors
+/// An unreadable ask, verdict or goal row, or storage errors.
+pub fn pending_skill_tradeoff_asks(vault: &Vault) -> Result<Vec<SkillTradeoffAsk>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rows: Vec<SkillTradeoffAsk> = Vec::new();
+    for row in vault.store.vault_meta.prefix_iter(&txn, ASK_PREFIX)? {
+        let (_, raw) = row?;
+        rows.push(rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex(LABEL))?);
+    }
+    let mut asks = Vec::new();
+    for ask in rows {
+        let Some(pending) = standing_verdict_in_txn(vault, &txn, &ask.question.proposal)? else {
+            continue;
+        };
+        if let Some((bound, _)) = bound_ask_in_txn(vault, &txn, &pending)? {
+            asks.push(bound);
+        }
+    }
+    Ok(asks)
+}
+
 /// Climb one rung: the pending ask now also reaches the next role up its
 /// chain, the last being the vault's owners ("it goes up by role, ending at
 /// the vault owner role"). The scheduler calls this when an ask has waited
@@ -597,41 +624,52 @@ pub(super) fn plan(
             jev: None,
         });
     }
-    // Only the exact question may skip Jev on a later ruling: a body, the
-    // evidence or the goal may have moved since an older ask was put.
+    // Reuse a measurement only for this exact question. Every fresh answer
+    // comes from the shared typed-decision ladder, never a supplied scalar.
     let band = preferences
         .as_ref()
         .and_then(|preferences| preferences.jev_band);
-    let jev = match prior.filter(|prior| prior.question == question) {
-        Some(prior) => prior.jev,
+    let jev = match (prior.filter(|prior| prior.question == question), band) {
+        (Some(prior), _) => prior.jev,
         // No band was authored, so no judgment can rule: ask the role.
-        None if band.is_none() => None,
-        None => {
-            let jev = scorer.jev_tradeoff(&question)?;
-            if let Some(verdict) = &jev
-                && (verdict.question_digest != question.digest()? || verdict.validate().is_err())
-            {
-                return Err(invalid(
-                    "Jev verdict does not bind the goal tradeoff question",
-                ));
-            }
-            // Choice probability is confidence in the chosen option, not
-            // P(yes): the lower tail is uncertainty, never a confident no.
-            if let Some(verdict) = jev
-                .as_ref()
-                .filter(|verdict| band.is_some_and(|band| verdict.probability >= band.high))
-            {
-                let authentication = format!("{}@{}", verdict.pin.model, verdict.pin.version);
-                let choice = verdict.choice;
-                return Ok(TradeoffPlan::Decided {
-                    question,
+        (None, None) => None,
+        (None, Some(band)) => {
+            if let Some(decision) = scorer.tradeoff_decision(&question, band)? {
+                let choice = match &decision.answer {
+                    DecisionAnswer::Choice(value) if value == "approve" => {
+                        Some(TradeoffChoice::Approve)
+                    }
+                    DecisionAnswer::Choice(value) if value == "reject" => {
+                        Some(TradeoffChoice::Reject)
+                    }
+                    _ => None,
+                };
+                // Choice probability is confidence in the chosen option, not
+                // P(yes): the lower tail is uncertainty, never a confident no.
+                if let (Some(choice), Some(probability), Some(pin)) = (
                     choice,
-                    rung: TradeoffRung::Judgment,
-                    authentication,
-                    jev,
-                });
+                    decision.probability,
+                    decision.receipt.providers.last(),
+                ) && decision.human_ask.is_none()
+                    && probability >= band.high
+                {
+                    let verdict = JevTradeoffVerdict {
+                        question_digest: question.digest()?,
+                        choice,
+                        probability,
+                        pin: pin.clone(),
+                    };
+                    verdict.validate()?;
+                    return Ok(TradeoffPlan::Decided {
+                        authentication: format!("{}@{}", pin.model, pin.version),
+                        question,
+                        choice,
+                        rung: TradeoffRung::Judgment,
+                        jev: Some(verdict),
+                    });
+                }
             }
-            jev
+            None
         }
     };
     let holder = limits_holder(preferences.as_ref(), &question)?;
@@ -756,6 +794,68 @@ pub fn settle_skill_tradeoff_ask(
         // The role check below is the authorization: a board member who is
         // not a vault owner answers on their own behalf.
         let actor = owner.revalidate_person_in_txn(vault, txn)?;
+        settle_ask_in_txn(
+            vault,
+            txn,
+            actor,
+            format!("{:?}", owner.decision_id()),
+            TradeoffRung::Person,
+            proposal,
+            expected_question_digest,
+            choice,
+            at,
+        )
+    })
+}
+
+/// [`settle_skill_tradeoff_ask`] for an agent that holds a responsible role
+/// the ask has reached (ROLES-EVERYWHERE). The agent must be a live, bound
+/// writer in the settling transaction; the role check is the authorization,
+/// and its pick is learned as the role's preference like a person's.
+/// # Errors
+/// A writer that is not a live agent, plus every error of
+/// [`settle_skill_tradeoff_ask`]. An error writes nothing.
+pub fn settle_skill_tradeoff_ask_as_agent(
+    vault: &Vault,
+    agent: &crate::write_envelope::WriteActor,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    vault.with_write_txn_grouped(|txn| {
+        if agent.actor_class() != crate::edge::EdgeActorClass::Agent {
+            return Err(invalid("an agent tradeoff pick requires an agent actor"));
+        }
+        vault.verify_write_actor_in_txn(txn, agent)?;
+        let actor = agent.entity_ref();
+        settle_ask_in_txn(
+            vault,
+            txn,
+            actor,
+            format!("agent:{}", actor.to_hex()),
+            TradeoffRung::Role,
+            proposal,
+            expected_question_digest,
+            choice,
+            at,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settle_ask_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    authentication: String,
+    rung: TradeoffRung,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    {
         let ask: SkillTradeoffAsk = load(vault, txn, &key(ASK_PREFIX, proposal))?
             .ok_or(invalid("no pending skill tradeoff ask"))?;
         let question = &ask.question;
@@ -834,10 +934,10 @@ pub fn settle_skill_tradeoff_ask(
         let resolution = TradeoffResolution {
             pending: pending.id,
             owner: actor,
-            authentication: format!("{:?}", owner.decision_id()),
+            authentication,
             evidence: expected_question_digest.to_owned(),
-            rung: TradeoffRung::Person,
+            rung,
         };
         record_tradeoff_resolution_in_txn(vault, txn, pending, resolution, choice, &cycle, at)
-    })
+    }
 }

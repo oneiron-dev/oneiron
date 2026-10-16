@@ -1,0 +1,509 @@
+//! The inputs and answers of the verb-table rows a host door answers: the
+//! owner's `vault.packs.put` and `vault.hooks.replay`, the `ai.*` model calls
+//! past text and `ai.verdict`. A server answers each with its own state (the
+//! owner's proof, its model seats, its decision ladder, its hook sandbox); an
+//! embedded handle answers a pack put as the vault's embedded owner and
+//! refuses the rest, which have nothing to run on there.
+use std::collections::BTreeMap;
+
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use serde::{Deserialize, Serialize};
+
+use crate::llm::media::{AiOperation, MediaJobState, MediaPart, MediaResponse, MediaUsage};
+use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
+use crate::skill_hub::HubFile;
+use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
+
+/// One file of a pack folder.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PackFileInput {
+    /// Relative to the pack folder, `/`-separated.
+    pub path: String,
+    pub text: String,
+}
+
+/// `vault.packs.put`'s input: the pack folder's files. The put installs the
+/// folder, or replaces the pack installed under its name.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PackPutRequest {
+    pub files: Vec<PackFileInput>,
+}
+
+impl PackPutRequest {
+    /// The folder as the pack source reads it.
+    #[must_use]
+    pub fn into_files(self) -> Vec<HubFile> {
+        self.files
+            .into_iter()
+            .map(|file| HubFile::new(file.path, file.text.into_bytes()))
+            .collect()
+    }
+}
+
+/// What one pack put did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackPutOutcome {
+    Installed,
+    /// Its code waits for its sandbox to qualify it.
+    Candidate,
+    /// The vault's install rules refused it; `reason` says why.
+    Blocked,
+}
+
+/// `vault.packs.put`'s answer: the outcome, and the install receipt unless
+/// the put was blocked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackPutReceipt {
+    pub outcome: PackPutOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<Box<PackInstallReceipt>>,
+}
+
+impl From<PackInstallDisposition> for PackPutReceipt {
+    fn from(disposition: PackInstallDisposition) -> Self {
+        let (outcome, reason, receipt) = match disposition {
+            PackInstallDisposition::Installed(receipt) => {
+                (PackPutOutcome::Installed, None, Some(receipt))
+            }
+            PackInstallDisposition::Candidate(receipt) => {
+                (PackPutOutcome::Candidate, None, Some(receipt))
+            }
+            PackInstallDisposition::Blocked { reason } => {
+                (PackPutOutcome::Blocked, Some(reason), None)
+            }
+        };
+        Self {
+            outcome,
+            reason,
+            receipt,
+        }
+    }
+}
+
+/// `vault.packs.put` under the owner's proof a host minted from the request.
+pub fn put_pack_as_owner(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: PackPutRequest,
+) -> MemoryResult<PackPutReceipt> {
+    Ok(vault.put_pack(owner, input.into_files())?.into())
+}
+
+/// `vault.packs.put` on an embedded handle: the vault's embedded owner's put.
+pub fn put_pack_embedded(
+    memory: &Memory<'_>,
+    input: PackPutRequest,
+) -> MemoryResult<PackPutReceipt> {
+    Ok(memory
+        .put_pack_as_embedded_owner(input.into_files())?
+        .into())
+}
+
+/// A row only a host's own state answers, refused on an embedded handle.
+pub fn host_only<T, I>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
+    Err(MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        format!(
+            "{verb} runs on a server's own model seats, decision ladder or hook sandbox; an embedded vault has none"
+        ),
+        &["Call it through a remote client of a server that serves it."],
+    ))
+}
+
+/// One part of an `ai.*` call on the SDK wire: text, or bytes as base64.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AiPart {
+    Text {
+        text: String,
+    },
+    Image {
+        media_type: String,
+        data: String,
+    },
+    Audio {
+        media_type: String,
+        data: String,
+    },
+    /// A clip's bytes, or where its provider keeps it.
+    Video {
+        media_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uri: Option<String>,
+    },
+    Embedding {
+        vector: Vec<f32>,
+    },
+}
+
+impl AiPart {
+    /// The part a call sends: text, or an image or audio with base64 data.
+    /// A clip or a vector is an answer, never an input.
+    #[must_use]
+    pub fn into_media(self) -> Option<MediaPart> {
+        let bytes = |data: &str| STANDARD.decode(data).ok().filter(|bytes| !bytes.is_empty());
+        Some(match self {
+            Self::Text { text } => MediaPart::Text { text },
+            Self::Image { media_type, data } => MediaPart::Image {
+                bytes: bytes(&data)?,
+                media_type,
+            },
+            Self::Audio { media_type, data } => MediaPart::Audio {
+                bytes: bytes(&data)?,
+                media_type,
+            },
+            Self::Video { .. } | Self::Embedding { .. } => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn from_media(part: MediaPart) -> Self {
+        match part {
+            MediaPart::Text { text } => Self::Text { text },
+            MediaPart::Image { media_type, bytes } => Self::Image {
+                media_type,
+                data: STANDARD.encode(bytes),
+            },
+            MediaPart::Audio { media_type, bytes } => Self::Audio {
+                media_type,
+                data: STANDARD.encode(bytes),
+            },
+            MediaPart::Video {
+                media_type,
+                bytes,
+                uri,
+            } => Self::Video {
+                media_type,
+                data: (!bytes.is_empty()).then(|| STANDARD.encode(bytes)),
+                uri,
+            },
+            MediaPart::Embedding { vector } => Self::Embedding { vector },
+        }
+    }
+}
+
+/// One `ai.*` media call: `ai.image`, `ai.video`, `ai.speech`,
+/// `ai.transcribe` or `ai.embed`, as `POST /v1/ai/<operation>` takes it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiCallRequest {
+    /// A row's id to use it alone, or its seat's id; the operation's seat
+    /// when absent (`ai.options` lists both).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The instruction, the script or the one text: a first text part.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub input: Vec<AiPart>,
+    /// The images an image call edits, or a video call starts from.
+    #[serde(default)]
+    pub references: Vec<AiPart>,
+    #[serde(default)]
+    pub params: BTreeMap<String, serde_json::Value>,
+}
+
+/// One `ai.*` call's answer: the model that answered, its parts, and what
+/// its provider counted.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AiAnswer {
+    pub model: String,
+    pub parts: Vec<AiPart>,
+    pub usage: MediaUsage,
+}
+
+impl From<MediaResponse> for AiAnswer {
+    fn from(response: MediaResponse) -> Self {
+        Self {
+            model: response.model.to_string(),
+            parts: response.parts.into_iter().map(AiPart::from_media).collect(),
+            usage: response.usage,
+        }
+    }
+}
+
+/// `ai.options`'s input: the operation whose rows to list (`text`, `image`,
+/// `video`, `speech`, `transcribe`, `embed`), every one when absent, and the
+/// modalities a call would send (`text`, `image`, `audio`, `video`,
+/// `embedding`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiOptionsRequest {
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+}
+
+/// `ai.options`'s answer: each text seat's rungs and each media row that
+/// serves the operation over those inputs, and what the media meter has left.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiOptions {
+    pub options: Vec<serde_json::Value>,
+    pub media_units_left: Option<u64>,
+}
+
+/// `ai.video`'s answer: the provider job its clip renders as.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiVideoTicket {
+    pub job: String,
+    pub model: String,
+    pub operation: AiOperation,
+}
+
+/// A video job, by the ticket `ai.video` answered.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiVideoJobRequest {
+    pub job: String,
+}
+
+/// Where a video job stands; a finished one answers with its clip, once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum AiVideoJob {
+    Queued,
+    Running {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        progress: Option<u8>,
+    },
+    Done {
+        answer: AiAnswer,
+    },
+    Failed {
+        error: crate::LlmError,
+    },
+}
+
+impl From<MediaJobState> for AiVideoJob {
+    fn from(state: MediaJobState) -> Self {
+        match state {
+            MediaJobState::Queued => Self::Queued,
+            MediaJobState::Running { progress } => Self::Running { progress },
+            MediaJobState::Done { response } => Self::Done {
+                answer: response.into(),
+            },
+            MediaJobState::Failed { error } => Self::Failed { error },
+        }
+    }
+}
+
+/// `ai.video.cancel`'s answer: the job its provider was told to stop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiVideoCancelled {
+    pub job: String,
+}
+
+/// What a wrong `ai.verdict` would cost: a read that can be redone, or an
+/// effect that leaves the vault. The bands escalate an outbound effect
+/// sooner.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AiVerdictReversibility {
+    #[default]
+    ReversibleRead,
+    OutboundEffect,
+}
+
+impl From<AiVerdictReversibility> for crate::llm::decision::Reversibility {
+    fn from(value: AiVerdictReversibility) -> Self {
+        match value {
+            AiVerdictReversibility::ReversibleRead => Self::ReversibleRead,
+            AiVerdictReversibility::OutboundEffect => Self::OutboundEffect,
+        }
+    }
+}
+
+/// `ai.verdict`'s clock, in milliseconds, when the request names none.
+pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
+
+/// `ai.verdict`'s input: one typed question through the host's decision
+/// ladder (ARCH-0076), asked for the caller. The principal is the caller's
+/// own actor, never a field here.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AiVerdictRequest {
+    /// The question, as the ladder's providers read it.
+    pub question: String,
+    /// The labels the answer is one of; a yes/no question when empty.
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// Entity refs (short refs or 32-hex ids, each optionally `@<revision>`)
+    /// the answer reads. Each must be readable by the caller; the providers
+    /// read their views in the call's state.
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    /// What else the question reads, beside the evidence.
+    #[serde(default)]
+    pub state: Option<serde_json::Value>,
+    /// The highest rung that may answer; `big` when absent. A verdict never
+    /// queues an owner ask, so `human` is refused.
+    #[serde(default)]
+    pub ceiling: Option<crate::llm::decision::DecisionRung>,
+    #[serde(default)]
+    pub reversibility: AiVerdictReversibility,
+    /// The call's clock, 1 to 60000 milliseconds;
+    /// [`AI_VERDICT_DEADLINE_MS`] when absent.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+}
+
+/// `ai.verdict`'s answer: the ladder's answer, its probability, the rung
+/// whose answer stands (none when the call abstained), and the decision's
+/// receipt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AiVerdict {
+    pub answer: crate::llm::decision::DecisionAnswer,
+    pub p: Option<f64>,
+    pub rung: Option<crate::llm::decision::DecisionRung>,
+    pub receipt: crate::llm::decision::DecisionReceipt,
+}
+
+impl From<crate::llm::decision::TypedDecision> for AiVerdict {
+    fn from(decision: crate::llm::decision::TypedDecision) -> Self {
+        Self {
+            answer: decision.answer,
+            p: decision.probability,
+            rung: decision.receipt.time.and_then(|time| time.answered),
+            receipt: decision.receipt,
+        }
+    }
+}
+
+/// `vault.hooks.replay`'s page size when the request names none.
+pub const HOOKS_REPLAY_LIMIT_DEFAULT: usize = 64;
+/// The most entries one `vault.hooks.replay` returns: the engine's own cap.
+pub const HOOKS_REPLAY_LIMIT_MAX: usize = 256;
+
+/// `vault.hooks.replay`'s input: the fact hook to replay, where to start and
+/// how many entries to return.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HooksReplayRequest {
+    /// The hook binding's 32-hex id.
+    pub binding: String,
+    /// The fact position to replay after (`claim_changelog:<hex32>` or
+    /// `settlement:<hex16>`); every source from its start when absent.
+    #[serde(default)]
+    pub since: Option<String>,
+    /// Entries to return, 1 to [`HOOKS_REPLAY_LIMIT_MAX`];
+    /// [`HOOKS_REPLAY_LIMIT_DEFAULT`] when absent.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+impl HooksReplayRequest {
+    /// The page size this request names, refused outside its bounds.
+    pub fn limit(&self) -> MemoryResult<usize> {
+        let limit = self.limit.unwrap_or(HOOKS_REPLAY_LIMIT_DEFAULT);
+        if limit == 0 || limit > HOOKS_REPLAY_LIMIT_MAX {
+            return Err(MemoryError::bad_request_with(
+                format!("limit must be between 1 and {HOOKS_REPLAY_LIMIT_MAX}"),
+                &["Request a smaller page and continue from the last entry's position."],
+            ));
+        }
+        Ok(limit)
+    }
+}
+
+/// One past fact a hook takes, and what its body returns for it now.
+/// Nothing landed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookReplayRow {
+    pub position: crate::runtime_hooks::FactPositionHex,
+    pub kind: crate::runtime_hooks::FactKind,
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub entity: crate::EntityId,
+    pub result: HookReplayOutcome,
+}
+
+/// What a replayed entry gave: the body's outcome, or the history it lacks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum HookReplayOutcome {
+    /// The body ran on this entry. Nothing landed.
+    Ran {
+        outcome_json: Option<String>,
+        /// The outcome kind, or `refused` / `failed`.
+        outcome: String,
+        reason: Option<String>,
+        /// The outcome the live run recorded, when one ran.
+        recorded: Option<String>,
+        /// The input came from the run's pinned memo row.
+        from_memo: bool,
+        /// No run pinned this entry's reads; they read current rows.
+        reads_live: bool,
+    },
+    /// The entry's inputs are gone: replay will not read newer state instead.
+    MissingHistory { reason: String },
+}
+
+impl From<crate::runtime_hooks::HookReplayEntry> for HookReplayRow {
+    fn from(entry: crate::runtime_hooks::HookReplayEntry) -> Self {
+        use crate::runtime_hooks::HookReplayResult;
+        Self {
+            position: entry.position,
+            kind: entry.kind,
+            entity: entry.entity,
+            result: match entry.result {
+                HookReplayResult::Ran {
+                    outcome_json,
+                    outcome,
+                    reason,
+                    recorded,
+                    from_memo,
+                    reads_live,
+                } => HookReplayOutcome::Ran {
+                    outcome_json,
+                    outcome,
+                    reason,
+                    recorded,
+                    from_memo,
+                    reads_live,
+                },
+                HookReplayResult::MissingHistory { reason } => {
+                    HookReplayOutcome::MissingHistory { reason }
+                }
+            },
+        }
+    }
+}
+
+/// `vault.hooks.replay` under the owner's proof a host minted from the
+/// request, on `runtime`, the host's own hook sandbox: a dry run of the
+/// binding's body over past facts, landing nothing.
+pub fn replay_hooks_as_owner(
+    vault: &crate::Vault,
+    _owner: &crate::consent::AuthenticatedOwner,
+    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+    input: &HooksReplayRequest,
+) -> MemoryResult<Vec<HookReplayRow>> {
+    let limit = input.limit()?;
+    let binding = crate::EntityId::from_hex(input.binding.trim())
+        .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
+    let since = input
+        .since
+        .as_ref()
+        .map(|position| crate::runtime_hooks::FactPositionHex(position.trim().to_owned()));
+    let entries =
+        vault
+            .hooks_replay(runtime, binding, since, limit)
+            .map_err(|error| match error {
+                crate::Error::EntityNotFound => {
+                    MemoryError::not_found(format!("no hook binding {}", input.binding.trim()))
+                }
+                crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
+                other => other.into(),
+            })?;
+    Ok(entries.into_iter().map(HookReplayRow::from).collect())
+}

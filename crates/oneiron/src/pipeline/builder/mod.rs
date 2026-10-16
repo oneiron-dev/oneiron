@@ -79,6 +79,7 @@ pub struct PipelineBuilder<'a> {
     /// selection's caller-supplied agent id. Bare `Vault::query` has none.
     pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
     pub(super) skill_executor: Option<String>,
+    pub(super) skill_reliability_query: Option<crate::skill_reliability::SkillReliabilityQuery>,
     pub(super) corpus_scope: CorpusScope,
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
@@ -98,6 +99,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
     pub(super) retrieval_state: Option<crate::store::RetrievalState>,
+    pub(super) retrieval_policy: Option<super::retrieval_policy::RetrievalPolicyOptions>,
     pub(super) retrieval_turn: Option<crate::store::RetrievalTurn>,
     pub(super) corpus_snapshot_ref: Option<String>,
     pub(super) replay_query_ref: Option<String>,
@@ -161,6 +163,7 @@ impl<'a> PipelineBuilder<'a> {
             active_world_selection: None,
             execution_actor: None,
             skill_executor: None,
+            skill_reliability_query: None,
             corpus_scope: CorpusScope::All,
             made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
@@ -174,6 +177,7 @@ impl<'a> PipelineBuilder<'a> {
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             retrieval_state: None,
+            retrieval_policy: None,
             retrieval_turn: None,
             corpus_snapshot_ref: None,
             replay_query_ref: None,
@@ -199,11 +203,22 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     /// Selects the exact executor model@revision for skill reliability ranking.
-    /// Unspecified queries rank the unknown-executor arm, not another model's evidence.
+    /// Add skill_reliability_context to read measured cells. Untyped discovery
+    /// uses provenance only, never an unrelated task's evidence.
     pub fn skill_executor(mut self, model: impl Into<String>) -> Result<Self> {
         let model = model.into();
         crate::skill_reliability::validate_executor(&model)?;
         self.skill_executor = Some(model);
+        Ok(self)
+    }
+
+    /// Bind skill UCB ranking to the placement and axis the task will stamp.
+    pub fn skill_reliability_context(
+        mut self,
+        query: crate::skill_reliability::SkillReliabilityQuery,
+    ) -> Result<Self> {
+        query.validate()?;
+        self.skill_reliability_query = Some(query);
         Ok(self)
     }
 

@@ -175,7 +175,15 @@ export type TemporalHint = {
 }
 
 /** Retrieval accounting. */
+export type RerankReport =
+  | { status: "applied"; model: string; served_model?: string; candidates: number; calls: number }
+  | { status: "skipped"; reason: "no_reranker" | "no_candidates" | "deadline" | "device_only" }
+
 export type RetrievalMeta = {
+  quality: "full" | "degraded" | "passthrough"
+  degradation: ("ppr_cache_miss" | "embedding_timeout" | "bm25_stale" | "temporal_signal_skipped")[]
+  confidenceAdjustment: number
+  rerank?: RerankReport
   partial: boolean
   sparse?: boolean
   totalCandidates: number
@@ -187,7 +195,8 @@ export type RetrievalMeta = {
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
-export type MemoryExport = { format: string; rendered: string }
+/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
+export type MemoryExport = { format: string; archive: string; digest: string }
 
 /** The engine `MemoryPack`, unchanged apart from field spelling. */
 export type MemoryPack = {

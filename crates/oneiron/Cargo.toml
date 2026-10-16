@@ -38,6 +38,7 @@ oneiron-code-check = { path = "../oneiron-code-check" }
 # Every subprocess starts with only the descriptors it is named.
 oneiron-spawn = { path = "../oneiron-spawn" }
 # The browser verbs' input and output shapes (types only, no driver).
+oneiron-container = { path = "../oneiron-container" }
 oneiron-browser = { path = "../oneiron-browser", default-features = false }
 # Native DOCX revisions: organ crate remains independent of the vault engine.
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
@@ -105,6 +106,8 @@ tokio-tungstenite = { version = "0.26", optional = true }
 base64 = "0.22"
 futures-util = { version = "0.3", optional = true }
 zstd = "0.13"
+# The whole-vault archive (OF-222) is one ZIP of JSONL records, files and a manifest.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 tracing = { version = "0.1" }
 whichlang = "0.1.1"
 kamadak-exif = "0.5"
@@ -193,6 +196,7 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
+default = ["sync"]
 code-sandbox-wasmtime = []
 image-station-ocr = ["dep:ocrs", "dep:rten"]
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest

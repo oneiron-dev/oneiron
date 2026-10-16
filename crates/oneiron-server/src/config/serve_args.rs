@@ -63,6 +63,16 @@ pub struct ServeArgs {
     #[arg(long = "derivation-owner")]
     pub derivation_owner: Option<String>,
 
+    /// Trusted organization hosting id (32 bytes in hexadecimal). With no
+    /// --member-vault, this is also the shared vault's derivation owner.
+    #[arg(long = "organization-owner", requires = "managed_by_hypnos")]
+    pub organization_owner: Option<String>,
+
+    /// This organization's member vault, sealed to --derivation-owner rather
+    /// than to the organization. The personal vault can leave with its member.
+    #[arg(long = "member-vault", requires = "organization_owner")]
+    pub member_vault: bool,
+
     /// Vault data directory. Managed mode's spelling of `--vault-path`, which
     /// stays available as the alias; unmanaged serve keeps using either.
     #[arg(long = "data-dir")]
@@ -106,6 +116,13 @@ pub struct ServeArgs {
     /// as `[keystore] dir`.
     #[arg(long = "keystore-dir")]
     pub keystore_dir: Option<PathBuf>,
+
+    /// Managed mode: the unix socket the vault's artifact origin listens on,
+    /// an absolute path the supervisor chose and routes `<vault>.<domain>` to
+    /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
+    /// serves `/a/` on its API socket alone.
+    #[arg(long = "artifact-http-socket")]
+    pub artifact_http_socket: Option<PathBuf>,
 
     /// Host address to bind to.
     #[arg(long)]
@@ -311,6 +328,11 @@ pub struct ServeArgs {
     /// `relay` and `self-host`.
     #[arg(long)]
     pub hosted_kms_key_ref: Option<String>,
+
+    /// Start no fact-hook runner for this run: the clean baseline
+    /// (ARCH-0080 §10).
+    #[arg(long = "no-hooks")]
+    pub no_hooks: bool,
 }
 
 impl fmt::Debug for ServeArgs {
@@ -321,6 +343,8 @@ impl fmt::Debug for ServeArgs {
             .field("managed_by_hypnos", &self.managed_by_hypnos)
             .field("contract_version", &self.contract_version)
             .field("vault_name", &self.vault_name)
+            .field("organization_owner", &self.organization_owner)
+            .field("member_vault", &self.member_vault)
             .field("data_dir", &self.data_dir)
             .field("http_socket", &self.http_socket)
             .field("ctl_socket", &self.ctl_socket)
@@ -329,6 +353,7 @@ impl fmt::Debug for ServeArgs {
             .field("credentials_fd", &self.credentials_fd)
             .field("vsock_guest", &self.vsock_guest)
             .field("keystore_dir", &self.keystore_dir)
+            .field("artifact_http_socket", &self.artifact_http_socket)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
@@ -402,6 +427,7 @@ impl fmt::Debug for ServeArgs {
                 "hosted_kms_key_ref",
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
+            .field("no_hooks", &self.no_hooks)
             .finish()
     }
 }

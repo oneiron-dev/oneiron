@@ -6,8 +6,13 @@
 pub mod coach;
 mod curator;
 mod evaluation;
+pub mod honesty;
+pub(crate) mod optimize;
+pub use optimize::CoachSkillOptimizer;
 mod proposals;
 pub mod representation;
+mod retrieval_policy;
+pub mod stewardship;
 #[cfg(test)]
 mod tests;
 use super::{
@@ -54,7 +59,8 @@ impl DreamerRunnerStore<'_> {
     }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
-    /// many wakes ask) and the harness self-audit (one per wake key).
+    /// many wakes ask), the relationship-stewardship pass and the harness
+    /// self-audit (one per wake key each).
     pub(crate) fn enqueue_dreamer_nightly_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -70,6 +76,7 @@ impl DreamerRunnerStore<'_> {
             run_id.clone(),
             now,
         )?;
+        self.enqueue_stewardship_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_harness_audit_in_txn(txn, parent_attempt, wake_key, run_id, now)?;
         Ok(())
     }
@@ -126,18 +133,22 @@ pub(crate) fn execute(
         representation::REPRESENTATION_FACET => {
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
+        stewardship::STEWARDSHIP_FACET => {
+            stewardship::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            // ARCH-0037 #tune-retrieval: the update at sleep. Too few gated
-            // rewards is a quiet night, not a failed attempt.
-            let _ = ctx
-                .vault
-                .store
-                .tune_retrieval_blend_weights_when_ready(Default::default())?;
+            retrieval_policy::run(ctx.vault)?;
+        }
+        honesty::HONESTY_AUDIT_FACET => {
+            let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;
         }
         coach::COACH_READ_HARDENING_FACET => {
             coach::run_read_hardening(ctx.vault, ctx.now_ms / 1000)?;
         }
         coach::COACH_TRIPWIRES_FACET => coach::run_tripwires(ctx.vault, ctx.now_ms / 1000)?,
+        coach::COACH_TRADEOFF_ESCALATION_FACET => {
+            coach::run_tradeoff_escalation(ctx.vault, ctx.now_ms / 1000)?;
+        }
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })

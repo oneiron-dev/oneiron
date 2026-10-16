@@ -1,4 +1,5 @@
-//! Full-vault memory export through the existing five-format pack writers.
+//! Full-vault memory export: the whole-vault archive (OF-222). Export is never
+//! gated and is never a backup; backups stay the vault's encrypted snapshot.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,17 +7,32 @@ use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryErro
 use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::claim::CallerLocality;
-use crate::context_pack::PackFormat;
 use crate::edge::EdgeActorClass;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
+use crate::write_envelope::WriteActor;
 
-/// Format for the full-vault export; absence uses the model-injection default.
+/// The export target. `archive` (the default) is the whole vault: one ZIP of
+/// one JSONL file per record kind, each attached file once by BLAKE3, and a
+/// manifest. It re-imports into a fresh vault. `okf` is "Export to OKF": a
+/// ZIP of markdown concepts with YAML frontmatter (Open Knowledge Format
+/// v0.1) for other tools, lossy and labelled as not a full copy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExportOptions {
     #[serde(default)]
     pub format: Option<String>,
+    /// Whether the archive carries custody secret values. Absent means yes:
+    /// "all your data is all your data" (owner, 2026-10-17). `false` exports
+    /// each custody record as its handle only; a re-import lists those as
+    /// missing secrets to re-enter.
+    #[serde(default)]
+    pub include_secrets: Option<bool>,
 }
+
+/// The `format` that names the whole-vault archive.
+pub const EXPORT_TARGET_ARCHIVE: &str = "archive";
+/// The `format` that names the lossy OKF bundle.
+pub const EXPORT_TARGET_OKF: &str = "okf";
 
 /// One whole-vault export, written by the call that renders it, so every
 /// owner can see that the vault left and in what shape. Never the bytes. A
@@ -28,20 +44,45 @@ pub struct ExportReceipt {
     pub at: u64,
     pub format: String,
     pub bytes: u64,
-    /// BLAKE3 of the rendered document, lowercase hex.
+    /// BLAKE3 of the archive, lowercase hex.
     pub digest: String,
     /// The exporting actor as hex, or `host` for a host-root export.
     pub by: String,
+    /// OF-490: each agent whose diaries this export read, with the reason.
+    pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
 }
 
 const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
     SideTable::new(&side_table::EXPORT_RECEIPT);
 
-/// Rendered full-vault document in the chosen OF-096 format.
+/// One export: the archive, or the OKF bundle. On the wire the ZIP is
+/// standard base64.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryExport {
+    /// The archive manifest's `format`.
     pub format: String,
-    pub rendered: String,
+    #[serde(with = "archive_base64")]
+    pub archive: Vec<u8>,
+    /// BLAKE3 of `archive`, lowercase hex, as its receipt records it.
+    pub digest: String,
+}
+
+mod archive_base64 {
+    use base64::Engine as _;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u8>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 impl Memory<'_> {
@@ -73,6 +114,7 @@ impl Memory<'_> {
             opts,
             &self.actor.to_hex(),
             self.locality,
+            WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| {
                 verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
                 if self.actor_class != EdgeActorClass::Human {
@@ -140,7 +182,10 @@ impl Vault {
         proof: &VerifiedSlip,
         locality: CallerLocality,
     ) -> MemoryResult<MemoryExport> {
-        render_export(self, opts, "host", locality, |txn| {
+        // A host-root export reads diaries as the vault's owner (OF-490).
+        let reader =
+            WriteActor::new(crate::vault::embedded_owner_actor_id()?, EdgeActorClass::Human);
+        render_export(self, opts, "host", locality, reader, |txn| {
             validate_verified_owner(self, txn, proof)?;
             if proof.claims().holder_ref != "host" {
                 return Err(export_forbidden());
@@ -176,31 +221,32 @@ fn render_export(
     opts: &ExportOptions,
     by: &str,
     locality: CallerLocality,
+    reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<MemoryExport> {
-    let name = opts.format.as_deref().unwrap_or("toon");
-    let format = match name {
-        "toon" => PackFormat::Toon,
-        "md" => PackFormat::Markdown,
-        "json" => PackFormat::Json,
-        "yaml" => PackFormat::Yaml,
-        "txt" => PackFormat::Plaintext,
+    let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
+    let include_secrets = opts.include_secrets.unwrap_or(true);
+    let export = match name {
+        EXPORT_TARGET_ARCHIVE => {
+            vault.export_whole_vault_with_admission(locality, include_secrets, reader, admit)?
+        }
+        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, reader, admit)?,
         _ => {
             return Err(MemoryError::bad_request_with(
                 format!("unknown export format {name:?}"),
-                &["Use one of: toon, md, json, yaml, txt."],
+                &["Use one of: archive, okf."],
             ));
         }
     };
-    let document = vault.export_whole_vault_with_admission(format, locality, admit)?;
-    let rendered = String::from_utf8(document.bytes().to_vec())
-        .map_err(|_| MemoryError::bad_request("export serializer emitted non-UTF-8 text"))?;
+    let format = export.manifest.format.clone();
+    let digest = blake3::hash(&export.bytes).to_hex().to_string();
     let receipt = ExportReceipt {
         at: vault.store.clock.now_recorded_at(),
         format: name.to_owned(),
-        bytes: rendered.len() as u64,
-        digest: blake3::hash(rendered.as_bytes()).to_hex().to_string(),
+        bytes: export.bytes.len() as u64,
+        digest: digest.clone(),
         by: by.to_owned(),
+        diary_reads: export.diary_reads,
     };
     // Export is never gated: a vault that cannot take one more write (a full
     // map, a failing disk) still hands the owner their data, and says so.
@@ -220,8 +266,9 @@ fn render_export(
         tracing::warn!(%error, "whole-vault export served without its receipt");
     }
     Ok(MemoryExport {
-        format: name.to_owned(),
-        rendered,
+        format,
+        archive: export.bytes,
+        digest,
     })
 }
 

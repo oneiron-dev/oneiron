@@ -359,6 +359,9 @@ pub(super) struct StepResultDigests {
     pub(super) done: bool,
     /// Each file the step wrote, by the guest path it named.
     pub(super) outputs: Vec<(String, [u8; 32])>,
+    /// Each result name the step bound, with the handle it names, in the
+    /// order the step bound them.
+    pub(super) bindings: Vec<(String, String)>,
 }
 
 impl StepResultDigests {
@@ -368,6 +371,7 @@ impl StepResultDigests {
             observation: *blake3::hash(observation.as_bytes()).as_bytes(),
             done,
             outputs: Vec::new(),
+            bindings: Vec::new(),
         }
     }
 }
@@ -397,6 +401,11 @@ pub(super) fn step_state_hash(
     for (path, digest) in &result.outputs {
         hash_str(&mut hasher, path);
         hash_bytes(&mut hasher, digest);
+    }
+    hash_u64(&mut hasher, result.bindings.len() as u64);
+    for (name, handle) in &result.bindings {
+        hash_str(&mut hasher, name);
+        hash_str(&mut hasher, handle);
     }
     hash_u64(&mut hasher, bridge_calls.len() as u64);
     for call in bridge_calls {

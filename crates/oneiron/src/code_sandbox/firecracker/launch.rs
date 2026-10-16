@@ -91,10 +91,19 @@ pub(super) fn run(
 // Keep the directory descriptor alive until both the listener and watchdog are
 // finished. A /proc/self/fd path avoids sockaddr_un's small pathname limit,
 // without chdir (process-global), a public short-path alias, or a different jail.
-fn bind_guest_listener(
+pub(super) fn bind_guest_listener(
     jail_root: &Path,
     uid: u32,
     gid: u32,
+) -> Result<(fs::File, std::path::PathBuf, UnixListener)> {
+    bind_guest_listener_port(jail_root, uid, gid, 52)
+}
+
+pub(super) fn bind_guest_listener_port(
+    jail_root: &Path,
+    uid: u32,
+    gid: u32,
+    port: u32,
 ) -> Result<(fs::File, std::path::PathBuf, UnixListener)> {
     let directory = fs::OpenOptions::new()
         .read(true)
@@ -102,7 +111,7 @@ fn bind_guest_listener(
         .open(jail_root)
         .map_err(|_| refused("vsock directory open failed"))?;
     let endpoint = std::path::PathBuf::from(format!(
-        "/proc/self/fd/{}/vsock.sock_52",
+        "/proc/self/fd/{}/vsock.sock_{port}",
         directory.as_raw_fd()
     ));
     let listener =
@@ -114,7 +123,7 @@ fn bind_guest_listener(
     Ok((directory, endpoint, listener))
 }
 
-fn stage_images(
+pub(super) fn stage_images(
     config: &FirecrackerHostConfig,
     vm: &MicroVmHandle,
     image: &GuestImage,
@@ -163,7 +172,10 @@ fn stage_images(
     Ok((jail_custody, jail_root, staged))
 }
 
-fn machine_config(config: &FirecrackerHostConfig, budget: ExecutionBudget) -> serde_json::Value {
+pub(super) fn machine_config(
+    config: &FirecrackerHostConfig,
+    budget: ExecutionBudget,
+) -> serde_json::Value {
     json!({
         "boot-source": {
             "kernel_image_path":"/kernel",
@@ -175,10 +187,19 @@ fn machine_config(config: &FirecrackerHostConfig, budget: ExecutionBudget) -> se
     })
 }
 
-fn jailer_command(
+pub(super) fn jailer_command(
     config: &FirecrackerHostConfig,
     vm: &MicroVmHandle,
     budget: ExecutionBudget,
+) -> Command {
+    jailer_command_with_cpu(config, vm, budget, u32::from(config.vcpus) * 1000)
+}
+
+pub(super) fn jailer_command_with_cpu(
+    config: &FirecrackerHostConfig,
+    vm: &MicroVmHandle,
+    budget: ExecutionBudget,
+    cpu_millis: u32,
 ) -> Command {
     let mut command = oneiron_spawn::command(&config.jailer);
     // No environment passthrough, shell, NIC, daemonization, or extra host mounts.
@@ -210,10 +231,7 @@ fn jailer_command(
         .arg("--cgroup")
         .arg("memory.swap.max=0")
         .arg("--cgroup")
-        .arg(format!(
-            "cpu.max={} 100000",
-            u64::from(config.vcpus) * 100_000
-        ))
+        .arg(format!("cpu.max={} 100000", u64::from(cpu_millis) * 100))
         .args(["--", "--no-api", "--config-file", "/machine.json"]);
     command
 }
@@ -243,7 +261,7 @@ fn ensure_private_tree(path: &Path) -> Result<()> {
     Ok(())
 }
 
-struct JailCustody {
+pub(super) struct JailCustody {
     path: std::path::PathBuf,
     cgroup: std::path::PathBuf,
 }
@@ -254,13 +272,13 @@ impl Drop for JailCustody {
     }
 }
 
-struct ProcessCustody(Arc<Mutex<Option<Child>>>);
+pub(super) struct ProcessCustody(pub(super) Arc<Mutex<Option<Child>>>);
 impl Drop for ProcessCustody {
     fn drop(&mut self) {
         terminate(&self.0);
     }
 }
-fn terminate(child: &Mutex<Option<Child>>) {
+pub(super) fn terminate(child: &Mutex<Option<Child>>) {
     if let Ok(mut slot) = child.lock()
         && let Some(mut child) = slot.take()
     {

@@ -38,7 +38,8 @@ pub use job_maximum::{
 pub use media::MediaGate;
 pub use permit::RunPermit;
 pub use receipt::{
-    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink, TeacherReport,
+    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
+    RunTokenUsage, TeacherReport,
 };
 pub use settle::CallOutcome;
 

@@ -58,7 +58,8 @@ use crate::runtime::RuntimeRole;
 #[cfg(test)]
 use axum::http::HeaderMap;
 
-mod ai;
+pub(crate) mod ai;
+mod anonymous_chat;
 mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
@@ -120,14 +121,17 @@ mod openapi_registry;
 // scan switch, whole-batch import consent and whole-run agent consent.
 mod owner_origin;
 mod owner_routes;
+mod packs;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the
 // `protocol::close_codes` posture.
+pub(crate) mod call_receipt;
 mod context_board;
 #[allow(dead_code)]
 mod reactive;
+mod report;
 mod run_tree;
 mod saved_query;
 mod scoped_auth;
@@ -259,6 +263,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/context-board/turns/{turn}",
             get(context_board_turn_history),
         )
+        .route("/explain/memory/{entity}", get(core_explain_memory))
+        .route("/explain/gate/{receipt}", get(core_explain_gate))
+        .route("/context-board/scratchpad", post(context_board_scratchpad))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
@@ -341,7 +348,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/personas", get(list_personas))
         .route("/personas/access-requests", get(list_access_requests))
         .route(
-            "/profiles/{persona_ref}",
+            "/profiles/{person_ref}",
             get(get_companion_profile).post(refresh_companion_profile),
         )
         // ONE-207: the depth-dialed reasoning read. A POST that WRITES
@@ -401,9 +408,13 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
         // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
         // limit stays a property of this nest alone.
-        .nest("/v1/core/facade", self::facade::facade_routes())
+        .nest(
+            "/v1/core/facade",
+            self::facade::recorded_facade_routes(server.clone()),
+        )
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
+        .merge(self::report::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
@@ -433,8 +444,23 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
         // owner's own off-record routes sit out here for the same reason.
-        .nest("/v1/core/off-record", self::off_record_rooms::routes())
-        .nest("/v1/owner", self::owner_routes::off_record_routes())
+        // Anonymous turns also keep no wire or idempotency receipt, and say so.
+        .merge(
+            self::anonymous_chat::routes()
+                .layer(middleware::map_response(call_receipt::no_record_reply)),
+        )
+        // OF-538's one exception: these replies carry no call receipt, and
+        // say so (`x-oneiron-receipt-ref: none; no-record`).
+        .nest(
+            "/v1/core/off-record",
+            self::off_record_rooms::routes()
+                .layer(middleware::map_response(call_receipt::no_record_reply)),
+        )
+        .nest(
+            "/v1/owner",
+            self::owner_routes::off_record_routes()
+                .layer(middleware::map_response(call_receipt::no_record_reply)),
+        )
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,

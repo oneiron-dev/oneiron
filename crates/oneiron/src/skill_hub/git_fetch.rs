@@ -1,4 +1,6 @@
 //! Generic pinned Git subtree reads. Files are read as blobs, never checked out or executed.
+//! A repository is a hub (ARCH-0053 §7): `owner/repo` names a GitHub repository,
+//! and discovery lists its skill folders the way `npx skills add` does.
 use super::git_process::GitScratch;
 use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::package_codec::invalid;
@@ -8,7 +10,8 @@ use crate::{entity_id::EntityId, error::Result};
 /// A configured repository plus an immutable expected commit. A tag is checked
 /// against that commit every fetch; a moved tag cannot silently update content.
 /// `HubRef.ref_string` is the repository-relative skill folder (`.` for the root).
-/// Local absolute paths are explicit host configuration, not index-provided URLs.
+/// Local absolute paths are explicit host configuration, not index-provided URLs;
+/// the `owner/repo` shorthand is `https://github.com/owner/repo.git`.
 pub struct GitEndpointSkillHubAdapter {
     hub_id: EntityId,
     endpoint: String,
@@ -101,7 +104,10 @@ impl GitEndpointSkillHubAdapter {
 }
 impl super::pack_catalog::PackSourceAdapter for GitEndpointSkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<super::pack_catalog::PackSource> {
-        super::pack_catalog::PackSource::from_files(self.fetch_tree(reference)?)
+        Ok(super::pack_catalog::PackSourceAdapter::fetch_pack_tree(self, reference)?.source)
+    }
+    fn fetch_pack_tree(&self, reference: &HubRef) -> Result<super::pack_catalog::PackTree> {
+        super::pack_catalog::PackSource::from_tree(self.fetch_tree(reference)?)
     }
 }
 impl SkillHubAdapter for GitEndpointSkillHubAdapter {
@@ -117,12 +123,129 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
     fn fetch_package(&self, reference: &HubRef) -> Result<HubPackage> {
         super::folder::package_from_files(self.fetch_tree(reference)?)
     }
+    /// The skill folders at the pinned commit: each folder holding a `SKILL.md`
+    /// that no enclosing skill folder holds, read as blobs under a fetch's
+    /// bounds, never checked out. A collection (anthropics/skills, a Claude
+    /// plugin marketplace's `plugins/*/skills/*`, Codex and openskills layouts)
+    /// lists every skill; a folder whose tree or frontmatter does not import is
+    /// left out, and an import of it refuses with the reason.
     fn discover(&self) -> Result<Vec<HubIndexEntry>> {
-        // No repository-wide checkout or scan. Hosts select a subtree explicitly.
-        Err(invalid("Git discovery requires an explicit subtree ref"))
+        let (repo, resolved) = fetch_revision(&self.endpoint, &self.commit)?;
+        if resolved != self.commit {
+            return Err(invalid("Git tag or commit drift"));
+        }
+        let root = format!("{}^{{tree}}", self.commit);
+        let listing = repo.run(
+            &[
+                "--git-dir=repo",
+                "ls-tree",
+                "-r",
+                "-z",
+                "--full-tree",
+                &root,
+            ],
+            16 * 1024 * 1024,
+        )?;
+        let mut entries = Vec::new();
+        for folder in skill_folders(&listing)? {
+            let object = if folder == "." {
+                root.clone()
+            } else {
+                format!("{}:{folder}", self.commit)
+            };
+            let Ok(files) = repo
+                .run(
+                    &[
+                        "--git-dir=repo",
+                        "ls-tree",
+                        "-r",
+                        "-z",
+                        "--full-tree",
+                        &object,
+                    ],
+                    2 * 1024 * 1024,
+                )
+                .and_then(|listing| read_blobs(&repo, &listing))
+            else {
+                continue;
+            };
+            let Ok(package) = super::folder::package_from_files(files) else {
+                continue;
+            };
+            entries.push(HubIndexEntry {
+                name: package.record.skill_id.clone(),
+                description: package.record.desc.clone(),
+                version: package.record.version.clone(),
+                content_hash: package.content_hash()?,
+                ref_string: folder,
+            });
+        }
+        Ok(entries)
     }
 }
+/// The most skill folders one discovery reads.
+const MAX_DISCOVERED_SKILLS: usize = 256;
+/// Folders holding a `SKILL.md`, in path order; a folder inside another skill's
+/// folder is part of that skill. Repository metadata folders are skipped.
+fn skill_folders(listing: &[u8]) -> Result<Vec<String>> {
+    let mut folders = Vec::new();
+    for row in listing
+        .split(|byte| *byte == 0)
+        .filter(|row| !row.is_empty())
+    {
+        let row = std::str::from_utf8(row).map_err(|_| invalid("Git path is not UTF-8"))?;
+        let (_, path) = row
+            .split_once('\t')
+            .ok_or_else(|| invalid("invalid Git tree entry"))?;
+        let folder = match path.rsplit_once('/') {
+            Some((folder, "SKILL.md")) => folder,
+            None if path == "SKILL.md" => ".",
+            _ => continue,
+        };
+        if folder
+            .split('/')
+            .any(|part| part.eq_ignore_ascii_case(".git"))
+        {
+            continue;
+        }
+        folders.push(folder.to_owned());
+    }
+    folders.sort();
+    let mut kept: Vec<String> = Vec::new();
+    for folder in folders {
+        if kept
+            .iter()
+            .any(|outer| outer == "." || folder.starts_with(&format!("{outer}/")))
+        {
+            continue;
+        }
+        if kept.len() == MAX_DISCOVERED_SKILLS {
+            return Err(invalid(
+                "the repository holds more skill folders than one discovery reads; name a subtree",
+            ));
+        }
+        kept.push(folder);
+    }
+    Ok(kept)
+}
+/// `owner/repo`, the shorthand skills.sh and `npx skills add` use for GitHub.
+fn github_shorthand(endpoint: &str) -> Option<String> {
+    let (owner, repo) = endpoint.split_once('/')?;
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part.len() <= 100
+            && !part.starts_with('.')
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    (valid(owner) && valid(repo)).then(|| format!("https://github.com/{owner}/{repo}.git"))
+}
 fn normalize_endpoint(endpoint: &str) -> Result<String> {
+    if let Some(url) = github_shorthand(endpoint) {
+        return Ok(url);
+    }
     if std::path::Path::new(endpoint).is_absolute() {
         let path = std::fs::canonicalize(endpoint)?;
         return Ok(path

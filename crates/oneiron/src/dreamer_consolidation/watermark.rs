@@ -4,10 +4,8 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use super::support::{
-    DEFAULT_MESO_ROUND_TURN_CAP, KEY_LAST_LEARNED_AT, KEY_LAST_TURN_ID, KEY_SCHEMA_VERSION,
-    TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, WATERMARK_SCHEMA_VERSION,
-    WATERMARK_SCHEMA_VERSION_V1, decode_value, encode_value, expect_key, expect_map,
-    invalid_consolidation, scope_byte,
+    DEFAULT_MESO_ROUND_TURN_CAP, TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY,
+    WATERMARK_SCHEMA_VERSION, invalid_consolidation, scope_byte,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -21,6 +19,8 @@ use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, Raw, SideTable};
 
 pub(super) use super::redirty::conversation_of;
+mod codec;
+pub(super) use codec::{decode_watermark, encode_watermark};
 
 /// Per-scope consolidation watermark row. Key: u8 (the scope byte).
 const WATERMARK: SideTable<[u8; 1], ConsolidationWatermark, Raw> =
@@ -113,6 +113,39 @@ pub fn read_watermark(
     Ok(WATERMARK
         .get(&vault.store, &rtxn, &[scope_byte(scope)])?
         .unwrap_or_else(ConsolidationWatermark::bootstrap))
+}
+
+/// Admit a landed or changed TURN that any scope has already passed.
+/// The put owns this transaction, so a late source and its pending carrier
+/// become visible together; temporal-index position remains the authority
+/// for forward writes, not a caller's arrival-time hint.
+pub(crate) fn admit_turn_position_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    let row = store
+        .port_entity_record(txn, turn)?
+        .ok_or(Error::EntityNotFound)?;
+    for scope in [
+        DreamerConsolidationScope::Micro,
+        DreamerConsolidationScope::Meso,
+        DreamerConsolidationScope::Macro,
+    ] {
+        let watermark = WATERMARK
+            .get(store, txn, &[scope_byte(scope)])?
+            .unwrap_or_else(ConsolidationWatermark::bootstrap);
+        let passed = !watermark.before_first
+            && (row.learned_at < watermark.last_learned_at
+                || (row.learned_at == watermark.last_learned_at
+                    && watermark.last_turn_id.is_none_or(|last| *turn <= last)));
+        if passed {
+            super::redirty::requeue_turn_in_txn(store, txn, turn)?;
+            crate::dreamer_wake::words_changed_in_txn(store, txn, turn)?;
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// Reads the per-scope watermark inside a caller-owned write transaction
@@ -322,144 +355,13 @@ fn write_watermark_in_txn(
     scope: DreamerConsolidationScope,
     watermark: &ConsolidationWatermark,
 ) -> Result<()> {
+    if watermark.last_learned_at > crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)? {
+        return Err(invalid_consolidation(
+            "dreamer watermark cannot advance into the future",
+        ));
+    }
     WATERMARK.put(&vault.store, wtxn, &[scope_byte(scope)], watermark)?;
     Ok(())
-}
-
-/// Encodes a watermark row. Every emitted row is schema v2 (no bulk rewrite
-/// runs: a landed v1 row upgrades on its next advance). A nil learned-at in
-/// schema v2 records the before-first position, never a completed second zero.
-pub(super) fn encode_watermark(watermark: &ConsolidationWatermark) -> Result<Vec<u8>> {
-    if watermark.before_first
-        && (watermark.last_learned_at != 0 || watermark.last_turn_id.is_some())
-    {
-        return Err(invalid_consolidation(
-            "invalid before-first dreamer watermark",
-        ));
-    }
-    encode_value(&Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(WATERMARK_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_LAST_LEARNED_AT),
-            if watermark.before_first {
-                Value::Nil
-            } else {
-                Value::from(watermark.last_learned_at)
-            },
-        ),
-        (
-            Value::from(KEY_LAST_TURN_ID),
-            watermark
-                .last_turn_id
-                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
-        ),
-    ]))
-}
-
-pub(super) fn decode_watermark(raw: &[u8]) -> Result<ConsolidationWatermark> {
-    let value = decode_value(raw)?;
-    let entries = expect_map(&value, "dreamer watermark row must be a MessagePack map")?;
-    let mut schema_version = None;
-    // Outer Options track key presence; inner None means before-first for
-    // learned-at, or the complete-second sentinel for turn-id.
-    let mut last_learned_at: Option<Option<u64>> = None;
-    let mut last_turn_id: Option<Option<EntityId>> = None;
-    for (key, value) in entries {
-        match expect_key(key)? {
-            KEY_SCHEMA_VERSION => {
-                if schema_version.is_some() {
-                    return Err(duplicate_watermark_key());
-                }
-                schema_version = Some(expect_watermark_u64(value)?);
-            }
-            KEY_LAST_LEARNED_AT => {
-                if last_learned_at.is_some() {
-                    return Err(duplicate_watermark_key());
-                }
-                last_learned_at = Some(match value {
-                    Value::Nil => None,
-                    _ => Some(expect_watermark_u64(value)?),
-                });
-            }
-            KEY_LAST_TURN_ID => {
-                if last_turn_id.is_some() {
-                    return Err(duplicate_watermark_key());
-                }
-                last_turn_id = Some(decode_watermark_turn_id(value)?);
-            }
-            _ => return Err(unpinned_watermark_key()),
-        }
-    }
-    let schema_version =
-        schema_version.ok_or(invalid_consolidation("missing dreamer watermark schema"))?;
-    let last_turn_id = match schema_version {
-        // A v1 row carries EXACTLY the two landed keys and means "through
-        // second X": `last_turn_id` on it is as unpinned as any unknown key.
-        WATERMARK_SCHEMA_VERSION_V1 => {
-            if last_turn_id.is_some() {
-                return Err(unpinned_watermark_key());
-            }
-            None
-        }
-        WATERMARK_SCHEMA_VERSION => last_turn_id.ok_or(invalid_consolidation(
-            "missing dreamer watermark turn position",
-        ))?,
-        _ => {
-            return Err(invalid_consolidation(
-                "unsupported dreamer watermark schema",
-            ));
-        }
-    };
-    let last_learned_at = last_learned_at.ok_or(invalid_consolidation(
-        "missing dreamer watermark learned_at",
-    ))?;
-    let before_first = last_learned_at.is_none();
-    if before_first && (schema_version != WATERMARK_SCHEMA_VERSION || last_turn_id.is_some()) {
-        return Err(invalid_consolidation(
-            "invalid before-first dreamer watermark",
-        ));
-    }
-    Ok(ConsolidationWatermark {
-        schema_version,
-        last_learned_at: last_learned_at.unwrap_or(0),
-        before_first,
-        last_turn_id,
-    })
-}
-
-const fn duplicate_watermark_key() -> Error {
-    invalid_consolidation("duplicate dreamer watermark key")
-}
-
-const fn unpinned_watermark_key() -> Error {
-    invalid_consolidation("dreamer watermark key is not pinned")
-}
-
-fn expect_watermark_u64(value: &Value) -> Result<u64> {
-    value.as_u64().ok_or(invalid_consolidation(
-        "dreamer watermark counters must be unsigned integers",
-    ))
-}
-
-/// `nil` = the end-of-second sentinel; binary = an exact 16-byte entity id.
-fn decode_watermark_turn_id(value: &Value) -> Result<Option<EntityId>> {
-    match value {
-        Value::Nil => Ok(None),
-        Value::Binary(bytes) => {
-            let raw: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
-                invalid_consolidation("dreamer watermark turn id must be 16 binary bytes")
-            })?;
-            Ok(Some(EntityId::from_bytes(raw).map_err(|_| {
-                invalid_consolidation("dreamer watermark turn id is not a valid entity id")
-            })?))
-        }
-        _ => Err(invalid_consolidation(
-            "dreamer watermark turn id must be binary or nil",
-        )),
-    }
 }
 
 /// One admissible TURN at its exact key `(learned_at, key)` — its temporal
@@ -515,6 +417,12 @@ fn enumerate_admissible_turns(
     upper_inclusive_second: Option<u64>,
     limit: usize,
 ) -> Result<Vec<AdmissibleTurnRow>> {
+    let admission_time = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+    let upper_inclusive_second = Some(
+        upper_inclusive_second
+            .unwrap_or(admission_time)
+            .min(admission_time),
+    );
     let query = crate::ports::TimelineQuery {
         start: if !watermark.before_first && watermark.last_turn_id.is_none() {
             std::ops::Bound::Excluded(watermark.last_learned_at)
@@ -560,6 +468,7 @@ fn enumerate_admissible_turns(
         };
 
         if raw.entity_type != ENTITY_TYPE_TURN
+            || raw.learned_at > admission_time
             || !carriers.stands(vault, txn, &candidate, raw.learned_at)?
         {
             continue;

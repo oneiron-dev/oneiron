@@ -18,6 +18,9 @@ pub struct HookArgs {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum HookHost {
     ClaudeCode,
+    /// Hermes Agent's memory-provider plugin (`packages/oneiron-hermes`). It
+    /// asks only `bind`, and reads and writes through the Python SDK.
+    Hermes,
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -31,6 +34,21 @@ pub enum HookEvent {
     /// Queue the session's log for the running `serve` to import
     /// (`PreCompact`, `Stop`, `SessionEnd`).
     HandOver(HookHandOverArgs),
+    /// Bind a vault for a session, in the same order as `session-start`, and
+    /// print `{"url", "lines"}` as one JSON line: a plugin that runs in its
+    /// host's process (Hermes) asks here, so the order has one home. Reads
+    /// no event.
+    Bind(HookBindArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct HookBindArgs {
+    #[command(flatten)]
+    pub common: HookCommonArgs,
+
+    /// The vault's origin. This pins it, as for `session-start`.
+    #[arg(long)]
+    pub url: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

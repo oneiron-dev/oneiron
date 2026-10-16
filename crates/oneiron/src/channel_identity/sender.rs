@@ -43,6 +43,16 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
     let mut resolved = None;
     for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
         let id = entry?;
+        // Channel and binding are facts, read from the identity's claim heads
+        // (OF-272); only the custody check below reads the local row.
+        let Some(facts) = super::channel_identity_facts_in_txn(store, txn, &id)? else {
+            continue;
+        };
+        if normalize_channel_class(&facts.channel) != channel_class
+            || facts.binding.actor_ref() != Some(bound_actor)
+        {
+            continue;
+        }
         let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
             return Err(Error::CorruptedIndex("channel identity entity row"));
         };
@@ -59,10 +69,7 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
         // manifest ships, and if the owner raises that row the capability check
         // behind `may_send_under` still refuses, because a read-only grant
         // carries no outbound scope.
-        if !outbound_send_permitted(store, txn, &identity)?
-            || normalize_channel_class(identity.channel()) != channel_class
-            || identity.binding().actor_ref() != Some(bound_actor)
-        {
+        if !outbound_send_permitted(store, txn, &identity)? {
             continue;
         }
         if resolved.is_some() {
@@ -92,15 +99,18 @@ pub(crate) fn enrich_dispatch_channel_identity(
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("channel identity sender header"))?;
             if header.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
-                let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
                 // A pinned identity on a different channel class is metadata,
                 // not the sender for THIS effect. Keep the gate's counterparty
                 // verdict independent of a stale cross-channel enrichment.
-                // Provider email rails map to the email class here too.
-                if normalize_channel_class(identity.channel())
-                    == normalize_channel_class(connector_key)
-                    && !outbound_send_permitted(store, txn, &identity)?
-                {
+                // Provider email rails map to the email class here too. The
+                // class is the identity's channel head (OF-272).
+                let same_class =
+                    super::channel_identity_facts_in_txn(store, txn, &id)?.is_none_or(|facts| {
+                        normalize_channel_class(&facts.channel)
+                            == normalize_channel_class(connector_key)
+                    });
+                let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                if same_class && !outbound_send_permitted(store, txn, &identity)? {
                     return Err(refuse_outbound_send(&identity));
                 }
             }

@@ -1,8 +1,7 @@
 //! Turn-local capability hits and session-long loaded skill bodies.
 
 use super::{
-    AgentLane, AgentRow, AgentsSection, BoardFrameError, BoardSection, SectionPolicy,
-    SessionReadSet, ShedRank, one_line_token,
+    BoardFrameError, BoardSection, SectionPolicy, SessionReadSet, ShedRank, one_line_token,
 };
 use crate::{
     EntityId,
@@ -28,11 +27,23 @@ pub struct SkillsSection {
 }
 
 impl SkillsSection {
+    /// Skills and agent definitions the capability channel found, each one
+    /// `found` row; a definition's row says `agent` (PEOPLE, ARCH-0067: the
+    /// AGENTS section is gone, and its candidates found here).
     pub fn project(hits: &[CapabilityHit], session: &SessionReadSet) -> Self {
-        let found = hits
-            .iter()
-            .filter(|hit| hit.entity_type == ENTITY_TYPE_SKILL)
-            .map(|hit| format!("{} found {}", hit.id.to_hex(), one_line_token(&hit.label)))
+        let found = found_hits(hits)
+            .map(|hit| {
+                let kind = if hit.entity_type == ENTITY_TYPE_AGENT_DEF {
+                    "agent "
+                } else {
+                    ""
+                };
+                format!(
+                    "{} found {kind}{}",
+                    hit.id.to_hex(),
+                    one_line_token(&hit.label)
+                )
+            })
             .collect();
         let loaded: Vec<_> = session
             .loaded_skills()
@@ -42,6 +53,35 @@ impl SkillsSection {
             found,
             loaded: format!("loaded: {}", loaded.join(",")),
         }
+    }
+
+    /// [`Self::project`] with the learning view on each found row: the
+    /// skill's reliability posterior mean as `rel=` and, for a caller with an
+    /// entity principal, its newest fit estimate for that actor as `fit=`,
+    /// both to two places. A value the vault does not hold adds no token.
+    pub fn project_with_learning(
+        hits: &[CapabilityHit],
+        session: &SessionReadSet,
+        vault: &crate::Vault,
+        actor: Option<EntityId>,
+    ) -> crate::Result<Self> {
+        let mut section = Self::project(hits, session);
+        for (row, hit) in section.found.iter_mut().zip(found_hits(hits)) {
+            if hit.entity_type != ENTITY_TYPE_SKILL {
+                continue;
+            }
+            if let Some(posterior) =
+                crate::skill_reliability::skill_reliability_posterior(vault, &hit.id)?
+            {
+                row.push_str(&format!(" rel={:.2}", posterior.mean()));
+            }
+            if let Some(actor) = actor
+                && let Some(fit) = crate::actor_claims::skill_fit_for(vault, &actor, &hit.id)?
+            {
+                row.push_str(&format!(" fit={fit:.2}"));
+            }
+        }
+        Ok(section)
     }
 
     pub fn board_section(&self) -> Result<BoardSection, BoardFrameError> {
@@ -58,22 +98,11 @@ impl SkillsSection {
     }
 }
 
-impl AgentsSection {
-    /// Replace this turn's candidate lane without changing child/peer presence.
-    pub fn with_candidates(mut self, hits: &[CapabilityHit]) -> Self {
-        self.rows.retain(|row| row.lane != AgentLane::Cand);
-        self.rows.extend(
-            hits.iter()
-                .filter(|hit| hit.entity_type == ENTITY_TYPE_AGENT_DEF)
-                .map(|hit| AgentRow {
-                    id: hit.id.to_hex(),
-                    lane: AgentLane::Cand,
-                    line: format!("{} cand {}", hit.id.to_hex(), one_line_token(&hit.label)),
-                    harness_label: None,
-                }),
-        );
-        self
-    }
+/// The hits SKILLS lists as found, in hit order: skills and agent
+/// definitions.
+fn found_hits(hits: &[CapabilityHit]) -> impl Iterator<Item = &CapabilityHit> {
+    hits.iter()
+        .filter(|hit| matches!(hit.entity_type, ENTITY_TYPE_SKILL | ENTITY_TYPE_AGENT_DEF))
 }
 
 fn serialize_capability_id<S: serde::Serializer>(

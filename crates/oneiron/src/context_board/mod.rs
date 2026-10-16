@@ -1,11 +1,22 @@
 //! Typed Context Board render projections.
 //!
-//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, session read-set riders and stream projections.
+//! WORLDS, MEMORIES, TASKS, SKILLS, ROOM, INBOX, SCRATCHPAD, the cached
+//! `people` roster, session read-set riders and stream projections.
 
-mod agents;
-mod agents_fanout;
-pub(crate) use agents_fanout::fanout_agent_rows;
 mod capabilities;
+mod children;
+pub use children::{
+    ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
+};
+mod explain;
+pub use explain::{GateExplanation, MemoryExplanation};
+mod people;
+pub(crate) use people::ensure_agent_person;
+pub use people::{
+    PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
+};
+mod inbox;
+pub use inbox::assemble_inbox_section;
 mod observations;
 #[cfg(test)]
 mod observations_tests;
@@ -19,14 +30,14 @@ mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{
     ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
-    ProposalReason, ServedLifecycle, SessionReadSet,
+    ProposalReason, ServedLifecycle, ServedWhy, SessionReadSet,
 };
 pub(crate) use room::scope_worlds;
 pub use room::{
     RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
 };
 pub(crate) use room_verbs::{room_ceiling_in, room_clearance_in, room_roster_in};
-pub use worlds::{WorldPresence, WorldsSection};
+pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;
 mod history;
 mod hydration;
@@ -47,7 +58,12 @@ mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod plugin;
+mod scratchpad;
 mod stream;
+
+pub use scratchpad::{
+    SCRATCHPAD_LINE_MAX_BYTES, ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark,
+};
 
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
@@ -60,16 +76,13 @@ pub use stream::{
 mod surfaces_tests;
 mod tasks;
 
-pub use agents::{
-    AgentLane, AgentRow, AgentsSection, ChildAgentPresence, PeerPresence, render_agents_section,
-};
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
     BoardFrameError, BoardLegend, BoardRender, BoardRenderMetadata, BoardSection, BudgetPolicyRef,
     CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
     SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
-    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_task_agent_sections,
-    render_board_block, resolve_board_budget, section_policy_for_budget_ref, shed,
+    TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_tasks_section, render_board_block,
+    resolve_board_budget, section_policy_for_budget_ref, shed,
 };
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,

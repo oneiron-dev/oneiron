@@ -15,6 +15,7 @@ use super::error::{
     ByoaError, ByoaResult, ERR_ATTACH_KIND, ERR_ENDPOINT_PROTOCOL, ERR_PAYLOAD_DECODE,
     ERR_PAYLOAD_ENCODE, ERR_PAYLOAD_SCHEMA, ERR_UNKNOWN_MODEL_SLUG,
 };
+use super::official_seats::OfficialSeatStamp;
 use super::validate::validate_connector;
 use crate::error::ArtifactError;
 /// Wire version of every connector payload this module encodes.
@@ -389,6 +390,10 @@ pub struct ByoaAttemptPayload {
     /// The attempt that asked for this one, when there was one.
     #[serde(default)]
     pub parent_attempt: Option<[u8; 16]>,
+    /// The official seat this attempt runs on, when it is one (OF-375).
+    /// Labels and choices only; never credential material.
+    #[serde(default)]
+    pub official_seat: Option<OfficialSeatStamp>,
 }
 
 /// Encodes a connector payload in its canonical form.
@@ -483,11 +488,11 @@ mod optional_credential_handle_wire {
     }
 }
 
-mod credential_handle_vec_wire {
+pub(super) mod credential_handle_vec_wire {
     use super::SandboxCredentialHandle;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
+    pub(in crate::dispatch_byoa) fn serialize<S: Serializer>(
         handles: &[SandboxCredentialHandle],
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
@@ -498,7 +503,7 @@ mod credential_handle_vec_wire {
             .serialize(serializer)
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    pub(in crate::dispatch_byoa) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<SandboxCredentialHandle>, D::Error> {
         Vec::<String>::deserialize(deserializer)?

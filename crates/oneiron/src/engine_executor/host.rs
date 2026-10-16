@@ -2,18 +2,19 @@
 
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
-    RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path,
-    is_bridge_result_output_path, recoverable_output_path, result_handle_json, result_read_path,
+    RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
+    recoverable_output_path, result_handle_json, result_read_path, store_result_output_path,
     write_json,
 };
 use super::types::{
-    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeStream,
-    SelfDispatchResponse,
+    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream,
+    JsResultCall, JsResultRef, SelfDispatchResponse,
 };
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorCallSite,
-    ExecutorStorage, GatedActorWrite, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDurableWait, SelfEffect, SelfFailedResult,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
+    CodeRunReplayRecord, CodeRunResultBinding, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
+    RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect,
+    SelfFailedResult, SelfSkillCall, SelfSkillCallResult, agent_verb_rows_of,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -23,7 +24,12 @@ use crate::compaction::output::OutputRef;
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::entity_id::EntityId;
 use crate::error::GateError;
+use crate::secret_rotation::ArtifactTaintState;
 use crate::{Error, Result};
+use serde_json::json;
+
+/// Live names a refusal for an unknown result lists, newest first.
+const UNKNOWN_HANDLE_LIVE_NAMES: usize = 64;
 
 pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
@@ -37,11 +43,18 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The step's result as the guest streams it, written into the run's
     /// body store frame by frame.
     streamed: StreamedOutputs,
-    /// The run's earlier bridge results stored as bodies, which the guest
-    /// may read back.
+    /// The run's earlier results stored as bodies (bridge results and
+    /// stored values), which the guest may read back.
     results: Vec<CodeRunRawOutput>,
-    /// This step's bridge results stored as bodies, for the record.
+    /// This step's results stored as bodies, for the record.
     pub(super) captured: Vec<CodeRunRawOutput>,
+    /// The run's result names, as its record holds them.
+    bindings: Vec<CodeRunResultBinding>,
+    /// The names this step bound or rebound, in order, for the record.
+    pub(super) bound: Vec<CodeRunResultBinding>,
+    /// The rows the run's recorded verb answers were served from, `None`
+    /// when one kept no set (DEC-0005).
+    recorded_rows: Option<Vec<EntityId>>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
@@ -55,6 +68,13 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// calls and recorded-output reads in the step are refused as after a
     /// hard failure.
     left_a_gap: bool,
+    /// The TASK the agent's own refusal declined in this step (OF-533). The
+    /// run does nothing more for it: later calls and recorded-output reads
+    /// are refused, and the step closes the run.
+    pub(super) declined: Option<EntityId>,
+    /// The run's executor, `provider/name@revision`, as the callable skills
+    /// its program calls are credited to (OF-353).
+    skill_executor: Option<String>,
 }
 
 impl<'a, 's> RecordingJsHost<'a, 's> {
@@ -77,11 +97,23 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             streamed: StreamedOutputs::default(),
             results: Vec::new(),
             captured: Vec::new(),
+            bindings: Vec::new(),
+            bound: Vec::new(),
+            recorded_rows: Some(Vec::new()),
             bridge_calls: Vec::new(),
             durable_wait: None,
             hard_failure: None,
             left_a_gap: false,
+            declined: None,
+            skill_executor: None,
         }
+    }
+
+    /// Names the run's executor, as the callable skills its program calls
+    /// are credited to (OF-353).
+    pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
+        self.skill_executor = Some(executor.as_str().to_owned());
+        self
     }
 
     /// Bind only committed observations from the current run to the linked
@@ -103,53 +135,423 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         self.results = record
             .outputs
             .iter()
-            .filter(|output| is_bridge_result_output_path(&output.path))
+            .filter(|output| is_result_output_path(&output.path))
             .cloned()
             .collect();
+        self.bindings = record.bindings.clone();
+        self.recorded_rows = record.agent_verb_rows();
         self.storage = Some(storage);
         Ok(self)
     }
 
-    /// A verb answer too large for one reply, stored whole as a body of the
-    /// run as it is encoded. The guest and the replay row get its handle
-    /// (`result_handle_json`), never the answer; nothing is refused for size.
+    /// A verb's or a callable skill's answer too large for one reply, stored
+    /// whole as a body of the run as it is encoded. The guest and the replay
+    /// row get its handle (`result_handle_json`), never the answer; nothing is
+    /// refused for size.
     fn store_large_answer(
         &mut self,
         seq: u64,
-        outcome: SelfDispatchOutcome,
+        mut outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
-        let SelfDispatchOutcome::AgentVerb(mut answer) = outcome else {
-            return Ok(outcome);
+        let answer = match &mut outcome {
+            SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
+            SelfDispatchOutcome::SkillCall(result) => &mut result.output,
+            _ => return Ok(outcome),
         };
         let mut size = ByteCount::default();
-        serde_json::to_writer(&mut size, &answer.output).map_err(|error| {
+        serde_json::to_writer(&mut size, &*answer).map_err(|error| {
             Error::InvalidConfig(format!("verb answer encoding failed: {error}"))
         })?;
         if size.0 <= RESULT_REPLY_INLINE_BYTES {
-            return Ok(SelfDispatchOutcome::AgentVerb(answer));
+            return Ok(outcome);
         }
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
         let mut sink = storage.code_run_output_sink()?;
-        write_json(&mut sink, &answer.output)?;
+        write_json(&mut sink, &*answer)?;
         let output = storage.publish_code_run_output(
             bridge_result_output_path(seq),
             sink,
             true,
             self.run_id,
         )?;
-        answer.output = result_handle_json(&output);
+        let name = self.next_auto_name();
+        self.bind(name.clone(), output.handle.clone());
+        *answer = result_handle_json(&output);
+        answer["name"] = json!(name);
         self.captured.push(output);
-        Ok(SelfDispatchOutcome::AgentVerb(answer))
+        Ok(outcome)
     }
 
-    /// One chunk of a stored bridge result of this run, read by range.
+    /// `self.skills.call` (OF-353): an agent-callable skill run as a step of
+    /// its own, on the sibling runtime the caller's step lent, under the
+    /// running attempt's lease, with this host as its bridge. The skill's own
+    /// calls are gated and recorded as the run's, at the positions after this
+    /// one's. A skill that fails answers a typed failure the program reads;
+    /// a halt or a declined TASK among its calls is this call's answer too.
+    fn call_skill(
+        &mut self,
+        seq: u64,
+        started_at_ms: u64,
+        call: &SelfCall,
+        skill: SelfSkillCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchOutcome> {
+        let failed = |error: String| {
+            SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::SkillsCall,
+                error,
+            })
+        };
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
+        let lease = match self
+            .gated_write
+            .admit_skill_call_for_executor_run(site, call)?
+        {
+            Ok(lease) => lease,
+            Err(refused) => return Ok(refused),
+        };
+        let Some(executor) = self.skill_executor.clone() else {
+            return Ok(failed("skills_call_no_executor".to_owned()));
+        };
+        let (run_id, determinism) = (self.run_id, self.determinism);
+        let ran = crate::skill::execute_callable_skill(
+            &lease.vault,
+            &lease.leased,
+            &skill.skill,
+            &executor,
+            &skill.args,
+            runtime,
+            &mut *self,
+            run_id,
+            seq,
+            determinism,
+            started_at_ms / 1000,
+        );
+        if self.hard_failure.is_some() || self.left_a_gap {
+            return Ok(failed("host_bridge_halted".to_owned()));
+        }
+        if self.declined.is_some() {
+            return Ok(failed("task_declined".to_owned()));
+        }
+        let output = ran.and_then(|step| {
+            serde_json::from_str::<serde_json::Value>(&step.observation).map_err(|_| {
+                Error::InvalidConfig("callable skill returned non-JSON output".to_owned())
+            })
+        });
+        Ok(match output {
+            Ok(output) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
+                skill: skill.skill,
+                output,
+            }),
+            Err(error) => failed(error.to_string()),
+        })
+    }
+
+    /// One `self.*` call over the bridge. `runtime` is the sibling a call
+    /// that runs a step of its own runs it on, when the caller's runtime
+    /// lent one ([`JsCodeModeHost::dispatch_self_nested`]).
+    fn dispatch_call(
+        &mut self,
+        call: SelfCall,
+        runtime: Option<&mut dyn JsCodeModeRuntime>,
+    ) -> Result<SelfDispatchResponse> {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
+        // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
+        // stamped here — on the one ordering path every `self.*` call takes —
+        // before the row is recorded or the effect dispatched. Guest code
+        // cannot forge either, and the replay row, the dispatched call and the
+        // emitted bubble all carry the same number.
+        let call = call.with_bridge_stamp(seq, started_at_ms);
+        // Past a wait or a halt the bridge answers without dispatching, but a
+        // session-bound run is still answered as its participant stands: once
+        // they left the room it hears `NotInRoom`, never the wait or the halt.
+        if (self.durable_wait.is_some()
+            || self.hard_failure.is_some()
+            || self.left_a_gap
+            || self.declined.is_some())
+            && let Some(storage) = self.storage
+            && let Err(err) = storage.answered(|| Ok(()))
+        {
+            self.left_a_gap = true;
+            return Err(err);
+        }
+        if let Some(wait) = &self.durable_wait {
+            let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
+            let row =
+                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            self.bridge_calls.push(row);
+            return Ok(self.respond(outcome));
+        }
+        if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
+            // Fail-closed after the first hard failure or unrecorded call:
+            // no further gate dispatches; the guest sees a typed Failed
+            // response (budget attached) and the replay row records exactly
+            // that. A declined TASK is closed the same way, without failing
+            // the step.
+            let error =
+                if self.declined.is_some() && self.hard_failure.is_none() && !self.left_a_gap {
+                    "task_declined"
+                } else {
+                    "host_bridge_halted"
+                };
+            let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect(),
+                error: error.to_owned(),
+            });
+            let row =
+                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            self.bridge_calls.push(row);
+            return Ok(self.respond(outcome));
+        }
+        // ONE-1314: the current step's own history, observed at the last
+        // moment before this call dispatches. The durable half was observed
+        // when the step opened; together they are every bridge call this run
+        // has made, so a write can never be sealed against a narrower history
+        // than the one already recorded.
+        self.gated_write.observe_bridge_history(&self.bridge_calls);
+        // This call's row keeps its own position: a callable skill's calls
+        // take the positions after it, and their rows land first.
+        let place = self.bridge_calls.len();
+        let dispatched = match (&call, runtime) {
+            (SelfCall::SkillsCall(skill), Some(runtime)) => {
+                let skill = skill.clone();
+                self.call_skill(seq, started_at_ms, &call, skill, runtime)
+            }
+            _ => {
+                let site = ExecutorCallSite {
+                    run_id: self.run_id,
+                    seq,
+                    step_start: self.step_start,
+                    earlier: &self.bridge_calls,
+                };
+                self.gated_write
+                    .dispatch_for_executor_run(site, call.clone())
+            }
+        };
+        let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
+                    // Infrastructure failure: no guest-visible response
+                    // exists for this call at all.
+                    self.left_a_gap = true;
+                    return Err(err);
+                };
+                let row = CodeRunBridgeCall::record(
+                    seq,
+                    &call,
+                    &error_outcome,
+                    started_at_ms,
+                    started_at_ms,
+                )?;
+                self.bridge_calls.insert(place, row);
+                self.hard_failure = Some(err);
+                return Ok(self.respond(error_outcome));
+            }
+        };
+        let finished_at_ms = started_at_ms;
+        let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?;
+        if self.durable_wait.is_none()
+            && let SelfDispatchOutcome::DurableWait(wait) = &outcome
+        {
+            self.durable_wait = Some(wait.clone());
+        }
+        if let SelfDispatchOutcome::TaskRefusal(refusal) = &outcome
+            && refusal.declined()
+        {
+            self.declined = Some(refusal.task_ref);
+        }
+        self.bridge_calls.insert(place, row);
+        Ok(self.respond(outcome))
+    }
+
+    /// The run's live result names, oldest first: this step's binds over
+    /// the record's.
+    fn live_bindings(&self) -> Vec<&CodeRunResultBinding> {
+        let mut live: Vec<_> = self
+            .bindings
+            .iter()
+            .filter(|binding| !self.bound.iter().any(|held| held.name == binding.name))
+            .collect();
+        live.extend(&self.bound);
+        live
+    }
+
+    /// The next free automatic name: `r<n>`, counting from one past the
+    /// live names, past any name taken.
+    fn next_auto_name(&self) -> String {
+        let live = self.live_bindings();
+        (live.len() + 1..)
+            .map(|n| format!("r{n}"))
+            .find(|name| !live.iter().any(|binding| binding.name == *name))
+            .unwrap_or_default()
+    }
+
+    /// Binds `name` to the result `handle` for the record; a rebind replaces
+    /// the name's entry in place.
+    fn bind(&mut self, name: String, handle: String) {
+        let binding = CodeRunResultBinding::new(name, handle);
+        match self.bound.iter_mut().find(|held| held.name == binding.name) {
+            Some(held) => *held = binding,
+            None => self.bound.push(binding),
+        }
+    }
+
+    /// The run's result a reference names, and the live name bound to it.
+    /// Only this run's results resolve: a handle names nothing else.
+    fn resolve_result(
+        &self,
+        reference: &JsResultRef,
+    ) -> Option<(CodeRunRawOutput, Option<String>)> {
+        let live = self.live_bindings();
+        let mut held = self.results.iter().chain(&self.captured);
+        match reference {
+            JsResultRef::Name(name) => {
+                let binding = live.iter().find(|binding| binding.name == *name)?;
+                let output = held.find(|output| output.handle == binding.handle)?;
+                Some((output.clone(), Some(binding.name.clone())))
+            }
+            JsResultRef::Handle(handle) => {
+                let output = held.find(|output| names_result(output, handle))?;
+                let name = live
+                    .iter()
+                    .rev()
+                    .find(|binding| binding.handle == output.handle)
+                    .map(|binding| binding.name.clone());
+                Some((output.clone(), name))
+            }
+        }
+    }
+
+    /// The refusal for a reference to no result of this run, with the live
+    /// names it could have meant.
+    fn unknown_handle(&self) -> serde_json::Value {
+        let live = self.live_bindings();
+        let names: Vec<&str> = live
+            .iter()
+            .rev()
+            .take(UNKNOWN_HANDLE_LIVE_NAMES)
+            .map(|binding| binding.name.as_str())
+            .collect();
+        json!({
+            "denied": "unknown_handle",
+            "reasonCodes": ["unknown_handle"],
+            "live": names,
+            "liveCount": live.len(),
+        })
+    }
+
+    /// Whether the run's results stay on this device for its door's caller
+    /// now (DEC-0005). A result's rows are the run's conservative union:
+    /// every row its recorded and this step's verb answers were served from,
+    /// or none known when one answer kept no set.
+    fn withholds_results(&self) -> Result<bool> {
+        let rows = self
+            .recorded_rows
+            .as_ref()
+            .zip(agent_verb_rows_of(&self.bridge_calls))
+            .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat());
+        self.gated_write
+            .withholds_retained(rows.as_deref())
+            .map_err(|refusal| {
+                Error::InvalidConfig(format!("stored result read refused: {}", refusal.code))
+            })
+    }
+
+    /// A result's card, from its manifest and taint sidecars, never its
+    /// body: the handle facets, its name, and its taint. A body that is not
+    /// clean shows no preview.
+    fn result_card(
+        storage: &ExecutorStorage<'_>,
+        output: &CodeRunRawOutput,
+        name: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let (state, secret) = storage.code_run_result_taint(output)?;
+        let mut card = result_handle_json(output);
+        card["name"] = json!(name);
+        card["taint"] = json!({"state": taint_word(state), "secret": secret});
+        if state.is_tainted() {
+            card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
+        }
+        Ok(card)
+    }
+
+    /// `store(value, name?)`: the value the program just streamed, stored as
+    /// a result of the run and bound to a name. Not gated: the value is the
+    /// run's own, as a file it writes is. A halted bridge, or a run whose
+    /// TASK was declined, stores nothing.
+    fn store_result(&mut self, name: Option<String>) -> Result<serde_json::Value> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        let sink = self
+            .streamed
+            .take_store()
+            .ok_or(Error::InvalidConfig("store sent no body".into()))?;
+        if self.hard_failure.is_some() || self.left_a_gap {
+            return Ok(result_refusal("host_bridge_halted"));
+        }
+        if self.declined.is_some() {
+            return Ok(result_refusal("task_declined"));
+        }
+        if name
+            .as_deref()
+            .is_some_and(|name| !CodeRunResultBinding::is_valid_name(name))
+        {
+            return Ok(result_refusal("invalid_result_name"));
+        }
+        let path = store_result_output_path(&sink.digest()?);
+        let output = storage.publish_code_run_output(path, sink, true, self.run_id)?;
+        if !self
+            .results
+            .iter()
+            .chain(&self.captured)
+            .any(|held| held.path == output.path)
+        {
+            self.captured.push(output.clone());
+        }
+        let name = name.unwrap_or_else(|| self.next_auto_name());
+        self.bind(name.clone(), output.handle.clone());
+        Ok(json!({"output": Self::result_card(storage, &output, Some(name.as_str()))?}))
+    }
+
+    /// `describe(r)`: the card of one of the run's results, admitted as a
+    /// read of it is, rows and taint re-checked now.
+    fn describe_result(&mut self, reference: &JsResultRef) -> Result<serde_json::Value> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        let Some((output, name)) = self.resolve_result(reference) else {
+            return Ok(self.unknown_handle());
+        };
+        self.admit_result_read(storage)?;
+        if self.withholds_results()? {
+            return Ok(result_refusal("result_withheld"));
+        }
+        Ok(json!({"output": Self::result_card(storage, &output, name.as_deref())?}))
+    }
+
+    /// One chunk of a stored result of this run, read by range, while the
+    /// rows it was served from may reach the door's caller.
     fn read_stored_result(
         &self,
         storage: &ExecutorStorage<'_>,
         path: &str,
     ) -> Result<Option<Vec<u8>>> {
+        if self.withholds_results()? {
+            return Err(Error::InvalidConfig(
+                "stored result read refused: result_withheld".into(),
+            ));
+        }
         for output in self.results.iter().chain(&self.captured) {
             let base = result_read_path(output.output_ref());
             let Some(offset) = path.strip_prefix(&format!("{base}/chunk/")) else {
@@ -188,6 +590,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         if self.hard_failure.is_some() || self.left_a_gap {
             return Err(refused("host_bridge_halted"));
         }
+        if self.declined.is_some() {
+            return Err(refused("task_declined"));
+        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq: self.next_seq,
@@ -200,6 +605,21 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         self.gated_write
             .admit_run_call(RunCall::RecordedOutput)?
             .map_err(|refusal| refused(&refusal.code))?;
+        Ok(())
+    }
+
+    /// Admits one read of the run's recorded outputs, answered as a call is,
+    /// so a run whose participant left the room hears `NotInRoom`, never the
+    /// door's verdict. A gate's rejection halts the bridge, as at a call.
+    fn admit_result_read(&mut self, storage: &ExecutorStorage<'_>) -> Result<()> {
+        if let Err(err) = storage.answered(|| self.admit_recorded_read()) {
+            let Error::Gate(GateError::GateWriteRejected { outcome, .. }) = &err else {
+                return Err(err);
+            };
+            let refused = Error::InvalidConfig(format!("recorded output read refused: {outcome}"));
+            self.hard_failure = Some(err);
+            return Err(refused);
+        }
         Ok(())
     }
 
@@ -236,18 +656,8 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor recoverable output storage unavailable".into(),
         ))?;
-        // The run's recorded outputs hold what its calls read. A gate's
-        // rejection of reading them back halts the bridge, as at a call. The
-        // ruling is answered as a call is, so a run whose participant left
-        // the room hears `NotInRoom`, never the door's verdict.
-        if let Err(err) = storage.answered(|| self.admit_recorded_read()) {
-            let Error::Gate(GateError::GateWriteRejected { outcome, .. }) = &err else {
-                return Err(err);
-            };
-            let refused = Error::InvalidConfig(format!("recorded output read refused: {outcome}"));
-            self.hard_failure = Some(err);
-            return Err(refused);
-        }
+        // The run's recorded outputs hold what its calls read.
+        self.admit_result_read(storage)?;
         if path.starts_with(RESULT_READ_ROOT) {
             return self.read_stored_result(storage, path);
         }
@@ -291,92 +701,47 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         ))
     }
 
+    fn result_call(&mut self, call: JsResultCall) -> Result<serde_json::Value> {
+        match call {
+            JsResultCall::Store { name } => self.store_result(name),
+            JsResultCall::Describe(reference) => self.describe_result(&reference),
+        }
+    }
+
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
-        // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
-        // stamped here — on the one ordering path every `self.*` call takes —
-        // before the row is recorded or the effect dispatched. Guest code
-        // cannot forge either, and the replay row, the dispatched call and the
-        // emitted bubble all carry the same number.
-        let call = call.with_bridge_stamp(seq, started_at_ms);
-        // Past a wait or a halt the bridge answers without dispatching, but a
-        // session-bound run is still answered as its participant stands: once
-        // they left the room it hears `NotInRoom`, never the wait or the halt.
-        if (self.durable_wait.is_some() || self.hard_failure.is_some() || self.left_a_gap)
-            && let Some(storage) = self.storage
-            && let Err(err) = storage.answered(|| Ok(()))
-        {
-            self.left_a_gap = true;
-            return Err(err);
-        }
-        if let Some(wait) = &self.durable_wait {
-            let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
-            let row =
-                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
-            self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
-        }
-        if self.hard_failure.is_some() || self.left_a_gap {
-            // Fail-closed after the first hard failure or unrecorded call:
-            // no further gate dispatches; the guest sees a typed Failed
-            // response (budget attached) and the replay row records exactly
-            // that.
-            let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
-                effect: call.effect(),
-                error: "host_bridge_halted".to_owned(),
-            });
-            let row =
-                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
-            self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
-        }
-        // ONE-1314: the current step's own history, observed at the last
-        // moment before this call dispatches. The durable half was observed
-        // when the step opened; together they are every bridge call this run
-        // has made, so a write can never be sealed against a narrower history
-        // than the one already recorded.
-        self.gated_write.observe_bridge_history(&self.bridge_calls);
-        let site = ExecutorCallSite {
-            run_id: self.run_id,
-            seq,
-            step_start: self.step_start,
-            earlier: &self.bridge_calls,
-        };
-        let dispatched = self
-            .gated_write
-            .dispatch_for_executor_run(site, call.clone());
-        let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
-                    // Infrastructure failure: no guest-visible response
-                    // exists for this call at all.
-                    self.left_a_gap = true;
-                    return Err(err);
-                };
-                let row = CodeRunBridgeCall::record(
-                    seq,
-                    &call,
-                    &error_outcome,
-                    started_at_ms,
-                    started_at_ms,
-                )?;
-                self.bridge_calls.push(row);
-                self.hard_failure = Some(err);
-                return Ok(self.respond(error_outcome));
-            }
-        };
-        let finished_at_ms = started_at_ms;
-        let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?;
-        if self.durable_wait.is_none()
-            && let SelfDispatchOutcome::DurableWait(wait) = &outcome
-        {
-            self.durable_wait = Some(wait.clone());
-        }
-        self.bridge_calls.push(row);
-        Ok(self.respond(outcome))
+        self.dispatch_call(call, None)
+    }
+
+    fn dispatch_self_nested(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchResponse> {
+        self.dispatch_call(call, Some(runtime))
+    }
+}
+
+/// A result call's refusal, as the guest's thrown error carries it.
+fn result_refusal(code: &str) -> serde_json::Value {
+    json!({"denied": code, "reasonCodes": [code]})
+}
+
+/// Whether `handle` names `output`: its handle as its card gives it, or its
+/// digest as model context cites it (`output:blake3:<hex>:<len>`).
+fn names_result(output: &CodeRunRawOutput, handle: &str) -> bool {
+    output.handle == handle
+        || handle
+            .strip_prefix("output:blake3:")
+            .and_then(|rest| rest.split(':').next())
+            .is_some_and(|hex| hex == crate::entity_id::bytes_to_hex_lower(&output.raw_blake3))
+}
+
+/// A taint state as a card spells it.
+fn taint_word(state: ArtifactTaintState) -> &'static str {
+    match state {
+        ArtifactTaintState::Clean => "clean",
+        ArtifactTaintState::TaintedLive => "tainted_live",
+        ArtifactTaintState::TaintedStale => "tainted_stale",
     }
 }
 

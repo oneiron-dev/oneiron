@@ -1,4 +1,5 @@
-//! Fixed per-handle recovery metadata and terminal audit. No partial text is encoded.
+//! Per-handle recovery seed, holding the stream's accepted text as of its last
+//! checkpoint, and terminal audit.
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -34,6 +35,11 @@ pub(super) struct Seed {
     pub mode: MessageWriteMode,
     pub idle_timeout_ms: u64,
     pub continuation: bool,
+    /// The accepted text as of the last checkpoint: what the stream's
+    /// `pending` holds, so for a continuation the suffix past its committed
+    /// base. Empty in a resident stream's state, whose `pending` is the live
+    /// copy; only the stored row carries it.
+    pub saved: String,
 }
 impl Seed {
     pub(super) fn class(&self) -> Result<EdgeActorClass> {
@@ -60,6 +66,27 @@ impl Seed {
         }
     }
 }
+/// Drops the recovery seeds an erase of `id` covers: the message's own, and
+/// every seed whose turn or conversation is `id`. A seed holds accepted reply
+/// text, so it leaves with its record. Registered in `deletion/derived_rows.rs`.
+pub(crate) fn erase_stream_seeds_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    ACTIVE.delete(store, txn, id)?;
+    let covered: Vec<EntityId> = ACTIVE
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, seed)| seed.turn == *id || seed.conversation == *id)
+        .map(|(message, _)| message)
+        .collect();
+    for message in covered {
+        ACTIVE.delete(store, txn, &message)?;
+    }
+    Ok(())
+}
+
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -95,6 +122,17 @@ pub(super) fn redirty_turn(vault: &Vault, txn: &mut heed::RwTxn<'_>, seed: &Seed
             reason: Some("stream continuation finalized"),
         },
     )
+}
+/// Rewrites the seed's checkpointed text in the caller's write transaction,
+/// fenced on the stream's generation like its terminal.
+pub(super) fn checkpoint(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &Seed) -> Result<()> {
+    let stored = ACTIVE
+        .get(&vault.store, txn, &row.message_id)?
+        .ok_or(Error::CorruptedIndex("stream recovery metadata missing"))?;
+    if stored.generation != row.generation {
+        return Err(Error::ConcurrentWrite("message stream generation changed"));
+    }
+    ACTIVE.put(&vault.store, txn, &row.message_id, row)
 }
 pub(super) fn finish(
     vault: &Vault,

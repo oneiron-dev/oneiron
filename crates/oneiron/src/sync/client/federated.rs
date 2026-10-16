@@ -166,9 +166,21 @@ impl SyncClient {
         // The stamps the update holds are charged with it, and a deferred
         // update holds none (Astra-b F2 on #1432).
         let writes = admitted.writes();
-        let (decision, work) = admit_work(&self.vault, &peer, &key, kind, update, writes)
-            .map_err(map_federated_admission_err)?;
-        if let FederationBurstDecision::Defer { request_id, inputs } = decision {
+        let (decision, work) = admit_work(
+            &self.vault,
+            &peer,
+            &key,
+            kind,
+            update,
+            writes,
+            Some(admitted.bytes()),
+        )
+        .map_err(map_federated_admission_err)?;
+        if let FederationBurstDecision::Defer { request_id, inputs }
+        | FederationBurstDecision::IsolateAndPropose {
+            request_id, inputs, ..
+        } = decision
+        {
             let _ = self
                 .event_tx
                 .send(crate::sync::SyncEvent::FederationDeferred {
@@ -363,7 +375,9 @@ impl SyncClient {
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
         let born = watch_births(&vault, admitted.births(), || {
-            self.import_accepted_window_update(window_key, &window, admitted.bytes())
+            crate::sync::ingest::peer_import(&vault, || {
+                self.import_accepted_window_update(window_key, &window, admitted.bytes())
+            })
         })?;
         let released = admitted
             .release(&self.vault, key, &born)

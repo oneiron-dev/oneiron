@@ -146,6 +146,9 @@ side_tables! {
     /// Crash-recoverable heartbeat journal (oid32+timestamp8, 40 bytes) for one in-progress streamed
     /// LFS upload. Key: id16.
     ORIGIN_LFS_UPLOAD_JOURNAL: VaultMeta b"origin:lfs:upload:v1:" Raw;
+    /// The owner's outbound mirror of one served repository: its https URL, the custody record of
+    /// its push token, the cadence and the last push. Key: id16 (repo id).
+    ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named;
     /// Durable journal row for one origin ref-publication attempt, across its
     /// Prepared/Published/Failed/Conflicted lifecycle. Key: id16.
     ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named;
@@ -443,6 +446,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
+    RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as

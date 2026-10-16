@@ -70,6 +70,8 @@ pub(super) struct WidenIntent {
     pub project_ref: Option<String>,
     pub scope: Option<crate::llm::Scope>,
     pub healer_case: Option<crate::failure_ladder::HealerCase>,
+    #[serde(default)]
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
     /// The spawn's `budget` (OF-532), carved at approval like any launch.
     #[serde(default)]
     pub budget: Option<u64>,
@@ -94,6 +96,7 @@ impl WidenIntent {
             project_ref: spawn.project_ref.map(|id| id.to_hex()),
             scope: spawn.scope.clone(),
             healer_case: spawn.healer_case.clone(),
+            type_ref: spawn.type_ref.clone(),
             budget: spawn.budget,
         })
     }
@@ -135,9 +138,12 @@ impl WidenIntent {
                     .map(EntityId::from_hex)
                     .transpose()?,
                 scope: self.scope.clone(),
+                type_ref: self.type_ref.clone(),
                 budget: self.budget,
                 // A widen always has a parent, whose scope the child spends under.
                 spend: None,
+                // A widened spawn is a child: it inherits its parent's origin.
+                origin_conversation: None,
             },
         ))
     }
