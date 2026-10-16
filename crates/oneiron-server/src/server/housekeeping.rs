@@ -136,6 +136,12 @@ impl SyncServer {
                 }
             }
             server.prune_mcp_credentials().await;
+            let courier = Arc::clone(&server);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || courier.deliver_cooperative_deletions()).await
+            {
+                tracing::warn!(panicked = error.is_panic(), "courtesy delete delivery failed");
+            }
             server
                 .end_lifecycle_job(LifecycleJobKind::Housekeeping)
                 .await;
