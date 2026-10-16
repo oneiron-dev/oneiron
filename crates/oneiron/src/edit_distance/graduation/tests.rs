@@ -21,7 +21,7 @@ fn scope() -> RampScope {
 
 /// The vault's own owner: a ruling is the owner's word (H149).
 fn owner(vault: &Vault) -> AuthenticatedOwner {
-    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner")

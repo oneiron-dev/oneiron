@@ -155,6 +155,74 @@ fn assert_exception_class(member: &InboxGroupMember, class: InboxExceptionClass)
     );
 }
 
+/// H393: a host protects its own persona namespace by declaring the prefix in
+/// a trusted policy pack (`persona_core_prefixes`); the engine names no
+/// product namespace. Undeclared, the host's predicate lands Auto like any
+/// other; declared, a one-sitting Dreamer write is denied and a two-sitting
+/// one parks for owner review, exactly as a built-in persona-core write does.
+#[test]
+fn a_host_declared_persona_prefix_is_isolated_as_persona_core() -> Result<()> {
+    const HOST_PERSONA: &str = "host.persona.tone";
+    for declared in [false, true] {
+        let (_tmp, vault) = temp_vault();
+        let mut extra = vec![
+            source_trust_entry(ClaimSource::Generated, 0),
+            signatures_entry(),
+        ];
+        if declared {
+            extra.push((
+                Value::from("persona_core_prefixes"),
+                Value::Array(vec![Value::from("host.persona.")]),
+            ));
+        }
+        let mut data = encode_policy_manifest(extra);
+        append_actor_ceiling(
+            &mut data,
+            actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
+        );
+        trust_human_candidate_actor(&mut data);
+        put_policy_manifest_bytes(&vault, test_id(0x90), &data)?;
+        let first_turn = test_id(0xD1);
+        seed_isolation_cycle(&vault, &first_turn, &test_id(0xE2))?;
+
+        let single = test_id(0x91);
+        let body = isolation_body(HOST_PERSONA, Value::from("warm"), vec![first_turn]);
+        let result = attempt_isolation_write(&vault, &single, &body);
+        if !declared {
+            result?;
+            assert_eq!(
+                stored_claim_body(&vault, &single)?.approval,
+                ClaimApprovalStatus::Auto,
+                "an undeclared host predicate is not persona-core"
+            );
+            continue;
+        }
+        let err = result.expect_err("a declared persona prefix needs two sittings");
+        assert_isolation_rejected(
+            err,
+            "deny",
+            &["gate.deny.dreamer_precommit.persona_single_cycle"],
+        );
+        assert!(vault.get_raw(&single)?.is_none());
+
+        let second_turn = test_id(0xD2);
+        seed_isolation_cycle(&vault, &second_turn, &test_id(0xE3))?;
+        let parked = test_id(0x92);
+        let mut body = isolation_body(
+            HOST_PERSONA,
+            Value::from("warm"),
+            vec![first_turn, second_turn],
+        );
+        body.approval = ClaimApprovalStatus::Proposed;
+        attempt_isolation_write(&vault, &parked, &body)?;
+        assert_eq!(
+            isolation_pending_row(&vault, &parked)?.reason_codes,
+            isolation_reason_codes(GateReasonCode::PendingPersonaIsolation)
+        );
+    }
+    Ok(())
+}
+
 /// Persona-core writes are NEVER Auto, whatever the manifest grants, and two
 /// distinct sittings buy an owner-review row rather than the head itself.
 #[test]

@@ -3531,10 +3531,7 @@ fn judged_verdict_rejects_unsupported_world_axes_and_unbound_counts() -> Result<
 }
 
 fn vector_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let id = EntityId::now();
-    vault
-        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"goal owner")
-        .expect("person");
+    let id = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(
             id,
@@ -4913,10 +4910,7 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
 
 // ONE-2115: a pending tradeoff climbs rule → Jev band → responsible A/B.
 fn tradeoff_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let person = EntityId::now();
-    vault
-        .put_entity(&person, ENTITY_TYPE_PERSON, t(1), 1, b"responsible")
-        .unwrap();
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(
             person,
@@ -5141,7 +5135,9 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
     assert_eq!(ask.question.proposal, proposal);
     assert_eq!(ask.jev, first.tradeoff_jev);
     let ask_digest = ask.question.digest()?;
-    let stranger = tradeoff_owner(&vault);
+    // Someone other than the responsible person settles nothing.
+    let stranger = crate::test_util::non_owner_proof(&vault);
+    assert_ne!(stranger.actor(), owner.actor());
     assert!(
         settle_skill_tradeoff_ask(
             &vault,

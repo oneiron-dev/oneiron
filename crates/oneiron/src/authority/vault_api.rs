@@ -27,8 +27,9 @@ impl Vault {
     /// `MaintenanceKindNotWritable`; this method validates canonical bytes and
     /// the origin signature before using the internal maintenance path.
     ///
-    /// A stored terminal `FederationLifecycle` entry additionally triggers the
-    /// ONE-1411 stale-stamp sweep (see below). Fold semantics are untouched:
+    /// A stored entry additionally triggers the ONE-1411 stale-stamp sweep,
+    /// as on every door that stores one (see
+    /// [`Self::put_authority_log_entries`]). Fold semantics are untouched:
     /// the sweep only reads the fold this door's own append produced.
     pub fn put_authority_log_entry(
         &self,
@@ -37,18 +38,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         let ids = self.put_authority_log_entries(&[(entry.clone(), occurred, learned_at)])?;
-        let id = ids.into_iter().next().ok_or(Error::EntityNotFound)?;
-        // ONE-1411: a terminal federation transition marks the worlds that pact
-        // delivered as no longer refreshing. The trigger is a SHAPE test and the
-        // sweep is global: it stamps exactly what the FOLD reports terminal, so
-        // a fold-REJECTED entry can never justify a stamp of its own (though the
-        // sweep it triggers still writes any stamp the fold already justifies,
-        // e.g. a world registered late to an already-terminal pact). The write
-        // path therefore never duplicates the transition table.
-        if is_terminal_federation_lifecycle(entry) {
-            crate::federation::apply_federation_stale_stamps(self)?;
-        }
-        Ok(id)
+        ids.into_iter().next().ok_or(Error::EntityNotFound)
     }
 
     /// Appends N AUTHORITY_LOG entries in ONE transaction, all-or-nothing.
@@ -56,22 +46,37 @@ impl Vault {
     /// Every id is derived from entry content (ONE-1604-D1), exactly as the
     /// single-entry door does. Encoding, validation, and derivation all happen
     /// BEFORE the write transaction opens, so a bad entry anywhere in the
-    /// batch stores nothing at all. The rows stage parents first and each
-    /// signer's by sequence, in whatever order the caller gives them; the
-    /// ids come back in the caller's order.
+    /// batch stores nothing at all. The rows stage parents first, each
+    /// signer's by sequence and each after the rows that let a key vouch
+    /// for it, in whatever order the caller gives them; the ids come back
+    /// in the caller's order.
     ///
     /// This is what makes a genesis owner-binding a single ceremony: a host
     /// composes `[genesis, bind]` and either both land or neither does. The
     /// door does NOT require a binding to accompany a genesis — enforcement
     /// lives at the facade, where a rooted vault without an owner binding
     /// fail-closes owner verbs.
+    ///
+    /// ONE-1411: a terminal federation transition marks the worlds that pact
+    /// delivered as no longer refreshing. Every AUTHORITY_LOG put triggers the
+    /// sweep, terminal-shaped or not (a late ancestor can bring a stored
+    /// terminal entry into the fold), and the sweep is global: it stamps
+    /// exactly what the FOLD reports terminal, so a fold-REJECTED entry can
+    /// never justify a stamp of its own (though the sweep it triggers still
+    /// writes any stamp the fold already justifies, e.g. a world registered
+    /// late to an already-terminal pact). The write path never duplicates the
+    /// transition table, and every transaction owner runs the same sweep after
+    /// its commit (H213), so a replicated or imported entry stamps like a
+    /// local one.
     pub fn put_authority_log_entries(
         &self,
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
     ) -> Result<Vec<EntityId>> {
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut wtxn = self.store.env.write_txn()?;
         let ids = self.put_authority_log_entries_in_txn(&mut wtxn, entries)?;
         wtxn.commit()?;
+        watch.finish()?;
         Ok(ids)
     }
 
@@ -140,10 +145,16 @@ impl Vault {
             return Ok(ids);
         }
         // The door judges each row against the rows staged before it (H72),
-        // so stage them parents first and each signer's by sequence,
-        // whatever order the caller gave.
+        // so stage them parents first, each signer's by sequence and each
+        // after the rows that let a key vouch for it, whatever order the
+        // caller gave.
+        let order = if staged.len() < 2 {
+            (0..staged.len()).collect()
+        } else {
+            super::import_order::write_stage_order(&self.store, wtxn, &staged)?
+        };
         let mut ops: Vec<_> = ops.into_iter().map(Some).collect();
-        let ops: Vec<_> = super::authority_stage_order(&staged)
+        let ops: Vec<_> = order
             .into_iter()
             .filter_map(|index| ops[index].take())
             .collect();

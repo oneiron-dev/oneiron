@@ -406,14 +406,27 @@ pub(super) fn check_ceiling(
         return Ok(());
     }
     let txn = vault.store.env.read_txn()?;
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    check_ceiling_in_txn(vault, &txn, actor, required)
+}
+/// [`check_ceiling`] in the caller's transaction, for a door that must judge
+/// the ceiling in the snapshot it writes.
+pub(super) fn check_ceiling_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    required: AgentCeiling,
+) -> Result<()> {
+    if required == AgentCeiling::Proposed {
+        return Ok(());
+    }
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let class = match actor.actor_class() {
         EdgeActorClass::Agent => "agent",
         EdgeActorClass::Human => "human",
         _ => return Err(invalid("unsupported action principal class")),
     };
     let ceiling = policy.actor_ceiling(class, Some(&actor.entity_ref().to_hex()));
-    let definition = crate::gate::agent_definition_ceiling_for_actor(&vault.store, &txn, actor);
+    let definition = crate::gate::agent_definition_ceiling_for_actor(&vault.store, txn, actor);
     if ceiling != crate::gate::PolicyApprovalCeiling::Auto
         || definition == Some(crate::gate::PolicyApprovalCeiling::Proposed)
     {

@@ -61,14 +61,7 @@ fn person(vault: &Vault, seed: u8) -> crate::EntityId {
 
 /// The vault's own owner's proof: an owner-locked rule is the owner's (H149).
 fn owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    vault
-        .authenticate_owner(
-            vault.ensure_embedded_owner_actor().expect("embedded owner"),
-            "principal:owner",
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("authenticate owner")
+    crate::test_util::embedded_owner_proof(vault)
 }
 
 fn owner_writer(vault: &Vault) -> ChannelIdentitySelectionWriter {
@@ -585,6 +578,7 @@ fn the_selection_write_door_rechecks_its_writer() {
     let (_dir, vault) = open_vault();
     let (_other_dir, other) = open_vault();
     let foreign = ChannelIdentitySelectionWriter::owner(&owner_proof(&other));
+    // The same owner id is live here too: only the proof's vault differs.
     vault.ensure_embedded_owner_actor().expect("embedded owner");
     let retire = ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
         agent_amendable: false,

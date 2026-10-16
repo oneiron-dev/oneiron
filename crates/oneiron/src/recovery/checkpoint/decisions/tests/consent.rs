@@ -329,9 +329,7 @@ pub(super) fn booking_publications() -> Result<Case> {
 /// again, giving the other its autonomy back.
 pub(super) fn principal_autonomy() -> Result<Case> {
     let (dir, vault) = open_vault();
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    let owner = vault.ensure_embedded_owner_actor().map_err(invalid)?;
     let (sora, rin) = (person(&vault, 0x72)?, person(&vault, 0x73)?);
     let owner = vault.authenticate_owner(
         owner,
@@ -465,8 +463,9 @@ const BEN: &str = "ben@example.test";
 /// Fails unless `vault` holds a consent basis for a calendar invitation to
 /// `recipient` exactly when `expected`.
 fn invitable(vault: &Vault, recipient: &str, expected: bool) -> Result<()> {
-    let basis =
-        crate::calendar::invite::resolve_consent_basis(vault, recipient).map_err(invalid)?;
+    let basis = crate::calendar::invite::CalendarInviteConsentSnapshot::read(vault)
+        .basis(recipient)
+        .map_err(invalid)?;
     if basis.is_some() == expected {
         return Ok(());
     }
@@ -695,7 +694,7 @@ fn unreadable_booking() -> Result<Case> {
             )?;
             vault.put_claim(&entity(0xB9), &status, AT, NOW)?;
             invitable(vault, ADA, true)?;
-            match crate::calendar::invite::resolve_consent_basis(vault, BEN) {
+            match crate::calendar::invite::CalendarInviteConsentSnapshot::read(vault).basis(BEN) {
                 Err(_) => Ok(()),
                 other => Err(invalid(other)),
             }

@@ -289,7 +289,7 @@ fn mint_fixture(
     };
     let person = vault
         .ensure_embedded_owner_actor()
-        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+        .expect("the vault's owner");
     let message = crate::test_util::entity(0x79);
     let skill = crate::test_util::entity(0x7A);
     let at = TimeRange { start: 20, end: 20 };

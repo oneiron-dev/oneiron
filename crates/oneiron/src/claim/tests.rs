@@ -1660,14 +1660,7 @@ fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) 
 fn gate_receipt_horizon_does_not_block_later_retraction_of_a_live_claim() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let vault = Vault::open(temp.path().join("vault"), crate::VaultConfig::device())?;
-    let subject = EntityId::now();
-    vault.put_entity(
-        &subject,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let subject = vault.ensure_embedded_owner_actor().unwrap();
     let claim = guard_claim(&vault, &subject, "osaka", 2);
     let owner = vault.authenticate_owner(
         subject,
@@ -3377,7 +3370,7 @@ fn the_code_run_candidate_put_refuses_an_expression_preference() -> Result<()> {
     );
     let claim_id = EntityId::now();
 
-    let refusal = vault.put_claim_candidate_without_lexical_query_reconcile(
+    let refusal = vault.put_claim_candidate_with_landing(
         &claim_id,
         expression_preference_candidate(subject),
         &envelope,

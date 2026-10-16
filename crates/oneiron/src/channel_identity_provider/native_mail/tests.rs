@@ -236,9 +236,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
         format!("recipient:cold_external:{}", id.to_hex()),
         actor.to_hex(),
     )?;
-    let owner_id = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",

@@ -483,6 +483,53 @@ fn fork_clamp_reads_parent_row() -> Result<()> {
     Ok(())
 }
 
+/// H147, inherited half: a fork's bound is its parent ROW as it stands. A
+/// parent retracted or rejected after the fork was made lends it nothing past
+/// Proposed, read live at the fork's next write.
+#[test]
+fn a_withdrawn_parent_definition_lends_its_forks_no_ceiling() -> Result<()> {
+    let withdrawals: [fn(&mut AgentDefinition); 2] = [
+        |def| def.lifecycle_status = ClaimLifecycleStatus::Retracted,
+        |def| def.approval_status = ClaimApprovalStatus::Rejected,
+    ];
+    for withdraw in withdrawals {
+        let (_tmp, vault) = temp_vault();
+        put_agent_def_row(
+            &vault,
+            &pinned_actor_id(0xA4),
+            "sys.herald",
+            AgentCeiling::Auto,
+            None,
+        )?;
+        let fork = test_id(0x74);
+        put_agent_def_row(
+            &vault,
+            &fork,
+            "fork.of.herald",
+            AgentCeiling::Auto,
+            Some("sys.herald"),
+        )?;
+        assert_eq!(
+            resolved_ceiling(&vault, fork)?,
+            Some(PolicyApprovalCeiling::Auto)
+        );
+        let mut parent = agent_def_fixture("sys.herald", AgentCeiling::Auto);
+        withdraw(&mut parent);
+        put_raw_entity_row(
+            &vault,
+            &pinned_actor_id(0xA4),
+            ENTITY_TYPE_AGENT_DEF,
+            &encode_agent_definition(&parent)?,
+        )?;
+        assert_eq!(
+            resolved_ceiling(&vault, fork)?,
+            Some(PolicyApprovalCeiling::Proposed),
+            "a withdrawn parent's ceiling must not reach its fork"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn fork_clamp_fails_closed_without_parent_row() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -726,11 +773,12 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
 #[test]
 fn a_held_effect_keeps_its_approve_once() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let owner_id = test_id(0xE0);
-    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let actor = test_id(0xE0);
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
-    let actor_ref = owner_id.to_hex();
+    let actor_ref = actor.to_hex();
     let policy_data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
         &actor_ref,
         "external:send",
@@ -771,11 +819,12 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
     const EFFECT_RAN_KEY: &[u8] = b"test.approve_once.production_effect";
 
     let (_tmp, vault) = temp_vault();
-    let owner_id = test_id(0xE0);
-    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let actor = test_id(0xE0);
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
-    let actor_ref = owner_id.to_hex();
+    let actor_ref = actor.to_hex();
     let policy_data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
         &actor_ref,
         "external:send",

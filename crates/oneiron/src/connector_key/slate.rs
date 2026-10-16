@@ -591,15 +591,7 @@ mod tests {
                 .is_err()
         );
         let id = vault.store_connector_slate(&manifest, &serde_json::to_string(&rows).unwrap())?;
-        let owner = EntityId::now();
-        vault.put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )?;
-        crate::test_util::bind_test_owner(&vault, owner);
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
         let auth = vault.authenticate_owner(
             owner,
             &owner.to_hex(),

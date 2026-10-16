@@ -316,7 +316,10 @@ pub(crate) fn bind_actor(
             continue;
         }
         // A world's side entry is never a main-log head, and retires none.
-        if matches!(entry.op, AuthorityOp::WorldPrivacy(_)) {
+        if matches!(
+            entry.op,
+            AuthorityOp::WorldPrivacy(_) | AuthorityOp::WorldKeyWraps(_)
+        ) {
             heads.remove(&hash);
             continue;
         }

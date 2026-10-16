@@ -12,9 +12,7 @@ use crate::{EntityId, Vault};
 
 /// The vault's owner as a writer, with the owner's proof (H149).
 fn actor(vault: &Vault) -> Result<(WriteActor, AuthenticatedOwner)> {
-    let id = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|_| Error::InvariantViolation("embedded owner"))?;
+    let id = vault.ensure_embedded_owner_actor().unwrap();
     let actor = WriteActor::new(id, EdgeActorClass::Human);
     let owner =
         vault.authenticate_owner(id, "principal:document-test", true, GateDecisionId::now())?;

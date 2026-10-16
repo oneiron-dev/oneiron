@@ -150,15 +150,7 @@ fn qualify_scoped_fixture(vault: &crate::Vault, key_id: &EntityId) -> Result<()>
         input_schema: serde_json::json!({"properties":{}}),
     }])?;
     vault.stage_connector_manifest(key_id, manifest.clone(), "R1", &Suite, 11)?;
-    let owner = EntityId::now();
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    crate::test_util::bind_test_owner(vault, owner);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),

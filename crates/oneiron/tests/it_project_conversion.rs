@@ -172,16 +172,16 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
     let host = EntityId::now();
-    let owner_id = EntityId::now();
-    for id in [host, owner_id] {
-        vault.put_entity(
-            &id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )?;
-    }
+    let owner_id = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault.put_entity(
+        &host,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
     let proof =
         vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
     let source_id = EntityId::now();
@@ -333,30 +333,8 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
         },
     )?
     .on_thread(room, fresh)?;
-    let survivor = EntityId::now();
-    vault.put_entity(
-        &survivor,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"survivor",
-    )?;
-    vault.apply_identity_topology_op(
-        &oneiron::identity_topology::IdentityTopologyOp::Merge(
-            oneiron::identity_topology::MergeOp {
-                sources: vec![owner_id],
-                survivor,
-                evidence: oneiron::identity_topology::IdentityOpEvidence {
-                    refs: vec![],
-                    rationale: "retire owner proof".into(),
-                },
-                survivorship_plan: oneiron::identity_topology::SurvivorshipPlan::ReadThrough,
-            },
-        ),
-        &oneiron::identity_topology::IdentityOpWrite::auto(ClaimSource::Inferred)
-            .with_actor(WriteActor::new(host, EdgeActorClass::Human)),
-        5,
-    )?;
+    // A merge never retires the vault's owner, so a delete does.
+    assert!(vault.delete_entity(&owner_id)?);
     let rejected = EntityId::now();
     assert!(
         stale
@@ -538,7 +516,9 @@ fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
     let host = EntityId::now();
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     // The first-party connector actor may create tasks under the shipped policy.
     let holder = EntityId::from_bytes([0xE1; 16])?;
     for id in [host, holder] {

@@ -1,5 +1,4 @@
 use super::*;
-use crate::registry::ENTITY_TYPE_PERSON;
 use crate::workspace_roster::ProjectRecord;
 
 fn axis(name: &str, measure: &str, bound: &str) -> GoalAxis {
@@ -52,14 +51,7 @@ fn scripted_human_interview_commits_valid_typed_goal_and_revisions() -> Result<(
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let project = vault.root_project()?;
-    let human = EntityId::now();
-    vault.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         human,
         &human.to_hex(),
@@ -94,14 +86,7 @@ fn incomplete_answers_and_unauthenticated_agent_cannot_commit_goal() -> Result<(
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let project = vault.root_project()?;
-    let human = EntityId::now();
-    vault.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         human,
         &human.to_hex(),
@@ -189,14 +174,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let project = vault.root_project()?;
-    let human = EntityId::now();
-    vault.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = vault.ensure_embedded_owner_actor().unwrap();
     let fake = WriteEnvelope::new(
         WriteActor::new(human, EdgeActorClass::Human),
         ClaimSource::UserStated,
@@ -336,14 +314,7 @@ fn intake_does_not_supersede_a_claim_named_by_a_corrupt_project_pointer() -> Res
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     let project = vault.root_project()?;
-    let human = EntityId::now();
-    vault.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         human,
         &human.to_hex(),
@@ -416,9 +387,7 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let root = vault.root_project()?;
         let root_record = vault.project(root)?.unwrap();
-        let human = vault
-            .ensure_embedded_owner_actor()
-            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+        let human = vault.ensure_embedded_owner_actor().unwrap();
         let project = EntityId::now();
         vault.put_project(
             project,
@@ -498,14 +467,7 @@ fn replayed_goal_tombstone_retains_no_dangling_pointer() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let project = vault.root_project()?;
-        let human = EntityId::now();
-        vault.put_entity(
-            &human,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"human",
-        )?;
+        let human = vault.ensure_embedded_owner_actor().unwrap();
         let owner = vault.authenticate_owner(
             human,
             &human.to_hex(),
@@ -535,14 +497,7 @@ fn receiving_vault_keeps_unverified_goal_out_of_authority() -> Result<()> {
     let origin_dir = tempfile::tempdir()?;
     let origin = Vault::open(origin_dir.path(), crate::VaultConfig::default())?;
     let project = origin.root_project()?;
-    let human = EntityId::now();
-    origin.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = origin.ensure_embedded_owner_actor().unwrap();
     let owner = origin.authenticate_owner(
         human,
         &human.to_hex(),
@@ -591,9 +546,7 @@ fn superseded_goal_erases_after_its_project_is_deleted() -> Result<()> {
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-        let human = vault
-            .ensure_embedded_owner_actor()
-            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+        let human = vault.ensure_embedded_owner_actor().unwrap();
         let project = EntityId::now();
         vault.put_project(
             project,

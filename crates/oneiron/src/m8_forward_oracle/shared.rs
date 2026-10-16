@@ -8,17 +8,11 @@ use crate::outbound_chokepoint::{PreparedAuthorization, PreparedEffect};
 use crate::outbound_consent::{DataClass, OutboundBindingAuthority, ScopedMcpCallContext};
 use crate::outbound_grant::ScopedMcpGrantMintIntent;
 use crate::outbound_intent_ledger::BudgetClass;
-use crate::registry::ENTITY_TYPE_PERSON;
-use crate::temporal::TimeRange;
 
 pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
     (dir, vault)
-}
-
-pub(super) fn t(at: u64) -> TimeRange {
-    TimeRange { start: at, end: at }
 }
 
 pub(super) struct OracleScopedFixture {
@@ -95,11 +89,7 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
     vault
         .stage_connector_manifest(&key_id, manifest.clone(), "R1", &Suite, 11)
         .expect("qualify oracle");
-    let owner = EntityId::now();
-    vault
-        .put_entity(&owner, ENTITY_TYPE_PERSON, t(1), 1, b"owner")
-        .expect("owner person");
-    crate::test_util::bind_test_owner(vault, owner);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault
         .authenticate_owner(
             owner,

@@ -46,8 +46,16 @@ impl HostSlipIssuer {
     pub fn binding_key(&self) -> [u8; 32] {
         self.signing.verifying_key().to_bytes()
     }
-    /// The roster row this host's key holds as the vault's root.
-    pub(super) fn root_device(&self) -> DeviceAuthority {
+    /// The roster row this host's key holds as the vault's root. A Hosted root is
+    /// stamped `ROLE_CLOUD` and `CloudCustodial`: the host holds it, so it never counts
+    /// as an owner-held key (E2). That is a fact in the log, so every replica's fold
+    /// sees it.
+    pub(super) fn root_device(&self, posture: crate::HostingPrivacyPosture) -> DeviceAuthority {
+        let (cloud, tier) = if posture == crate::HostingPrivacyPosture::Hosted {
+            (ROLE_CLOUD, AuthorityTier::CloudCustodial)
+        } else {
+            (0, AuthorityTier::Software)
+        };
         DeviceAuthority {
             key: self.public_key(),
             transport_key_binding: self.binding_key(),
@@ -55,8 +63,8 @@ impl HostSlipIssuer {
                 kind: HOST_ROOT_ATTESTATION.into(),
                 evidence: Vec::new(),
             },
-            tier: AuthorityTier::Software,
-            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier,
+            roles: ROLE_OWNER | ROLE_ADMIN | cloud,
         }
     }
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
@@ -214,7 +222,7 @@ impl Vault {
                 0,
                 Vec::new(),
                 AuthorityOp::Genesis {
-                    device: issuer.root_device(),
+                    device: issuer.root_device(self.privacy_posture()),
                     genesis_nonce: random_slip_id(),
                     recovery: GenesisRecoveryStep::acknowledge(&recovery, true)?,
                     tier_floor: AuthorityTier::Software,
@@ -224,7 +232,12 @@ impl Vault {
             )?;
             pending.push(genesis);
             // Only bootstrap on no records, never on a confused/invalid fold.
-            fold = fold_authority_log(&pending);
+            let pin = super::pinned_root::read_pinned_root_in_txn(&self.store, txn)?;
+            fold = super::fold_engine::fold_own_authority_log(
+                &pending,
+                self.privacy_posture(),
+                pin.as_ref(),
+            );
         }
         require_host(&fold, issuer)?;
         if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, txn, &cache_key)? {
@@ -716,6 +729,36 @@ impl Vault {
             end: now,
         };
         self.put_authority_log_entries(&[(revoke, at, now)])?;
+        Ok(())
+    }
+
+    /// Moves the host root's one human binding to `person` at `epoch`, as a
+    /// host that hands its key to another human does.
+    #[cfg(all(test, feature = "sync"))]
+    pub(crate) fn rebind_host_owner_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        person: crate::EntityId,
+        epoch: u64,
+    ) -> Result<()> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        let rebind = next_entry(
+            issuer,
+            &fold,
+            AuthorityOp::RebindActor {
+                authority_key: issuer.public_key(),
+                actor_ref: person,
+                actor_class: "human".into(),
+                epoch,
+            },
+            now,
+        )?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(rebind, at, now)])?;
         Ok(())
     }
 }

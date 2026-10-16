@@ -93,30 +93,89 @@ client, so list proxy hosts only, never a client network. An entry that does
 not parse, a `/0` block, or an address with bits set past its prefix stops
 startup. The default is empty: every caller is keyed by its own connection.
 
-`[limits]` bounds the work a caller can start; the connection bounds hold
-before any credential is read. Every bound is finite, and a zero is a config
-error. A caller past a bound is refused at once with a 503 and `retry-after`,
-never queued.
+`artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
+port of a second listener, on the same host, that serves hosted artifacts
+(`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets
+that origin rather than the API's: there it keeps its module scripts and
+fonts, and no route it can reach holds API data. The API still answers `/a/`,
+but sandboxes a code bundle into an opaque origin there, where module scripts
+and fonts do not load. The default `0` takes any free port, which
+`/api/health` reports as `artifact_port`; clients open artifacts at the API's
+scheme and host with that port. Set a fixed port for links that outlive a
+restart. Behind a reverse proxy, publish that port on its own origin as well,
+and never list it in `allowed_origins`. Both listeners share the `[limits]`
+connection floor and each address's unauthenticated share. Managed serve
+(`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
+`/a/` is unchanged until the supervisor routes an artifact origin.
+
+`[limits]` bounds the work a caller can start. Every bound is finite, and a
+zero is a config error. The count rows sit far above fleet scale (each is at
+least ten times the 200 agents a fleet plans for, many of them on one
+credential and one address). Past a row, work waits its turn in a fair queue,
+round-robin across credentials and in arrival order within one, and the row
+asks whether everything is okay: a typed `inspect_limit_crossing` question
+(OF-520), logged as `limit_crossed` and kept on the vault. It never refuses
+authenticated work for count. A wait ends at `queue_wait_timeout_ms`, a
+request timeout, with a 503 and `retry-after` and nothing started.
 
 ```toml
 [limits]
-max_connections = 512             # sockets open at once, from every peer
-max_connections_per_peer = 64     # sockets one off-device address may hold
+max_connections = 32768           # sockets open at once: the descriptor floor (default: half the open-file limit)
+max_unauthenticated_connections_per_peer = 256  # sockets an off-device address holds before they authenticate
 header_read_timeout_ms = 30000    # headers must arrive within it; also idle keep-alive
 body_idle_timeout_ms = 60000      # a request body may pause this long between pieces
-git_exchanges = 8                 # git smart-HTTP exchanges (one child each)
-git_exchanges_per_principal = 4
-lfs_transfers = 8                 # LFS uploads, downloads and verifies
-lfs_transfers_per_principal = 4
-lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight (507 past it)
+git_exchanges = 2048              # git smart-HTTP exchanges at once (one child each); past it they queue
+lfs_transfers = 2048              # LFS uploads, downloads and verifies at once; past it they queue
+lfs_memory_bytes = 2147483648     # bytes LFS transfers hold in memory: half reads, half installs (default: an eighth of memory)
+embedder_requests = 2048          # requests `embedder serve` holds at once; past it they queue
+embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
+lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
+git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
+queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
+disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
 ```
 
-A loopback peer meets `max_connections` only: it is this device, or a TLS
-proxy whose callers all arrive from its one address. A push to a repository
-another writer holds answers 503 rather than waiting, and an LFS object over
-`--max-lfs-object-bytes` (2 GiB unless set) is refused, by its declared size
-before any byte is read.
+The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
+its memory floor per blob, never a cap on the push: a push of any size lands
+while each blob fits and the disk keeps `git_scan_disk_floor_bytes` free. A
+push past either is refused whole, with a reason that names the key.
+
+Only the machine's own floors and the anonymous surface hold work back. Past
+`max_connections` the server stops accepting, so new sockets wait in the
+kernel's backlog; raising the open-file limit (`LimitNOFILE=`) raises the
+default. Serving raises its soft open-file limit to the hard one, at most
+65,536 (a refused raise keeps the limit there was, and logs it). The
+descriptors the sockets leave hold the transfer rows too: half of what is
+left past the server's own (256) bounds git exchanges at sixteen
+descriptors each (its backend's pipes, a push's lock, and a git child it
+reads through while the next one starts), and the other half LFS transfers
+at one each, so a 1,024-descriptor limit runs 8 git exchanges at once, and
+65,536 with half for sockets runs 1,016; past them they queue. A log line
+(`transfer_descriptor_room`) gives the limit held and the bounds at start.
+LFS transfers hold memory within `lfs_memory_bytes`. Reads take room on one
+half before they take a transfer permit (and so does a git exchange's
+check that its published refs' LFS objects are readable, for each manifest
+it reads): a chunk exchange 128 MiB, and 256 bytes for each byte its
+request declares, which it decodes; a download or a verify four times its
+manifest's stored row, and 1 MiB, for as long as it streams. An upload takes
+room on the other half once its body is spooled: 256 bytes for each byte of
+an object of up to 8 MiB, which the install's credential scan decodes whole (a
+larger object's chunks are decoded one at a time), and 256 bytes for each
+32 KiB for its manifest. Past either half work queues, and work larger than
+its half waits to run alone; nothing is refused for its size. A smaller row
+than one chunk exchange in each half (256 MiB) is a config error. A connection from off this device that has not yet authenticated
+counts toward its address's `max_unauthenticated_connections_per_peer` (never
+more than half of `max_connections`, so one address cannot fill the floor), and
+one past that share is shed with a 503; it leaves the share as soon as a
+request on it presents a credential the server accepts. A loopback peer meets
+`max_connections` only: it is this device, or a TLS proxy whose callers all
+arrive from its one address. A push to a repository another push holds waits
+its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
+set) lands and the row asks; an upload that would take the vault's disk below
+`disk_reserve_bytes` is refused with 507, by its declared size before any byte
+is read.
 
 ## CJK Dictionaries
 
@@ -230,9 +289,17 @@ not HTTPS, so reach a remote embedder through a TLS proxy such as
 key before it reads any of a request's body, and reads bodies only within a
 budget (16 MiB for bodies up to 256 KiB, 64 MiB for larger ones, each body at
 most 32 MiB), so neither strangers nor key holders can make it hold more. A
-body must declare its `Content-Length` (411 otherwise); at most 32 requests
-wait for each budget (503 past that, to retry), and a body has 120 s to arrive
-once its budget is reserved (408 after).
+body must declare its `Content-Length` (411 otherwise). It reads `[limits]`
+from the same config: an answer takes room for its vectors and their encoding
+in `embedder_answer_bytes` before the model makes it, and keeps it until it is
+delivered. The endpoint does not start when that row cannot hold its model's
+largest answer (2,048 inputs at its dimensions: about 193 MiB at 4,096). Past
+`embedder_requests`, past a full budget or `embedder_answer_bytes`, and past
+the few requests the model works on at once, a request with the key waits its
+turn in order and is never refused for how many wait. Each wait ends at
+`queue_wait_timeout_ms` (503, to retry, nothing started), and crossing a row
+or a budget logs a `limit_crossed` question. A body has 120 s to arrive once
+its budget is reserved (408 after).
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:
