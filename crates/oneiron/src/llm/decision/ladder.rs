@@ -83,7 +83,7 @@ pub const MAX_DECISION_STATE_BYTES: usize = 65_536;
 
 /// One prepared call: the question, its access-checked evidence, the bounded state the host
 /// built from that evidence, and the call's one clock. Every provider gets the same call.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct DecisionCall<'a> {
     pub question: &'a DecisionQuestion,
     pub evidence: &'a [EntityId],
@@ -96,7 +96,7 @@ pub struct DecisionCall<'a> {
 
 /// Several typed questions asked as one request over one state. Each question carries its
 /// own text (its description) and its own contract; the state is their shared prefix.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct DecisionPack<'a> {
     pub questions: &'a [&'a DecisionQuestion],
     pub evidence: &'a [EntityId],
