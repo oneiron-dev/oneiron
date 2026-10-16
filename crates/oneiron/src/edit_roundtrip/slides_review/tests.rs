@@ -138,18 +138,21 @@ impl SlideReviewProvider for Provider {
                         answer: DecisionAnswer::Abstain,
                         probability: None,
                         paired: None,
+                        person: None,
                     }
                 } else if self.rung == DecisionRung::Local && matches!(slide, 5 | 11 | 20) {
                     ProviderDecision {
                         answer: DecisionAnswer::Noul(true),
                         probability: Some(0.5),
                         paired: None,
+                        person: None,
                     }
                 } else {
                     ProviderDecision {
                         answer: DecisionAnswer::Noul(slide % 2 == 0),
                         probability: Some(0.9),
                         paired: None,
+                        person: None,
                     }
                 }
             })
@@ -418,6 +421,7 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             answer: DecisionAnswer::Noul(false),
             probability: Some(0.5),
             paired: None,
+            person: None,
         },
     };
     let paired = PairedAnswer {
@@ -425,12 +429,18 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
         question_version: 1,
         probability: 0.2,
     };
+    let person = PairedAnswer {
+        question: EntityId::now(),
+        question_version: 1,
+        probability: 0.6,
+    };
     let house = Fixed {
         rung: DecisionRung::Escalation,
         decision: ProviderDecision {
             answer: DecisionAnswer::Noul(true),
             probability: Some(0.9),
             paired: Some(paired),
+            person: Some(person),
         },
     };
     let big = Fixed {
@@ -439,6 +449,7 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             answer: DecisionAnswer::Noul(true),
             probability: Some(0.95),
             paired: None,
+            person: None,
         },
     };
     // Without a house model the route skips its rung (ARCH-0076 #posture): System
@@ -487,6 +498,12 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             .into_iter()
             .collect();
         assert_eq!(decision.receipt.paired, rows);
+        // The surface has no person rung, so the reading routes nothing, and it stays.
+        let rows: Vec<_> = (ceiling == DecisionRung::Escalation)
+            .then(|| person.bind(house.pin()))
+            .into_iter()
+            .collect();
+        assert_eq!(decision.receipt.person, rows);
         vault
             .settle_select_edit_proposal(
                 &artifact,
@@ -790,6 +807,7 @@ impl SlideReviewProvider for ChangingPin {
                 answer: DecisionAnswer::Noul(true),
                 probability: Some(0.9),
                 paired: None,
+                person: None,
             })
             .collect())
     }

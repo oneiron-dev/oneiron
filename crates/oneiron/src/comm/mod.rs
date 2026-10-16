@@ -2,6 +2,7 @@
 //!
 //! Directory module. `claims` holds the `comm.*` claim family; `records` the
 //! COMM_RECORD storage and codec; `parties` the party identity doors;
+//! `stop_hold` the send hold of a STOP, standing or not projected here yet;
 //! `projector` the ordered projector pass; `projection_writes` the
 //! deterministic claim writes; `consent` the human gates, send overrides and
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
@@ -17,6 +18,7 @@ mod parties;
 mod projection_writes;
 mod projector;
 mod records;
+mod stop_hold;
 mod thread_membership;
 
 #[cfg(test)]
@@ -29,7 +31,9 @@ pub use self::claims::{
     PREDICATE_COMM_THREAD_MEMBER, SendOverrideMatch, SendOverrideScope, claim_class_descriptors,
     is_comm_claim_predicate,
 };
-pub(crate) use self::claims::{guard_send_override_put, validate_comm_claim_structure};
+pub(crate) use self::claims::{
+    guard_send_override_put, is_restrictive_comm_predicate, validate_comm_claim_structure,
+};
 pub use self::consent::{
     approve_pending_opt_out_clear, count_active_comm_claims, count_active_thread_member_claims,
     count_contact_record_claim_entries, count_opt_out_clear_receipts,
@@ -51,6 +55,9 @@ pub use self::projector::{
 };
 pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
+};
+pub(crate) use self::stop_hold::{
+    clear_pending_stop_for_delete, maintain_pending_stop_put, send_stop_reason_in_txn,
 };
 
 use std::cell::{Cell, RefCell};
@@ -112,7 +119,8 @@ struct IndexedGate {
 /// after the snapshot are simply picked up by the next pass.
 #[derive(Debug, Default)]
 struct CommProjectorIndex {
-    /// Unprojected source events as `(sequence, id)`, sequence ascending.
+    /// Unprojected source events as `(sequence, id)`, sequence ascending,
+    /// and each STOP whose send hold this replica has not released yet.
     pending_events: Vec<(u64, EntityId)>,
     pending_gates: HashMap<PartyChannelKey, Vec<IndexedGate>>,
     latest_projected_thread_transition: HashMap<PartyThreadKey, (u64, bool)>,
@@ -133,7 +141,7 @@ struct CommProjectorIndex {
 }
 
 impl CommProjectorIndex {
-    fn from_records(records: &[(EntityId, CommRecord)]) -> Self {
+    fn from_records(records: &[(EntityId, CommRecord)], pending_stops: &HashSet<EntityId>) -> Self {
         let mut index = Self::default();
         for (id, record) in records {
             match record {
@@ -142,9 +150,9 @@ impl CommProjectorIndex {
                     kind,
                     party_ref,
                     thread_ref,
-                    projected: false,
+                    projected,
                     ..
-                } => {
+                } if !projected || pending_stops.contains(id) => {
                     index.pending_events.push((*sequence, *id));
                     if matches!(
                         kind,

@@ -141,9 +141,13 @@ pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
 /// Parts: the revision's 32-byte logical hash.
 pub const PROJECT_REVISION: &[u8] = b"oneiron/project-revision-id/v1/";
 
+/// A typed decision question an engine caller asks (`self_heal::tiered`). Parts: the
+/// question's registered name, then the caller's instance parts.
+pub const DECISION_QUESTION: &[u8] = b"oneiron.decision.question.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 36] = [
+pub(crate) const ALL: [&[u8]; 37] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -180,4 +184,5 @@ pub(crate) const ALL: [&[u8]; 36] = [
     HISTORY_MESSAGE,
     IMPORTED_NOTE,
     PROJECT_REVISION,
+    DECISION_QUESTION,
 ];

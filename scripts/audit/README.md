@@ -4,27 +4,26 @@ Pins are in `tools.json`. The CI compiler lanes use sccache 0.15.0 with GitHub
 Actions cache storage, in addition to each runner's persistent host target dir.
 `SCCACHE_GHA_VERSION` namespaces entries by OS, architecture, the Rust toolchain
 file, and Cargo.lock; the pinned setup action exposes GitHub's cache runtime
-token to sccache. Full-tier nextest commands are unchanged. `--show-stats`
-records hit counts in each compiler job. The setup action also prints its
-post-run statistics.
+token to sccache. `--show-stats` records hit counts in each compiler job. The
+setup action also prints its post-run statistics.
 
-A scoped workflow-only PR compiles no crates and cannot demonstrate hits. Run
+A workflow-only change compiles no crates and cannot demonstrate hits. Run
 `gh workflow run ci.yml -R oneiron-dev/oneiron --ref <branch> -f cache_proof=true`
-for a controlled proof on the approved Mac mini runner. The two jobs use
-its unique `mini` capability label so their artifact paths and compiler inputs
-match; the retired Arch runners are offline. This dispatch skips the
-normal full gate; the two dedicated jobs run serially. The first builds
+for a controlled proof. Both proof jobs skip while the repository variable
+`CI_PAUSED` is `true`. They run on the `[self-hosted, macos, arm64, mini]`
+labels, so their artifact paths and compiler inputs match. This dispatch skips
+every other CI job; the two dedicated jobs run serially. The first builds
 `oneiron-vault-contract` (small enough for busy runners) from a fresh run-owned
 target without sccache (host-target-only
 baseline), then deletes only that run-owned target and populates the shared
 GitHub cache from the same source and target path. The second job starts a new
 compiler daemon and another empty artifact target at the same path, then
 builds with the same shared namespace. It fails unless Rust hits are positive
-and repeat wall time is less than baseline. Each job retains a JSON artifact
-with run URL, revision, runner, namespace, command, timing, and cache stats.
-Neither job deletes or changes the runner's persistent `CARGO_TARGET_DIR`.
-See the linked run receipts for actual results; a warm host target is not a
-cache-hit proof. The local `cache-baseline.json` proves only host-local
+and repeat wall time is less than baseline. Each job uploads a JSON receipt as
+a workflow artifact, with run URL, revision, runner, namespace, command, timing,
+and cache stats. Neither job deletes or changes the runner's persistent
+`CARGO_TARGET_DIR`. Those receipts hold the actual results; a warm host target
+is not a cache-hit proof. The local `cache-baseline.json` proves only host-local
 cold-artifact reuse, not CI shared-cache speedup.
 
 `python3 scripts/audit/cache.py` measures three serial `cargo check` builds of
@@ -72,9 +71,10 @@ pinned stable compiler with the tool's supported rustdoc-only unstable opt-in:
 Both LLVM binaries must match the compiler's LLVM major version. The collector
 sets `CARGO_LLVM_COV_SETUP=no`, so missing components fail rather than installing.
 `RUSTC_BOOTSTRAP=1` is scoped to the doctest lane and its report, not production
-checks or other test lanes. On macOS only the seven named UnsupportedPlatform
-benchmark cases already excluded by CI are excluded here. Cargo and test threads
-are bounded separately to two.
+checks or other test lanes. On macOS the collector filters exactly two named
+`UnsupportedPlatform` eval tests out of the nextest lane and keeps the rest of
+`oneiron-bench`; the macOS CI recipe instead excludes the whole `oneiron-bench`
+crate. Cargo and test threads are bounded separately to two.
 
 Test temporary files use a private, real-path directory independent of report
 output. For long checkout paths on macOS, pass `--tmp-dir` with a short owned

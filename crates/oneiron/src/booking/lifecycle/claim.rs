@@ -225,6 +225,11 @@ fn is_confirmed_booking_in(
         if body.subject != ClaimSubject::Entity(*event_ref) {
             continue;
         }
+        // A held head still charges the cap; only a settled one discharges it.
+        let settled = || {
+            crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)
+                .map_err(|error| engine_failure("booking claim confirm read", error))
+        };
         match body.predicate.as_str() {
             BOOKING_SOURCE_PAGE_PREDICATE => {
                 on_page |=
@@ -241,14 +246,15 @@ fn is_confirmed_booking_in(
             BOOKING_STATUS_PREDICATE => {
                 match decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status {
                     BookingStatus::Confirmed => confirmed = true,
-                    BookingStatus::Cancelled => cancelled = true,
+                    BookingStatus::Cancelled => cancelled |= settled()?,
                 }
             }
             PREDICATE_CALENDAR_STATUS => {
                 cancelled |= decode_status_value(&body.value)
                     .map_err(|error| engine_failure("calendar status decode", error))?
                     .status
-                    == CalendarStatus::Cancelled;
+                    == CalendarStatus::Cancelled
+                    && settled()?;
             }
             _ => {}
         }
@@ -460,9 +466,29 @@ pub(super) fn read_booking_facts(
     rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
 ) -> Result<BookingFacts, BookingError> {
+    booking_facts_in(vault, rtxn, event_ref, true)
+}
+
+/// [`read_booking_facts`] for a door whose only effect is cancelling the
+/// booking: held heads read as they stand, so a hold never stops a cancel.
+pub(super) fn read_booking_facts_to_cancel(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<BookingFacts, BookingError> {
+    booking_facts_in(vault, rtxn, event_ref, false)
+}
+
+fn booking_facts_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+    hold_enablers: bool,
+) -> Result<BookingFacts, BookingError> {
     let mut page_ref = None;
     let mut event_type = None;
     let mut status = None;
+    let mut held_confirmed = false;
     for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
@@ -472,25 +498,51 @@ pub(super) fn read_booking_facts(
         {
             continue;
         }
+        // The hold binds the enabling heads only: a held Cancelled still
+        // cancels, while a held page, type or Confirmed never decides.
+        let settled = || -> Result<bool, BookingError> {
+            Ok(!hold_enablers
+                || crate::gate::claim_critical_confirm_settled_in_txn(
+                    &vault.store,
+                    rtxn,
+                    &claim_id,
+                )
+                .map_err(|error| engine_failure("booking claim confirm read", error))?)
+        };
         match body.predicate.as_str() {
             BOOKING_SOURCE_PAGE_PREDICATE => {
-                page_ref = Some(
-                    decode_claim_value::<BookingSourcePageValue>(&body.value, "source page")?
-                        .page_ref,
-                );
+                let value =
+                    decode_claim_value::<BookingSourcePageValue>(&body.value, "source page")?;
+                if !settled()? {
+                    return Err(refused("booking source page awaits its owner's confirm"));
+                }
+                page_ref = Some(value.page_ref);
             }
             BOOKING_EVENT_TYPE_REF_PREDICATE => {
-                event_type = Some(
-                    decode_claim_value::<BookingEventTypeRefValue>(&body.value, "event type ref")?
-                        .event_type,
-                );
+                let value =
+                    decode_claim_value::<BookingEventTypeRefValue>(&body.value, "event type ref")?;
+                if !settled()? {
+                    return Err(refused("booking event type awaits its owner's confirm"));
+                }
+                event_type = Some(value.event_type);
             }
             BOOKING_STATUS_PREDICATE => {
-                status =
-                    Some(decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status);
+                match decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status {
+                    BookingStatus::Cancelled => status = Some(BookingStatus::Cancelled),
+                    BookingStatus::Confirmed => {
+                        if settled()? {
+                            status = status.or(Some(BookingStatus::Confirmed));
+                        } else {
+                            held_confirmed = true;
+                        }
+                    }
+                }
             }
             _ => {}
         }
+    }
+    if status.is_none() && held_confirmed {
+        return Err(refused("booking status awaits its owner's confirm"));
     }
     Ok(BookingFacts {
         page_ref: page_ref.ok_or_else(|| refused("booking carries no source page claim"))?,

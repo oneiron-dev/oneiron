@@ -146,18 +146,14 @@ fn carries_facet(scoped: &ScopedRead<'_>, id: &EntityId, facet: &EntityId) -> Re
 }
 
 impl DepthSearchRequest<'_> {
-    /// Fetch the indexed candidate set before session narrowing, just as the
-    /// actor-keyed door does for policy filters. A global page is not a scoped page.
-    pub(super) fn channel_limit(&self, scoped: &ScopedRead<'_>, text: bool) -> Result<usize> {
+    /// Fetch the bounded candidate window before session narrowing: a global
+    /// page is not a scoped page. The page is short when the window holds
+    /// fewer of the session's rows.
+    pub(super) fn channel_limit(&self) -> usize {
         if self.session_scope.is_none_or(SessionScope::is_empty) {
-            return Ok(self.limit);
+            return self.limit;
         }
-        scoped.vault().scoped_read_search_candidate_limit(
-            &scoped.store_read(),
-            self.limit,
-            text,
-            !text,
-        )
+        crate::memory::caps::narrowed_candidate_window(self.limit)
     }
 
     pub(super) fn narrow_hits(

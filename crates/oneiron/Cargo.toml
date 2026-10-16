@@ -37,6 +37,8 @@ oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-code-check = { path = "../oneiron-code-check" }
 # Every subprocess starts with only the descriptors it is named.
 oneiron-spawn = { path = "../oneiron-spawn" }
+# The browser verbs' input and output shapes (types only, no driver).
+oneiron-browser = { path = "../oneiron-browser", default-features = false }
 # Native DOCX revisions: organ crate remains independent of the vault engine.
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 # Default xlsx recalc of the edit round trip: the in-process formula engine on

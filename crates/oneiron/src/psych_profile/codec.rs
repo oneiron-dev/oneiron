@@ -7,8 +7,9 @@ use rmpv::Value;
 use super::record::{
     CONFIDENCE_KEYS, KEY_COMPACT, KEY_CONFIDENCE, KEY_NARRATIVE, KEY_SCHEMA_VERSION,
     KEY_SOURCE_REVISION_IDS, KEY_STATUS, KEY_SUBJECT_REF, KEY_TEXT, MAX_COMPACT_BYTES,
-    MAX_NARRATIVE_BYTES, MAX_TEXT_BYTES, PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION,
-    PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus,
+    MAX_NARRATIVE_BYTES, MAX_PSYCH_PROFILE_BODY_BYTES, MAX_PSYCH_PROFILE_SOURCE_REVISIONS,
+    MAX_TEXT_BYTES, PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile,
+    PsychProfileConfidence, PsychProfileSnapshotStatus, TOO_MANY_SOURCE_REVISIONS,
 };
 use crate::claim::unit_interval_f32;
 use crate::entity_id::EntityId;
@@ -57,6 +58,9 @@ pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
 
 /// Decodes and validates a PsychProfile body.
 pub fn decode_psych_profile_body(bytes: &[u8]) -> Result<PsychProfile> {
+    if bytes.len() > MAX_PSYCH_PROFILE_BODY_BYTES {
+        return Err(invalid_profile("body exceeds the largest valid snapshot"));
+    }
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_profile("body"))?;
     if cursor.position() != bytes.len() as u64 {
@@ -123,6 +127,9 @@ fn decode_source_revision_ids(value: &Value) -> Result<Vec<EntityId>> {
     let Value::Array(values) = value else {
         return Err(invalid_profile("sourceRevisionIds must be an array"));
     };
+    if values.len() > MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
+        return Err(invalid_profile(TOO_MANY_SOURCE_REVISIONS));
+    }
     let mut ids = Vec::with_capacity(values.len());
     for value in values {
         ids.push(decode_entity_ref(value)?);

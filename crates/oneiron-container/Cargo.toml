@@ -1,0 +1,22 @@
+[package]
+name = "oneiron-container"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Container guest sessions for hosts without KVM: one long-lived guest, stdio only"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+blake3 = { workspace = true }
+oneiron-spawn = { path = "../oneiron-spawn" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

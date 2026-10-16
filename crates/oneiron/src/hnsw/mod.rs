@@ -23,11 +23,13 @@ pub(crate) use self::rebuild::{
 };
 pub(crate) use self::search::{exact_score, hnsw_search};
 pub(crate) use self::slim_drop::{drop_rebuildable_hnsw, hnsw_is_dropped};
+#[cfg(test)]
+pub(crate) use self::storage::hnsw_entity_count;
 pub(crate) use self::storage::{
-    has_population, hnsw_entity_count, increment_embedding_model_epoch, increment_vector_version,
+    has_population, increment_embedding_model_epoch, increment_vector_version,
     read_embedding_model_epoch, read_vector_version,
 };
-pub(crate) use self::types::RebuiltHnswGraph;
+pub(crate) use self::types::{Admission, RebuiltHnswGraph};
 
 // Test-only paths (no production use outside `hnsw/`): the `#[cfg(test)]`
 // re-export keeps `crate::hnsw::X` resolving for the test targets without

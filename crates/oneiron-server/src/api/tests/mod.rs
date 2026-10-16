@@ -1,5 +1,6 @@
 use super::*;
 
+mod agent_definition_doors;
 mod ai_chat;
 mod depth_quality;
 mod memory_reason_repairs;
@@ -16,6 +17,7 @@ mod auth_idempotency;
 mod machine_identity;
 mod off_record_rooms;
 mod org_admin;
+mod owner_authored_writes;
 mod owner_healer;
 mod owner_routes;
 mod owner_secrets;

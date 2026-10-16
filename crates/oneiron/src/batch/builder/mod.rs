@@ -41,6 +41,8 @@ pub struct BatchBuilder<'a> {
     /// The FACET every NOTE and ASSET this batch births is stamped with.
     /// `None` stamps the vault default.
     birth_mask: Option<EntityId>,
+    /// Every source each ASSET_TEXT this batch births was written from.
+    text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
     #[cfg(feature = "sync")]
     import_tier: crate::sync::client::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
@@ -98,6 +100,7 @@ impl<'a> BatchBuilder<'a> {
             commit_checks: Vec::new(),
             origin,
             birth_mask: None,
+            text_births: std::collections::HashMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]

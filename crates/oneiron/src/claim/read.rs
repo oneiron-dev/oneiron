@@ -51,6 +51,41 @@ impl Vault {
         self.get_claim_in_txn(&rtxn, id)
     }
 
+    /// [`Vault::get_claim_in_txn`] for a reader about to ACT on the claim.
+    ///
+    /// A critical claim whose owner confirmation is outstanding, attached or
+    /// timed out, reads as absent here; every retrieval read still returns it
+    /// (ARCH-0026 §G3). This is the marker rule only: each caller keeps its
+    /// own approval, source and lifecycle rules on the body.
+    pub(crate) fn get_claim_for_effect_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(body) = self.get_claim_in_txn(rtxn, id)? else {
+            return Ok(None);
+        };
+        if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, rtxn, id)? {
+            return Ok(None);
+        }
+        Ok(Some(body))
+    }
+
+    /// For an acting reader that read the claim's body in an earlier
+    /// transaction: the claim's confirm is settled and the claim is still
+    /// active now. An owner's Decline settles the confirm by retracting the
+    /// claim, so a Decline landing between the two reads never passes the
+    /// active body the reader already holds.
+    pub(crate) fn claim_settled_and_active(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &rtxn, id)? {
+            return Ok(false);
+        }
+        Ok(self
+            .get_claim_in_txn(&rtxn, id)?
+            .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active))
+    }
+
     /// Transaction-composable [`Vault::get_claim`]: reads and decodes a CLAIM
     /// body through the caller's txn (so it composes inside a write txn, where a
     /// nested read txn would be illegal).
@@ -58,6 +93,40 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        self.claim_in_txn(
+            rtxn,
+            id,
+            super::history_projection::resolved_machine_history,
+        )
+    }
+
+    /// [`Vault::get_claim_in_txn`] for a door that only restricts the claim:
+    /// a MACHINE claim's history folds with its carriers held or not, and
+    /// the door's own staging and live-row guard keep any approval from
+    /// projecting. Never for a read that could project or approve.
+    pub(crate) fn claim_for_restriction_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        self.claim_in_txn(
+            rtxn,
+            id,
+            super::history_projection::machine_history_for_restriction,
+        )
+    }
+
+    fn claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        history: fn(
+            &crate::store::Store,
+            &heed::RoTxn<'_>,
+            &crate::authority::AuthorityFold,
+            EntityId,
+        ) -> Result<super::transition::ClaimTransitionProjection>,
     ) -> Result<Option<ClaimBody>> {
         let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
         let Some(body) = body else { return Ok(None) };
@@ -71,8 +140,7 @@ impl Vault {
                 .is_some()
         {
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
-            let projection =
-                super::history_projection::resolved_machine_history(&self.store, rtxn, &fold, *id)?;
+            let projection = history(&self.store, rtxn, &fold, *id)?;
             // A superseded history's same-id successor is an ordinary claim.
             if !projection.admits_successor_by(crate::memory::claim_author(&body))
                 || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?

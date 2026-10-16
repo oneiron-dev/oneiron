@@ -8,7 +8,9 @@
 pub mod checkpoint;
 
 use std::ffi::OsString;
+#[cfg(test)]
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod canonical;
@@ -139,6 +141,8 @@ impl RecoveryArtifactFailure {
 
 /// Builds canonical shell bytes for a recovery artifact payload.
 pub fn encode_recovery_artifact(artifact_type: u16, payload: &[u8]) -> Result<Vec<u8>> {
+    // Never write a shell the loader would refuse to read.
+    artifact_size(HEADER_LEN.saturating_add(payload.len()))?;
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
     bytes.resize(HEADER_LEN, 0);
     bytes.extend_from_slice(payload);
@@ -175,8 +179,8 @@ pub fn load_recovery_artifact(
     expected_artifact_type: u16,
 ) -> Result<RecoveryArtifactLoad> {
     let path = path.as_ref();
-    match fs::read(path) {
-        Ok(bytes) => match validate_recovery_artifact(&bytes, expected_artifact_type) {
+    match read_bounded_artifact(path)? {
+        Some(bytes) => match validate_recovery_artifact(&bytes, expected_artifact_type) {
             Ok(artifact) => Ok(RecoveryArtifactLoad::Ready(artifact)),
             Err(failure) => {
                 let quarantine_path = quarantine_invalid_artifact(path, &bytes)?;
@@ -187,13 +191,41 @@ pub fn load_recovery_artifact(
                 }))
             }
         },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            Ok(RecoveryArtifactLoad::Missing {
-                path: path.to_path_buf(),
-            })
-        }
-        Err(err) => Err(Error::Io(err)),
+        None => Ok(RecoveryArtifactLoad::Missing {
+            path: path.to_path_buf(),
+        }),
     }
+}
+
+/// The largest shell any writer in this build emits: a canonical snapshot,
+/// header included.
+const RECOVERY_ARTIFACT_MAX_BYTES: usize = CANONICAL_SNAPSHOT_MAX_BYTES;
+
+/// Reads a regular file of at most [`RECOVERY_ARTIFACT_MAX_BYTES`], judging its
+/// kind and size before reading; `None` when there is no file.
+fn read_bounded_artifact(path: &Path) -> Result<Option<Vec<u8>>> {
+    let file = match quarantine::open_regular(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(Error::Io(err)),
+    };
+    artifact_size(usize::try_from(file.metadata()?.len()).unwrap_or(usize::MAX))?;
+    let mut bytes = Vec::new();
+    file.take(RECOVERY_ARTIFACT_MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    artifact_size(bytes.len())?;
+    Ok(Some(bytes))
+}
+
+fn artifact_size(required: usize) -> Result<()> {
+    if required > RECOVERY_ARTIFACT_MAX_BYTES {
+        return Err(ArtifactError::OverlayLimit {
+            required,
+            limit: RECOVERY_ARTIFACT_MAX_BYTES,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn validate_recovery_artifact(

@@ -155,8 +155,8 @@ pub(super) fn apply_ops_with_origin(
     let mut ops = ReplayOps { ops, replay };
     let hub_admission = gate_mode.hub_admission.take();
     let refinement_admission = gate_mode.refinement_admission.take();
-
     let birth_mask = gate_mode.birth_mask;
+    let text_births = std::mem::take(&mut gate_mode.text_births);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
@@ -256,9 +256,15 @@ pub(super) fn apply_ops_with_origin(
                     hub_sync_imported,
                 )?;
                 let replicated = allow_maintenance && allow_reserved_predicate;
-                if let Some(facet) =
-                    birth_stamp_target(store, wtxn, id, entity_type, replicated, birth_mask)?
-                {
+                let sources = text_births.get(&id).map(Vec::as_slice);
+                if let Some(facet) = birth_stamp_target(
+                    store,
+                    wtxn,
+                    id,
+                    entity_type,
+                    replicated,
+                    (birth_mask, sources),
+                )? {
                     let owner = crate::vault::embedded_owner_actor_id()?;
                     if birth_mask.is_none()
                         && facet == crate::claim::substrate_facet_id(owner)?
@@ -354,6 +360,7 @@ pub(super) fn apply_ops_with_origin(
                             refinement_admission: refinement_admission.as_ref(),
                             transition: transition.as_ref(),
                             posture: config.privacy.posture,
+                            owner_authored: None,
                         },
                     },
                 )?;
@@ -534,6 +541,7 @@ pub(super) fn apply_ops_with_origin(
                         consent: put_options.consent,
                         indexing: put_options.indexing,
                         write_policy: write_policy.as_ref(),
+                        owner_authored: gate_mode.owner_authored.as_ref(),
                     },
                 )?;
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;

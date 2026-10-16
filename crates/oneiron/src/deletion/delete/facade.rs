@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 
 use super::super::erase::{stage_sweep_refs_in_txn, sweep_extras};
 use super::super::gate::{
-    GatedDeletion, reverify_deletion_authority_before_publication,
+    GatedDeletion, claim_in_txn, reverify_deletion_authority_before_publication,
     reverify_deletion_authority_when_unpublished,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
@@ -262,6 +262,9 @@ impl Vault {
         // raced-delete harness recv()s here so the eraser commits AFTER this
         // header read, forcing the headerful leg every run. No-op in
         // production.
+        // The receipt is signed in the last txn; load the device key before
+        // the first, so no tombstone commits on an install that cannot sign.
+        self.prepare_install_signing()?;
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
         self.reserve_user_brief_delete(id, reason, gate.as_ref())?;
@@ -779,6 +782,7 @@ impl Vault {
             },
             sweep_extras(captured.as_ref()),
         )?;
+        claim_in_txn(gate.as_ref(), &mut wtxn, &tombstone, Some(&receipt_id))?;
 
         wtxn.commit()?;
         self.notify_local_delete_materialized(&affected);

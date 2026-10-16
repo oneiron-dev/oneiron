@@ -313,7 +313,7 @@ pub(in crate::campaign) fn identical_live_head_in_txn(
 /// a same-key twin therefore never hide a restriction: this leg only ever
 /// adds suppression, and a row it should not have read can only add more. An
 /// undecodable or unrelated PERSON body carries no key, exactly as before.
-fn do_not_contact_subjects_in_txn(
+pub(crate) fn do_not_contact_subjects_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     counterparty: &str,
@@ -366,8 +366,21 @@ pub(crate) fn counterparty_do_not_contact_in_txn(
     channel: Option<&str>,
     scope: &str,
 ) -> Result<bool> {
-    for person_ref in do_not_contact_subjects_in_txn(store, txn, counterparty)? {
-        if matching_do_not_contact_in_txn(store, txn, person_ref, channel, scope)? {
+    let subjects = do_not_contact_subjects_in_txn(store, txn, counterparty)?;
+    subjects_do_not_contact_in_txn(store, txn, &subjects, channel, scope)
+}
+
+/// [`counterparty_do_not_contact_in_txn`] on subjects the caller already
+/// read with [`do_not_contact_subjects_in_txn`].
+pub(crate) fn subjects_do_not_contact_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subjects: &[EntityId],
+    channel: Option<&str>,
+    scope: &str,
+) -> Result<bool> {
+    for person_ref in subjects {
+        if matching_do_not_contact_in_txn(store, txn, *person_ref, channel, scope)? {
             return Ok(true);
         }
     }
