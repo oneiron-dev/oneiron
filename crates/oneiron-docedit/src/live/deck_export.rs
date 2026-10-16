@@ -189,7 +189,10 @@ pub fn project(
             changed_parts.extend(report.changed_parts);
         }
         if text_changed {
-            let plain = deck.texts.get(id).map_or_else(String::new, |body| body.plain());
+            let plain = deck
+                .texts
+                .get(id)
+                .map_or_else(String::new, |body| body.plain());
             let view = DeckView::read(&next)?;
             let expected = fingerprint_of(&view, &binding.slide_part, native_id)
                 .ok_or(LiveError::UnknownNode)?;

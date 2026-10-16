@@ -157,6 +157,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
+    /// the exact content hash it scored). Key: id16 (skill entity).
+    SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
     /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
     /// receipt length + receipt string + id16.
     SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;

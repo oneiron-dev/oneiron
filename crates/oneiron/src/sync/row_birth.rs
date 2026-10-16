@@ -45,7 +45,11 @@ fn owner(key: &str) -> Option<EntityId> {
 /// Mirrors `id`'s stored birth into `doc`. An equal carrier stays; a
 /// different one is replaced, because the local row is the authority for its
 /// own birth. Returns whether the map changed.
-pub(in crate::sync) fn mirror_local_birth(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Result<bool> {
+pub(in crate::sync) fn mirror_local_birth(
+    vault: &Vault,
+    doc: &LoroDoc,
+    id: &EntityId,
+) -> Result<bool> {
     let Some(birth) = vault.row_birth(id)? else {
         return Ok(false);
     };
@@ -62,11 +66,7 @@ pub(in crate::sync) fn mirror_local_birth(vault: &Vault, doc: &LoroDoc, id: &Ent
 /// Copies the births `src` carries for `owners` into `dst`. Selector, guest
 /// and federation rebuilds call it with the owners they finally kept, never
 /// with candidates, so a birth can never bring a denied row into scope.
-pub(crate) fn copy_births(
-    src: &LoroDoc,
-    dst: &LoroDoc,
-    owners: &[EntityId],
-) -> Result<()> {
+pub(crate) fn copy_births(src: &LoroDoc, dst: &LoroDoc, owners: &[EntityId]) -> Result<()> {
     let from = births(src);
     let to = births(dst);
     for id in owners {
@@ -107,7 +107,12 @@ pub(in crate::sync) fn drop_orphan_births(doc: &LoroDoc) -> Result<bool> {
     let orphans: Vec<String> = map
         .keys()
         .map(|key| key.to_string())
-        .filter(|key| !matches!(entities.get(key), Some(ValueOrContainer::Value(LoroValue::Binary(_)))))
+        .filter(|key| {
+            !matches!(
+                entities.get(key),
+                Some(ValueOrContainer::Value(LoroValue::Binary(_)))
+            )
+        })
         .collect();
     for key in &orphans {
         map_delete(&map, key)?;
@@ -119,7 +124,11 @@ pub(in crate::sync) fn drop_orphan_births(doc: &LoroDoc) -> Result<bool> {
 /// value is a canonical envelope, and the admitted document carries its
 /// owner entity. A birth for a row the sender did not ship is refused before
 /// import.
-pub(crate) fn validate_carried_birth(candidate: &LoroDoc, key: &str, value: &LoroValue) -> Result<()> {
+pub(crate) fn validate_carried_birth(
+    candidate: &LoroDoc,
+    key: &str,
+    value: &LoroValue,
+) -> Result<()> {
     let well_formed = owner(key).is_some()
         && matches!(value, LoroValue::Binary(bytes) if decode(bytes).is_some())
         && matches!(
@@ -187,7 +196,9 @@ pub(crate) fn materialize_births_from_delta(
         };
         match (owner(key), decode(bytes)) {
             (Some(id), Some(birth)) => carried.push((id, birth)),
-            _ => tracing::warn!(window = window_key, key = %key, "row birth carrier malformed; left out"),
+            _ => {
+                tracing::warn!(window = window_key, key = %key, "row birth carrier malformed; left out")
+            }
         }
     }
     if carried.is_empty() {
