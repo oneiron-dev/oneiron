@@ -47,6 +47,7 @@ mod parallel;
 mod partition;
 mod persistence;
 mod provenance;
+mod person_about;
 pub(crate) mod redirty;
 mod resident_dream;
 pub(crate) mod resources;
@@ -59,6 +60,7 @@ mod settle;
 mod sieve_attempt;
 mod step_charge;
 mod support;
+mod task_realize;
 mod turn_text;
 mod wake_plan;
 mod watermark;
@@ -84,10 +86,13 @@ pub use resident_dream::{
     resident_of_dream_input, run_resident_dream,
 };
 pub use resources::ScopedConsolidationWrite;
+pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,
 };
+pub(crate) use person_about::enqueue_person_about_on_wake;
+pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement,
