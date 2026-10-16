@@ -91,6 +91,21 @@ impl HookBlock {
     }
 }
 
+/// Writes `block` unless a row already stands under `id`: a retried call
+/// does not reset a block's deliveries. Returns whether it wrote.
+pub(super) fn put_new_block_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    block: &HookBlock,
+) -> Result<bool> {
+    if BLOCKS.get(&vault.store, txn, &id)?.is_some() {
+        return Ok(false);
+    }
+    BLOCKS.put(&vault.store, txn, &id, block)?;
+    Ok(true)
+}
+
 pub(super) fn put_block_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

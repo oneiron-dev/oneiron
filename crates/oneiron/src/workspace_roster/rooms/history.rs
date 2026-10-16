@@ -2,7 +2,7 @@
 use super::*;
 use crate::store::Store;
 
-const PAGE_LIMIT: usize = 256;
+pub(super) const PAGE_LIMIT: usize = 256;
 
 /// One HISTORY row: its `(room, at, turn)` key and the turn id.
 type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
@@ -100,7 +100,7 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
             HANDLES.delete(store, txn, key)?;
         }
     }
-    Ok(())
+    super::participation::delete_room_facts(store, txn, room)
 }
 impl Memory<'_> {
     /// The turns among `turns` this reader may read. Membership admits none
@@ -119,7 +119,7 @@ impl Memory<'_> {
         }
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            require_member(self.vault(), &txn, room, self.actor())?;
+            require_reader(self.vault(), &txn, room, self.actor())?;
             for turn in &mut turns {
                 if super::liveness::is_thread_root(turn) {
                     turn.converted_project = self
@@ -185,7 +185,7 @@ impl Memory<'_> {
         let worlds = self.room_read_worlds(room)?;
         let project_room = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            require_member(self.vault(), &txn, room, self.actor())?
+            require_reader(self.vault(), &txn, room, self.actor())?
         };
         if !turns_readable(&worlds) {
             return Ok(Vec::new());
@@ -253,7 +253,7 @@ impl Memory<'_> {
         let scope = self.room_read_scope(room)?;
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Ok(RoomPage {
                 rows: Vec::new(),
@@ -348,7 +348,7 @@ impl Memory<'_> {
         row: impl Fn(&heed::RoTxn<'_>, (u64, EntityId), EntityId) -> MemoryResult<T>,
     ) -> MemoryResult<Vec<T>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         let store = &self.vault().store;
         // Seek straight past `start`; never walk the room from its first row.
         let after = start.map(|(at, id)| (room, at, id));
@@ -405,7 +405,7 @@ impl Memory<'_> {
                 }
                 let body = {
                     let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-                    require_member(self.vault(), &txn, room, self.actor())?;
+                    require_reader(self.vault(), &txn, room, self.actor())?;
                     TURNS.get(&self.vault().store, &txn, turn_id)
                 };
                 match body {
@@ -430,7 +430,7 @@ impl Memory<'_> {
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Ok(None);
         }
@@ -454,7 +454,7 @@ impl Memory<'_> {
     pub(super) fn room_turn_snapshot(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Ok(Vec::new());
         }
@@ -533,7 +533,7 @@ impl Memory<'_> {
     pub fn rooms_trunk(&self, room: EntityId, trunk: EntityId) -> MemoryResult<super::RoomTrunk> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Err(outside_scope());
         }

@@ -215,6 +215,20 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             Ok(lease) => lease,
             Err(refused) => return Ok(refused),
         };
+        // The call's verb hooks once it is admitted (ARCH-0080 §3): a rewrite
+        // names the skill and the args it runs with.
+        let (skill, hooked) = match self
+            .gated_write
+            .enter_verb_hooks(SelfCall::SkillsCall(skill), Some(site))?
+        {
+            Ok((SelfCall::SkillsCall(skill), hooked)) => (skill, hooked),
+            Ok(_) => {
+                return Err(Error::InvariantViolation(
+                    "a skill call's hooks rewrote it into another call",
+                ));
+            }
+            Err(stopped) => return Ok(stopped),
+        };
         let Some(executor) = self.skill_executor.clone() else {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
@@ -243,13 +257,17 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 Error::InvalidConfig("callable skill returned non-JSON output".to_owned())
             })
         });
-        Ok(match output {
+        let outcome = match output {
             Ok(output) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
                 skill: skill.skill,
                 output,
             }),
             Err(error) => failed(error.to_string()),
-        })
+        };
+        // The post chain reads the answer as the guest gets it: a large one
+        // by its handle.
+        let outcome = self.store_large_answer(seq, outcome)?;
+        self.gated_write.leave_verb_hooks(hooked, outcome)
     }
 
     /// One `self.*` call over the bridge. `runtime` is the sibling a call
@@ -287,7 +305,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
+            return Ok(self.respond(outcome, None));
         }
         if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
             // Fail-closed after the first hard failure or unrecorded call:
@@ -308,7 +326,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
+            return Ok(self.respond(outcome, None));
         }
         // ONE-1314: the current step's own history, observed at the last
         // moment before this call dispatches. The durable half was observed
@@ -335,6 +353,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                     .dispatch_for_executor_run(site, call.clone())
             }
         };
+        // A verb hook's view of this call's result, taken whatever came of
+        // the call: the guest reads it, the row keeps the outcome.
+        let view = self.gated_write.take_hook_view();
         let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
             Ok(outcome) => outcome,
             Err(err) => {
@@ -353,7 +374,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 )?;
                 self.bridge_calls.insert(place, row);
                 self.hard_failure = Some(err);
-                return Ok(self.respond(error_outcome));
+                return Ok(self.respond(error_outcome, None));
             }
         };
         let finished_at_ms = started_at_ms;
@@ -369,7 +390,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             self.declined = Some(refusal.task_ref);
         }
         self.bridge_calls.insert(place, row);
-        Ok(self.respond(outcome))
+        Ok(self.respond(outcome, view))
     }
 
     /// The run's live result names, oldest first: this step's binds over
@@ -670,11 +691,17 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// The ONE response chokepoint: every guest-visible bridge-call
     /// response — success, wait, or typed error outcome — leaves through
-    /// here so the budget envelope can never be skipped.
-    fn respond(&self, outcome: SelfDispatchOutcome) -> SelfDispatchResponse {
+    /// here so the budget envelope can never be skipped. `view` is a verb
+    /// hook's view of the outcome, which the guest reads in its place.
+    fn respond(
+        &self,
+        outcome: SelfDispatchOutcome,
+        view: Option<serde_json::Value>,
+    ) -> SelfDispatchResponse {
         SelfDispatchResponse {
             outcome,
             budget: self.budget(),
+            view,
         }
     }
 }

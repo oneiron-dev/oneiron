@@ -1265,10 +1265,11 @@ impl AgentVerbDoor for LaneDoor {
         &self,
         _: &SelfAgentVerbCall,
         _: &crate::memory::HostWriteOrigin,
-    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
-        Err(AgentVerbRefusal {
+        _: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
-        })
+        }))
     }
 
     fn admit_run_call(

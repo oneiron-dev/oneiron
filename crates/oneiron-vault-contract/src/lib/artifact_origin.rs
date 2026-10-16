@@ -84,7 +84,10 @@ impl ArtifactHost {
     #[must_use]
     pub fn read(host: &str, domains: &[String]) -> ArtifactHostRead {
         let host = normalize_host(host);
-        for domain in domains.iter().map(|domain| normalize_artifact_domain(domain)) {
+        for domain in domains
+            .iter()
+            .map(|domain| normalize_artifact_domain(domain))
+        {
             if domain.is_empty() {
                 continue;
             }
@@ -102,11 +105,12 @@ impl ArtifactHost {
             }
             let named = match label.split_once(APP_SEPARATOR) {
                 None => Some(Self::vault(label)),
-                Some((app, vault)) => (valid_app_label(app) && valid_app_label(vault))
-                    .then(|| Self {
+                Some((app, vault)) => {
+                    (valid_app_label(app) && valid_app_label(vault)).then(|| Self {
                         vault: vault.to_owned(),
                         app: Some(app.to_owned()),
-                    }),
+                    })
+                }
             };
             return match named {
                 Some(named) if valid_app_label(&named.vault) => ArtifactHostRead::Named(named),
