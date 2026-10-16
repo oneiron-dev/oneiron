@@ -35,12 +35,13 @@ pub(super) fn spawn_git(
 ) -> Result<GitWireProcessOutput> {
     let repo_root = command.context().root().canonicalize()?;
     if !command.effect().needs_profile() {
-        return spawn_git_inner(
+        return spawn_git_child(
             process_env,
             &repo_root,
             command.args(),
             command.stdin(),
             None,
+            command.hold(),
         );
     }
     let profile = super::repository_profile::AdmittedRepoProfile::admit(
@@ -67,12 +68,13 @@ pub(super) fn spawn_git(
             .open(path)?
             .write_all(bytes)?;
     }
-    let output = spawn_git_inner(
+    let output = spawn_git_child(
         process_env,
         &repo_root,
         command.args(),
         command.stdin(),
         Some(scope.common_dir()),
+        command.hold(),
     )?;
     if let Some(target) = command.worktree_target() {
         scope.rebind_created_worktree(target, output.success)?;
@@ -108,11 +110,43 @@ pub(super) fn spawn_git_inner(
     stdin_payload: Option<&[u8]>,
     attribute_common_dir: Option<&Path>,
 ) -> Result<GitWireProcessOutput> {
+    spawn_git_child(
+        process_env,
+        repo_root,
+        args,
+        stdin_payload,
+        attribute_common_dir,
+        None,
+    )
+}
+
+/// [`spawn_git_inner`] for an effect child. With `hold`, the child inherits
+/// this thread's coordinator descriptor on that common directory, so the
+/// repository stays held while the child lives, past its parent's hold or
+/// death.
+fn spawn_git_child(
+    process_env: &GitWireProcessEnv,
+    repo_root: &Path,
+    args: &[OsString],
+    stdin_payload: Option<&[u8]>,
+    attribute_common_dir: Option<&Path>,
+    hold: Option<&Path>,
+) -> Result<GitWireProcessOutput> {
     // A removed repository must not fall back to an unrelated ancestor. Git
     // excludes the ceiling itself; the working directory is still inspected.
     let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(repo_root)])
         .map_err(|_| super::failure::invalid("git repository ceiling is not representable"))?;
-    let mut command = oneiron_spawn::command(process_env.git_binary.as_os_str());
+    let git = process_env.git_binary.as_os_str();
+    #[cfg(unix)]
+    let mut command = match hold.and_then(super::repo::held_lock_fd) {
+        Some(fd) => oneiron_spawn::command_with_fds(git, &[(fd, fd)]),
+        None => oneiron_spawn::command(git),
+    };
+    #[cfg(not(unix))]
+    let mut command = {
+        let _ = hold;
+        oneiron_spawn::command(git)
+    };
     command.arg("-C").arg(repo_root).args(args);
     command.env_clear();
     for (key, value) in child_env(process_env) {
