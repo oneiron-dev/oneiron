@@ -456,6 +456,63 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         IMPORT_RECEIPT.get(&self.store, &txn, &import_receipt_key(entity, source))
     }
+
+    /// Source receipts for this skill's current content, with its actual loader
+    /// disposition in the same read snapshot. The source identity and hash stay
+    /// those of the import; a later activation or retirement is not a new import.
+    /// Like `hub_import_receipt`, this door grants no read authority.
+    pub fn current_hub_import_receipts(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Vec<HubImportReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(record) = self.get_skill_record_in_txn(&txn, entity)? else {
+            return Ok(Vec::new());
+        };
+        let mut receipts = Vec::new();
+        for row in IMPORT_RECEIPT.iter_from(&self.store, &txn, entity.as_bytes())? {
+            let (_, mut receipt) = row?;
+            if !record
+                .content_hash
+                .is_some_and(|hash| hash.to_hex() == receipt.content_hash)
+            {
+                continue;
+            }
+            let disposition = match record.lifecycle_status {
+                SkillLifecycle::Active if crate::skill::skill_loadable(&record) => {
+                    InstallDisposition::AlreadyInstalled
+                }
+                SkillLifecycle::Active => {
+                    InstallDisposition::NotInstalled(InstallHoldReason::UnloadableApproval)
+                }
+                SkillLifecycle::Candidate
+                    if record.approval_status != ClaimApprovalStatus::Auto =>
+                {
+                    InstallDisposition::NotInstalled(InstallHoldReason::LocalApproval)
+                }
+                SkillLifecycle::Candidate => match receipt.disposition {
+                    InstallDisposition::Installed | InstallDisposition::AlreadyInstalled => {
+                        InstallDisposition::NotInstalled(InstallHoldReason::SourceOnly)
+                    }
+                    disposition => disposition,
+                },
+                SkillLifecycle::Stale => {
+                    InstallDisposition::NotInstalled(InstallHoldReason::Stale)
+                }
+                SkillLifecycle::Quarantined => {
+                    InstallDisposition::NotInstalled(InstallHoldReason::Quarantined)
+                }
+                SkillLifecycle::Superseded => {
+                    InstallDisposition::NotInstalled(InstallHoldReason::Superseded)
+                }
+            };
+            let result = InstallResult::finalized(&record, disposition)?;
+            receipt.installed_as = result.lifecycle;
+            receipt.disposition = result.disposition;
+            receipts.push(receipt);
+        }
+        Ok(receipts)
+    }
 }
 fn permission_labels(surface: &SkillCapabilitySurface) -> Vec<String> {
     [
