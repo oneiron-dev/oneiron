@@ -176,7 +176,11 @@ impl AgentDispatcher<'_> {
     /// One consult's expected spend in `unit` when delivered to `peer`: its
     /// calibrated mean once consult samples exist, the labelled prior until
     /// then. Never an agent's row.
-    pub fn expected_consult_spend(&self, peer: EntityId, unit: &LeaseUnit) -> Result<ExpectedSpend> {
+    pub fn expected_consult_spend(
+        &self,
+        peer: EntityId,
+        unit: &LeaseUnit,
+    ) -> Result<ExpectedSpend> {
         let txn = self.vault.store.env.read_txn()?;
         self.expected_consult_spend_in_txn(&txn, peer, unit)
     }

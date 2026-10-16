@@ -166,8 +166,8 @@ impl AgentDispatcher<'_> {
             match item {
                 FanoutWork::Agent(agent) => {
                     let nodes = self.launch_nodes_in_txn(txn, &agent.target, &unit)?;
-                    agent_count = agent_count
-                        .saturating_add(u64::try_from(nodes.len()).unwrap_or(u64::MAX));
+                    agent_count =
+                        agent_count.saturating_add(u64::try_from(nodes.len()).unwrap_or(u64::MAX));
                     items.extend(nodes.into_iter().map(|node| node.expected));
                 }
                 FanoutWork::PeerConsult { peer } => {
