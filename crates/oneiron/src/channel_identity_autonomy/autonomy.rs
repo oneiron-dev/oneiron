@@ -117,10 +117,24 @@ impl Vault {
         desired: &ChannelIdentityAutonomyRequest,
         owner: &AuthenticatedOwner,
     ) -> Result<ChannelIdentityAutonomyState> {
+        self.apply_channel_identity_autonomy_checked(desired, owner, |_| Ok(()))
+    }
+
+    /// [`Self::apply_channel_identity_autonomy`], with `also` checked in the
+    /// committing transaction after the owner: for a grant that also rests on
+    /// another party's live consent, so a consent that lapses while the mint
+    /// waits for the writer mints nothing.
+    pub(crate) fn apply_channel_identity_autonomy_checked(
+        &self,
+        desired: &ChannelIdentityAutonomyRequest,
+        owner: &AuthenticatedOwner,
+        also: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<ChannelIdentityAutonomyState> {
         self.autonomy_owner(owner)?;
         let now = self.store.authorization_now()?;
         let mut txn = self.store.env.write_txn()?;
         let owner_actor = owner.revalidate_in_txn(self, &txn)?;
+        also(&txn)?;
         let identity = desired.read_envelope.identity_ref;
         if self.autonomy_identity_actor(&txn, identity)? != desired.actor_ref {
             return Err(invalid_autonomy());

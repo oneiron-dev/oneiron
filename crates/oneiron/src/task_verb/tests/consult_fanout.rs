@@ -13,10 +13,7 @@ use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::store::GateDecisionId;
 
 fn owner(vault: &Vault) -> AuthenticatedOwner {
-    let actor = consult_peer(vault, 0xF0);
-    vault
-        .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
-        .expect("human proof")
+    crate::test_util::embedded_owner_proof(vault)
 }
 
 fn plan(vault: &Vault, count: u8) -> ConsultFanOutSpec {

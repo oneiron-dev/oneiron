@@ -183,7 +183,8 @@ impl Vault {
         Ok(super::title_index::holder_in_txn(
             &self.store,
             &txn,
-            owner.revalidate_in_txn(self, &txn)?,
+            // Person tier: a person reads their own title namespace.
+            owner.revalidate_person_in_txn(self, &txn)?,
             title,
         )?
         .is_none())

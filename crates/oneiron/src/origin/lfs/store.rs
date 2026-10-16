@@ -193,6 +193,19 @@ impl Vault {
             .map(|record| record.with_oid(oid)))
     }
 
+    /// The directory the object plane and an upload's spool are written in:
+    /// the disk a free-space floor is judged on.
+    pub fn lfs_storage_dir(&self) -> &std::path::Path {
+        self.store.env.path()
+    }
+
+    /// The page size the object plane is stored in. Each stored chunk takes
+    /// whole pages of it, so the room an object's stored copy may take on
+    /// the disk past its bytes depends on it.
+    pub fn lfs_storage_page_size(&self) -> Result<u64> {
+        self.store.page_size()
+    }
+
     /// The bytes every recorded LFS object declares, deleted ones still
     /// awaiting reclamation included: what the object plane holds on disk,
     /// before chunk sharing. A storage quota is judged against it.
@@ -204,6 +217,23 @@ impl Vault {
                 let (_, record) = row?;
                 Ok(total.saturating_add(record.size_bytes))
             })
+    }
+
+    /// Bytes the stored row of a live object's manifest takes, read in
+    /// place without copying it: a read of the object copies, decodes and
+    /// holds its manifest before its first byte, so a server counts this
+    /// before the read starts. `None` when no live object has the id.
+    pub fn lfs_manifest_row_bytes(&self, oid: LfsOid) -> Result<Option<u64>> {
+        use crate::store::ManifestDbs as _;
+        let Some(object) = self.lfs_object(oid)? else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .entities()
+            .get(&txn, object.asset_id.as_bytes())?
+            .map(|row| row.len() as u64))
     }
 
     /// Whether a live object has this exact declared size.
