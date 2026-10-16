@@ -627,7 +627,8 @@ fn branches_pushed_together_need_only_their_own_large_file_at_a_shared_path() {
             &format!("{}:refs/heads/right", right.as_str()),
         ],
     );
-    let repo_id = landed_repo_id(&vault, &unpinned_repo_ref(&repo_dir), &repo_dir);
+    let repo = local_repo_ref(&repo_dir, &left).expect("repo ref");
+    let repo_id = landed_repo_id(&vault, &repo, &repo_dir);
     let references = |name: &str| {
         vault
             .lfs_git_ref_objects(repo_id, name)
