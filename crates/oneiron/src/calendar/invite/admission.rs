@@ -6,7 +6,7 @@ use super::claims::{
     PREDICATE_CALENDAR_PASSPORT,
 };
 use super::hygiene::{CalendarInviteHygieneContext, hydrate_calendar_invite_hygiene};
-use super::mime::{ics_blob_content_hash, read_calendar_invite_ics};
+use super::mime::{ics_blob_content_hash, read_checked_invite_ics};
 use super::passport::{
     admitted_passport_for_in_txn, encode_passport_value, event_ref_for_indexed_uid,
     resolve_admitted_event_by_uid,
@@ -186,6 +186,9 @@ pub fn admit_calendar_invite(
     // --- emit/state validation -----------------------------------------
     let event_ref = resolve_invite_event(vault, &payload.uid)?
         .ok_or_else(|| refused("this invite UID names no EVENT in the vault"))?;
+    // The bytes that go out must be the invite the payload names: its UID
+    // picked the EVENT, its METHOD and SEQUENCE drive the passport move.
+    let (_, ics) = read_checked_invite_ics(vault, payload)?;
     let content_hash = ics_blob_content_hash(vault, &payload.ics_blob_ref)?;
     // The same admitted head the commit re-reads: a pending proposal never
     // sets the SEQUENCE an invite must advance.
@@ -222,7 +225,7 @@ pub fn admit_calendar_invite(
         change,
         next,
         hygiene,
-        organizer: super::ics::invite_organizer(&read_calendar_invite_ics(vault, payload)?)?,
+        organizer: ics.organizer,
         recipient: payload.recipient.clone(),
     })
 }

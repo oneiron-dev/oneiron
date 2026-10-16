@@ -280,14 +280,16 @@ impl ReceiptProjectionIndex {
     }
 
     fn receipt_matches_brief(&self, receipt: &ReceiptRecord, brief_ref: &str) -> bool {
-        if direct_brief_ref(receipt).is_some_and(|value| refs_match(&value, brief_ref)) {
+        if direct_brief_ref(receipt)
+            .is_some_and(|value| refs_match(&value, brief_ref, BRIEF_REF_NAMESPACES))
+        {
             return true;
         }
         if let Some(run_ref) = direct_run_ref(receipt)
             && self
                 .run_to_brief
                 .get(&run_ref)
-                .is_some_and(|value| refs_match(value, brief_ref))
+                .is_some_and(|value| refs_match(value, brief_ref, BRIEF_REF_NAMESPACES))
         {
             return true;
         }
@@ -295,7 +297,7 @@ impl ReceiptProjectionIndex {
             if self
                 .intent_to_brief
                 .get(&intent_ref)
-                .is_some_and(|value| refs_match(value, brief_ref))
+                .is_some_and(|value| refs_match(value, brief_ref, BRIEF_REF_NAMESPACES))
             {
                 return true;
             }
@@ -303,7 +305,7 @@ impl ReceiptProjectionIndex {
                 && self
                     .run_to_brief
                     .get(run_ref)
-                    .is_some_and(|value| refs_match(value, brief_ref))
+                    .is_some_and(|value| refs_match(value, brief_ref, BRIEF_REF_NAMESPACES))
             {
                 return true;
             }
@@ -596,12 +598,13 @@ fn receipt_identity_ref(receipt: &ReceiptRecord) -> Option<EntityId> {
 }
 
 fn receipt_matches_grant(receipt: &ReceiptRecord, grant_ref: &str) -> bool {
-    field_ref(receipt, FIELD_GRANT_REF).is_some_and(|value| refs_match(value, grant_ref))
+    field_ref(receipt, FIELD_GRANT_REF)
+        .is_some_and(|value| refs_match(value, grant_ref, GRANT_REF_NAMESPACES))
         || receipt
             .trigger_ref
             .as_deref()
             .filter(|value| value.starts_with("access_grant:") || value.starts_with("grant:"))
-            .is_some_and(|value| refs_match(value, grant_ref))
+            .is_some_and(|value| refs_match(value, grant_ref, GRANT_REF_NAMESPACES))
 }
 
 fn receipt_is_consent_grant(receipt: &ReceiptRecord) -> bool {
@@ -648,8 +651,26 @@ fn trigger_ref_with_prefix(receipt: &ReceiptRecord, prefix: &str) -> Option<Stri
         .map(str::to_owned)
 }
 
-fn refs_match(candidate: &str, target: &str) -> bool {
-    candidate == target || strip_ref_prefix(candidate) == strip_ref_prefix(target)
+/// Namespaces a bare brief id may stand for.
+const BRIEF_REF_NAMESPACES: &[&str] = &["brief"];
+/// Namespaces a bare grant id may stand for.
+const GRANT_REF_NAMESPACES: &[&str] = &["grant", "access_grant"];
+
+/// Whether two refs name the same record. A namespaced ref matches only the
+/// identical ref: `run:party`, `brief:party` and `grant:party` are three
+/// records, so a shared suffix never joins them. A bare id is the legacy
+/// spelling of a ref in one of `namespaces`, the ones this matcher reads.
+fn refs_match(candidate: &str, target: &str, namespaces: &[&str]) -> bool {
+    candidate == target
+        || bare_ref_names(candidate, target, namespaces)
+        || bare_ref_names(target, candidate, namespaces)
+}
+
+fn bare_ref_names(bare: &str, namespaced: &str, namespaces: &[&str]) -> bool {
+    !bare.contains(':')
+        && namespaced
+            .split_once(':')
+            .is_some_and(|(namespace, id)| id == bare && namespaces.contains(&namespace))
 }
 
 fn strip_ref_prefix(value: &str) -> &str {

@@ -118,6 +118,13 @@ pub fn enqueue_confirm_invite(
     };
 
     let admission = admit_calendar_invite(vault, actor, &payload, now).map_err(calendar_wrap)?;
+    // The grant was checked against `invite.booking_ref`; the UID must name
+    // that same EVENT, or the booking's consent would carry another invite.
+    if admission.event_ref() != invite.booking_ref {
+        return Err(refused(
+            "the invite UID names a different EVENT than the booking",
+        ));
+    }
     if !admission.moves_state() {
         // A replay of the exact revision. One booking earns one REQUEST, so
         // this answers with the intent already recorded rather than sending a

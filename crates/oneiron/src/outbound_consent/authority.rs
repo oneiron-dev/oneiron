@@ -250,27 +250,12 @@ impl OutboundBindingAuthority {
         })
     }
 
-    fn validate_frozen_call_grant(
+    /// Recovery replays answer to the same check as a first send: a grant
+    /// revoked, or stale under today's policy, never authorizes the wire.
+    pub(crate) fn validate_frozen_call_grant(
         &self,
         vault: &Vault,
         call: &FrozenOutboundCall,
-    ) -> Result<FrozenCallValidation> {
-        self.validate_frozen_call_grant_with_liveness(vault, call, true)
-    }
-
-    pub(crate) fn validate_frozen_call_grant_for_recovery(
-        &self,
-        vault: &Vault,
-        call: &FrozenOutboundCall,
-    ) -> Result<FrozenCallValidation> {
-        self.validate_frozen_call_grant_with_liveness(vault, call, false)
-    }
-
-    fn validate_frozen_call_grant_with_liveness(
-        &self,
-        vault: &Vault,
-        call: &FrozenOutboundCall,
-        require_live_grant: bool,
     ) -> Result<FrozenCallValidation> {
         if call.binding_version() != crate::outbound_intent_ledger::OUTBOUND_BINDING_VERSION {
             return Ok(FrozenCallValidation::Rejected(
@@ -287,11 +272,9 @@ impl OutboundBindingAuthority {
                 OutboundBindingValidation::Invalid,
             ));
         };
-        let current_policy_floor = if require_live_grant {
+        let current_policy_floor = {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            Some(crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?)
-        } else {
-            None
+            crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.read_frontier_hash()?
         };
         // A frozen call that carries typed capability provenance names its own
         // grant: check exactly that grant rather than searching for whichever
@@ -321,10 +304,7 @@ impl OutboundBindingAuthority {
             if !constant_time_eq(binding.as_bytes(), expected.as_bytes()) {
                 continue;
             }
-            if current_policy_floor
-                .as_ref()
-                .is_some_and(|floor| !grant.is_active_under_policy(floor))
-            {
+            if !grant.is_active_under_policy(&current_policy_floor) {
                 return Ok(FrozenCallValidation::Rejected(
                     OutboundBindingValidation::GrantNotLive,
                 ));

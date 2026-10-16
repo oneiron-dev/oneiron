@@ -187,15 +187,18 @@ pub fn coreference_shared_for_pact(
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    coreference_shared_for_pact_in_txn(vault, &txn, a, b, pact_id)
+    coreference_shared_for_pact_in_txn(vault, &txn, a, b, pact_id, vault.now_recorded_at())
 }
 
+/// [`coreference_shared_for_pact`] on the caller's transaction, judged at
+/// `now` (Unix seconds on the vault's policy clock).
 pub(crate) fn coreference_shared_for_pact_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     a: EntityId,
     b: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+    now: u64,
 ) -> Result<bool> {
     if !person_pair_in_txn(vault, txn, a, b)? {
         return Ok(false);
@@ -205,7 +208,7 @@ pub(crate) fn coreference_shared_for_pact_in_txn(
             .store
             .port_edge_get(txn, &source, EdgeKind::SameAs, &target)?
             .is_some()
-            && coreference_consent_names_pact(vault, txn, source, target, pact_id)?
+            && coreference_consent_names_pact(vault, txn, source, target, pact_id, now)?
         {
             return Ok(true);
         }
@@ -217,7 +220,8 @@ pub(crate) fn coreference_shared_for_pact_in_txn(
 ///
 /// The claim must be Active AND Approved AND name this exact pact: a claim
 /// naming another pact is not weaker evidence for this one, it is evidence about
-/// something else.
+/// something else. It must also be in force at `now`
+/// ([`share_consent_valid_at`]).
 ///
 /// It must also be LOCALLY AUTHORED. Federation admission restamps every
 /// inbound claim to [`ClaimSource::Imported`]
@@ -233,6 +237,7 @@ fn coreference_consent_names_pact(
     source: EntityId,
     target: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+    now: u64,
 ) -> Result<bool> {
     for claim in vault.claims_for_subject_in_txn(txn, &source)? {
         let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
@@ -242,6 +247,7 @@ fn coreference_consent_names_pact(
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.approval != ClaimApprovalStatus::Approved
             || body.source == Some(ClaimSource::Imported)
+            || !share_consent_valid_at(&body, now)
             || body.subject
                 != (ClaimSubject::Edge {
                     source,
@@ -261,6 +267,13 @@ fn coreference_consent_names_pact(
         }
     }
     Ok(false)
+}
+
+/// Whether a share consent's valid-time window holds `now` (Unix seconds,
+/// both ends inclusive, an absent end open). A consent that has not started,
+/// or has lapsed, is no consent, at every door that reads one.
+pub(crate) fn share_consent_valid_at(body: &ClaimBody, now: u64) -> bool {
+    body.valid_from.is_none_or(|from| from <= now) && body.valid_to.is_none_or(|to| now <= to)
 }
 
 /// Stored weight of a `same_as` edge: explicitly `0.0`.

@@ -55,6 +55,11 @@ pub(super) fn admit_claim_put(
         },
     )?;
     if let Some(body) = &body {
+        crate::comm::guard_send_override_put(
+            body,
+            input.allow_reserved_predicate,
+            input.replicated,
+        )?;
         crate::authority::verify_machine_claim_in_txn(
             store,
             txn,

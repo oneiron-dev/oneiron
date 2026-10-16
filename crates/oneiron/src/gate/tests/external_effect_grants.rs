@@ -595,6 +595,112 @@ fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<
     Ok(())
 }
 
+/// One standing grant for `sender`, one known contact, and a decider that
+/// sends `verb` to that contact with no opt-in, so only the grant can allow.
+fn granted_contact_fixture(
+    scope: GrantMintIntentScope,
+) -> Result<(tempfile::TempDir, crate::Vault, EntityId)> {
+    let (tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xD8), &encode_policy_manifest(vec![]))?;
+    let intent = GrantMintIntent {
+        principal_ref: "sender".to_owned(),
+        origin_component_id: "ask-1".to_owned(),
+        origin_action_id: "escalate".to_owned(),
+        origin_receipt_ref: Some("gate:ask-1".to_owned()),
+        scope,
+    };
+    vault.mint_standing_outbound_grant(&test_id(0xD9), &intent, 10)?;
+    let contact_id = test_id(0xCB);
+    let contact =
+        CounterpartyContactRecord::user_introduction(test_id(0xCA), "kenji@example.com", 10)?;
+    vault.create_counterparty_contact(&contact_id, &contact)?;
+    Ok((tmp, vault, contact_id))
+}
+
+fn decide_contact_effect(vault: &crate::Vault, verb: &str) -> Result<GateDecision> {
+    let policy = resolve(vault)?;
+    let mut effect = external_effect_gate_input("sender", verb, "line");
+    effect.has_opted_in = false;
+    effect.channel_identity_ref = Some(test_id(0xCA));
+    effect.counterparty = Some("kenji@example.com".to_owned());
+    let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy_with_budget(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    Ok(decision)
+}
+
+/// H115: "always this contact" authorizes sends to that contact, never
+/// another external verb aimed at them.
+#[test]
+fn contact_grant_authorizes_sends_to_the_contact_and_no_other_verb() -> Result<()> {
+    let (_tmp, vault, _contact) = granted_contact_fixture(GrantMintIntentScope::Contact {
+        contact_ref: "kenji@example.com".to_owned(),
+    })?;
+    assert_eq!(
+        decide_contact_effect(&vault, "send")?.outcome(),
+        GateOutcome::Allow
+    );
+    for verb in ["share_brief", "provision", "fulfill", "react"] {
+        let decision = decide_contact_effect(&vault, verb)?;
+        assert_ne!(decision.outcome(), GateOutcome::Allow, "{verb}");
+    }
+    Ok(())
+}
+
+/// H109: an owner-revoked contact is unreachable even under a grant that
+/// still matches the send; it holds like an opt-out, under its own reason,
+/// and a send override, which answers an opt-out, does not lift it.
+#[test]
+fn revoked_counterparty_contact_holds_a_granted_send() -> Result<()> {
+    let (_tmp, vault, contact_id) = granted_contact_fixture(GrantMintIntentScope::VerbClass {
+        verb_class: "send".to_owned(),
+    })?;
+    assert_eq!(
+        decide_contact_effect(&vault, "send")?.outcome(),
+        GateOutcome::Allow
+    );
+
+    let revoked = vault.revoke_counterparty_contact(&contact_id, 20)?;
+    assert!(!revoked.is_opted_out());
+    let decision = decide_contact_effect(&vault, "send")?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+    assert_eq!(
+        decision.receipt_reasons().first(),
+        Some(&"counterparty_contact_revoked")
+    );
+
+    let owner = test_id(0xDA);
+    vault.put_entity(
+        &owner,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    crate::comm::mint_send_override(
+        &vault,
+        "kenji@example.com",
+        Some("line"),
+        crate::comm::SendOverrideScope::Standing,
+        None,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        30,
+        None,
+    )
+    .expect("the owner may rule on a send override");
+    let decision = decide_contact_effect(&vault, "send")?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.receipt_reasons().first(),
+        Some(&"counterparty_contact_revoked")
+    );
+    Ok(())
+}
+
 #[test]
 fn record_bounded_effect_scope_does_not_become_an_unbounded_grant() -> Result<()> {
     let (_tmp, vault) = temp_vault();

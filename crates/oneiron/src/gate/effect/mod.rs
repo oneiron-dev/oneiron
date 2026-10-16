@@ -139,7 +139,7 @@ pub(crate) fn evaluate_external_effect_policy(
     approval_context: ApprovalContext,
 ) -> Result<ExternalEffectGovernance> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
-    let (mut hydrated_effect, counterparty_send_override) =
+    let (mut hydrated_effect, counterparty_send_override, counterparty_contact_revoked) =
         hydrate_external_effect_contact(store, &*wtxn, effect, policy)?;
     // Send eligibility is checked with the Gate's writer snapshot. A sender
     // released after dispatch preparation cannot authorize even a known
@@ -322,6 +322,7 @@ pub(crate) fn evaluate_external_effect_policy(
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
         effect.counterparty_send_override = counterparty_send_override;
+        effect.counterparty_contact_revoked = counterparty_contact_revoked;
     }
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;

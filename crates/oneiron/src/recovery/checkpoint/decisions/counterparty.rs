@@ -26,6 +26,9 @@ pub(super) struct SendPosture {
     /// the policy does not know, puts on the send.
     risk: ExternalEffectPolicyRisk,
     opted_out: bool,
+    /// A matching contact is owner-revoked: it holds under any posture and no
+    /// override lifts it, so it is compared apart from `opted_out`.
+    revoked: bool,
     /// The owner's override of an opt-out the send matches.
     send_override: Option<SendOverrideMatch>,
     /// Whether a native-mail send is cold, and may borrow the owner's
@@ -66,11 +69,12 @@ impl Decision for SendContacts {
                 effect.actor.actor_ref = Some(actor.to_hex());
                 effect.provenance.actor_entity_ref = Some(*actor);
             }
-            let (effect, send_override) =
+            let (effect, send_override, revoked) =
                 crate::gate::hydrate_external_effect_contact(store, &txn, &effect, &policy)?;
             Ok(SendPosture {
                 risk: effect.policy_risk,
                 opted_out: effect.counterparty_opted_out,
+                revoked,
                 send_override,
                 cold: native_mail::native_mail_cold_send_in_txn(store, &txn, &effect, &policy)?,
                 graduated: native_mail::mail_graduated_in_txn(store, &txn, &effect, &policy)?,
@@ -86,6 +90,7 @@ impl Decision for SendContacts {
         (live.risk == ExternalEffectPolicyRisk::HoldToProposal
             && restored.risk == ExternalEffectPolicyRisk::Normal)
             || (live.opted_out && !restored.opted_out)
+            || (live.revoked && !restored.revoked)
             || (live.send_override.is_none() && restored.send_override.is_some())
             || (live.cold && !restored.cold)
             || (!live.graduated && restored.graduated)

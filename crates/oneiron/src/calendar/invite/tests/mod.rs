@@ -500,7 +500,7 @@ fn cancel_with_prior_consent_but_no_recipient_binding_preserves_passport() {
     commit(&vault, actor_ref, &request(0, &blob_ref));
     prior_thread(&vault, 0x61, "stranger@example.test");
     assert_eq!(
-        resolve_consent_basis(&vault, "stranger@example.test").unwrap(),
+        resolve_consent_basis(&vault, actor_ref, event_ref, "stranger@example.test").unwrap(),
         Some(CalendarInviteConsentBasis::PriorThread)
     );
     let cancel_blob = blob(

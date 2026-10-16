@@ -516,7 +516,9 @@ fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
     let plan = &batch.plans[0];
     let ics = crate::calendar::read_calendar_invite_ics(&vault, plan.payload().unwrap()).unwrap();
     assert_eq!(
-        crate::calendar::ics::invite_organizer(&ics).unwrap(),
+        crate::calendar::ics::invite_identity(&ics)
+            .unwrap()
+            .organizer,
         "host@example.test"
     );
     assert_eq!(plan.organizer, "host@example.test");

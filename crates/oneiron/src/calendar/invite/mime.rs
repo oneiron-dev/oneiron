@@ -36,7 +36,7 @@ pub fn build_calendar_invite_mime_part(
     vault: &Vault,
     payload: &CalendarInvitePayload,
 ) -> Result<CalendarInviteMimePart, CalendarError> {
-    let ics = read_calendar_invite_ics(vault, payload)?;
+    let (ics, _) = read_checked_invite_ics(vault, payload)?;
     Ok(CalendarInviteMimePart {
         content_type: format!(
             "{CALENDAR_INVITE_MEDIA_TYPE}; method={}; charset=utf-8",
@@ -67,6 +67,29 @@ pub fn read_calendar_invite_ics(
         .read_blob_artifact_version(&artifact_id, head.version)
         .map_err(CalendarError::from)?
         .ok_or_else(|| refused("ics_blob_ref head has no stored bytes"))
+}
+
+/// Reads the ICS one invite references and proves it is that invite: its
+/// VEVENT UID and SEQUENCE and its VCALENDAR METHOD are the payload's own.
+/// Admission and the transport both read through here, so the bytes a send
+/// carries answer to the payload that was admitted.
+pub(super) fn read_checked_invite_ics(
+    vault: &Vault,
+    payload: &CalendarInvitePayload,
+) -> Result<(Vec<u8>, super::ics::InviteIcsIdentity), CalendarError> {
+    let ics = read_calendar_invite_ics(vault, payload)?;
+    let identity = super::ics::invite_identity(&ics)?;
+    if identity.uid != payload.uid
+        || identity.sequence != payload.sequence
+        || !identity
+            .method
+            .eq_ignore_ascii_case(payload.method.as_str())
+    {
+        return Err(refused(
+            "the ICS blob does not carry this invite's UID, SEQUENCE and METHOD",
+        ));
+    }
+    Ok((ics, identity))
 }
 
 /// Resolves `ics_blob_ref` to a real blob artifact head and returns its
