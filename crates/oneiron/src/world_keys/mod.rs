@@ -42,7 +42,6 @@ pub use self::content::{
 };
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
-pub(crate) use self::machine::keystore_error;
 pub use self::machine::{machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
