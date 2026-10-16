@@ -446,10 +446,6 @@ fn keep_use_limited_in_txn(
 /// hold names, for the caller to erase, and the held ones it keeps. Each
 /// held record logs a refusal with its reason; where Oneiron hosts the bytes
 /// it is kept under a use limit (C6). It never lifts or skips a hold.
-#[allow(
-    dead_code,
-    reason = "L02 calls it from memory/entity_erase.rs for the multi-record privacy erase"
-)]
 pub(crate) fn split_privacy_erase_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
