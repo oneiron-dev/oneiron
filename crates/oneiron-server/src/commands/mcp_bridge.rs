@@ -78,9 +78,9 @@ impl WakePump {
                 let key = instance.key.clone();
                 let polled = tokio::task::spawn_blocking(move || polling.wakes(&key)).await;
                 match polled {
-                    Ok(Ok(wakes)) => {
+                    Ok(Ok(delivery)) => {
                         failed = false;
-                        instance.deliver(wakes, &bridge.named_env).await;
+                        instance.deliver(delivery, &bridge.named_env).await;
                     }
                     Ok(Err(refusal)) => {
                         if !failed {
@@ -429,7 +429,7 @@ impl Bridge {
     fn wakes(
         &self,
         instance_key: &str,
-    ) -> Result<Vec<oneiron::context_board::WakeEnvelope>, Refusal> {
+    ) -> Result<crate::wake_adapters::board_stream::BoardDelivery, Refusal> {
         let id = json!("oneiron-wake-adapter");
         let body = json!({
             "jsonrpc": "2.0",
@@ -441,10 +441,10 @@ impl Bridge {
         let answer = self
             .post(body.to_string().into_bytes(), until)?
             .answer_to(&id)?;
-        let Some(wakes) = answer.pointer("/result/wakes").cloned() else {
+        let Some(delivery) = answer.get("result").cloned() else {
             return Err(Refusal::Refused(answer));
         };
-        serde_json::from_value(wakes)
+        serde_json::from_value(delivery)
             .map_err(|error| Refusal::Server(format!("invalid wake handoff: {error}"), answer))
     }
 

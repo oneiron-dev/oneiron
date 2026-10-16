@@ -68,6 +68,15 @@ impl CommittedTaskBoardState {
         }))
     }
 
+    /// The current TASK row for a STREAM delta. A host must admit this TASK
+    /// under the recipient's current read before delivering the row.
+    pub fn delta_row(&self) -> DeltaRow {
+        DeltaRow {
+            key: format!("tasks:{}", self.task_ref),
+            line: self.line.clone(),
+        }
+    }
+
     /// The actors an event about this TASK can reach: its owner, and the
     /// actor an open consult addresses.
     pub fn recipients(&self) -> impl Iterator<Item = &str> {
