@@ -459,7 +459,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         setting: SharedActPolicy,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -467,18 +466,17 @@ impl Vault {
             act,
             payload,
             SettingChoice::Holder(setting),
-            now,
         )
     }
     /// Start an arbitrary host-defined authority act. The host must execute only
     /// when `completed` is true; every named live role holder gets one durable event.
+    /// The window starts at the store clock, never at a time the starter names.
     pub fn start_authority_act(
         &self,
         starter: &AuthenticatedOwner,
         vault_id: u64,
         act: &str,
         payload: Vec<u8>,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -486,7 +484,6 @@ impl Vault {
             act,
             payload,
             SettingChoice::Stored,
-            now,
         )
     }
 
@@ -500,7 +497,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         setting: Option<SharedActPolicy>,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -508,7 +504,6 @@ impl Vault {
             act,
             payload,
             SettingChoice::Host(setting),
-            now,
         )
     }
 
@@ -519,7 +514,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         selection: SettingChoice,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         if !valid_name(act) {
             return Err(invalid());
@@ -556,6 +550,9 @@ impl Vault {
         if act.len() > policy.max_act_name_bytes || payload.len() > policy.max_payload_bytes {
             return Err(invalid());
         }
+        // The window runs on the store clock: a starter's own time could open
+        // it already past its deadline.
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let holders = self.live_act_holders(&txn, vault_id, now)?;
         if !holders.iter().any(|holder| {
             holder.member == starter_actor
@@ -644,18 +641,21 @@ impl Vault {
         Ok(events)
     }
     /// Objections are live only while their holder still carries a named role.
-    /// Once the deadline has passed, withdrawing the last live objection releases the act.
+    /// Once the deadline has passed on the store clock, withdrawing the last
+    /// live objection releases the act.
     pub fn change_authority_objection(
         &self,
         holder: &AuthenticatedOwner,
         id: &str,
         object: bool,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         let id = EntityId::from_hex(id)?;
         let mut txn = self.store.env.write_txn()?;
         // Person tier, own holder check: the objector's named role.
         let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
+        // The store clock, not the holder's own time, says whether the
+        // deadline has passed.
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let k = key(ACT_PREFIX, &id.to_hex());
         let raw = self.store.vault_meta.get(&txn, &k)?.ok_or_else(invalid)?;
         let mut record: PendingAuthorityAct = decode(&raw)?;
