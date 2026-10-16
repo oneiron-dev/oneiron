@@ -20251,7 +20251,7 @@
      "path": "src/git_wire/wire_publish.rs",
      "purpose": "Journaled ref publication: the one transactional path and its finishing rules",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6
      }
     },
@@ -26257,7 +26257,7 @@
      "path": "src/origin/publication/publication_journal.rs",
      "purpose": "Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -26300,6 +26300,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/publication_tests_c.rs",
+     "purpose": "Tests: a saved ref effect from a previous authority epoch, reached through generic GitWire recovery",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26332,7 +26340,7 @@
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -42198,7 +42206,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42753,7 +42761,7 @@
    },
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2575,
+   "source_files": 2576,
    "test_files": 866
   },
   "oneiron-android": {
