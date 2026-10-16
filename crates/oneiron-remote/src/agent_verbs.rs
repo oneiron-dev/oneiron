@@ -203,6 +203,21 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.legal_holds.place" => {
+                    remote_agent_verb_output::<oneiron::deletion::LegalHold>(client, verb, &input)
+                }
+                "vault.legal_holds.widen" => {
+                    remote_agent_verb_output::<oneiron::deletion::LegalHold>(client, verb, &input)
+                }
+                "vault.legal_holds.list" => remote_agent_verb_output::<
+                    Vec<oneiron::deletion::LegalHold>,
+                >(client, verb, &input),
+                "vault.legal_holds.log" => remote_agent_verb_output::<
+                    Vec<oneiron::deletion::LegalHoldEvent>,
+                >(client, verb, &input),
+                "vault.legal_holds.lift_and_erase" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LegalHoldLiftAndErased,
+                >(client, verb, &input),
                 "vault.lenses.propose" => remote_agent_verb_output::<
                     oneiron::receipt::LensProposalReceipt,
                 >(client, verb, &input),
@@ -356,6 +371,9 @@ impl OneironClient {
                     oneiron::workspace_roster::RoomSharingView,
                 >(client, verb, &input),
                 "vault.companions.sharing.get" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::CompanionSharingView,
+                >(client, verb, &input),
+                "vault.companions.sharing.set" => remote_agent_verb_output::<
                     oneiron::workspace_roster::CompanionSharingView,
                 >(client, verb, &input),
                 "vault.workspace.work_companion.get" => remote_agent_verb_output::<
@@ -1183,6 +1201,66 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.authority.handoff_alarms.acknowledge", value)
     }
+    pub fn vault_legal_holds_place(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldPlaceRequest,
+    ) -> Result<oneiron::deletion::LegalHold, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.place", value)
+    }
+    pub fn vault_legal_holds_widen(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldWidenRequest,
+    ) -> Result<oneiron::deletion::LegalHold, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.widen", value)
+    }
+    pub fn vault_legal_holds_list(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::deletion::LegalHold>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.list", value)
+    }
+    pub fn vault_legal_holds_log(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::deletion::LegalHoldEvent>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.log", value)
+    }
+    pub fn vault_legal_holds_lift_and_erase(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+    ) -> Result<oneiron::task_verb::sdk::LegalHoldLiftAndErased, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.lift_and_erase", value)
+    }
     pub fn vault_lenses_propose(
         &self,
         input: &oneiron::lens::LensProposeRequest,
@@ -1809,6 +1887,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.companions.sharing.get", value)
+    }
+    pub fn vault_companions_sharing_set(
+        &self,
+        input: &oneiron::task_verb::sdk::CompanionSharingSetRequest,
+    ) -> Result<oneiron::workspace_roster::CompanionSharingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.companions.sharing.set", value)
     }
     pub fn vault_workspace_work_companion_get(
         &self,

@@ -61,6 +61,7 @@
 use crate::ports::EntityStoreRead;
 mod driver;
 mod epoch;
+mod fold_words;
 mod folds;
 mod gate;
 pub mod output;
@@ -94,6 +95,11 @@ pub use gate::{
 pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
+pub(crate) use fold_words::{
+    FOLD_LEDGERS, fence_withdrawn_folds_in, land_folds_in_base, land_folds_in_overlay,
+    scrub_withdrawn_fold_summary_in_txn,
+};
+pub(crate) use folds::escape_compacted_text;
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, scrub_withdrawn_epoch_in_txn};
 #[cfg(feature = "sync")]
