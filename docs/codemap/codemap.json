@@ -3907,7 +3907,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/export_diary.rs",
-     "purpose": "OF-490: a vault export is a read of agent diaries",
+     "purpose": "OF-490: a vault export is a read of agent diaries, made through the diary door's [`DiaryReadGate`] with the…",
      "surface": {
       "const": 1,
       "crate-vis": 5
