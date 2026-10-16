@@ -57,6 +57,8 @@ pub(super) const ERR_EXHAUST_EMPTY: &str = "byoa exhaust must carry at least one
 
 pub(super) const ERR_EXHAUST_TOO_LARGE: &str = "byoa exhaust exceeds its byte budget";
 
+pub(super) const ERR_EXHAUST_TAINT: &str = "byoa exhaust taint refs are malformed";
+
 pub(super) const ERR_ATTEMPT_KIND: &str = "operation requires a valid BYOA attempt";
 
 pub(super) const ERR_EXECUTION_SHAPE: &str = "execution does not match the persisted connector";
@@ -94,6 +96,8 @@ pub(super) const ERR_LEASE_UNBOUNDED: &str = "egress lease grants no bounded hos
 pub(super) const ERR_LEASE_HOST_DENIED: &str = "egress lease does not admit the requested host";
 
 pub(super) const ERR_LEASE_ID_ZERO: &str = "egress lease carries no lease id";
+
+pub(super) const ERR_LEASE_TAINT: &str = "egress lease taint refs are malformed";
 
 /// Every way a foreign-agent door can refuse.
 #[derive(Debug, thiserror::Error)]

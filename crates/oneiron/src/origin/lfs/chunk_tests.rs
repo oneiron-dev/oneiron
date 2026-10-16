@@ -462,13 +462,14 @@ fn a_segment_past_what_a_seam_reads_whole_reads_as_the_write_door_reads_it() {
     // the first `=` falls where it cut: a key and its value there (refused
     // whole), or the first `=` there and a sensitive one at the end (accepted
     // whole, for the first `=` holds the key). Sol R4: a provider prefix
-    // inside a longer token where a cut falls (accepted whole), and a
-    // blocklisted string a chunk edge splits where a cut falls (refused
-    // whole). Wonder R4: quotes past what the seam keeps after a sensitive
-    // key, which its read trims whole (refused whole). Sol and Wonder R5:
-    // `export ` prefixes that run past the cut before the key's name
-    // (refused whole). Wonder R6: a blank the cut splits after them, quotes
-    // past it (refused whole). Chunks as long as a peer sends.
+    // inside a longer token where a cut falls, its body no key's (accepted
+    // whole), and a blocklisted string a chunk edge splits where a cut falls
+    // (refused whole). Wonder R4: quotes past what the seam keeps after a
+    // sensitive key, which its read trims whole (refused whole). Sol and
+    // Wonder R5: `export ` prefixes that run past the cut before the key's
+    // name (refused whole). Wonder R6: a blank the cut splits after them,
+    // quotes past it (refused whole). F23: a key inside a longer token that a
+    // chunk edge splits (refused whole). Chunks as long as a peer sends.
     let pad = |units: usize| b"zz  ".repeat(units);
     let value: &[u8] = b"t7Rk2pLq9WzX";
     let chunked = |parts: &[Vec<u8>]| -> Vec<Vec<u8>> {
@@ -507,6 +508,13 @@ fn a_segment_past_what_a_seam_reads_whole_reads_as_the_write_door_reads_it() {
             false,
             chunked(&inset(
                 6_356_992,
+                b"ghp_0123456789abcdefghijklmnopqrstuvw-yz",
+            )),
+        ),
+        (
+            true,
+            chunked(&inset(
+                LFS_CHUNK_MAX - 10,
                 b"ghp_0123456789abcdefghijklmnopqrstuvwxyz",
             )),
         ),

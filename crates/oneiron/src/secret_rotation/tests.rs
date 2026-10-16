@@ -24,6 +24,7 @@ use rmpv::Value;
 
 use super::*;
 use crate::artifact_hosting::ArtifactPointerChannel;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::export::ExportManifest;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody,
