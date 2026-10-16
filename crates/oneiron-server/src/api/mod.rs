@@ -343,7 +343,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/personas", get(list_personas))
         .route("/personas/access-requests", get(list_access_requests))
         .route(
-            "/profiles/{persona_ref}",
+            "/profiles/{person_ref}",
             get(get_companion_profile).post(refresh_companion_profile),
         )
         // ONE-207: the depth-dialed reasoning read. A POST that WRITES

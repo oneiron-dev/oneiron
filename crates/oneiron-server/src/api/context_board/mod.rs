@@ -122,8 +122,8 @@ pub(crate) struct ContextBoardResponse {
     memories: Option<oneiron::MemoriesSection>,
     /// The one rendered board frame (one-way renderer): WORLDS, MEMORIES,
     /// TASKS, AGENTS, SKILLS and ROOM in canon order, then an agent run's
-    /// SCRATCHPAD, under the board budget. Foreign worlds render as guest-attributed evidence, never first-party
-    /// memory.
+    /// SCRATCHPAD, under the board budget. Foreign worlds render as
+    /// guest-attributed evidence, never first-party memory.
     board: String,
     /// How the board's budget settled and what it shed.
     #[schema(inline)]
