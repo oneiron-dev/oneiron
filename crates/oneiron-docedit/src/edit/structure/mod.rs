@@ -1,14 +1,17 @@
 //! Structural edits (ONE-2529; ARCH-0077, "Edit in place with
 //! passthrough"): `add_shape` from a preset, `delete_shape` under the
-//! animation and connector dependency rules, and a legal `reparent` within
-//! one slide.
+//! animation and connector dependency rules, a legal `reparent` within one
+//! slide, and the slide-level `duplicate_slide` and `reorder_slides`
+//! (`slides/`).
 //!
 //! Like a value edit, one structural edit is one checked operation on a copy
-//! of the package (`check.rs`): surviving shapes keep their ids, names,
-//! creation ids and animation entries, and a refusal leaves the package as
-//! it was. New native ids come from the caller's high-water mark (managed
-//! history), never from the surviving shapes alone.
+//! of the package (`check.rs`, `slides/check.rs`): surviving shapes keep
+//! their ids, names, creation ids and animation entries, and a refusal
+//! leaves the package as it was. New native and slide ids come from the
+//! caller's high-water mark (managed history), never from the surviving
+//! shapes or slides alone.
 mod check;
+mod slides;
 #[cfg(test)]
 mod tests;
 mod timing;
@@ -45,6 +48,20 @@ pub enum StructureEdit<'a> {
         target: Target<'a>,
         parent: Option<u32>,
     },
+    /// A copy of the slide after it in the slide list (and its section),
+    /// cloning, sharing or leaving out each dependency by the tested policy
+    /// in `slides/`. `expected` is the slide's render fingerprint as read.
+    DuplicateSlide {
+        slide: &'a str,
+        expected: [u8; 32],
+        /// The deck's slide-id high-water mark in managed history: the
+        /// copy's id is above it and above every id in the slide list.
+        high_water: u32,
+        /// Derives the copy's creation ids, re-drawn on a collision.
+        seed: &'a [u8],
+    },
+    /// Every slide id, in the new order.
+    ReorderSlides { order: &'a [u32] },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -97,13 +114,17 @@ enum Plan {
     /// The input slide's elements removed whole (document-order indices).
     Removed(Vec<usize>),
     Moved,
+    Duplicated(slides::Duplicate),
+    Reordered,
 }
 
 impl StructureEdit<'_> {
-    fn slide(&self) -> &str {
+    /// The one slide a shape verb writes.
+    fn slide(&self) -> Option<&str> {
         match self {
-            Self::AddShape { slide, .. } => slide,
-            Self::DeleteShape { target, .. } | Self::Reparent { target, .. } => target.slide,
+            Self::AddShape { slide, .. } => Some(slide),
+            Self::DeleteShape { target, .. } | Self::Reparent { target, .. } => Some(target.slide),
+            Self::DuplicateSlide { .. } | Self::ReorderSlides { .. } => None,
         }
     }
 }
@@ -134,8 +155,21 @@ pub fn structure_patch(
             reparent(&mut next, &before.slides[index], shape, parent)?;
             (Plan::Moved, Vec::new())
         }
+        StructureEdit::DuplicateSlide {
+            slide,
+            expected,
+            high_water,
+            seed,
+        } => slides::duplicate(&mut next, &before, slide, expected, high_water, seed)?,
+        StructureEdit::ReorderSlides { order } => slides::reorder(&mut next, &before, order)?,
     };
-    let changed = check::verify(deck, &next, &before, op, &plan)?;
+    let changed = match (&plan, *op) {
+        (Plan::Duplicated(copy), _) => slides::duplicated(deck, &next, &before, op, copy)?,
+        (Plan::Reordered, StructureEdit::ReorderSlides { order }) => {
+            slides::reordered(deck, &next, &before, order)?
+        }
+        _ => check::verify(deck, &next, &before, op, &plan)?,
+    };
     *deck = next;
     Ok(StructureReport {
         changed_parts: changed,

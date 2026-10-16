@@ -24,21 +24,10 @@ pub(super) fn verify(
     plan: &Plan,
 ) -> Result<Vec<String>, EditRefusal> {
     let candidate = Package::open(&next.export()?, input.limits())?;
-    let slide = op.slide();
-    let mut changed = Vec::new();
-    for part in candidate.names() {
-        if input.part(part)? != candidate.part(part)? {
-            changed.push(part.to_owned());
-        }
-    }
-    if input
-        .names()
-        .any(|part| candidate.names().all(|name| name != part))
-    {
-        return Err(EditRefusal::PartDiffOutsideTransaction(
-            "a part was removed".to_owned(),
-        ));
-    }
+    let slide = op
+        .slide()
+        .ok_or(EditRefusal::Invalid("the plan does not match the verb"))?;
+    let changed = diff(input, &candidate)?;
     if let Some(part) = changed.iter().find(|part| part.as_str() != slide) {
         return Err(EditRefusal::PartDiffOutsideTransaction(part.clone()));
     }
@@ -74,6 +63,26 @@ pub(super) fn verify(
             sides.moved(target.shape, parent)?;
         }
         _ => return Err(EditRefusal::Invalid("the plan does not match the verb")),
+    }
+    Ok(changed)
+}
+
+/// The parts whose exported bytes differ from the input's; a removed part
+/// refuses.
+pub(super) fn diff(input: &Package, candidate: &Package) -> Result<Vec<String>, EditRefusal> {
+    let mut changed = Vec::new();
+    for part in candidate.names() {
+        if input.part(part)? != candidate.part(part)? {
+            changed.push(part.to_owned());
+        }
+    }
+    if input
+        .names()
+        .any(|part| candidate.names().all(|name| name != part))
+    {
+        return Err(EditRefusal::PartDiffOutsideTransaction(
+            "a part was removed".to_owned(),
+        ));
     }
     Ok(changed)
 }

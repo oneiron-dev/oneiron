@@ -121,6 +121,18 @@ pub enum Effect {
     TimingRemoved { timing_ids: Vec<u32> },
     /// A relationship only the deleted shape used is kept, unreferenced.
     Unreferenced { relationship: String },
+    /// A copy of a slide, with its slide id and minted `p14:creationId`.
+    SlideAdded {
+        part: String,
+        sld_id: u32,
+        creation_id: Option<u32>,
+    },
+    /// A dependency the copy owns a clone of.
+    PartCloned { from: String, to: String },
+    /// A comments relationship of the source the copy does not carry.
+    CommentsOmitted { relationship: String },
+    /// A custom show that lists the source and is not given the copy.
+    NotInCustomShow { show: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +175,12 @@ pub enum EditRefusal {
     IdSpaceExhausted,
     #[error("reparent unsupported: {0}")]
     ReparentUnsupported(&'static str),
+    /// A slide dependency outside the tested clone policy, by relationship
+    /// kind.
+    #[error("clone dependency unsupported: {0}")]
+    CloneDependencyUnsupported(String),
+    #[error("reorder unsupported: {0}")]
+    ReorderUnsupported(&'static str),
     /// A connector is glued to the shape to delete; a cascade unglues it.
     #[error("a connector is glued to the shape")]
     GluedConnector(Option<u32>),

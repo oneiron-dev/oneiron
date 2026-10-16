@@ -120,7 +120,8 @@ pub(super) fn verify(
             .iter()
             .any(|added| &rels_name(&added.source) == part);
         if part == TYPES {
-            content_types(input, &candidate, written)?;
+            let created: Vec<String> = written.created.iter().map(|(p, _)| p.clone()).collect();
+            content_types(input, &candidate, &created)?;
         } else if !relationship_part {
             if declared.is_empty() {
                 return Err(outside(part, "the edit declares nothing in this part"));
@@ -128,7 +129,7 @@ pub(super) fn verify(
             confine(input, &candidate, part, &declared)?;
         }
     }
-    relationships(input, &candidate, written)?;
+    relationships(input, &candidate, &written.relationships)?;
     for (part, content_type) in &written.created {
         if declared_type(&candidate, part)?.as_deref() != Some(*content_type) {
             return Err(outside(part, "new part without its content type"));
@@ -257,23 +258,20 @@ pub(crate) fn find_shape(tree: &XmlTree, id: u32) -> Option<usize> {
 
 /// Relationship parts gain exactly the declared relationships and keep
 /// every other one as it was.
-fn relationships(
+/// Each declared source's relationship part only gains the declared
+/// relationships, under fresh ids.
+pub(super) fn relationships(
     input: &Package,
     candidate: &Package,
-    written: &Written,
+    declared: &[Added],
 ) -> Result<(), EditRefusal> {
-    let mut sources: Vec<&str> = written
-        .relationships
-        .iter()
-        .map(|a| a.source.as_str())
-        .collect();
+    let mut sources: Vec<&str> = declared.iter().map(|a| a.source.as_str()).collect();
     sources.sort_unstable();
     sources.dedup();
     for source in sources {
         let old = input.relationships(source)?;
         let new = candidate.relationships(source)?;
-        let mut added: Vec<(&str, &str)> = written
-            .relationships
+        let mut added: Vec<(&str, &str)> = declared
             .iter()
             .filter(|a| a.source == source)
             .map(|a| (a.kind.as_str(), a.target.as_str()))
@@ -305,10 +303,11 @@ fn relationships(
 }
 
 /// `[Content_Types].xml` only gains overrides for the created parts.
-fn content_types(
+/// `[Content_Types].xml` only gains overrides for the created parts.
+pub(super) fn content_types(
     input: &Package,
     candidate: &Package,
-    written: &Written,
+    created: &[String],
 ) -> Result<(), EditRefusal> {
     let (old, old_tree) = xml::read(input, TYPES)?;
     let (new, new_tree) = xml::read(candidate, TYPES)?;
@@ -332,16 +331,13 @@ fn content_types(
             .unwrap_or_default()
             .trim_start_matches('/');
         let ours = node.is(CONTENT_TYPES, "Override")
-            && written
-                .created
-                .iter()
-                .any(|(part, _)| part.eq_ignore_ascii_case(name));
+            && created.iter().any(|part| part.eq_ignore_ascii_case(name));
         if ours { Ok(()) } else { Err(fault()) }
     })
 }
 
 /// The content type the package declares for `part`.
-fn declared_type(package: &Package, part: &str) -> Result<Option<String>, EditRefusal> {
+pub(super) fn declared_type(package: &Package, part: &str) -> Result<Option<String>, EditRefusal> {
     let (_, tree) = xml::read(package, TYPES)?;
     let entry = |kind: &str, key: &str, value: &str| {
         tree.children(0)

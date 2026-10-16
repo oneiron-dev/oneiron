@@ -35,7 +35,7 @@ fn reparent_to(package: &Package, shape: u32, parent: Option<u32>) -> StructureE
 }
 
 /// Refuse on a copy, which must stay byte-identical.
-fn refuse(package: &Package, op: &StructureEdit<'_>) -> EditRefusal {
+pub(super) fn refuse(package: &Package, op: &StructureEdit<'_>) -> EditRefusal {
     let mut copy = package.clone();
     let before = copy.export().unwrap();
     let refusal = structure_patch(&mut copy, op).unwrap_err();
