@@ -2,6 +2,7 @@
 
 use super::super::SearchResponse;
 use super::super::core_engine_error;
+use super::super::{ContextPackMediaQuery, MediaSeed, embed_media_seeds};
 use super::super::default_limit;
 use super::super::json_payload;
 use super::super::scoped_read_for_core_auth;
@@ -46,6 +47,11 @@ pub(crate) struct CoreQueryRequest {
     #[serde(default, rename = "query_vector", alias = "queryVector")]
     #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
     query_vector: Option<Vec<f32>>,
+    /// Optional media query (OF-370), embedded by the server into one
+    /// declared space and searched as one more ranked list beside `query`
+    /// and `query_vector`, as on the context pack.
+    #[serde(default)]
+    media: Option<ContextPackMediaQuery>,
     /// Maximum result count. A limit past 1,000 is served at 1,000 and
     /// `meta.limitClamped` says so.
     #[serde(default = "default_limit")]
@@ -88,9 +94,10 @@ pub(crate) struct CoreScopedQueryResponse {
         (status = 200, description = "Projected query results.", body = CoreScopedQueryResponse, content_type = "application/json"),
         (status = 400, description = "Malformed query request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or the vault's inference policy refuses a media query's ai.embed call.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 413, description = "The query exceeds `[limits].retrieval_query_bytes` (1 MiB unless set).", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "Query failed.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 500, description = "Query failed.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 503, description = "No ai.embed rung serves a media query's space (or, on the one-space preset, the text slot's space), or the rung's call failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 pub(crate) async fn core_query(
@@ -106,13 +113,24 @@ pub(crate) async fn core_query(
             .map_err(ApiError::from)?;
     }
     let query = non_empty_query(req.query.as_deref());
-    validate_core_query_seeds(query, req.query_vector.as_deref())?;
+    validate_core_query_seeds(
+        query.or(req.media.as_ref().map(|_| "media")),
+        req.query_vector.as_deref(),
+    )?;
+    let media = req
+        .media
+        .as_ref()
+        .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
+        .transpose()?;
     let (limit, limit_clamped) = oneiron::memory::caps::clamp_search_limit(req.limit);
 
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, limit);
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
+    // Embedded once everything free is checked, before the session's read
+    // set is held: it is a paid call.
+    let media = embed_media_seeds(&server, media, query).await?;
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
@@ -120,6 +138,7 @@ pub(crate) async fn core_query(
         &scoped_read,
         query,
         req.query_vector.as_deref(),
+        &media,
         fetch_limit,
     )
     .map_err(|error| {
@@ -243,8 +262,16 @@ pub(crate) fn run_core_query(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     query: Option<&str>,
     vector: Option<&[f32]>,
+    media: &[MediaSeed],
     limit: usize,
 ) -> oneiron::Result<oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>> {
+    if !media.is_empty() {
+        let media: Vec<_> = media
+            .iter()
+            .map(|seed| (seed.space.as_str(), seed.kind, seed.vector.as_slice()))
+            .collect();
+        return scoped_read.search_seeded(query, vector, &media, limit, None);
+    }
     match (query, vector) {
         (Some(query), Some(vector)) => scoped_read.search(query, vector, limit, None),
         (Some(query), None) => scoped_read.search_text(query, limit, None),
