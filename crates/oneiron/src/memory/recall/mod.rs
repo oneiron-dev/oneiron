@@ -694,7 +694,7 @@ impl Memory<'_> {
         {
             let hits = match (session, route.as_ref()) {
                 (Some(session), Some(route)) => {
-                    let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
+                    let limit = lane.search_candidate_limit(PPR_SEED_LIMIT)?;
                     // Seeds come from what the lane reads: a reader that
                     // reads base alone in the room seeds from base alone.
                     let raw = if lane.reads_room() {
@@ -712,7 +712,7 @@ impl Memory<'_> {
                     // admit every seed through the actor's read lane, and
                     // read the query's time words on the recall's clock.
                     let scored = if execution.deadline.is_some() {
-                        let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
+                        let limit = lane.search_candidate_limit(PPR_SEED_LIMIT)?;
                         lane.filter_scored_entities(self.vault.search_text(query, limit)?)?
                     } else {
                         lane.search_text_as_of(query, PPR_SEED_LIMIT, None, execution.as_of)?

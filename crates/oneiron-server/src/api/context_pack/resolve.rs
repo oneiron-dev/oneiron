@@ -179,7 +179,7 @@ pub(crate) async fn run_context_pack(
         scoped_read
     };
     let candidate_limit = scoped_read
-        .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
+        .search_candidate_limit(req.limit)
         .map_err(|error| {
             tracing::error!(kind = ?error.kind(), "core context-pack scoped read setup failed");
             core_engine_error("core context-pack scoped read setup failed", error)

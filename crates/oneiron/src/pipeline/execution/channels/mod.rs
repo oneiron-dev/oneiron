@@ -196,20 +196,22 @@ impl PipelineBuilder<'_> {
                 .as_ref()
                 .map(|resolved| &resolved.active_set);
             filter_config.device_local = device_local.as_ref();
-            // Ordinary text uses D19 widening; candidate-filtered text instead
-            // applies D19 during bounded scoring and needs no corpus-sized probe.
-            let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
-                rtxn,
-                bm25_config,
-                hyde_expansion,
-                filter_config,
-                &mut metadata_cache,
-                &mut claim_gate_widening_probe,
-            )?;
-            let text_scope_widening_active = codebase_scope_active
+            // A scoped scan scores every posting through its scope, D19's gate
+            // included. Unscoped text probes for a posting the gate rejects
+            // and scans that way too when it finds one; candidate-filtered
+            // text always does, and needs no probe.
+            let text_scope_active = codebase_scope_active
                 || self.has_strict_text_scope_filter()
-                || occurred_range.is_some()
-                || claim_gate_text_widening_active;
+                || occurred_range.is_some();
+            let text_scope_widening_active = text_scope_active
+                || self.claim_gate_text_widening_probe(
+                    rtxn,
+                    bm25_config,
+                    hyde_expansion,
+                    filter_config,
+                    &mut metadata_cache,
+                    &mut claim_gate_widening_probe,
+                )?;
             let mut stages = StagePlan::new([
                 self.vector_search.is_some(),
                 hyde_expansion.is_some(),

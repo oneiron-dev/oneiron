@@ -14,8 +14,6 @@ mod filters;
 mod scoped_channels;
 pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
-mod population;
-pub(crate) use population::{indexed_text_population, indexed_vector_population};
 mod support;
 mod temporal_bound;
 mod trace;

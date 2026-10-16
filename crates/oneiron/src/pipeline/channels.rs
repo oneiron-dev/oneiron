@@ -11,7 +11,6 @@ use crate::store::StoreRead;
 use crate::temporal::TemporalAnchorMode;
 
 use super::filters::pipeline_candidate_matches_filters_and_gate;
-use super::population::{indexed_text_population, indexed_vector_population};
 use super::support::{
     combine_proximity, compute_radius, effective_range_width, interval_distance,
     learned_anchor_range, midpoint, point_interval_distance, resolve_sigma_secs, sigmoid,
@@ -742,28 +741,28 @@ pub(super) fn fusion_fetch_limit(requested: usize) -> usize {
     }
 }
 
-pub(super) fn scoped_text_channel_limit(
-    store: &StoreRead<'_>,
-    rtxn: &RoTxn<'_>,
-    requested: usize,
-    text_scope_widening_active: bool,
-) -> Result<usize> {
-    if !text_scope_widening_active || requested == 0 {
-        return Ok(requested);
-    }
-    Ok(requested.max(indexed_text_population(store, rtxn)?))
+/// How many rows a text channel fetches for `requested`: never past
+/// [`MAX_SEARCH_LIMIT`], however many rows the index holds. A scoped scan
+/// admits through its scope while it scores, so it needs no wider fetch.
+///
+/// [`MAX_SEARCH_LIMIT`]: crate::memory::caps::MAX_SEARCH_LIMIT
+pub(super) fn scoped_text_channel_limit(requested: usize) -> usize {
+    requested.min(crate::memory::caps::MAX_SEARCH_LIMIT)
 }
 
-pub(super) fn scoped_vector_channel_limit(
-    store: &StoreRead<'_>,
-    rtxn: &RoTxn<'_>,
-    requested: usize,
-    scope_widening_active: bool,
-) -> Result<usize> {
-    if !scope_widening_active || requested == 0 {
-        return Ok(requested);
+/// How many rows a vector walk fetches for `requested`: a `narrowed` walk,
+/// whose scope admits inside it, the whole [`MAX_SEARCH_LIMIT`] window;
+/// any other the request, never past the window. Zero stays zero.
+///
+/// [`MAX_SEARCH_LIMIT`]: crate::memory::caps::MAX_SEARCH_LIMIT
+pub(super) fn scoped_vector_channel_limit(requested: usize, narrowed: bool) -> usize {
+    if requested == 0 {
+        0
+    } else if narrowed {
+        crate::memory::caps::MAX_SEARCH_LIMIT
+    } else {
+        requested.min(crate::memory::caps::MAX_SEARCH_LIMIT)
     }
-    Ok(requested.max(indexed_vector_population(store, rtxn)?))
 }
 
 pub(super) fn truncate_widened_channel_results_to_scope(

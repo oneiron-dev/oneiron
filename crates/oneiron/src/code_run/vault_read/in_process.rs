@@ -162,7 +162,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let max_neighbors = depth.max_neighbors.unwrap_or(DEFAULT_MAX_NEIGHBORS);
         let candidate_limit = self
             .scoped_read
-            .search_candidate_limit(request.limit, query.is_some(), vector.is_some())
+            .search_candidate_limit(request.limit)
             .map_err(|error| engine_failure(METHOD, &error))?;
         let mut builder = self
             .scoped_read

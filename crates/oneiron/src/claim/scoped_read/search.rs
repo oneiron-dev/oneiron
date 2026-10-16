@@ -25,6 +25,20 @@ impl ScopedRead<'_> {
         Ok(())
     }
 
+    /// The plan admission a bounded search runs inside its retrieval: a
+    /// candidate the plan's authority refuses takes no place in any channel,
+    /// so the search needs no fetch past what it was asked for.
+    pub(super) fn plan_admits<'p>(
+        &'p self,
+        filter: &'p ResolvedRetrievalFilter,
+        policy: &'p PolicyManifestResolution,
+    ) -> impl Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> Result<bool>
+    + Send
+    + Sync
+    + 'p {
+        move |_store, txn, id| self.recall_candidate_in(txn, policy, filter, id)
+    }
+
     /// Admit one candidate in the retrieval transaction under the query plan.
     pub(crate) fn recall_candidate_in(
         &self,
@@ -51,16 +65,15 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit =
-            self.vault
-                .scoped_read_search_candidate_limit(&self.store_read(), limit, true, true)?;
+        let admitted = self.plan_admits(&filter, &policy);
         let results = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .search(query, vector, None, fetch_limit)
+            .filter_candidates(&admitted)
+            .search(query, vector, None, limit)
             .run_for_pack()?;
         self.filter_search_results(
             results.scores,
@@ -229,12 +242,13 @@ impl ScopedRead<'_> {
         crate::retrieval_depth::execute(self, request)
     }
 
-    pub fn search_candidate_limit(
-        &self,
-        requested: usize,
-        include_text: bool,
-        include_vector: bool,
-    ) -> Result<usize> {
+    /// How many candidates a caller that filters this reader's rows after
+    /// its own read fetches for `requested`: the request when no grant,
+    /// audience or peer read narrows the reader, otherwise the whole
+    /// [`crate::memory::caps::MAX_SEARCH_LIMIT`] window. Never past it,
+    /// however many rows the vault holds; the page is short when the window
+    /// holds fewer readable rows.
+    pub fn search_candidate_limit(&self, requested: usize) -> Result<usize> {
         if requested == 0 {
             return Ok(0);
         }
@@ -247,16 +261,9 @@ impl ScopedRead<'_> {
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {
-            return Ok(requested);
+            return Ok(requested.min(crate::memory::caps::MAX_SEARCH_LIMIT));
         }
-        drop(rtxn);
-
-        self.vault.scoped_read_search_candidate_limit(
-            &self.store_read(),
-            requested,
-            include_text,
-            include_vector,
-        )
+        Ok(crate::memory::caps::narrowed_candidate_window(requested))
     }
 
     pub fn filter_scored_entities(

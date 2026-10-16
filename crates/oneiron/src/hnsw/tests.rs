@@ -548,6 +548,7 @@ fn delete_purges_orphan_protected_one_way_backlink() -> Result<()> {
         &[1.0, 0.0, 0.0, 0.0],
         5,
         false,
+        None,
     )?;
     assert!(
         hits.iter().all(|hit| hit.id != from),
