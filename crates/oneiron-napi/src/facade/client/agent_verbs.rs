@@ -527,6 +527,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_conversations_turn_continue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.continue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_conversations_turn_retry(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.retry", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_host(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.host", input)

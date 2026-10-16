@@ -421,7 +421,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
-        | AuthorityOp::WorldKeyWraps(_) => false,
+        | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::OwnerHandover(_) => false,
     }
 }
 

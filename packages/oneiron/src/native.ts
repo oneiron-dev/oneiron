@@ -70,6 +70,8 @@ vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+vaultConversationsTurnContinue(input: unknown): unknown
+vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown

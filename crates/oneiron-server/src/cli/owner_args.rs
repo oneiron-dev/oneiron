@@ -342,6 +342,23 @@ pub struct ImportDecisionArgs {
 }
 
 #[derive(Subcommand, Clone, Debug)]
+pub enum HandoffAlarmsCommand {
+    /// Every saved fork alarm a held root handoff left, open or acknowledged.
+    List(Box<ServeOnlyArgs>),
+    /// Acknowledge one alarm: it stays saved, its refused row marked seen.
+    Acknowledge(Box<HandoffAlarmAckArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct HandoffAlarmAckArgs {
+    /// The alarm's retired key, `suite:hex`, as `list` names it.
+    pub signer: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Subcommand, Clone, Debug)]
 pub enum RunsCommand {
     /// Agent runs with proposals waiting for you.
     Pending(Box<ServeOnlyArgs>),

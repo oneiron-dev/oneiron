@@ -36,6 +36,8 @@ mod ledger;
 mod listener;
 pub mod org_routing;
 mod peer;
+/// Private live previews on a session-owned origin.
+pub mod preview;
 mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
