@@ -60,6 +60,11 @@ impl TurnTracker {
         self.0.stop.send_replace(true);
     }
 
+    /// The stop running turns get, for a worker that is no turn itself.
+    pub(crate) fn stop_signal(&self) -> watch::Receiver<bool> {
+        self.0.stop.subscribe()
+    }
+
     async fn drained(&self) {
         loop {
             // Created before the check, so a finish in between still wakes it.

@@ -8,6 +8,7 @@ use super::controls::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackPolicyControls,
     ContextPackRetrievalBudgetControls, ContextPackTimeControls, CoreContextPackRequest,
 };
+use super::media_query::embed_media_seeds;
 use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
@@ -37,8 +38,9 @@ use std::sync::Arc;
         (status = 200, description = "Context pack assembled.", body = CoreContextPackResponse, content_type = "application/json"),
         (status = 400, description = "Malformed context-pack request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "Context-pack assembly failed.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 403, description = "Core token lacks core:read, or the vault's inference policy refuses a media query's ai.embed call.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Context-pack assembly failed.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 503, description = "No ai.embed rung serves a media query's space (or, on the one-space preset, the text slot's space), or the rung's call failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 pub(crate) async fn core_context_pack(
@@ -109,7 +111,17 @@ pub(crate) async fn run_context_pack(
         room.as_ref(),
     )?;
     let query = non_empty_query(req.query.as_deref());
-    validate_core_query_seeds(query, req.query_vector.as_deref())?;
+    // A media query seeds the pack on its own; a vector beside it is still
+    // checked.
+    validate_core_query_seeds(
+        query.or(req.media.as_ref().map(|_| "media")),
+        req.query_vector.as_deref(),
+    )?;
+    let media = req
+        .media
+        .as_ref()
+        .map(|media| media.decode(server.config.limits.retrieval_query_bytes))
+        .transpose()?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
         resolved_context_pack_depth(req.depth.as_ref(), req.edge_hop, req.max_neighbors);
     validate_context_pack_depth(edge_hop, edge_hop_field, max_neighbors, max_neighbors_field)?;
@@ -202,6 +214,9 @@ pub(crate) async fn run_context_pack(
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
     )?;
+    // Embedded once everything free is checked: it is a paid call. On the
+    // one-space preset the text query is embedded into the text slot's space.
+    let media = embed_media_seeds(server, media, query).await?;
 
     let mut builder = server
         .vault
@@ -223,6 +238,9 @@ pub(crate) async fn run_context_pack(
     }
     if let Some(vector) = req.query_vector.as_deref() {
         builder = builder.search_vector(vector, candidate_limit);
+    }
+    for seed in &media {
+        builder = builder.search_media(&seed.space, seed.kind, &seed.vector, &[], candidate_limit);
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;

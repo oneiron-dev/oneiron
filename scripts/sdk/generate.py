@@ -2,6 +2,7 @@
 'Generate agent SDK transports from agent-verbs.json; --check never writes.'
 import argparse
 import json
+import keyword
 import re
 import subprocess
 from pathlib import Path
@@ -44,6 +45,12 @@ for row in ROWS:
     # the Dreamer's turn producer after it.
     if row.get('lands_turn') and row['scope'] != 'Write': raise ValueError(f'{row["name"]}: only a Write row lands a turn')
     if row.get('lands_turn') and row.get('context') == 'board': raise ValueError(f'{row["name"]}: a board verb lands no turn')
+    # `host_door` marks a row only a server's own state answers (the owner's
+    # proof, its model seats): the HTTP facade and the MCP dispatch both call
+    # `api::facade::host_doors::<fn>(server, auth, input)`, and its `call` is
+    # what an embedded handle answers instead.
+    if row.get('host_door') and (row.get('server_door') or row.get('admission', {}).get('owner_grade') or row.get('context', 'memory') != 'memory'):
+        raise ValueError(f'{row["name"]}: a host door is a memory row with no other server door')
 def mcp_rows():
     'The rows the MCP doors serve as tools: every row but a browser row.'
     return [row for row in ROWS if row.get('mcp') != 'none']
@@ -334,7 +341,9 @@ def python_facade(row, stub=False, method_name=None):
     return signature + '\n        """' + binding['docs']['py'] + '"""\n        return json.loads(_translate(lambda: self._client.' + row['name'].replace('.', '_') + '(' + ', '.join(values) + ')))\n'
 
 def leaf(name):
-    return name.rsplit('.', 1)[-1]
+    'The Python method a row ends in; a keyword (`continue`) takes the trailing underscore PEP 8 gives it.'
+    part = name.rsplit('.', 1)[-1]
+    return part + '_' if keyword.iskeyword(part) else part
 
 def python_handle_verb(row, stub=False, name=None):
     'A facade verb on the generic door, as a method of its namespace.'
@@ -456,6 +465,12 @@ def mcp_input_dispatch(row):
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = auth.verified_slip().ok_or_else(|| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
                  'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner(&input, proof, actor.locality()) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
+    elif row.get('host_door'):
+        # A host door answers from the server's own state, under the same
+        # credential the REST facade passes it.
+        body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
+                 f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
+                 f'let output = crate::api::facade::host_doors::{method}(server, auth, input).await.map_err(mcp_facade_error)?;\n')
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
@@ -722,6 +737,18 @@ def outputs():
                     StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
                     "export result encoding failed", ["Report this SDK response mismatch."]
                 ))?))
+            }}\n'''
+            continue
+        if r.get('host_door'):
+            # A host door answers from the server's own state, outside any
+            # room turn, under the credential this request presented.
+            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
+                auth.require(CoreScope::{r["scope"]})?;
+                {record_scope_guard(r)}
+                facade_outside_room_turn(&headers, {json.dumps(r["name"])})?;
+                let value = facade_json(payload)?;
+                oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
+                Ok(Json(facade_output(super::host_doors::{method}(&server, &auth, facade_input(value)?).await?)?))
             }}\n'''
             continue
         # `readable` names the credential read checks: each caller-named ref is

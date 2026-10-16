@@ -49,12 +49,14 @@ pub enum InstallHoldReason {
     SourceOnly,
     RulesHit,
     CodeAutoInstallOff,
+    QualificationRequired,
     NoFit,
     LocalApproval,
     UnloadableApproval,
     Stale,
     Quarantined,
     Superseded,
+    Advisories,
 }
 impl InstallHoldReason {
     pub const fn as_str(self) -> &'static str {
@@ -62,12 +64,14 @@ impl InstallHoldReason {
             Self::SourceOnly => "source_only",
             Self::RulesHit => "rules_hit",
             Self::CodeAutoInstallOff => "code_auto_install_off",
+            Self::QualificationRequired => "qualification_required",
             Self::NoFit => "not_fit",
             Self::LocalApproval => "local_decision",
             Self::UnloadableApproval => "unloadable_approval",
             Self::Stale => "stale",
             Self::Quarantined => "quarantined",
             Self::Superseded => "superseded",
+            Self::Advisories => "advisories",
         }
     }
 }
@@ -203,25 +207,28 @@ impl InstallPlan {
         Self::new(binding, action)
     }
 
+    /// `hold` is the pack's Candidate reason; None installs with the pack.
     pub(super) fn pack(
         record: &SkillRecord,
         binding: InstallBinding,
-        active: bool,
-        blocked: bool,
-        code_allowed: bool,
+        hold: Option<InstallHoldReason>,
     ) -> Self {
-        let fit = if active {
+        let fit = if hold.is_none() {
             MarketplaceFit::Ready
         } else {
             MarketplaceFit::Ask
         };
-        let mut plan = Self::marketplace(record, binding, fit, blocked, code_allowed);
-        if !active && matches!(plan.action, InstallAction::PendingPermission) {
-            plan.action = InstallAction::Preserve(if blocked {
-                InstallHoldReason::RulesHit
-            } else {
-                InstallHoldReason::CodeAutoInstallOff
-            });
+        let mut plan = Self::marketplace(
+            record,
+            binding,
+            fit,
+            hold == Some(InstallHoldReason::RulesHit),
+            hold != Some(InstallHoldReason::CodeAutoInstallOff),
+        );
+        if let Some(reason) = hold
+            && matches!(plan.action, InstallAction::PendingPermission)
+        {
+            plan.action = InstallAction::Preserve(reason);
         }
         if matches!(
             plan.action,

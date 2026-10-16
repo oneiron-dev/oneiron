@@ -146,7 +146,7 @@ pub fn record_judge_conversion(
     };
     vault.with_write_txn_grouped(|wtxn| {
         CONVERSION.put(&vault.store, wtxn, &conversion.from_judge, &conversion)?;
-        reproject_judged_in_txn(vault, wtxn, from_judge, now)
+        reproject_judged_in_txn(vault, wtxn, now)
     })?;
     Ok(conversion)
 }
@@ -162,7 +162,7 @@ pub fn withdraw_judge_conversion(vault: &Vault, from_judge: &str, now: u64) -> R
         if !CONVERSION.delete(&vault.store, wtxn, &from_judge.to_owned())? {
             return Ok(false);
         }
-        reproject_judged_in_txn(vault, wtxn, from_judge, now)?;
+        reproject_judged_in_txn(vault, wtxn, now)?;
         Ok(true)
     })
 }
@@ -175,16 +175,12 @@ pub(crate) fn conversions_in_txn(
     Ok(CONVERSION.scan(&vault.store, txn)?.into_iter().collect())
 }
 
-fn reproject_judged_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    judge: &str,
-    now: u64,
-) -> Result<()> {
+fn reproject_judged_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now: u64) -> Result<()> {
     let digests: BTreeSet<[u8; 32]> = EVIDENCE
         .scan(&vault.store, wtxn)?
         .into_iter()
-        .filter(|(_, row)| row.judge.as_deref() == Some(judge))
+        // Earlier judges can reach this map through another conversion.
+        .filter(|(_, row)| row.judge.is_some())
         .map(|((digest, _), _)| digest)
         .collect();
     for digest in &digests {

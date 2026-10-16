@@ -15,9 +15,10 @@ use super::codec::{
 };
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
-    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -208,7 +209,7 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Enqueues a SKILL-OPT attempt in a caller-owned write transaction, so a
     /// wake that registers one lands it as a durable fact of the wake.
-    fn enqueue_skill_optimize_in_txn(
+    pub(crate) fn enqueue_skill_optimize_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueDreamerSkillOptimizeAttempt,
@@ -365,6 +366,31 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// Enqueues the NOTE review (OF-073) as a Nightly child in the wake's own
+    /// commit. One review per wake key: the review pages through every NOTE
+    /// itself, so a second one in the same night would read the same pages.
+    pub(crate) fn enqueue_note_review_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_NOTE_REVIEW_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::Nil,
+                parent_attempt,
+            },
+            wake_key.map(|key| format!("{DREAMER_NOTE_REVIEW_ATTEMPT_KIND}:{key}")),
+            run_id,
+            now,
+        )
+    }
+
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
     /// take the advisory dedupe floor, and co-commit the private run-tree row
     /// whichever way the queue answered.
@@ -478,6 +504,23 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
             )?;
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
+            // A finished agent launch settles its spend lease (OF-532) in the
+            // commit that finishes it: its parent pays what it spent and the
+            // unused hold goes back. Settling twice is a no-op.
+            let record = match &outcome {
+                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
+                    record
+                }
+            };
+            if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
+                payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+            }) {
+                crate::agent_dispatch::AgentDispatcher::new(self.vault).settle_child_in_txn(
+                    wtxn,
+                    &attempt_id,
+                    input.now,
+                )?;
+            }
             Ok(outcome)
         })?;
         match outcome {
@@ -761,7 +804,9 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
+        || kind == DREAMER_RECIPE_WAKE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+        || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }

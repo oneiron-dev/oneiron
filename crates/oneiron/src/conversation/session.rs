@@ -1,7 +1,10 @@
 //! Session mode persists; active participant presence belongs only to this process.
+//! People and agent personas are present; engine upkeep never is.
 use super::*;
 use crate::federation::{ScopeAxis, ScopeId};
-use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,7 +135,11 @@ impl Vault {
             return Err(Error::IndexOverflow("session presence"));
         }
         for id in &ids {
-            require_kind(self, &txn, *id, ENTITY_TYPE_PERSON)?;
+            // A PERSON or an AGENT_DEF persona, never a MACHINE: room hosting
+            // reads this set as who is here now.
+            if require_kind(self, &txn, *id, ENTITY_TYPE_PERSON).is_err() {
+                require_kind(self, &txn, *id, ENTITY_TYPE_AGENT_DEF)?;
+            }
         }
         let mut presence = self
             .conversation_presence

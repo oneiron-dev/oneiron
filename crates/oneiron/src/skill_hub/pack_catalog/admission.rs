@@ -1,5 +1,7 @@
 //! Post-fit installation of pinned pack source; requested powers stay inert.
-use super::super::install_transition::{InstallBinding, InstallDisposition, InstallPlan};
+use super::super::install_transition::{
+    InstallBinding, InstallDisposition, InstallHoldReason, InstallPlan,
+};
 use super::qualify::{validate_installed_qualification, validate_qualification};
 use super::{
     BundledSkillPermissions, PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict,
@@ -184,6 +186,10 @@ impl Vault {
             self.import_pack_skills_in_txn(txn, &source, &commit.hub, at)?;
         let candidate_reason = if commit.verdict.rules_hit {
             Some(PackCandidateReason::RulesHit)
+        } else if commit.foreign.is_some()
+            && self.pack_advisory_hold_in_txn(txn, source.content_hash())?
+        {
+            Some(PackCandidateReason::Advisories)
         } else if source.has_code() && !commit.verdict.code_auto_install {
             Some(PackCandidateReason::CodeAutoInstallOff)
         } else if source.manifest.kind == PackKind::Connector && commit.qualification.is_none() {
@@ -206,9 +212,16 @@ impl Vault {
             let plan = InstallPlan::pack(
                 &record,
                 InstallBinding::new(&source.reference, source.hash, &capabilities),
-                status == PackInstallStatus::Active,
-                candidate_reason == Some(PackCandidateReason::RulesHit),
-                candidate_reason != Some(PackCandidateReason::CodeAutoInstallOff),
+                candidate_reason.map(|reason| match reason {
+                    PackCandidateReason::RulesHit => InstallHoldReason::RulesHit,
+                    PackCandidateReason::CodeAutoInstallOff => {
+                        InstallHoldReason::CodeAutoInstallOff
+                    }
+                    PackCandidateReason::QualificationRequired => {
+                        InstallHoldReason::QualificationRequired
+                    }
+                    PackCandidateReason::Advisories => InstallHoldReason::Advisories,
+                }),
             );
             let result = self.execute_hub_install_plan_in_txn(
                 txn,

@@ -152,6 +152,9 @@ pub enum PackCandidateReason {
     RulesHit,
     CodeAutoInstallOff,
     QualificationRequired,
+    /// A hub source whose dependencies carry OSV advisories, or whose
+    /// advisory query did not complete, waits for the owner.
+    Advisories,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

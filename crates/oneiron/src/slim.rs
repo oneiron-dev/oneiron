@@ -9,17 +9,20 @@
 //! `drop_rebuildable_hnsw`), and every dropped structure is
 //! rebuilt lazily by its own ordinary first-use path.
 //!
-//! What this module never does: start a timer, poll, hold an egress slot,
-//! observe the outbound wait itself, or write the intent ledger. The long-wait
-//! observation is host-side (Hypnos); the engine validates only that
-//! `waited_secs` is positive and that exactly one durable `Pending` outbound
-//! step exists. No threshold policy lives here.
+//! The host supplies the long-wait timer. The engine keeps a scoped pointer
+//! to a live, journaled model step and polls the same provider future while
+//! that timer runs. Shed admission requires exactly one journaled outbound
+//! step (a live model wait or a `Pending` effect intent). No threshold policy,
+//! outbound reissue or intent-ledger write lives here.
 //!
 //! `Reaped` is deliberately absent from [`VaultResidency`]: once the host kills
 //! the process no live [`Vault`] value exists, so process absence is the third
 //! ladder state.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+mod outbound_wait;
+pub use outbound_wait::OutboundWaitHost;
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -53,34 +56,56 @@ pub enum ShedCause {
 
 /// Stable pointer to the one durable step retained across SLIM.
 ///
-/// It never copies payload, auth material, endpoint or provider text: the full
-/// frozen call stays in the durable ledger, and this pointer is used only for
-/// admission identity and observability — never to reissue, cancel or rewrite
-/// the intent.
+/// Payloads, credentials and responses stay in their existing journals. These
+/// identities are resume points, never instructions to reissue an outbound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct JournaledResumeStep {
-    pub intent_id: IntentId,
-    pub attempt_id: AttemptId,
-    pub call_seq: u64,
-    /// Observability timestamp from the selected ledger row; never admission
-    /// identity.
-    pub updated_ms: u64,
+pub enum JournaledResumeStep {
+    OutboundIntent {
+        intent_id: IntentId,
+        attempt_id: AttemptId,
+        call_seq: u64,
+        updated_ms: u64,
+    },
+    Model {
+        attempt_id: AttemptId,
+        step_hash: [u8; 32],
+        updated_ms: u64,
+    },
 }
 
 impl JournaledResumeStep {
-    /// Admission identity deliberately excludes `updated_ms`: the landed
-    /// ledger may touch a still-Pending row (a retry-begin / non-delivery
-    /// marker) without changing the journaled outbound step. Derived
-    /// `PartialEq` remains structural only and must never gate shed admission.
-    ///
-    /// Not a `const fn`: identity compares an `IntentId` array and an
-    /// `AttemptId` through `PartialEq`, which is not callable in const
-    /// context on stable.
+    /// The journal may refresh a timestamp without changing step identity.
     #[must_use]
     pub(crate) fn same_step(&self, other: &Self) -> bool {
-        self.intent_id == other.intent_id
-            && self.attempt_id == other.attempt_id
-            && self.call_seq == other.call_seq
+        match (self, other) {
+            (
+                Self::OutboundIntent {
+                    intent_id,
+                    attempt_id,
+                    call_seq,
+                    ..
+                },
+                Self::OutboundIntent {
+                    intent_id: other_intent,
+                    attempt_id: other_attempt,
+                    call_seq: other_seq,
+                    ..
+                },
+            ) => intent_id == other_intent && attempt_id == other_attempt && call_seq == other_seq,
+            (
+                Self::Model {
+                    attempt_id,
+                    step_hash,
+                    ..
+                },
+                Self::Model {
+                    attempt_id: other_attempt,
+                    step_hash: other_hash,
+                    ..
+                },
+            ) => attempt_id == other_attempt && step_hash == other_hash,
+            _ => false,
+        }
     }
 }
 
@@ -171,6 +196,10 @@ pub enum InboundResumeOutcome {
 #[derive(Debug, Default)]
 pub(crate) struct SlimController {
     state: Mutex<SlimState>,
+    /// Changed only while holding `state`, so a completed wait cannot race
+    /// selection and leave the process parked on a stale step.
+    model_waits: Mutex<Vec<JournaledResumeStep>>,
+    wait_host: Mutex<Option<Arc<dyn OutboundWaitHost>>>,
 }
 
 impl SlimController {
@@ -210,15 +239,14 @@ impl Vault {
 
     /// Drops every rebuildable heap structure and parks the vault in SLIM.
     ///
-    /// Called by the vault-side ctl adapter. No timer path calls this, and the
-    /// engine never observes the wait itself: `cause` and `waited_secs` are the
-    /// host's observation, ride the shed log, and are validated only for
-    /// positivity. Policy lives in the host scheduler.
+    /// Called by the vault-side ctl adapter or the host's long-wait hook.
+    /// `cause` and `waited_secs` are the host's observation, ride the shed log,
+    /// and are validated only for positivity. Policy lives in the host.
     ///
     /// The transaction runs in exactly this order:
     ///
-    /// 0. **Journaled step first** — exactly one `IntentState::Pending` row
-    ///    read through the existing read-only `intent_ledger_records` API.
+    /// 0. **Journaled step first** — exactly one live model wait or
+    ///    `IntentState::Pending` row read through `intent_ledger_records`.
     /// 1. **Admission second**, with the controller mutex held through publish.
     /// 2. **Sync** — persist and deregister every manager-owned live window. A
     ///    busy external window handle refuses before any registry mutation.
@@ -329,7 +357,7 @@ impl Vault {
             Some(mut residue) => {
                 // Same-step re-drop: refresh ONLY the observability timestamp,
                 // preserve `entered_at_ms`, keep residency.
-                residue.step.updated_ms = step.updated_ms;
+                residue.step = step;
                 *state = SlimState::Slim(residue.clone());
                 Ok(ShedOutcome::AlreadySlim { residue, dropped })
             }
@@ -360,34 +388,38 @@ impl Vault {
         }
     }
 
-    /// Engine truth at shed time: exactly one durable `Pending` outbound step,
-    /// read through the existing public read-only ledger API.
+    /// Engine truth at shed time, with the transition lock held: one live
+    /// model step whose Started row precedes its wait, or one Pending intent.
     fn select_journaled_resume_step(&self) -> Result<StepSelection> {
         let listing = intent_ledger_records(self).map_err(map_intent_ledger_error)?;
         if let Some(corrupt) = listing.corrupt.into_iter().next() {
-            // Fail closed: an unreadable row must never be read as "no pending
-            // step" and admit a shed against an unknown journal.
             return Err(map_intent_ledger_error(corrupt.error));
         }
 
-        let pending: Vec<_> = listing
+        let mut pending: Vec<_> = listing
             .records
             .into_iter()
             .filter(|record| record.state == IntentState::Pending)
+            .map(|record| JournaledResumeStep::OutboundIntent {
+                intent_id: record.id,
+                attempt_id: record.attempt_id,
+                call_seq: record.call_seq,
+                updated_ms: record.updated_ms,
+            })
             .collect();
-        match pending.len() {
-            0 => Ok(StepSelection::Blocked(ShedBlocker::NoPendingOutboundStep)),
-            1 => {
-                let record = &pending[0];
-                Ok(StepSelection::Selected(JournaledResumeStep {
-                    intent_id: record.id,
-                    attempt_id: record.attempt_id,
-                    call_seq: record.call_seq,
-                    updated_ms: record.updated_ms,
-                }))
-            }
-            count => Ok(StepSelection::Blocked(
-                ShedBlocker::MultiplePendingOutboundSteps { count },
+        pending.extend(
+            self.slim
+                .model_waits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .copied(),
+        );
+        match pending.as_slice() {
+            [] => Ok(StepSelection::Blocked(ShedBlocker::NoPendingOutboundStep)),
+            [step] => Ok(StepSelection::Selected(*step)),
+            steps => Ok(StepSelection::Blocked(
+                ShedBlocker::MultiplePendingOutboundSteps { count: steps.len() },
             )),
         }
     }

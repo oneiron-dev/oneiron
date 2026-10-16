@@ -9,6 +9,7 @@ mod exec_board_verbs;
 mod memory_response;
 mod stream_reads;
 mod tasks_response;
+mod wakes;
 
 pub(crate) use self::actor_dispatch::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_params, mcp_tool_validation_error,

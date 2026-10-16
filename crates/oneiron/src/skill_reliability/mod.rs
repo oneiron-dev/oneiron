@@ -1,51 +1,13 @@
-//! ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior
-//! that decides which skills load, and the demotion of the record's
-//! `confidence` field to a rebuildable cache over it.
+//! Bayesian skill retrieval over the shared learning.reliability projection.
 //!
-//! ```text
-//! SK-04 judgments ─┐
-//!                  ├─▶ outcome ledger ─▶ Beta(α,β) ─▶ skill.reliability CLAIM (truth)
-//! contributing ────┤   (per skill and executor,           │
-//!  wins            │    keyed by receipt)                ├─▶ pair selection score (mean + UCB)
-//! amendment ───────┘                                     │
-//!  defect shares                                         └─▶ pair floor → quarantine PROPOSAL
-//! Unknown-executor history retains the old scalar SkillRecord.confidence cache.
-//! ```
-//!
-//! **Residence, not shape (doc-13 r7).** Reliability is EPISTEMIC, so it lives
-//! where epistemic things live: a projector-written superseding CLAIM on the
-//! SKILL entity citing the receipts it rests on. The record field that used to
-//! hold it is now a materialization — CID-7's demotion pattern, the same
-//! "claims are truth, the record is cache" law the contact record follows.
-//!
-//! **What counts (§5).** Only three classes of outcome move the posterior:
-//! - β: an SK-04-routed [`AttributionVerdict::SkillDefect`](crate::skill_attribution::AttributionVerdict::SkillDefect) judgment — the
-//!   skill's content was wrong.
-//! - α: a CONTRIBUTING WIN — a terminal pack receipt whose manifest loaded the
-//!   skill, whose attempt COMPLETED, and which SK-04 routed to no judgment.
-//! - β, by a share: an AMENDED attempt (ARCH-0056 §5) — the amendment judge
-//!   charged part of the decider's edit to the skill, so the attempt counts as
-//!   ONE loss weighted by that `skill_defect` share, in place of whatever the
-//!   attempt lane recorded for it (one record per attempt; the later verdict
-//!   holds).
-//!
-//! Everything else contributes NOTHING, by construction rather than by
-//! special-case: an [`AttributionVerdict::ExecutionLapse`](crate::skill_attribution::AttributionVerdict::ExecutionLapse) blames the actor and
-//! its attempt failed, so it is neither a defect on this skill nor a win; a
-//! [`AttributionVerdict::Discovery`](crate::skill_attribution::AttributionVerdict::Discovery) became an edit proposal, not a verdict on
-//! reliability. ONE-1737's projector states the seam from its side: "Crediting
-//! a win is the reliability posterior's job (ONE-1738), which reads the same
-//! receipts."
-//!
-//! **Companion-surface skills are out** (ARCH-0053 §12 surrogate-verifier
-//! residue). A companion skill produces no objective win signal — no attempt,
-//! no terminal pack receipt, no attributed outcome — so it simply never enters
-//! this ledger. That is why there is no companion special-case here: the input
-//! set is attributed outcomes, and companion surfaces produce none.
-//!
-//! The [`crate::posterior::Posterior`] interface shares sampling, bounds and
-//! update/bonus entry points with critic reliability. Attribution remains here:
-//! only receipt-backed wins and routed skill defects reach this posterior.
+//! The outcome ledger remains the attribution boundary: a contributing win,
+//! routed skill defect or amended defect share belongs to the executor that
+//! ran it. The receipt supplies its required task placement and scored axis.
+//! Only anchored outcomes add own runs. Carried executor histories, parent
+//! types and provenance enter as weighted priors; UNTESTED lasts until own
+//! runs reach that weight. Judge conversions change the view, never receipts.
+//! Skill arms pick by UCB through the shared Posterior interface. The scalar
+//! SkillRecord confidence is only a diagnostic cache and never a ranking input.
 
 mod amended;
 mod callable;
@@ -53,6 +15,7 @@ mod codec;
 mod floor;
 mod ledger;
 mod posterior;
+mod priors;
 mod projector;
 mod provenance;
 mod read;
@@ -77,17 +40,19 @@ pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
 };
 pub use self::projector::{
-    PREDICATE_SKILL_RELIABILITY, project_skill_reliability, project_skill_reliability_for,
+    FIELD_SKILL_LEARNING_ANCHOR, FIELD_SKILL_TYPE_REF, PREDICATE_SKILL_RELIABILITY,
+    SKILL_OUTCOME_AXIS, project_skill_reliability, project_skill_reliability_for,
     project_skill_reliability_for_executor,
 };
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
 pub use self::read::{
-    ExecutorReliability, rebuild_skill_confidence_cache, skill_executor_reliability,
-    skill_reliability_posterior, skill_reliability_posterior_for_executor, skill_selection_score,
+    ExecutorReliability, SkillReliabilityQuery, read_skill_reliability,
+    rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,
+    skill_reliability_posterior_for_executor, skill_selection_score,
     skill_selection_score_for_executor,
 };
 pub(crate) use self::read::{
-    selection_posterior_in_txn, skill_selection_score_from_posterior, validate_executor,
+    selection_posterior_for_query_in_txn, skill_selection_score_from_posterior, validate_executor,
 };
 pub use self::resident::rank_resident_skill_versions;
 
