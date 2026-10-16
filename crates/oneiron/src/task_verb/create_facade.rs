@@ -58,7 +58,14 @@ fn create_proposal_identity(value: &Value) -> Vec<u8> {
 impl Memory<'_> {
     /// Mints one TASK plus one linked realizing attempt when the actor's live
     /// definition/manifest ceiling permits Auto; otherwise parks one proposal.
+    ///
+    /// A create carrying a typed brief is a post: it runs through the one
+    /// task highway (OF-220), which owns its idempotency, settlement and
+    /// receipts. A brief-less create is the engine-internal minters' door.
     pub fn tasks_create(&self, spec: &TaskCreateSpec) -> MemoryResult<TaskCreateReceipt> {
+        if spec.brief.is_some() || spec.intent_key.is_some() {
+            return self.post_create_spec(spec);
+        }
         self.tasks_create_with_engine_rate_limit(spec, TaskCreateRateLimit::default())
     }
 
@@ -117,39 +124,7 @@ impl Memory<'_> {
             // failure rolls the intent back rather than leaving an invisible
             // half-created task behind.
             let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
-            // A caller-chosen owner_ref does not certify who authored the
-            // assignment. This independent witness is minted only after an
-            // authenticated human owner creates an agent-addressed TASK, never
-            // when code a model wrote does so under the owner's connector.
-            if validated.kind == TaskKind::Standard
-                && validated.assignee.is_some_and(|assignee| {
-                    matches!(
-                        assignee,
-                        TaskAssignee::Peer { .. }
-                            | TaskAssignee::AgentDef { .. }
-                            | TaskAssignee::Child { .. }
-                    )
-                })
-                && self.actor_class() == crate::EdgeActorClass::Human
-                && !self.writes_generated()
-                && owner_ref == self.actor()
-                && crate::memory::verify_owner_actor_binding_in_txn(self.vault(), wtxn, owner_ref)
-                    .is_ok()
-            {
-                put_task_authority_fact_in_txn(
-                    self.vault(),
-                    wtxn,
-                    TaskAuthorityFact {
-                        task_ref,
-                        kind: TaskAuthorityFactKind::HumanAssigned,
-                        actor_ref: owner_ref,
-                        assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
-                        actor_generation: None,
-                        assigned_generation: None,
-                        occurred_at: now,
-                    },
-                )?;
-            }
+            self.witness_human_assignment_in_txn(wtxn, task_ref, &validated, owner_ref, now)?;
             Ok(Some((task_ref, route)))
         })?;
 
@@ -185,6 +160,50 @@ impl Memory<'_> {
             effected: false,
             route: None,
         })
+    }
+
+    /// A caller-chosen owner_ref does not certify who authored the
+    /// assignment. This independent witness is minted only after an
+    /// authenticated human owner creates an agent-addressed TASK, never when
+    /// code a model wrote does so under the owner's connector.
+    pub(super) fn witness_human_assignment_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        validated: &ValidatedTaskCreate,
+        owner_ref: EntityId,
+        now: u64,
+    ) -> MemoryResult<()> {
+        if validated.kind == TaskKind::Standard
+            && validated.assignee.is_some_and(|assignee| {
+                matches!(
+                    assignee,
+                    TaskAssignee::Peer { .. }
+                        | TaskAssignee::AgentDef { .. }
+                        | TaskAssignee::Child { .. }
+                )
+            })
+            && self.actor_class() == crate::EdgeActorClass::Human
+            && !self.writes_generated()
+            && owner_ref == self.actor()
+            && crate::memory::verify_owner_actor_binding_in_txn(self.vault(), wtxn, owner_ref)
+                .is_ok()
+        {
+            put_task_authority_fact_in_txn(
+                self.vault(),
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref,
+                    kind: TaskAuthorityFactKind::HumanAssigned,
+                    actor_ref: owner_ref,
+                    assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
+                    actor_generation: None,
+                    assigned_generation: None,
+                    occurred_at: now,
+                },
+            )?;
+        }
+        Ok(())
     }
 
     /// The OPEN `tasks.create` proposal this actor already parked for an
@@ -288,6 +307,24 @@ impl Memory<'_> {
         provenance: &Value,
         now: u64,
     ) -> MemoryResult<EntityId> {
+        self.mint_task_with_brief_at_in_txn(wtxn, identity, validated, label, provenance, None, now)
+    }
+
+    /// [`Self::mint_task_at_in_txn`] carrying the TASK's typed brief (OF-220).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the mint's identity, shape, display, provenance and brief are each its own input"
+    )]
+    pub(super) fn mint_task_with_brief_at_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        identity: (EntityId, EntityId),
+        validated: &ValidatedTaskCreate,
+        label: Option<String>,
+        provenance: &Value,
+        brief: Option<super::brief::StoredBrief>,
+        now: u64,
+    ) -> MemoryResult<EntityId> {
         let (task_ref, owner_ref) = identity;
         if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
             return Err(MemoryError::bad_request("task mint id is already occupied"));
@@ -308,6 +345,7 @@ impl Memory<'_> {
             provenance: provenance.clone(),
             created_at: now,
             refusal: None,
+            brief,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).

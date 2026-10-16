@@ -514,6 +514,13 @@ impl Vault {
             for id in &member_claim_ids {
                 if action == GateConsentBundleAction::Approve {
                     self.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
+                    crate::task_verb::settle_task_proposal_in_txn(
+                        self,
+                        wtxn,
+                        *id,
+                        Some(actor),
+                        now,
+                    )?;
                 } else {
                     self.cancel_deferred_claim_in_txn(wtxn, id)?;
                 }

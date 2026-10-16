@@ -179,6 +179,12 @@ pub enum TaskExecutionState {
         /// expecting an interruption that did not ask for consent.
         consent_required: bool,
     },
+    /// OF-220: the executor reported STUCK. An intent fact only: no queue
+    /// lease moves, and `on` names what it waits for (tasks, asks, results).
+    Blocked {
+        since: u64,
+        on: Vec<EntityId>,
+    },
     Terminal(TaskTerminalRecord),
 }
 
@@ -188,7 +194,10 @@ impl TaskExecutionState {
     pub const fn terminal(&self) -> Option<&TaskTerminalRecord> {
         match self {
             Self::Terminal(record) => Some(record),
-            Self::Queued | Self::Working { .. } | Self::Interrupted { .. } => None,
+            Self::Queued
+            | Self::Working { .. }
+            | Self::Interrupted { .. }
+            | Self::Blocked { .. } => None,
         }
     }
 
@@ -202,7 +211,7 @@ impl TaskExecutionState {
         match self {
             Self::Terminal(record) => record.ladder,
             Self::Interrupted { ladder, .. } => ladder.map(|state| state.disposition),
-            Self::Queued | Self::Working { .. } => None,
+            Self::Queued | Self::Working { .. } | Self::Blocked { .. } => None,
         }
     }
 }

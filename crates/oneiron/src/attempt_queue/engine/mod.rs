@@ -11,6 +11,7 @@ mod mutate;
 mod prune;
 mod reads;
 mod redirect;
+mod task_lease;
 mod workflow;
 
 use crate::store::Store;

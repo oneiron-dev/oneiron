@@ -126,7 +126,7 @@ impl Memory<'_> {
 
     /// Whether this handle's read credential withholds `task_ref`. An unbound
     /// handle withholds nothing.
-    fn credential_withholds(&self, task_ref: EntityId) -> MemoryResult<bool> {
+    pub(super) fn credential_withholds(&self, task_ref: EntityId) -> MemoryResult<bool> {
         Ok(self
             .credential_readable_ids(&[task_ref])?
             .is_some_and(|readable| readable.is_empty()))
@@ -151,13 +151,33 @@ impl Memory<'_> {
         Ok(rows)
     }
 
-    /// Updates one TASK. Today the update is the free render-tier
-    /// acknowledgement bit of a failed task.
+    /// Updates one TASK with the owner's acknowledgement of its failure: a
+    /// thin wrapper over the task highway's `Ack` report (OF-220), whose
+    /// richer reports (progress, blocked, done, failed, release, brief) ride
+    /// the same verb through [`Memory::tasks_highway`].
+    pub fn tasks_update(&self, task_ref: EntityId) -> MemoryResult<TaskUpdateReceipt> {
+        self.tasks_highway(
+            super::TaskVia::Wire,
+            super::TaskCall::Report(super::TaskReport {
+                task_ref,
+                attempt: None,
+                report_key: "ack".to_owned(),
+                body: super::TaskReportBody::Ack,
+            }),
+        )?;
+        Ok(TaskUpdateReceipt {
+            task_ref,
+            acked: task_is_acked(self.vault(), task_ref)?,
+        })
+    }
+
+    /// The free render-tier acknowledgement bit of a failed task, as the
+    /// highway's `Ack` report runs it.
     ///
     /// Only the task's owner dismisses its failure: the bit takes the row off
     /// every board, so another actor's dismissal is a typed refusal. A task
     /// this handle's credential does not read is absent, as in `describe`.
-    pub fn tasks_update(&self, task_ref: EntityId) -> MemoryResult<TaskUpdateReceipt> {
+    pub(super) fn tasks_ack_core(&self, task_ref: EntityId) -> MemoryResult<TaskUpdateReceipt> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksUpdate));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         if self.credential_withholds(task_ref)? {
