@@ -83,6 +83,9 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.images.view" => {
+                    remote_agent_verb_output::<oneiron::memory::PulledImage>(client, verb, &input)
+                }
                 "vault.receipts.get" => remote_agent_verb_output::<
                     Option<oneiron::receipt::CallReceipt>,
                 >(client, verb, &input),
@@ -116,6 +119,9 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.hooks.replay" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::HookReplayRow>,
+                >(client, verb, &input),
                 "vault.artifacts.view" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
                 >(client, verb, &input),
@@ -127,6 +133,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.artifacts.proposals" => remote_agent_verb_output::<
                     Vec<oneiron::edit_settle::PendingProposalView>,
+                >(client, verb, &input),
+                "vault.artifacts.waits" => remote_agent_verb_output::<
+                    Vec<oneiron::edit_settle::OrganWaitView>,
+                >(client, verb, &input),
+                "vault.artifacts.release_wait" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::ReleasedWait,
                 >(client, verb, &input),
                 "vault.artifacts.propose_deck" => remote_agent_verb_output::<
                     oneiron::blob_artifact::DeckProposeOutcome,
@@ -244,6 +256,9 @@ impl OneironClient {
                 "ai.video.cancel" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AiVideoCancelled,
                 >(client, verb, &input),
+                "ai.verdict" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiVerdict>(
+                    client, verb, &input,
+                ),
                 "connector.list" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::ConnectorEntry>,
                 >(client, verb, &input),
@@ -565,7 +580,10 @@ impl OneironClient {
         &self,
         limit: usize,
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
-        let input = oneiron::task_verb::sdk::ReceiptsRequest { limit: Some(limit) };
+        let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
+            limit: Some(limit),
+            ..Default::default()
+        };
         oneiron::memory::caps::check_limit(
             input
                 .limit
@@ -578,6 +596,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts", value)
+    }
+    /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.
+    pub fn vault_images_view(
+        &self,
+        input: &oneiron::memory::ImageViewRequest,
+    ) -> Result<oneiron::memory::PulledImage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.images.view", value)
     }
     pub fn vault_receipts_get(
         &self,
@@ -692,6 +723,19 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.packs.put", value)
     }
+    pub fn vault_hooks_replay(
+        &self,
+        input: &oneiron::task_verb::sdk::HooksReplayRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::HookReplayRow>, MemoryError> {
+        input.limit()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.hooks.replay", value)
+    }
     /// One artifact's kind, head and versions, each with its made_by and born-from.
     pub fn vault_artifacts_view(
         &self,
@@ -743,6 +787,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.proposals", value)
+    }
+    /// The organ calls held beside one artifact until one of your nodes can run them, each with why it waits.
+    pub fn vault_artifacts_waits(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactRefRequest,
+    ) -> Result<Vec<oneiron::edit_settle::OrganWaitView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.waits", value)
+    }
+    /// Lets one held organ call go, by its run ref, under the consent a Discard needs.
+    pub fn vault_artifacts_release_wait(
+        &self,
+        input: &oneiron::blob_artifact::ProposalSettleRequest,
+    ) -> Result<oneiron::blob_artifact::ReleasedWait, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.release_wait", value)
     }
     /// Runs one native deck transaction over the head and holds the proposal for Keep.
     pub fn vault_artifacts_propose_deck(
@@ -1206,6 +1276,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.video.cancel", value)
+    }
+    pub fn ai_verdict(
+        &self,
+        input: &oneiron::task_verb::sdk::AiVerdictRequest,
+    ) -> Result<oneiron::task_verb::sdk::AiVerdict, MemoryError> {
+        oneiron::memory::caps::check_batch_len("evidence", input.evidence.len())?;
+        oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.verdict", value)
     }
     pub fn connector_list(
         &self,

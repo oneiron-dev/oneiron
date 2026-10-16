@@ -2,14 +2,24 @@
 //!
 //! A generated image lands as one ASSET holding its bytes, with its ASSET_TEXT
 //! written in the same commit, so every form is ready before anyone reads it.
-//! The resolver then picks, per read, which form a consumer is served: image
-//! bytes for a consumer that reads images, the precomputed text for one that
-//! does not, and the text under budget pressure. It only picks the form of
-//! what the reader's scope already admits; a read no form fits fails closed.
+//! The resolver then serves each image lazily, down a ladder, per read: the
+//! full image to a reader that takes images in, when it fits the read's room;
+//! else a thumbnail beside the ASSET_TEXT and the image's view handle; else
+//! the text and the handle; and when nothing fits, the handle alone, and the
+//! vault asks whether everything is okay (OF-520). A host's fast per-image
+//! pick, through the host's own decision ladder, may step an image that would
+//! fit down from full; an unsure pick sends it. The handle fetches the full
+//! pixels later (view, crop, zoom, or `ask_image` through a small vision
+//! model), and every rung served and every pull is a served-form receipt. It
+//! only serves forms of what the reader's scope already admits; a read no
+//! form fits fails closed.
+
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use super::support::{decode_body_json, encode_rmpv};
 use super::*;
@@ -19,11 +29,19 @@ use super::structural::kind_string_for_type;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::limit_ask::EngineLimit;
+use crate::llm::decision::catalogue::QuestionFamily;
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial,
+    DecisionLadder, Reversibility, cut_text, fit_state,
+};
 use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
 use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
-use crate::llm::{BudgetLease, BudgetRead, BudgetThreshold, CallPurpose, LlmCapability, ModelId};
+use crate::llm::{BudgetLease, CallPurpose, LlmCapability, ModelId};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::receipt::{PixelPull, ServedForm};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
 use crate::vault::ReadMode;
 
@@ -33,19 +51,42 @@ const BODY_BYTES: &str = "bytes";
 const BODY_MEDIA_TYPE: &str = "mime_type";
 /// The ASSET body field that holds the bytes' BLAKE3 content hash.
 const BODY_BLAKE3: &str = "blake3";
+/// The longer edge, in pixels, of the thumbnail an image is served as when
+/// its full bytes do not fit.
+const THUMBNAIL_EDGE: u32 = 384;
+/// The JPEG quality a thumbnail is encoded at.
+const THUMBNAIL_QUALITY: u8 = 70;
+/// The hex digits of an image's content hash its view handle carries.
+const HANDLE_HASH_HEX: usize = 16;
+/// The longest edge, in pixels, a zoom scales a region to.
+const MAX_ZOOM_EDGE: u32 = 4096;
 
-/// The form an asset read serves.
+/// The family of the host's per-image pick (OF-329): does the task this
+/// read serves need this image in full? Keyed by the read's purpose; the
+/// wording is the host's.
+pub const IMAGE_FULL: QuestionFamily = QuestionFamily {
+    name: "memory.image_full",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// The rung of the lazy-image ladder an asset read serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServedAssetForm {
     /// The image bytes, with the newest ASSET_TEXT beside them as a caption.
     Image,
-    /// The newest ASSET_TEXT alone; no bytes.
+    /// A thumbnail of the image, beside its newest ASSET_TEXT and its view
+    /// handle.
+    Thumbnail,
+    /// The newest ASSET_TEXT and the image's view handle; no bytes.
     AssetText,
+    /// Nothing fit: the view handle alone.
+    Ask,
 }
 
 /// Who reads an asset: what the consumer's model takes in, and the call
-/// purpose whose policy row says where budget pressure starts.
+/// purpose the read serves, which the host's per-image pick reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetConsumer {
     /// The consumer's input capabilities; image bytes need `image_input`.
@@ -84,19 +125,172 @@ impl AssetConsumer {
     }
 }
 
+/// The host's fast per-image pick (OF-329): its ladder, the principal the
+/// read is for, the dial and learned bands, its wording of "does this task
+/// need this image in full?", the task the images serve, and each pick's
+/// anytime budget. A provider reads the task and the image's description as
+/// the call's bounded state. Only an in-band "no" steps an image down from
+/// full; an abstain, an answer outside the band or a failed ladder sends it.
+pub struct ImagePick<'a> {
+    pub ladder: DecisionLadder<'a>,
+    pub principal: EntityId,
+    pub dial: DecisionDial,
+    pub bands: DecisionBandPolicy,
+    pub wording: String,
+    pub task: String,
+    pub budget: Duration,
+}
+
+impl ImagePick<'_> {
+    /// Whether `asset`, described by `text`, goes in full for `purpose`.
+    fn wants_full(
+        &self,
+        asset: EntityId,
+        purpose: &CallPurpose,
+        text: Option<&(EntityId, String)>,
+    ) -> bool {
+        let purpose = serde_json::to_string(purpose).unwrap_or_default();
+        let Ok(question) = IMAGE_FULL.question(
+            &[purpose.as_bytes()],
+            self.wording.clone(),
+            AnswerContract::Noul,
+        ) else {
+            return true;
+        };
+        let description = text.map_or("", |(_, text)| text.as_str());
+        let state = fit_state(self.task.len().max(description.len()), |cut| {
+            json!({
+                "question": question.id.to_hex(),
+                "asset_ref": asset.to_hex(),
+                "task": cut_text(&self.task, cut),
+                "description": cut_text(description, cut),
+                "cut_at_bytes": cut,
+            })
+        });
+        let evidence: Vec<EntityId> = std::iter::once(asset)
+            .chain(text.map(|(id, _)| *id))
+            .collect();
+        self.ladder
+            .run(
+                &question,
+                self.principal,
+                &evidence,
+                &state,
+                self.dial,
+                &self.bands,
+                Reversibility::ReversibleRead,
+                &RetrievalDeadline::hard(Instant::now(), self.budget),
+            )
+            .map_or(true, |decision| {
+                !(decision.in_band && matches!(decision.answer, DecisionAnswer::Noul(false)))
+            })
+    }
+}
+
+/// An image's view handle, served with it at every rung: its ASSET and the
+/// leading hex of its content hash, as `<asset>@<hash>`. A handle is a
+/// locator, not a grant: a fetch through it reads the asset through the
+/// fetcher's own lane, and refuses an asset whose bytes are no longer the
+/// ones it names. A bare 32-hex asset ref reads as a handle naming any bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageHandle {
+    pub asset: EntityId,
+    content: String,
+}
+
+impl ImageHandle {
+    fn of(asset: EntityId, image: &ImageBytes) -> Self {
+        let mut content = blake3::hash(&image.bytes).to_hex().to_string();
+        content.truncate(HANDLE_HASH_HEX);
+        Self { asset, content }
+    }
+
+    /// The handle `handle` spells.
+    pub fn parse(handle: &str) -> MemoryResult<Self> {
+        let (asset, content) = handle.split_once('@').unwrap_or((handle, ""));
+        let asset = EntityId::from_hex(asset.trim())
+            .map_err(|_| MemoryError::bad_request("an image handle is <asset>@<hash>"))?;
+        let content = content.trim().to_ascii_lowercase();
+        if content.len() > 64 || !content.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(MemoryError::bad_request("an image handle is <asset>@<hash>"));
+        }
+        Ok(Self { asset, content })
+    }
+
+    fn names(&self, image: &ImageBytes) -> bool {
+        blake3::hash(&image.bytes)
+            .to_hex()
+            .starts_with(self.content.as_str())
+    }
+}
+
+impl std::fmt::Display for ImageHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.asset.to_hex(), self.content)
+    }
+}
+
 /// One asset as served to one consumer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedAsset {
     /// 32-hex ASSET id.
     pub asset_ref: String,
-    /// The form served.
+    /// The rung served.
     pub form: ServedAssetForm,
-    /// The bytes, for the image form only.
+    /// The pixels served: the full image's bytes, or its thumbnail's.
     pub image: Option<ImageBytes>,
     /// The ASSET_TEXT served: the whole text form, or the image's caption.
     pub text: Option<String>,
     /// 32-hex id of the ASSET_TEXT in `text`.
     pub asset_text_ref: Option<String>,
+    /// The image's view handle; `None` for an ASSET that holds no image.
+    pub handle: Option<String>,
+}
+
+/// A region of an image, in its own pixels from its top-left corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PixelRegion {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// `vault.images.view`'s request: the handle an image was served with, and
+/// what of its full pixels to fetch. No region and no edge is the whole
+/// image (a view); a region is a crop at the image's own resolution; an edge
+/// scales the region, or the whole image, so its longer side is that many
+/// pixels (a zoom).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImageViewRequest {
+    pub handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<PixelRegion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<u32>,
+}
+
+/// Pixels fetched through an image's handle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PulledImage {
+    /// 32-hex ASSET id.
+    pub asset_ref: String,
+    /// `view`, `crop`, `zoom` or `ask_image`, as its receipt records it.
+    pub pull: String,
+    pub mime_type: String,
+    /// Standard base64.
+    pub bytes: String,
+    /// The pixels' size, when their encoding says it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// The raw pixels, for an in-process caller that sends them on.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub image: Option<ImageBytes>,
 }
 
 /// The rows one generated image landed as.
@@ -247,35 +441,104 @@ impl Memory<'_> {
         })
     }
 
-    /// OF-329's resolve verb: the form of `asset_ref` this consumer is
-    /// served under `budget`, read through the bound actor's lane. An asset
-    /// that is absent, withheld, not an ASSET, or has no form for this
-    /// consumer is `NOT_FOUND` under the read's receipt. Every form served
-    /// is first recorded as a served-form receipt naming the lane's holder
+    /// OF-329's resolve verb: the rung of `asset_ref` this consumer is
+    /// served, read whole through the bound actor's lane as a single-entity
+    /// read is, after the host's `pick` when it gives one. An asset that is
+    /// absent, withheld, not an ASSET, or has no form for this consumer is
+    /// `NOT_FOUND` under the read's receipt. Every rung served is first
+    /// recorded as a served-form receipt naming the lane's holder
     /// ([`ScopedRead::commit_served_forms`]); a failed record fails the read.
     pub fn resolve_asset(
         &self,
         asset_ref: &str,
         consumer: &AssetConsumer,
-        budget: Option<&BudgetRead>,
+        pick: Option<&ImagePick<'_>>,
     ) -> MemoryResult<ScopedReadResult<ResolvedAsset>> {
+        let ScopedReadResult { mut value, receipt } =
+            self.serve_images(&[asset_ref.to_owned()], consumer, pick, Some(u64::MAX))?;
+        let value = value.pop().ok_or_else(|| no_form(asset_ref))?;
+        Ok(ScopedReadResult { value, receipt })
+    }
+
+    /// OF-329's serving for one model call's context: each of `asset_refs`,
+    /// in order, down its ladder within `room` bytes of served forms (the
+    /// vault's `limits.image_room_bytes` when `None`), each image that reads
+    /// in full first asking the host's `pick` whether the task needs it so.
+    /// An image no form of which fits the room left is served as its handle
+    /// alone, and the vault asks whether everything is okay. The rungs
+    /// served are recorded, in one write, before the call answers; the first
+    /// ref that is absent, withheld or has no form fails the call
+    /// `NOT_FOUND`.
+    pub fn serve_images(
+        &self,
+        asset_refs: &[String],
+        consumer: &AssetConsumer,
+        pick: Option<&ImagePick<'_>>,
+        room: Option<u64>,
+    ) -> MemoryResult<ScopedReadResult<Vec<ResolvedAsset>>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let asset = self.resolve_ref_in_lane(&lane, asset_ref)?;
-        let ScopedReadResult { value, receipt } =
-            asset_forms_in_lane(&lane, asset, consumer, false, &mut |_| true)?;
-        match value.and_then(|forms| forms.serve(consumer, budget)) {
-            Some(value) => {
-                lane.commit_served_forms(&[served_form(asset, &value)?])?;
-                Ok(ScopedReadResult { value, receipt })
+        let watch = self.vault.limit_watch();
+        let bound = room.unwrap_or_else(|| watch.bound(EngineLimit::ImageRoomBytes));
+        let mut left = bound;
+        let mut admits = |len: usize| match left.checked_sub(u64::try_from(len).unwrap_or(u64::MAX))
+        {
+            Some(rest) => {
+                left = rest;
+                true
             }
-            None => Err(no_form(asset_ref).with_read_receipt(receipt)),
+            None => false,
+        };
+        let mut receipt: Option<ScopedReadReceipt> = None;
+        let mut served = Vec::with_capacity(asset_refs.len());
+        let mut forms = Vec::with_capacity(asset_refs.len());
+        for asset_ref in asset_refs {
+            let asset = self.resolve_ref_in_lane(&lane, asset_ref)?;
+            let ScopedReadResult { value, receipt: read } =
+                asset_forms_in_lane(&lane, asset, false, &mut admits)?;
+            if let Some(receipt) = &mut receipt {
+                receipt.restrict_with(&read);
+            } else {
+                receipt = Some(read);
+            }
+            let resolved = match value {
+                Some(forms) => forms.resolved(consumer, pick, &mut admits)?,
+                None => None,
+            };
+            let Some((resolved, form, needed)) = resolved else {
+                let error = no_form(asset_ref);
+                return Err(match receipt {
+                    Some(receipt) => error.with_read_receipt(receipt),
+                    None => error,
+                });
+            };
+            if let Some(needed) = needed {
+                watch.crossed(EngineLimit::ImageRoomBytes, bound, needed);
+            }
+            forms.push(form);
+            served.push(resolved);
         }
+        let Some(receipt) = receipt else {
+            return Err(MemoryError::bad_request("a serve names at least one asset"));
+        };
+        lane.commit_served_forms(&forms)?;
+        Ok(ScopedReadResult {
+            value: served,
+            receipt,
+        })
+    }
+
+    /// `vault.images.view`: the full pixels behind an image's handle (the
+    /// whole image, a crop or a zoom), read through the bound actor's lane
+    /// and recorded as a pull before they return.
+    pub fn view_image(&self, request: &ImageViewRequest) -> MemoryResult<PulledImage> {
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        Ok(pull_image(&lane, request, false)?.value)
     }
 
     /// Hydrate's half of OF-329: each live image ASSET among `views` with a
     /// text this reader admits is served as [`hydrated_asset`] serves a
     /// reader that declared no image input. Every other view keeps its body.
-    /// The texts served are recorded, in one write, before the hydrate
+    /// The rungs served are recorded, in one write, before the hydrate
     /// answers.
     pub(super) fn serve_hydrated_assets(
         &self,
@@ -296,9 +559,9 @@ impl Memory<'_> {
             }
             let served = hydrated_asset(lane, *asset, &consumer, None, &mut |_| true)?;
             receipt.restrict_with(&served.receipt);
-            if let HydratedAsset::Text { body, asset_text } = served.value {
+            if let HydratedAsset::Served { body, form, .. } = served.value {
                 view.body = decode_body_json(&body);
-                served_forms.push(crate::receipt::ServedForm::text(*asset, asset_text));
+                served_forms.push(form);
             }
         }
         lane.commit_served_forms(&served_forms)?;
@@ -306,23 +569,54 @@ impl Memory<'_> {
     }
 }
 
+/// The pixels behind `request`'s handle, read through `lane`: the whole
+/// image, a crop or a zoom of it. An `ask` pull fetches them for a small
+/// vision model answering about them (`ask_image`) rather than for the
+/// reader. The pull is recorded as a served-form receipt naming the lane's
+/// holder before the pixels return; a handle whose asset is absent,
+/// withheld, holds no image or no longer holds the bytes it names is
+/// `NOT_FOUND`.
+pub fn pull_image(
+    lane: &ScopedRead<'_>,
+    request: &ImageViewRequest,
+    ask: bool,
+) -> MemoryResult<ScopedReadResult<PulledImage>> {
+    let handle = ImageHandle::parse(&request.handle)?;
+    // No text is decoded: a pull serves pixels alone.
+    let ScopedReadResult { value, receipt } =
+        asset_forms_in_lane(lane, handle.asset, true, &mut |_| false)?;
+    let Some(image) = value
+        .and_then(|forms| forms.image)
+        .filter(|image| handle.names(image))
+    else {
+        return Err(no_form(&request.handle).with_read_receipt(receipt));
+    };
+    let pull = match (ask, request.region, request.edge) {
+        (true, ..) => PixelPull::AskImage,
+        (false, None, None) => PixelPull::View,
+        (false, Some(_), None) => PixelPull::Crop,
+        (false, _, Some(_)) => PixelPull::Zoom,
+    };
+    let (pixels, width, height) = region_pixels(&image, request.region, request.edge)?;
+    lane.commit_served_forms(&[ServedForm::pulled(handle.asset, pull)])?;
+    Ok(ScopedReadResult {
+        value: PulledImage {
+            asset_ref: handle.asset.to_hex(),
+            pull: pull.as_str().to_owned(),
+            mime_type: pixels.media_type.clone(),
+            bytes: base64::engine::general_purpose::STANDARD.encode(&pixels.bytes),
+            width,
+            height,
+            image: Some(pixels),
+        },
+        receipt,
+    })
+}
+
 fn no_form(asset_ref: &str) -> MemoryError {
     MemoryError::not_found(format!(
         "asset {asset_ref:?} has no form this consumer reads"
     ))
-}
-
-/// What `resolved`, read from `asset`, served: its image, or its text form.
-fn served_form(
-    asset: EntityId,
-    resolved: &ResolvedAsset,
-) -> MemoryResult<crate::receipt::ServedForm> {
-    Ok(match resolved.asset_text_ref.as_deref() {
-        Some(asset_text) if resolved.form == ServedAssetForm::AssetText => {
-            crate::receipt::ServedForm::text(asset, EntityId::from_hex(asset_text)?)
-        }
-        _ => crate::receipt::ServedForm::image(asset),
-    })
 }
 
 /// What a hydrate serves, for one ASSET its lane admitted live.
@@ -332,68 +626,88 @@ pub enum HydratedAsset {
     /// form this reader is served (its body still names the image, bytes
     /// nulled), or an asset gone since the door read it.
     Stored,
-    /// A generated image, served as its bytes to a reader that reads images.
-    Image {
-        /// `{form, mime_type, bytes, asset_text_ref}` as MessagePack, the
-        /// bytes as standard base64 so a JSON door carries them where it
-        /// nulls a binary: the body the door projects in place of the stored
-        /// one.
+    /// A generated image, served at one rung of its ladder: its bytes, its
+    /// thumbnail beside its text, or its text, each with its view handle.
+    Served {
+        /// The rung's body as MessagePack, any pixels as standard base64 so
+        /// a JSON door carries them where it nulls a binary: the body the
+        /// door projects in place of the stored one.
         body: Vec<u8>,
-        /// The ASSET_TEXT the body names as the image's caption, a row the
-        /// reader did not name.
-        caption: Option<EntityId>,
+        /// The ASSET_TEXT the body names, a row the reader did not name.
+        text: Option<EntityId>,
+        /// The served-form record the door commits before it answers.
+        form: ServedForm,
     },
-    /// A generated image, served as its text form.
-    Text {
-        /// `{form, asset_text_ref, text}` as MessagePack: the body the door
-        /// projects in place of the stored one.
-        body: Vec<u8>,
-        /// The ASSET_TEXT served, a row the reader did not name.
-        asset_text: EntityId,
+    /// Nothing fit what the door may still decode: the door omits the
+    /// ASSET's body, its ref (the image's handle) reads it whole, and the
+    /// vault was asked whether everything is okay.
+    Omitted {
+        /// The served-form record the door commits before it answers.
+        form: ServedForm,
     },
-    /// The text's stored body is past what the door may still decode: the
-    /// door omits the ASSET's body, and its ref reads it whole.
-    Omitted,
 }
 
-/// The image form's body.
+impl HydratedAsset {
+    /// The served-form record this serving makes; `None` for a stored body.
+    #[must_use]
+    pub fn served_form(&self) -> Option<ServedForm> {
+        match self {
+            Self::Stored => None,
+            Self::Served { form, .. } | Self::Omitted { form } => Some(*form),
+        }
+    }
+}
+
+/// The image and thumbnail rungs' body.
 #[derive(Serialize)]
 struct ImageFormBody<'a> {
     form: ServedAssetForm,
     mime_type: &'a str,
     /// Standard base64.
     bytes: String,
+    /// The thumbnail's size in pixels; absent for the full image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     asset_text_ref: Option<String>,
+    /// The description beside a thumbnail; the full image names its
+    /// caption by ref alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
+    handle: &'a str,
 }
 
-/// The text form's body.
+/// The text rung's body.
 #[derive(Serialize)]
 struct TextFormBody<'a> {
     form: ServedAssetForm,
     asset_text_ref: String,
     text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handle: Option<&'a str>,
 }
 
 /// Hydrate's half of OF-329, for every door that reads through its own
-/// lane: what `asset`, an ASSET `lane` admitted live, serves `consumer`
-/// under `budget`, its ASSET_TEXT read through the same lane. A consumer
-/// that reads images, outside budget pressure, is served the image's bytes;
-/// any other its text form. Each text's stored body, and then the image
-/// form's body, is charged to `admits` before it decodes, so a door that
-/// bounds the bodies it decodes bounds these too: an image past the bound
-/// is served as its text form.
+/// lane: what `asset`, an ASSET `lane` admitted live, serves `consumer`, its
+/// ASSET_TEXT read through the same lane, down the image's ladder. Each
+/// text's stored body, and then each rung's body, is charged to `admits`
+/// before it decodes or serves, so a door that bounds the bodies it decodes
+/// bounds these too: an image past the bound steps down to its thumbnail,
+/// then its text, and with nothing left that fits is omitted, and the vault
+/// asks. The host's `pick` runs before the full image is charged.
 pub fn hydrated_asset(
     lane: &ScopedRead<'_>,
     asset: EntityId,
     consumer: &AssetConsumer,
-    budget: Option<&BudgetRead>,
+    pick: Option<&ImagePick<'_>>,
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<HydratedAsset>> {
     let ScopedReadResult { value, receipt } =
-        asset_forms_in_lane(lane, asset, consumer, true, admits)?;
+        asset_forms_in_lane(lane, asset, true, admits)?;
     let value = match value {
-        Some(forms) if forms.image.is_some() => forms.hydrated(consumer, budget, admits)?,
+        Some(forms) if forms.image.is_some() => forms.hydrated(lane, consumer, pick, admits)?,
         _ => HydratedAsset::Stored,
     };
     Ok(ScopedReadResult { value, receipt })
@@ -405,86 +719,235 @@ fn form_body(body: &impl Serialize) -> MemoryResult<Vec<u8>> {
         .map_err(|_| MemoryError::bad_request("body is not MessagePack-encodable"))
 }
 
-/// The forms one admitted ASSET holds, and where budget pressure starts for
-/// the consumer's purpose.
+/// Standard base64.
+fn base64_of(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// The forms one admitted ASSET holds.
 pub(crate) struct AssetForms {
     asset: EntityId,
     image: Option<ImageBytes>,
     /// The newest admitted ASSET_TEXT derived from the asset.
     text: Option<(EntityId, String)>,
-    /// Whether a text's stored body was refused before it decoded.
-    omitted: bool,
-    rung: BudgetThreshold,
+    /// The stored size of a text refused before it decoded.
+    omitted: Option<usize>,
+}
+
+/// A thumbnail of an image.
+struct Thumbnail {
+    image: ImageBytes,
+    width: u32,
+    height: u32,
+}
+
+/// The rung one image is served at, with the body a door projects for it.
+enum Rung {
+    Full(Vec<u8>),
+    Thumbnail(Thumbnail, Vec<u8>),
+    Description(Vec<u8>, EntityId),
+    /// Nothing fit: the smallest form needed this many bytes.
+    Ask(u64),
+}
+
+/// One image down its ladder: its rung, and what the host's pick answered
+/// when it ran.
+struct Climb {
+    rung: Rung,
+    pick: Option<bool>,
 }
 
 impl AssetForms {
-    /// The form `consumer` is served under `budget`; `None` fails closed.
-    fn form(
+    /// `image`, this asset's, down its ladder for `consumer` within
+    /// `admits`. `None` is an image with no form for this consumer and none
+    /// refused for room: no pixels it reads and no text.
+    fn climb(
         &self,
+        image: &ImageBytes,
         consumer: &AssetConsumer,
-        budget: Option<&BudgetRead>,
-    ) -> Option<ServedAssetForm> {
-        choose_form(
-            consumer.reads_images(),
-            under_pressure(budget, self.rung),
-            self.image.is_some(),
-            self.text.is_some(),
-        )
-    }
-
-    /// What [`hydrated_asset`] serves of an asset that holds an image: its
-    /// bytes, when `consumer` is served them under `budget` and `admits`
-    /// holds their body, captioned only by a text that decoded. Otherwise
-    /// its text form, a text `admits` refused omitting the body, and with no
-    /// text the stored body.
-    fn hydrated(
-        self,
-        consumer: &AssetConsumer,
-        budget: Option<&BudgetRead>,
+        pick: Option<&ImagePick<'_>>,
         admits: &mut dyn FnMut(usize) -> bool,
-    ) -> MemoryResult<HydratedAsset> {
-        if self.form(consumer, budget) == Some(ServedAssetForm::Image)
-            && let Some(image) = &self.image
-        {
-            let caption = self.text.as_ref().map(|(id, _)| *id);
-            let body = form_body(&ImageFormBody {
-                form: ServedAssetForm::Image,
-                mime_type: &image.media_type,
-                bytes: base64::engine::general_purpose::STANDARD.encode(&image.bytes),
-                asset_text_ref: caption.map(|id| id.to_hex()),
-            })?;
-            if admits(body.len()) {
-                return Ok(HydratedAsset::Image { body, caption });
+    ) -> MemoryResult<Option<Climb>> {
+        let handle = ImageHandle::of(self.asset, image).to_string();
+        let caption = self.text.as_ref().map(|(id, _)| id.to_hex());
+        let mut picked = None;
+        let mut needed = self.omitted;
+        let mut refused = |len: usize| {
+            needed = Some(needed.map_or(len, |needed| needed.min(len)));
+        };
+        if consumer.reads_images() {
+            let full = match pick {
+                Some(pick) => {
+                    let full = pick.wants_full(self.asset, &consumer.purpose, self.text.as_ref());
+                    picked = Some(full);
+                    full
+                }
+                None => true,
+            };
+            if full {
+                let body = form_body(&ImageFormBody {
+                    form: ServedAssetForm::Image,
+                    mime_type: &image.media_type,
+                    bytes: base64_of(&image.bytes),
+                    width: None,
+                    height: None,
+                    asset_text_ref: caption.clone(),
+                    text: None,
+                    handle: &handle,
+                })?;
+                if admits(body.len()) {
+                    return Ok(Some(Climb {
+                        rung: Rung::Full(body),
+                        pick: picked,
+                    }));
+                }
+                refused(body.len());
+            }
+            if let Some(thumbnail) = thumbnail_of(image) {
+                let body = form_body(&ImageFormBody {
+                    form: ServedAssetForm::Thumbnail,
+                    mime_type: &thumbnail.image.media_type,
+                    bytes: base64_of(&thumbnail.image.bytes),
+                    width: Some(thumbnail.width),
+                    height: Some(thumbnail.height),
+                    asset_text_ref: caption.clone(),
+                    text: self.text.as_ref().map(|(_, text)| text.as_str()),
+                    handle: &handle,
+                })?;
+                if admits(body.len()) {
+                    return Ok(Some(Climb {
+                        rung: Rung::Thumbnail(thumbnail, body),
+                        pick: picked,
+                    }));
+                }
+                refused(body.len());
             }
         }
-        if self.omitted {
-            return Ok(HydratedAsset::Omitted);
+        // The text's stored body was charged before it decoded.
+        if let Some((asset_text, text)) = &self.text {
+            let body = form_body(&TextFormBody {
+                form: ServedAssetForm::AssetText,
+                asset_text_ref: asset_text.to_hex(),
+                text,
+                handle: Some(&handle),
+            })?;
+            return Ok(Some(Climb {
+                rung: Rung::Description(body, *asset_text),
+                pick: picked,
+            }));
         }
-        let Some((asset_text, text)) = self.text else {
-            return Ok(HydratedAsset::Stored);
-        };
-        let body = form_body(&TextFormBody {
-            form: ServedAssetForm::AssetText,
-            asset_text_ref: asset_text.to_hex(),
-            text: &text,
-        })?;
-        Ok(HydratedAsset::Text { body, asset_text })
+        Ok(needed.map(|needed| Climb {
+            rung: Rung::Ask(u64::try_from(needed).unwrap_or(u64::MAX)),
+            pick: picked,
+        }))
     }
 
-    /// The asset as `consumer` is served it under `budget`; `None` fails closed.
-    pub(crate) fn serve(
+    /// The served-form record `climb` makes.
+    fn served_form(&self, climb: &Climb) -> ServedForm {
+        let text = self.text.as_ref().map(|(id, _)| *id);
+        let form = match &climb.rung {
+            Rung::Full(_) => ServedForm::image(self.asset),
+            Rung::Thumbnail(..) => ServedForm::thumbnail(self.asset, text),
+            Rung::Description(_, asset_text) => ServedForm::text(self.asset, *asset_text),
+            Rung::Ask(_) => ServedForm::ask(self.asset),
+        };
+        match climb.pick {
+            Some(full) => form.picked(full),
+            None => form,
+        }
+    }
+
+    /// What [`hydrated_asset`] serves of an asset that holds an image: the
+    /// rung its ladder reaches within `admits`, the ask raised on `lane`'s
+    /// vault when nothing fit, and with no form the stored body.
+    fn hydrated(
+        self,
+        lane: &ScopedRead<'_>,
+        consumer: &AssetConsumer,
+        pick: Option<&ImagePick<'_>>,
+        admits: &mut dyn FnMut(usize) -> bool,
+    ) -> MemoryResult<HydratedAsset> {
+        let Some(image) = &self.image else {
+            return Ok(HydratedAsset::Stored);
+        };
+        let Some(climb) = self.climb(image, consumer, pick, admits)? else {
+            return Ok(HydratedAsset::Stored);
+        };
+        let form = self.served_form(&climb);
+        let text = self.text.as_ref().map(|(id, _)| *id);
+        Ok(match climb.rung {
+            Rung::Full(body) | Rung::Thumbnail(_, body) | Rung::Description(body, _) => {
+                HydratedAsset::Served { body, text, form }
+            }
+            Rung::Ask(needed) => {
+                let watch = lane.vault().limit_watch();
+                watch.crossed(
+                    EngineLimit::ImageRoomBytes,
+                    watch.bound(EngineLimit::ImageRoomBytes),
+                    needed,
+                );
+                HydratedAsset::Omitted { form }
+            }
+        })
+    }
+
+    /// The asset as `consumer` is served it within `admits`, its served-form
+    /// record, and, for the ask rung, the bytes its smallest form needed.
+    /// `None` fails closed. An ASSET that holds no image is served its text.
+    fn resolved(
         self,
         consumer: &AssetConsumer,
-        budget: Option<&BudgetRead>,
-    ) -> Option<ResolvedAsset> {
-        let form = self.form(consumer, budget)?;
-        Some(ResolvedAsset {
-            asset_ref: self.asset.to_hex(),
-            form,
-            image: self.image.filter(|_| form == ServedAssetForm::Image),
-            asset_text_ref: self.text.as_ref().map(|(id, _)| id.to_hex()),
-            text: self.text.map(|(_, text)| text),
-        })
+        pick: Option<&ImagePick<'_>>,
+        admits: &mut dyn FnMut(usize) -> bool,
+    ) -> MemoryResult<Option<(ResolvedAsset, ServedForm, Option<u64>)>> {
+        let asset_ref = self.asset.to_hex();
+        let Some(image) = self.image.clone() else {
+            return Ok(self.text.map(|(asset_text, text)| {
+                (
+                    ResolvedAsset {
+                        asset_ref,
+                        form: ServedAssetForm::AssetText,
+                        image: None,
+                        text: Some(text),
+                        asset_text_ref: Some(asset_text.to_hex()),
+                        handle: None,
+                    },
+                    ServedForm::text(self.asset, asset_text),
+                    None,
+                )
+            }));
+        };
+        let Some(climb) = self.climb(&image, consumer, pick, admits)? else {
+            return Ok(None);
+        };
+        let served = self.served_form(&climb);
+        let handle = Some(ImageHandle::of(self.asset, &image).to_string());
+        let (form, pixels, needed) = match climb.rung {
+            Rung::Full(_) => (ServedAssetForm::Image, Some(image), None),
+            Rung::Thumbnail(thumbnail, _) => {
+                (ServedAssetForm::Thumbnail, Some(thumbnail.image), None)
+            }
+            Rung::Description(..) => (ServedAssetForm::AssetText, None, None),
+            Rung::Ask(needed) => (ServedAssetForm::Ask, None, Some(needed)),
+        };
+        let (text, asset_text_ref) = match self.text {
+            Some((asset_text, text)) if form != ServedAssetForm::Ask => {
+                (Some(text), Some(asset_text.to_hex()))
+            }
+            _ => (None, None),
+        };
+        Ok(Some((
+            ResolvedAsset {
+                asset_ref,
+                form,
+                image: pixels,
+                text,
+                asset_text_ref,
+                handle,
+            },
+            served,
+            needed,
+        )))
     }
 }
 
@@ -498,13 +961,12 @@ impl AssetForms {
 pub(crate) fn asset_forms_in_lane(
     lane: &ScopedRead<'_>,
     asset: EntityId,
-    consumer: &AssetConsumer,
     images_only: bool,
     admits: &mut dyn FnMut(usize) -> bool,
 ) -> MemoryResult<ScopedReadResult<Option<AssetForms>>> {
     let vault = lane.vault();
     let ScopedReadResult {
-        value: (row, derived, rung),
+        value: (row, derived),
         mut receipt,
     } = lane.read_projected(&[PointRead::id(asset)], None, |txn, rows| {
         let row = rows
@@ -525,10 +987,7 @@ pub(crate) fn asset_forms_in_lane(
                 derived.push(edge?.target);
             }
         }
-        let rung = crate::llm::read_effective_defaults(&vault.store, txn)?
-            .table()
-            .asset_text_at(&consumer.purpose);
-        Ok::<_, MemoryError>((row, derived, rung))
+        Ok::<_, MemoryError>((row, derived))
     })?;
     let Some(body) = row else {
         return Ok(ScopedReadResult {
@@ -540,8 +999,7 @@ pub(crate) fn asset_forms_in_lane(
         asset,
         image: image_of(&body)?,
         text: None,
-        omitted: false,
-        rung,
+        omitted: None,
     };
     if !(derived.is_empty() || (images_only && forms.image.is_none())) {
         let reads: Vec<_> = derived.iter().map(|id| PointRead::id(*id)).collect();
@@ -558,7 +1016,7 @@ pub(crate) fn asset_forms_in_lane(
                 continue;
             };
             if !admits(stored.len()) {
-                forms.omitted = true;
+                forms.omitted = Some(stored.len());
                 break;
             }
             if let Some(text) = text_of(stored) {
@@ -574,29 +1032,91 @@ pub(crate) fn asset_forms_in_lane(
     })
 }
 
-/// Image bytes go only to a consumer that reads images, of an asset that
-/// holds one, outside budget pressure. Otherwise the precomputed text;
-/// otherwise nothing, and the read fails closed.
-fn choose_form(
-    reads_images: bool,
-    under_pressure: bool,
-    has_image: bool,
-    has_text: bool,
-) -> Option<ServedAssetForm> {
-    if reads_images && has_image && !under_pressure {
-        Some(ServedAssetForm::Image)
-    } else if has_text {
-        Some(ServedAssetForm::AssetText)
+/// A thumbnail of `image`, its longer edge at most [`THUMBNAIL_EDGE`]
+/// pixels, as JPEG. `None` is bytes the engine's codecs do not decode.
+fn thumbnail_of(image: &ImageBytes) -> Option<Thumbnail> {
+    let decoded = image::load_from_memory(&image.bytes).ok()?;
+    let small = if decoded.width().max(decoded.height()) > THUMBNAIL_EDGE {
+        decoded.thumbnail(THUMBNAIL_EDGE, THUMBNAIL_EDGE)
     } else {
-        None
-    }
+        decoded
+    };
+    let small = image::DynamicImage::ImageRgb8(small.to_rgb8());
+    let mut bytes = Vec::new();
+    small
+        .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut bytes,
+            THUMBNAIL_QUALITY,
+        ))
+        .ok()?;
+    Some(Thumbnail {
+        image: ImageBytes {
+            bytes,
+            media_type: "image/jpeg".to_owned(),
+        },
+        width: small.width(),
+        height: small.height(),
+    })
 }
 
-/// Pressure starts once the budget has crossed the purpose's rung.
-fn under_pressure(budget: Option<&BudgetRead>, rung: BudgetThreshold) -> bool {
-    budget.is_some_and(|read| {
-        read.fired_thresholds.contains(&rung) || read.depleted_percent() >= rung.percent()
-    })
+/// The pixels a pull fetches of `image`: the bytes themselves for the whole
+/// image, else `region` cropped and, with `edge`, scaled so its longer side
+/// is `edge` pixels, as PNG. With the pixels' size when it reads.
+fn region_pixels(
+    image: &ImageBytes,
+    region: Option<PixelRegion>,
+    edge: Option<u32>,
+) -> MemoryResult<(ImageBytes, Option<u32>, Option<u32>)> {
+    if region.is_none() && edge.is_none() {
+        let size = image::ImageReader::new(std::io::Cursor::new(&image.bytes))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.into_dimensions().ok());
+        return Ok((
+            image.clone(),
+            size.map(|(width, _)| width),
+            size.map(|(_, height)| height),
+        ));
+    }
+    let decoded = image::load_from_memory(&image.bytes)
+        .map_err(|_| MemoryError::bad_request("this image's bytes do not decode for a crop"))?;
+    let mut view = match region {
+        Some(region) => {
+            if region.width == 0
+                || region.height == 0
+                || region.x >= decoded.width()
+                || region.y >= decoded.height()
+            {
+                return Err(MemoryError::bad_request("the region lies outside the image"));
+            }
+            decoded.crop_imm(
+                region.x,
+                region.y,
+                region.width.min(decoded.width() - region.x),
+                region.height.min(decoded.height() - region.y),
+            )
+        }
+        None => decoded,
+    };
+    if let Some(edge) = edge {
+        if edge == 0 || edge > MAX_ZOOM_EDGE {
+            return Err(MemoryError::bad_request(format!(
+                "a zoom's edge is 1 to {MAX_ZOOM_EDGE} pixels"
+            )));
+        }
+        view = view.resize(edge, edge, image::imageops::FilterType::Triangle);
+    }
+    let mut bytes = Vec::new();
+    view.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .map_err(|_| MemoryError::bad_request("the region does not encode as PNG"))?;
+    Ok((
+        ImageBytes {
+            bytes,
+            media_type: "image/png".to_owned(),
+        },
+        Some(view.width()),
+        Some(view.height()),
+    ))
 }
 
 /// The ASSET body for generated bytes: the canon asset fields beside the

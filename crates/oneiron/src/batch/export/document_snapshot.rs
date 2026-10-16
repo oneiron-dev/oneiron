@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    ArchiveSecretCustody, ExportAdapterDescriptor, ExportDiaryHold, ExportDiaryLedger,
-    ExportDiaryRead, ExportEdge, ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
+    ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryHold, ExportDiaryLedger, ExportDiaryRead, ExportEdge,
+    ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
     whole_vault_export_excludes_entity,
 };
 use crate::Vault;
@@ -65,11 +65,9 @@ impl Vault {
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
     /// all your data"); then each custody record goes as its handle only.
     pub fn export_whole_vault(&self, include_secrets: bool) -> Result<WholeVaultExport> {
-        self.export_whole_vault_with_admission(
-            CallerLocality::OnDevice,
-            include_secrets,
-            |_| Ok(()),
-        )
+        self.export_whole_vault_with_admission(CallerLocality::OnDevice, include_secrets, |_| {
+            Ok(())
+        })
     }
 
     /// The archive of exactly `records` and the graph between them, for a
@@ -80,7 +78,30 @@ impl Vault {
         &self,
         records: &BTreeSet<EntityId>,
     ) -> Result<WholeVaultExport> {
-        self.export_archive_snapshot(CallerLocality::OffDevice, Some(records), false, |_| Ok(()))
+        self.export_archive_snapshot(
+            CallerLocality::OffDevice,
+            Some(records),
+            ExportCut::Archive,
+            false,
+            |_| Ok(()),
+        )
+    }
+
+    /// "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
+    /// bundle (a ZIP of markdown concepts with YAML frontmatter) for other
+    /// tools. Lossy by design and labelled as not a full copy; it carries no
+    /// custody secret and does not re-import as a vault. The same diary reads
+    /// and credential nulling as the archive apply.
+    pub fn export_okf(&self) -> Result<WholeVaultExport> {
+        self.export_okf_with_admission(CallerLocality::OnDevice, |_| Ok(()))
+    }
+
+    pub(crate) fn export_okf_with_admission<E: From<Error>>(
+        &self,
+        locality: CallerLocality,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
+    ) -> std::result::Result<WholeVaultExport, E> {
+        self.export_archive_snapshot(locality, None, ExportCut::Okf, false, admit)
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME
@@ -95,13 +116,14 @@ impl Vault {
         include_secrets: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
     ) -> std::result::Result<WholeVaultExport, E> {
-        self.export_archive_snapshot(locality, None, include_secrets, admit)
+        self.export_archive_snapshot(locality, None, ExportCut::Archive, include_secrets, admit)
     }
 
     fn export_archive_snapshot<E: From<Error>>(
         &self,
         locality: CallerLocality,
         only: Option<&BTreeSet<EntityId>>,
+        cut: ExportCut,
         include_secrets: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
     ) -> std::result::Result<WholeVaultExport, E> {
@@ -114,7 +136,9 @@ impl Vault {
         admit(&rtxn)?;
         // A run names no world, so a caller off this device gets no run's
         // results: none of a device-local world's may leave it (DEC-0005).
-        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice && only.is_none()
+        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice
+            && only.is_none()
+            && cut == ExportCut::Archive
         {
             self.export_run_results_in_txn(&rtxn)?
         } else {
@@ -155,7 +179,10 @@ impl Vault {
             // custody records, so a re-import keeps every key. A scoped
             // export (a removed owner's, a contact's, a share's) never does.
             if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
-                if only.is_none() && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live() {
+                if only.is_none()
+                    && cut == ExportCut::Archive
+                    && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+                {
                     let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                         &self.store,
                         &rtxn,
@@ -324,24 +351,27 @@ impl Vault {
             .collect();
         drop(rtxn);
         let (diary_reads, diary_holds) = diaries.finish();
-        crate::serialize::serialize_vault_snapshot(ExportSnapshot {
-            entities,
-            edges,
-            adapters,
-            storage,
-            exported_at: crate::unix_seconds_now(),
-            skill_packages,
-            agent_fork_hashes,
-            pack_sources,
-            task_receipts,
-            archived_receipts,
-            run_results,
-            result_bodies,
-            diary_reads,
-            diary_holds,
-            secrets,
-            secrets_included: include_secrets && only.is_none(),
-        })
+        crate::serialize::serialize_vault_snapshot(
+            ExportSnapshot {
+                entities,
+                edges,
+                adapters,
+                storage,
+                exported_at: crate::unix_seconds_now(),
+                skill_packages,
+                agent_fork_hashes,
+                pack_sources,
+                task_receipts,
+                archived_receipts,
+                run_results,
+                result_bodies,
+                diary_reads,
+                diary_holds,
+                secrets,
+                secrets_included: include_secrets && only.is_none() && cut == ExportCut::Archive,
+            },
+            cut,
+        )
         .map_err(E::from)
     }
 

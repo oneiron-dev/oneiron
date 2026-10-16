@@ -75,7 +75,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.receipts",
-                crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VaultReceiptsRequest,
+                >(),
+            ),
+            (
+                "vault.images.view",
+                crate::code_run::vault_read::request_schema::<crate::memory::ImageViewRequest>(),
             ),
             (
                 "vault.receipts.get",
@@ -114,6 +120,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.hooks.replay",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::HooksReplayRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.view",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactRefRequest,
@@ -134,6 +146,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.artifacts.proposals",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.waits",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.release_wait",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
                 >(),
             ),
             (
@@ -309,6 +333,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "ai.video.cancel",
                 crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
+            ),
+            (
+                "ai.verdict",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AiVerdictRequest,
+                >(),
             ),
             (
                 "connector.list",
@@ -634,6 +664,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.images.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.receipts.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -697,6 +734,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.hooks.replay" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.view" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -719,6 +763,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.waits" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.release_wait" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1003,6 +1061,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.verdict" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1239,12 +1304,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
         }
         "vault.receipts" => {
-            let input: ReceiptsRequest = decode(value.clone())?;
+            let input: crate::task_verb::sdk::VaultReceiptsRequest = decode(value.clone())?;
             crate::memory::caps::check_limit(
                 input
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
             )?;
+        }
+        "vault.images.view" => {
+            let _input: crate::memory::ImageViewRequest = decode(value.clone())?;
         }
         "vault.receipts.get" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
@@ -1273,6 +1341,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.hooks.replay" => {
+            let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
+            input.limit()?;
+        }
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
@@ -1284,6 +1356,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.proposals" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.waits" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.release_wait" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
         }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
@@ -1398,6 +1476,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "ai.video.cancel" => {
             let _input: AiVideoJobRequest = decode(value.clone())?;
+        }
+        "ai.verdict" => {
+            let input: crate::task_verb::sdk::AiVerdictRequest = decode(value.clone())?;
+            crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
+            crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
         "connector.list" => {
             let _input: ConnectorListRequest = decode(value.clone())?;
@@ -1545,6 +1628,7 @@ pub fn invoke(
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
+        "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
         "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
@@ -1554,10 +1638,15 @@ pub fn invoke(
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
+        "vault.artifacts.waits" => encode(vault_artifacts_waits(memory, decode(value)?)?),
+        "vault.artifacts.release_wait" => {
+            encode(vault_artifacts_release_wait(memory, decode(value)?)?)
+        }
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -1610,6 +1699,7 @@ pub fn invoke(
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
         "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
+        "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
@@ -1845,18 +1935,25 @@ pub fn vault_export(
 }
 pub fn vault_receipts(
     memory: &Memory<'_>,
-    input: ReceiptsRequest,
+    input: crate::task_verb::sdk::VaultReceiptsRequest,
 ) -> MemoryResult<Vec<crate::memory::MemoryReceipt>> {
     crate::memory::caps::check_limit(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
     )?;
-    memory.receipts(
+    memory.receipts_of_kinds(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
+        &input.kinds,
     )
+}
+pub fn vault_images_view(
+    memory: &Memory<'_>,
+    input: crate::memory::ImageViewRequest,
+) -> MemoryResult<crate::memory::PulledImage> {
+    memory.view_image(&input)
 }
 pub fn vault_receipts_get(
     memory: &Memory<'_>,
@@ -1912,6 +2009,13 @@ pub fn vault_packs_put(
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
 }
+pub fn vault_hooks_replay(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::HooksReplayRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::HookReplayRow>> {
+    input.limit()?;
+    crate::task_verb::sdk::host_only(memory, "vault.hooks.replay", &input)
+}
 pub fn vault_artifacts_view(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ArtifactRefRequest,
@@ -1935,6 +2039,18 @@ pub fn vault_artifacts_proposals(
     input: crate::blob_artifact::ArtifactRefRequest,
 ) -> MemoryResult<Vec<crate::edit_settle::PendingProposalView>> {
     memory.artifacts_proposals(&input)
+}
+pub fn vault_artifacts_waits(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Vec<crate::edit_settle::OrganWaitView>> {
+    memory.artifacts_waits(&input)
+}
+pub fn vault_artifacts_release_wait(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::ReleasedWait> {
+    memory.artifacts_release_wait(&input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,
@@ -2218,6 +2334,14 @@ pub fn ai_video_cancel(
     input: AiVideoJobRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AiVideoCancelled> {
     crate::task_verb::sdk::host_only(memory, "ai.video.cancel", &input)
+}
+pub fn ai_verdict(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AiVerdictRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiVerdict> {
+    crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    crate::task_verb::sdk::host_only(memory, "ai.verdict", &input)
 }
 pub fn connector_list(
     memory: &Memory<'_>,

@@ -10,7 +10,8 @@ pub(crate) use self::effect_contacts::{
     counterparty_send_override_in_txn, hydrate_external_effect_contact,
 };
 use self::effect_grants::{
-    standing_outbound_grant_for_effect, touch_standing_outbound_grant_in_txn,
+    channel_identity_envelope_reservation_in_txn, standing_outbound_grant_for_effect,
+    touch_standing_outbound_grant_in_txn,
 };
 
 use crate::connector_key::{
@@ -57,6 +58,9 @@ pub(crate) struct ExternalEffectGovernance {
     approve_once: Option<crate::consent::ApproveOnceAuthorization>,
     approval_context: ApprovalContext,
     matched_grant: Option<(EntityId, StandingOutboundGrant)>,
+    /// OF-374: the sender row's envelope slot covering this send, spent only
+    /// when the decision is recorded as an admitting Allow.
+    envelope_reservation: Option<crate::outbound_grant::ChannelIdentityGrantReservation>,
     budget_target: Option<ExternalEffectBudgetTarget>,
     scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
 }
@@ -258,6 +262,33 @@ pub(crate) fn evaluate_external_effect_policy(
         // DEC-0006 evaluates its ordinary send requirement. The separate
         // cold-mail class is echoed as coverage only after the gate has
         // checked recipient class, actor, sender, and live owner grant here.
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
+    // OF-374 (L02 seam): a sender row at `AutonomousWithinEnvelope` releases
+    // this send with no press while its envelope has room (ARCH-0063). The
+    // slot is proven here and spent only with an admitting Allow; a held,
+    // denied or observed send spends nothing, and an exact replay finds its
+    // own slot. A native-mail cold send keeps its own OF-399 graduation.
+    let envelope_reservation = if mail_cold {
+        None
+    } else {
+        native_mail_cold_composed_effect(&hydrated_effect)
+            .map(|composed| {
+                channel_identity_envelope_reservation_in_txn(
+                    store,
+                    &*wtxn,
+                    &hydrated_effect,
+                    *composed.digest().as_bytes(),
+                    mutation_recorded_at,
+                )
+            })
+            .transpose()?
+            .flatten()
+    };
+    if envelope_reservation.is_some()
+        && let Some(bound) = requirement.as_ref()
+        && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
+    {
         consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
     }
     if let (Some(requirement), Some(effect_ctx)) =
@@ -623,6 +654,7 @@ pub(crate) fn evaluate_external_effect_policy(
         approve_once,
         approval_context,
         matched_grant,
+        envelope_reservation,
         budget_target,
         scoped_capability: scoped_mcp_capability,
     })
@@ -643,6 +675,7 @@ pub(crate) fn record_external_effect_policy(
         approve_once,
         approval_context,
         matched_grant,
+        envelope_reservation,
         budget_target: _,
         scoped_capability: _,
     } = governance;
@@ -707,6 +740,12 @@ pub(crate) fn record_external_effect_policy(
         && let Some((grant_id, grant)) = matched_grant
     {
         touch_standing_outbound_grant_in_txn(store, wtxn, &grant_id, grant, created_at)?;
+    }
+    if decision.outcome() == GateOutcome::Allow
+        && approval_context != ApprovalContext::Observe
+        && let Some(reservation) = envelope_reservation
+    {
+        reservation.commit_in_txn(store, wtxn, created_at)?;
     }
     store.diagnostics.gate.record_decision(&decision);
 
@@ -840,9 +879,9 @@ pub(crate) fn check_external_effect_policy(
 
 /// Records governance for an effect held BEFORE admission, such as a count
 /// ceiling reached under the admission writer lock. The decision stays as
-/// evidence, but nothing was admitted: no approve-once authorization is spent
-/// and no standing grant is touched as used, so the held effect can still
-/// run on its approval once the ceiling clears.
+/// evidence, but nothing was admitted: no approve-once authorization or
+/// envelope slot is spent and no standing grant is touched as used, so the
+/// held effect can still run on its approval once the ceiling clears.
 pub(crate) fn record_held_external_effect_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -860,6 +899,7 @@ pub(crate) fn record_held_external_effect_policy(
     )?;
     governance.approve_once = None;
     governance.matched_grant = None;
+    governance.envelope_reservation = None;
     record_external_effect_policy(store, wtxn, governance)
 }
 
