@@ -37,6 +37,7 @@ pub(super) fn rank_unmatched_entities_below_matches(
                             | RetrievalSignal::Phonetic
                             | RetrievalSignal::Hyde
                             | RetrievalSignal::HydeRetry
+                            | RetrievalSignal::MediaVector
                     )
             })
         })
