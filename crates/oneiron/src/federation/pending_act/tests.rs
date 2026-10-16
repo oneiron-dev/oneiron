@@ -861,3 +861,51 @@ fn a_withdrawal_inside_the_window_releases_nothing() -> Result<()> {
     assert!(!vault.pending_authority_act(&act.id)?.unwrap().completed);
     Ok(())
 }
+
+/// Execution state joined the act row after rows were stored without it: an unexecuted row
+/// keeps the bytes an earlier build wrote, and a row that build stored reads as unexecuted.
+#[test]
+fn an_act_row_stored_before_execution_state_reads_as_unexecuted() -> Result<()> {
+    /// The act row as builds before execution state stored it.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct StoredBefore {
+        id: String,
+        vault_id: u64,
+        act: String,
+        payload: Vec<u8>,
+        starter: String,
+        started_at: u64,
+        deadline: u64,
+        objector_roles: Vec<Role>,
+        required_verb: String,
+        starter_may_object: bool,
+        objections: BTreeSet<String>,
+        completed: bool,
+    }
+    let (_dir, vault, owner, _, _) = fixture(SharedVaultPreset::Org);
+    let act = vault.start_authority_act(&owner, 42, "erase", b"payload".to_vec())?;
+    let row = key(ACT_PREFIX, &act.id);
+    let stored = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .get(&txn, &row)?
+            .ok_or_else(invalid)?
+    };
+    let before: StoredBefore =
+        serde_json::from_slice(&stored).expect("an earlier build reads an unexecuted row");
+
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, &row, &serde_json::to_vec(&before).unwrap())?;
+    txn.commit()?;
+
+    let read = vault.pending_authority_act(&act.id)?.ok_or_else(invalid)?;
+    assert_eq!(read.execution, None);
+    assert_eq!(read, act);
+    Ok(())
+}

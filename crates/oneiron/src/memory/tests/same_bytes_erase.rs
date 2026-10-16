@@ -15,9 +15,10 @@ const ONLY_A: &[u8] = b"bytes only the first record holds";
 const ONLY_B: &[u8] = b"bytes only the second record holds";
 const OTHER: &[u8] = b"bytes an unrelated record holds";
 
-const FLAG: EraseOptions = EraseOptions {
+const FLAG: EraseOptions<'static> = EraseOptions {
     reason: EraseReason::UserHardDelete,
     also_same_bytes: true,
+    veto_starter: None,
 };
 
 /// The blob door's `blob.version` claims pass the gate only without the default manifest (see
@@ -78,8 +79,16 @@ fn version(vault: &crate::Vault, artifact: &EntityId, version: u64) -> Option<Ve
 /// scopes from the default manifest, so the fixture clears that manifest only once the members
 /// exist.
 fn shared_vault() -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
+    shared_vault_with(VaultConfig::default(), FederationGrantRole::Member)
+}
+
+/// [`shared_vault`] opened with `config`, its second writer holding `role`.
+fn shared_vault_with(
+    config: VaultConfig,
+    role: FederationGrantRole,
+) -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     let proof = crate::test_util::embedded_owner_proof(&vault);
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let member = put_person(&vault, 0xE2);
@@ -95,7 +104,7 @@ fn shared_vault() -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
                 },
                 InitialSharedMember {
                     member_ref: member,
-                    role: Some(FederationGrantRole::Member),
+                    role: Some(role),
                 },
             ],
             1,
@@ -210,6 +219,7 @@ fn only_a_live_vault_owner_confirms_a_same_bytes_erase() {
             let options = EraseOptions {
                 reason,
                 also_same_bytes: true,
+                veto_starter: None,
             };
             for (who, facade) in [("member", &theirs), ("agent", &agent)] {
                 let refused = facade
@@ -239,7 +249,10 @@ fn in_a_shared_vault_another_actors_record_is_held_not_erased() {
     let rows = rows(&outcome);
     assert_eq!(
         rows.get(&b),
-        Some(&SameBytesOutcome::Held(SameBytesHold::AnotherOwnersRecord))
+        Some(&SameBytesOutcome::Held {
+            reason: SameBytesHold::AnotherOwnersRecord,
+            act_id: None,
+        })
     );
     assert!(matches!(rows.get(&c), Some(SameBytesOutcome::Erased(_))));
     assert!(erased(&vault, &a) && erased(&vault, &c));
@@ -262,6 +275,7 @@ fn a_gdpr_erase_takes_every_holder_without_waiting_for_another_owner() {
             EraseOptions {
                 reason: EraseReason::GdprDelete,
                 also_same_bytes: true,
+                veto_starter: None,
             },
         )
         .expect("erase");
@@ -477,7 +491,10 @@ fn a_holder_whose_version_claim_was_deleted_is_held_and_keeps_its_bytes() {
 
     assert_eq!(
         rows(&outcome).get(&b),
-        Some(&SameBytesOutcome::Held(SameBytesHold::AnotherOwnersRecord))
+        Some(&SameBytesOutcome::Held {
+            reason: SameBytesHold::AnotherOwnersRecord,
+            act_id: None,
+        })
     );
     assert!(erased(&vault, &a));
     assert!(live(&vault, &b) && live(&vault, &asset(SHARED)));
@@ -521,6 +538,7 @@ fn a_match_with_its_own_brief_grant_is_erased_and_keeps_no_grant() {
                 EraseOptions {
                     reason,
                     also_same_bytes: true,
+                    veto_starter: None,
                 },
             )
             .expect("erase");
@@ -541,4 +559,176 @@ fn a_match_with_its_own_brief_grant_is_erased_and_keeps_no_grant() {
             "{reason:?}: the erased match's grant outlived it"
         );
     }
+}
+
+const WEEK: u64 = 7 * 24 * 60 * 60;
+
+/// A shared vault on a clock the test moves, where the embedded owner wrote `a` and a second
+/// owner wrote `b`, both holding the same bytes. The blobs are written without the default
+/// manifest (see `blob_vault`); an owner manifest goes back after them, because the veto
+/// window's act rows are read from a trusted manifest.
+struct TwoOwners {
+    _dir: tempfile::TempDir,
+    vault: crate::Vault,
+    clock: std::sync::Arc<crate::ports::ManualClock>,
+    me: crate::consent::AuthenticatedOwner,
+    other: crate::consent::AuthenticatedOwner,
+    a: EntityId,
+    b: EntityId,
+}
+
+fn two_owners() -> TwoOwners {
+    let clock = crate::ports::ManualClock::new(100);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    let (dir, vault, owner, other) = shared_vault_with(config, FederationGrantRole::Owner);
+    let me = crate::test_util::embedded_owner_proof(&vault);
+    let other_proof = vault
+        .authenticate_owner(
+            other,
+            &other.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("the other owner's proof");
+    let a = artifact(&facade_for(&vault, owner), &[SHARED]);
+    let b = artifact(&facade_for(&vault, other), &[SHARED]);
+    vault
+        .install_owner_policy_manifest(
+            &me,
+            EntityId::now(),
+            crate::gate::default_policy_manifest().expect("default manifest"),
+            100,
+        )
+        .expect("owner manifest");
+    TwoOwners {
+        _dir: dir,
+        vault,
+        clock,
+        me,
+        other: other_proof,
+        a,
+        b,
+    }
+}
+
+/// Erases `a` with the same-bytes flag under the caller's proof; `b`'s row must be held with
+/// the `erase` act it started.
+fn hold_b(owners: &TwoOwners) -> String {
+    let mine = facade_for(&owners.vault, owners.me.actor());
+    let preview = mine.preview_entity_delete(&owners.a).expect("preview");
+    let outcome = mine
+        .confirm_entity_erase(
+            &preview,
+            EraseOptions {
+                veto_starter: Some(&owners.me),
+                ..FLAG
+            },
+        )
+        .expect("erase");
+    assert!(erased(&owners.vault, &owners.a));
+    match rows(&outcome).remove(&owners.b) {
+        Some(SameBytesOutcome::Held {
+            reason: SameBytesHold::AnotherOwnersRecord,
+            act_id: Some(act),
+        }) => act,
+        row => panic!("the other owner's record was not held with an act: {row:?}"),
+    }
+}
+
+#[test]
+fn a_held_record_is_erased_once_its_owners_veto_window_runs_out() {
+    let owners = two_owners();
+    let act = hold_b(&owners);
+    let mine = facade_for(&owners.vault, owners.me.actor());
+    let execute = || mine.execute_completed_entity_erase(&owners.me, &act);
+
+    let early = execute().expect_err("the veto window is open");
+    assert_eq!(early.code, MEMORY_CODE_INVALID_STATE, "{early:?}");
+    owners
+        .vault
+        .change_authority_objection(&owners.other, &act, true)
+        .expect("the other owner objects");
+    owners.clock.set(100 + WEEK + 1);
+    let vetoed = execute().expect_err("an objection holds the erase past the deadline");
+    assert_eq!(vetoed.code, MEMORY_CODE_INVALID_STATE, "{vetoed:?}");
+    assert!(live(&owners.vault, &owners.b));
+    owners
+        .vault
+        .change_authority_objection(&owners.other, &act, false)
+        .expect("the other owner withdraws");
+    let theirs = facade_for(&owners.vault, owners.other.actor())
+        .execute_completed_entity_erase(&owners.other, &act)
+        .expect_err("only the act's starter executes it");
+    assert_eq!(theirs.code, MEMORY_CODE_FORBIDDEN, "{theirs:?}");
+    assert!(live(&owners.vault, &owners.b));
+
+    let receipt = execute().expect("the window ran out unopposed");
+
+    assert!(
+        receipt.existed && receipt.receipt_ref.is_some(),
+        "{receipt:?}"
+    );
+    assert!(erased(&owners.vault, &owners.b));
+    assert!(
+        !live(&owners.vault, &asset(SHARED)),
+        "the last holder took the bytes"
+    );
+    assert_eq!(
+        execute().expect("a retry"),
+        receipt,
+        "a retry returns the first erase's receipt"
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn a_held_erase_failing_after_its_tombstone_stays_claimed_by_that_request() {
+    let owners = two_owners();
+    let act = hold_b(&owners);
+    let mine = facade_for(&owners.vault, owners.me.actor());
+    owners.clock.set(100 + WEEK);
+    let learned_at = crate::batch::EntityMetadataHeader::parse(
+        &owners
+            .vault
+            .get_raw(&owners.b)
+            .expect("read")
+            .expect("live"),
+    )
+    .expect("header")
+    .learned_at;
+    let published = || {
+        owners
+            .vault
+            .entity_deletion_metadata(&owners.b, learned_at)
+            .expect("deletion metadata")
+            .and_then(|deletion| deletion.request_id)
+    };
+
+    crate::deletion::arm_fail_after_tombstone_before_purge();
+    mine.execute_completed_entity_erase(&owners.me, &act)
+        .expect_err("fails after its tombstone");
+
+    let request = published().expect("the tombstone was published");
+    let claimed = owners
+        .vault
+        .pending_authority_act(&act)
+        .expect("read act")
+        .expect("act")
+        .execution
+        .expect("the act was claimed with the tombstone");
+    assert_eq!(claimed.request, request);
+    assert_eq!(claimed.receipt, None);
+    let retry = mine
+        .execute_completed_entity_erase(&owners.me, &act)
+        .expect_err("its deletion recovery finishes the claimed request");
+    assert_eq!(retry.code, MEMORY_CODE_INVALID_STATE, "{retry:?}");
+    assert_eq!(
+        published(),
+        Some(request),
+        "a retry published no second request"
+    );
+    assert!(live(&owners.vault, &owners.b), "and purged nothing");
 }
