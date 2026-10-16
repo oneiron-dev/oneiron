@@ -131,6 +131,8 @@ embedder_requests = 2048          # requests `embedder serve` holds at once; pas
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
+projection_body_bytes = 4194304   # body bytes one multi-row read decodes
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
@@ -176,6 +178,15 @@ its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
 set) lands and the row asks; an upload that would take the vault's disk below
 `disk_reserve_bytes` is refused with 507, by its declared size before any byte
 is read.
+
+The two retrieval rows bound one request's shape, not how much a caller may
+read. A query past `retrieval_query_bytes` is refused with a 413 that names
+the field and the bound, and the first such query from a caller at a door
+leaves a check for the operator. A list, search or query whose decoded bodies
+would pass `projection_body_bytes` serves every row, and the rows past it
+carry `bodyOmitted` in place of their body; reading that row on its own
+returns its body whole. An over-large `limit` is served at 1,000 rows, and
+the response says it was clamped.
 
 ## CJK Dictionaries
 

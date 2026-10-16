@@ -143,6 +143,18 @@ impl Package {
         Ok(id)
     }
 
+    /// Add the relationship part of `source`, which has none, as written: a
+    /// cloned part keeps its relationship ids, which [`Package::relate`]
+    /// would mint afresh.
+    pub(crate) fn add_relationship_part(&mut self, source: &str, value: Vec<u8>) -> Result<()> {
+        let tree = XmlTree::parse(&value, self.limits.xml)
+            .map_err(|_| Error::Edit("relationship part unreadable"))?;
+        tree.root(PACKAGE_RELATIONSHIPS, "Relationships")
+            .map_err(|_| Error::Edit("relationship part unreadable"))?;
+        let rels = rels_name(source);
+        self.transact(|package| package.insert(&rels, RELS_TYPE, value))
+    }
+
     /// The relationships `source` declares, internal targets resolved to part
     /// names. A source without a relationship part has none.
     pub fn relationships(&self, source: &str) -> Result<Vec<Relationship>> {
