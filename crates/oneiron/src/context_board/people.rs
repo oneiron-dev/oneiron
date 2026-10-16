@@ -25,7 +25,9 @@ pub const PEOPLE_PREFIX_BUDGET_TOK: usize = 512;
 const AGENT_PERSON_DOMAIN: &[u8] = b"oneiron.people.agent-person.v1";
 
 /// Whether a person is a human or an agent. The room roster's kind column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PersonKind {
     Human,
@@ -43,7 +45,7 @@ impl PersonKind {
 }
 
 /// One person the vault knows.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PersonRow {
     /// The PERSON entity.
     pub person: EntityId,

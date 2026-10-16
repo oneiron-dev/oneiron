@@ -35,7 +35,7 @@ pub struct PeopleListRequest {
 }
 
 /// One page of the people the caller reads, in handle order.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeoplePage {
     pub vault: String,
     pub page: u32,
@@ -61,7 +61,7 @@ pub struct MessagePersonRequest {
 }
 
 /// The Direct room the message landed in, and its witness receipt.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessagePersonReceipt {
     pub room: String,
     pub receipt: WitnessReceipt,
@@ -98,11 +98,11 @@ pub struct GrantAskRequest {
 
 /// The pending access request. Asking grants nothing; the vault owner
 /// answers it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrantAskReceipt {
     pub request: String,
     pub asked: String,
-    pub status: &'static str,
+    pub status: String,
 }
 
 fn unix_ms() -> u64 {
@@ -281,7 +281,7 @@ impl Memory<'_> {
         Ok(GrantAskReceipt {
             request: request.to_hex(),
             asked: asked.handle.clone(),
-            status: "pending",
+            status: "pending".to_owned(),
         })
     }
 }
