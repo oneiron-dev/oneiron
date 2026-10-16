@@ -104,6 +104,13 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
                 "scheduled digest projection failed; attempt pass continues"
             );
         }
+        // Each reader's due weave digest, on the same home-only timer.
+        if let Err(error) = vault.serve_due_weave_digests(input.now, config.local_node_id) {
+            tracing::error!(
+                ?error,
+                "scheduled weave digests failed; attempt pass continues"
+            );
+        }
     }
     let pass = driver.run_wake_pass_concurrent(input, &mut executors, cancel);
     let Some(attachment) = attachment else {

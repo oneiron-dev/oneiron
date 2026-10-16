@@ -266,6 +266,19 @@ impl AuthenticatedOwner {
         }
     }
 
+    /// The credential slip this proof was carried under, and that slip's
+    /// parent. An offer refuses an answer from the lineage that opened it.
+    pub(super) fn credential_lineage(&self) -> Vec<[u8; 32]> {
+        self.credential
+            .as_ref()
+            .map_or_else(Vec::new, |credential| {
+                let claims = credential.claims();
+                std::iter::once(claims.slip_id)
+                    .chain(claims.parent_id)
+                    .collect()
+            })
+    }
+
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,
@@ -865,6 +878,21 @@ impl Vault {
             .filter(|row| query.include_revoked || row.is_active())
             .map(ConsentRegistryRow::from_row)
             .collect();
+        // A contact's clearance row is its own authority (OF-365): the
+        // registry projects it beside the grant rows, with its own revoke.
+        let rtxn = self.store.env.read_txn()?;
+        rows.extend(
+            crate::disclosure::contact_clearances_in_txn(&self.store, &rtxn)?
+                .iter()
+                .filter(|(_, clearance)| {
+                    query.include_revoked
+                        || clearance.status == crate::disclosure::DisclosureScopeStatus::Active
+                })
+                .map(|(contact, clearance)| {
+                    ConsentRegistryRow::from_contact_clearance(contact, clearance)
+                }),
+        );
+        drop(rtxn);
         rows.sort_by(|left, right| {
             right
                 .created_at

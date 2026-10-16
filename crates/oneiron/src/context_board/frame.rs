@@ -8,7 +8,6 @@
 //! Rendering is a pure function of typed state plus an explicit budget
 //! request: no store, cache, session, clock, or response is read or mutated.
 
-use super::agents::AgentsSection;
 use super::one_line_token;
 use super::tasks::TasksSection;
 use crate::tokenizer::count_context_pack_tokens;
@@ -124,7 +123,6 @@ pub enum ShedRank {
     CapabilityDiscovery,
     MemoriesSnippets,
     TasksToCounts,
-    AgentsToCounts,
     WorldsToCounts,
 }
 
@@ -137,7 +135,6 @@ impl ShedRank {
             Self::CapabilityDiscovery => "capability_discovery",
             Self::MemoriesSnippets => "memories_snippets",
             Self::TasksToCounts => "tasks_to_counts",
-            Self::AgentsToCounts => "agents_to_counts",
             Self::WorldsToCounts => "worlds_to_counts",
         }
     }
@@ -145,21 +142,19 @@ impl ShedRank {
 
 /// The canonical shed decision order. `PluginSections` is an outer first rank
 /// so plugins never outrank core state; it does not reorder the core four.
-pub const SHED_ORDER: [ShedRank; 6] = [
+pub const SHED_ORDER: [ShedRank; 5] = [
     ShedRank::PluginSections,
     ShedRank::CapabilityDiscovery,
     ShedRank::MemoriesSnippets,
     ShedRank::TasksToCounts,
-    ShedRank::AgentsToCounts,
     ShedRank::WorldsToCounts,
 ];
 
 /// The unchanged core-four subsequence of [`SHED_ORDER`].
-pub const CORE_SHED_ORDER: [ShedRank; 5] = [
+pub const CORE_SHED_ORDER: [ShedRank; 4] = [
     ShedRank::CapabilityDiscovery,
     ShedRank::MemoriesSnippets,
     ShedRank::TasksToCounts,
-    ShedRank::AgentsToCounts,
     ShedRank::WorldsToCounts,
 ];
 
@@ -282,72 +277,6 @@ impl BoardSection {
     pub fn policy(&self) -> SectionPolicy {
         self.policy
     }
-}
-
-/// PR-2 adapter over the landed producer outputs; `tasks.rs` / `agents.rs`
-/// stay byte-identical. It derives only the engine-owned `count: N` fallback
-/// and never infers domain semantics from row text.
-pub fn assemble_task_agent_sections(
-    tasks: &TasksSection,
-    agents: &AgentsSection,
-) -> Result<[BoardSection; 2], BoardFrameError> {
-    let tasks_section = BoardSection::new(
-        "TASKS",
-        Vec::new(),
-        tasks.rows.iter().map(|row| row.line.clone()).collect(),
-        vec![format!("count: {}", tasks.rows.len())],
-        SectionPolicy {
-            pinned: false,
-            shed_rank: Some(ShedRank::TasksToCounts),
-        },
-    )?;
-    let agents_section = assemble_agents_section(agents)?;
-    Ok([tasks_section, agents_section])
-}
-
-/// The AGENTS section alone: child and peer rows as its detail view, cand
-/// rows as its discovery lane (shed at `CapabilityDiscovery`), and a count of
-/// the non-cand rows as its fallback.
-pub fn assemble_agents_section(agents: &AgentsSection) -> Result<BoardSection, BoardFrameError> {
-    let mut agents_section = BoardSection::new(
-        "AGENTS",
-        Vec::new(),
-        agents
-            .rows
-            .iter()
-            .filter(|row| row.lane != super::AgentLane::Cand)
-            .map(|row| row.line.clone())
-            .collect(),
-        vec![format!(
-            "count: {}",
-            agents
-                .rows
-                .iter()
-                .filter(|row| row.lane != super::AgentLane::Cand)
-                .count()
-        )],
-        SectionPolicy {
-            pinned: false,
-            shed_rank: Some(ShedRank::AgentsToCounts),
-        },
-    )?;
-    agents_section.discovery_rows = agents
-        .rows
-        .iter()
-        .filter(|row| row.lane == super::AgentLane::Cand)
-        .map(|row| row.line.clone())
-        .collect();
-    for (row_index, row) in agents_section.discovery_rows.iter().enumerate() {
-        if row.len() > MAX_BOARD_ROW_BYTES {
-            return Err(BoardFrameError::RowExceedsByteLimit {
-                section: "AGENTS".into(),
-                row_index,
-                actual_bytes: row.len(),
-                max_bytes: MAX_BOARD_ROW_BYTES,
-            });
-        }
-    }
-    Ok(agents_section)
 }
 
 /// The TASKS section with `lead` detail rows ahead of the task rows (a

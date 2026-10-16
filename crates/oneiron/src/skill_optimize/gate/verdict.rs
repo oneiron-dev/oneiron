@@ -201,6 +201,9 @@ pub enum TradeoffRung {
     Judgment,
     /// The authenticated person: the owner door or an A/B pick.
     Person,
+    /// A live agent holding a responsible role the ask reached
+    /// (ROLES-EVERYWHERE).
+    Role,
 }
 
 /// The decision on a mixed (non-floor) goal vector: approve the candidate or

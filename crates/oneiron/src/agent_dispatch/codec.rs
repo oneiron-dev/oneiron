@@ -320,11 +320,13 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                         "task_type_ref must be node_id@tree_version",
                     ),
                 ))?;
-                type_ref = Some(crate::task_type::TaskTypeRef::parse_wire(wire).map_err(|_| {
-                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "task_type_ref must be node_id@tree_version",
-                    ))
-                })?);
+                type_ref = Some(
+                    crate::task_type::TaskTypeRef::parse_wire(wire).map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "task_type_ref must be node_id@tree_version",
+                        ))
+                    })?,
+                );
             }
             KEY_BUDGET => {
                 budget = Some(value.as_u64().ok_or(Error::Artifact(
@@ -470,7 +472,9 @@ pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
 /// The OF-543 type stamp of a queue row's dispatch payload, for the
 /// terminal attempt receipt. `None` only for non-dispatch rows.
 #[must_use]
-pub(crate) fn attempt_task_type_ref(record: &AttemptRecord) -> Option<crate::task_type::TaskTypeRef> {
+pub(crate) fn attempt_task_type_ref(
+    record: &AttemptRecord,
+) -> Option<crate::task_type::TaskTypeRef> {
     record_dispatch_input(record).map(|input| input.type_ref)
 }
 

@@ -25,6 +25,10 @@ use oneiron::skill_hub::{
 };
 use serde::{Deserialize, Serialize};
 
+use oneiron::connector_key::ProviderConnectionChecks;
+use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
+use oneiron::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
+
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
@@ -41,6 +45,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/packs", get(installed).post(put))
         .route("/packs/install", post(install_from_hub))
+        .route("/packs/setup", get(setup_view))
+        .route("/packs/setup/prepare", post(setup_prepare))
+        .route("/packs/setup/answer", post(setup_answer))
+        .route("/packs/setup/verify", post(setup_verify))
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
@@ -379,7 +387,9 @@ async fn put_organ_build(
             .map_err(|error| OwnerError::Host(error.into()))?
             .len();
         if length > MAX_ORGAN_BUILD_BYTES {
-            return Err(OwnerError::Invalid("the organ build is too large".to_owned()));
+            return Err(OwnerError::Invalid(
+                "the organ build is too large".to_owned(),
+            ));
         }
         let bytes = std::fs::read(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
         Ok(server.vault().put_pack_organ_build(
@@ -878,4 +888,198 @@ async fn approve_skill_activation(
     })
     .await?;
     Ok(Json(row))
+}
+
+/// One pack's setup: by name, and by content hash when several sources wait.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupKey {
+    pack: String,
+    /// One exact source; else the Active one, or the pack's one Candidate.
+    #[serde(default)]
+    source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupAnswerRequest {
+    pack: String,
+    #[serde(default)]
+    source: Option<String>,
+    /// A typed answer.
+    #[serde(default)]
+    answer: Option<PackSetupAnswer>,
+    /// Or one action from the setup's cards, with the card's `$state`.
+    #[serde(default)]
+    card_action: Option<PackSetupCardActionRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupCardActionRequest {
+    action_id: String,
+    #[serde(default)]
+    state: GeneratedUiStateSnapshot,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupVerifyRequest {
+    pack: String,
+    #[serde(default)]
+    source: Option<String>,
+    connection: String,
+}
+
+/// The setup, its GenUI cards and its plain text.
+#[derive(Serialize)]
+struct PackSetupReply {
+    setup: PackSetupView,
+    cards: Vec<GeneratedUiCard>,
+    text: String,
+    /// Set when a card asked to store a credential: the owner secrets door
+    /// takes the value, then a `secret_stored` answer pins its record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store_secret: Option<PackSetupStoreSecret>,
+}
+
+#[derive(Serialize)]
+struct PackSetupStoreSecret {
+    door: &'static str,
+    connection: String,
+    name: String,
+    /// The binding the stored credential needs, with the read scope.
+    effector: String,
+}
+
+impl PackSetupReply {
+    fn new(setup: PackSetupView) -> Result<Self, OwnerError> {
+        Ok(Self {
+            cards: setup.cards()?,
+            text: setup.text(),
+            setup,
+            store_secret: None,
+        })
+    }
+}
+
+/// `GET /v1/owner/packs/setup?pack=&source=`: the owner's guided setup of one
+/// pack (OF-378), readable while the pack is still a Candidate.
+async fn setup_view(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<PackSetupKey>, QueryRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let key = query_params(query)?;
+    let reply = blocking(move || {
+        PackSetupReply::new(server.vault().pack_setup(
+            &owner,
+            &key.pack,
+            key.source.as_deref(),
+        )?)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/prepare`: open, or resume, the setup. Opening
+/// grants nothing.
+async fn setup_prepare(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupKey>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        PackSetupReply::new(server.vault().prepare_pack_setup(
+            &owner,
+            &request.pack,
+            request.source.as_deref(),
+        )?)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/answer`: one typed answer, or one card action.
+/// A credential value never comes here: a card's store button answers with
+/// the owner secrets door to open.
+async fn setup_answer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupAnswerRequest>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        let vault = server.vault();
+        let source = request.source.as_deref();
+        let answer = match (request.answer, request.card_action) {
+            (Some(answer), None) => answer,
+            (None, Some(card)) => {
+                let view = vault.pack_setup(&owner, &request.pack, source)?;
+                match view.card_action(&card.action_id, &card.state)? {
+                    PackSetupCardAction::Answer(answer) => answer,
+                    PackSetupCardAction::Verify { connection } => {
+                        let checks = ProviderConnectionChecks::new()?;
+                        return PackSetupReply::new(vault.verify_pack_connection(
+                            &owner,
+                            &request.pack,
+                            source,
+                            &connection,
+                            &checks,
+                        )?);
+                    }
+                    PackSetupCardAction::StoreSecret {
+                        connection,
+                        secret,
+                        effector,
+                    } => {
+                        let mut reply = PackSetupReply::new(view)?;
+                        reply.store_secret = Some(PackSetupStoreSecret {
+                            door: "/v1/owner/secrets/register",
+                            connection,
+                            name: secret,
+                            effector,
+                        });
+                        return Ok(reply);
+                    }
+                }
+            }
+            _ => {
+                return Err(OwnerError::Invalid(
+                    "send exactly one of answer or card_action".to_owned(),
+                ));
+            }
+        };
+        PackSetupReply::new(vault.answer_pack_setup(&owner, &request.pack, source, &answer)?)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/verify`: check one connection before the pack
+/// uses it. The check is the engine's fixed read-only provider call for the
+/// declared check name; a pack never names a URL.
+async fn setup_verify(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupVerifyRequest>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        let checks = ProviderConnectionChecks::new()?;
+        PackSetupReply::new(server.vault().verify_pack_connection(
+            &owner,
+            &request.pack,
+            request.source.as_deref(),
+            &request.connection,
+            &checks,
+        )?)
+    })
+    .await?;
+    Ok(Json(reply))
 }

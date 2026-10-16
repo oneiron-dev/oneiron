@@ -1,6 +1,6 @@
 //! `/v1/ai`: the server's model-backed surfaces — status, chat turns, the
-//! session hints the Dreamer's triggers read, and the `ai.*` verbs past
-//! text (options, image, video, speech, transcribe, embed).
+//! session hints the Dreamer's triggers read, the `ai.*` verbs past text
+//! (options, image, video, speech, transcribe, embed), and `ask_image`.
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -17,6 +17,7 @@ use crate::server::SyncServer;
 
 pub(crate) mod chat;
 mod media;
+mod vision;
 mod waves;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -43,6 +44,7 @@ fn media_routes() -> Router<Arc<SyncServer>> {
         .route("/speech", post(media::speech))
         .route("/transcribe", post(media::transcribe))
         .route("/embed", post(media::embed))
+        .route("/ask_image", post(vision::ask_image))
         .layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT))
 }
 
@@ -75,12 +77,18 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
 #[serde(deny_unknown_fields)]
 struct QuotaAnswer {
     choice: QuotaChoice,
+    /// For `use_fallback`: the engine model id, one of the question's
+    /// `fallbacks`, that the parked offer's calls go to.
+    #[serde(default)]
+    fallback: Option<String>,
 }
 
 /// The owner's answer to a quota question in `GET /v1/ai/status` (OF-305):
 /// `top_up` or `pay_as_you_go` puts the parked offer back in rotation now,
 /// `wait` and `add_account` close the question and leave it parked until
-/// its reset.
+/// its reset, and `use_fallback` (`{"choice": "use_fallback", "fallback":
+/// "<model>"}`) sends its calls to that model on another provider while it
+/// stays parked.
 async fn answer_quota(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -97,13 +105,13 @@ async fn answer_quota(
     match server
         .ai
         .model_runtime()
-        .answer_quota(&question, answer.choice)
+        .answer_quota(&question, answer.choice, answer.fallback.as_deref())
     {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => refusal(
             StatusCode::NOT_FOUND,
             "no_such_question",
-            "no open quota question offers that choice",
+            "no open quota question offers that choice or fallback",
         ),
         Err(_) => refusal(
             StatusCode::INTERNAL_SERVER_ERROR,
