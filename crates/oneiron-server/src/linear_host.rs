@@ -11,11 +11,10 @@ use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::linear_sync::{LinearEffectKind, LinearEffectRequest};
+use oneiron::linear_sync::ServedLinearEgress;
 use oneiron::{
     EntityId, LinearChangePage, LinearChangeSource, LinearEgress, LinearIssueChange,
-    LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult, LinearTaskStore,
-    MirroredTaskFields,
+    LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult, MirroredTaskFields,
 };
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
@@ -23,6 +22,8 @@ use serde_json::{Value, json};
 
 use crate::server::SyncServer;
 use oneiron::linear_sync::VaultLinearTaskStore;
+
+mod direct;
 
 #[derive(Clone)]
 struct LinearBridge {
@@ -202,76 +203,6 @@ fn hex_operation_id(id: [u8; 32]) -> String {
     id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Outbound door for the scheduled mirror: no bridge mutation is sent until
-/// the vault admits it for the TASK's verified writer AND the scheduler.
-struct GatedEgress {
-    bridge: LinearBridge,
-    vault: Arc<oneiron::Vault>,
-    scheduler_actor: EntityId,
-}
-
-impl GatedEgress {
-    fn admit(
-        &self,
-        kind: LinearEffectKind,
-        operation_id: [u8; 32],
-        task_ref: EntityId,
-        issue: Option<&LinearIssueRef>,
-        fields: &MirroredTaskFields,
-    ) -> LinearSyncResult<()> {
-        let gate_ref = self.vault.authorize_linear_effect(&LinearEffectRequest {
-            operation_id,
-            task_ref,
-            scheduler_actor: self.scheduler_actor,
-            issue: issue.cloned(),
-            kind,
-            fields: fields.clone(),
-        })?;
-        tracing::debug!(gate_ref, "Linear effect admitted");
-        Ok(())
-    }
-}
-
-impl LinearEgress for GatedEgress {
-    fn create_issue(
-        &mut self,
-        operation_id: [u8; 32],
-        task_ref: EntityId,
-        fields: &MirroredTaskFields,
-    ) -> LinearSyncResult<LinearIssueChange> {
-        self.admit(
-            LinearEffectKind::Create,
-            operation_id,
-            task_ref,
-            None,
-            fields,
-        )?;
-        self.bridge.create_issue(operation_id, task_ref, fields)
-    }
-
-    fn update_issue_conditional(
-        &mut self,
-        operation_id: [u8; 32],
-        issue: &LinearIssueRef,
-        expected_remote: &BTreeMap<String, [u8; 32]>,
-        fields: &MirroredTaskFields,
-    ) -> LinearSyncResult<LinearIssueChange> {
-        let task_ref = oneiron::linear_sync::VaultLinearTaskStore::new(&self.vault)
-            .link_for_issue(issue)?
-            .ok_or(LinearSyncError::AuthorizationDenied)?
-            .task_ref;
-        self.admit(
-            LinearEffectKind::Update,
-            operation_id,
-            task_ref,
-            Some(issue),
-            fields,
-        )?;
-        self.bridge
-            .update_issue_conditional(operation_id, issue, expected_remote, fields)
-    }
-}
-
 /// A bearer-gated server is a prerequisite, independent of provider auth.
 /// Otherwise an anonymous core batch writer can inject TASKs for the mirror.
 pub(crate) fn validate_server_auth(
@@ -292,9 +223,9 @@ fn scheduler_actor(raw: Option<String>) -> anyhow::Result<EntityId> {
         .map_err(|_| anyhow::anyhow!("Linear scheduler actor must be an entity id"))
 }
 
-fn synchronize_once<O: LinearEgress>(
+fn synchronize_once<I: LinearChangeSource, O: LinearEgress>(
     vault: &oneiron::Vault,
-    inbound: LinearBridge,
+    inbound: I,
     outbound: O,
     now: u64,
     max_pull_pages_per_pass: usize,
@@ -325,6 +256,22 @@ async fn build_bridge(
 pub(crate) async fn spawn(
     server: Arc<SyncServer>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
+    let api_key = std::env::var("ONEIRON_LINEAR_API_KEY").ok();
+    let direct_config = std::env::var_os("ONEIRON_LINEAR_CONFIG");
+    if api_key.is_some() || direct_config.is_some() {
+        anyhow::ensure!(
+            std::env::var_os("ONEIRON_LINEAR_BRIDGE_URL").is_none()
+                && std::env::var_os("ONEIRON_LINEAR_BRIDGE_TOKEN").is_none(),
+            "configure either direct Linear GraphQL or a Linear bridge, not both"
+        );
+        let api_key = api_key.ok_or_else(|| {
+            anyhow::anyhow!("Linear direct mirror requires ONEIRON_LINEAR_API_KEY")
+        })?;
+        let config = direct_config.ok_or_else(|| {
+            anyhow::anyhow!("Linear direct mirror requires ONEIRON_LINEAR_CONFIG")
+        })?;
+        return direct::spawn(server, api_key, config.into()).await;
+    }
     let base = std::env::var("ONEIRON_LINEAR_BRIDGE_URL").ok();
     let token = std::env::var("ONEIRON_LINEAR_BRIDGE_TOKEN").ok();
     if base.is_none() && token.is_none() {
@@ -357,11 +304,7 @@ pub(crate) async fn spawn(
                 let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
                 let mut inbound = client;
                 inbound.request_timeout = Duration::from_secs(policy.request_timeout_secs);
-                let outbound = GatedEgress {
-                    bridge: inbound.clone(),
-                    vault: vault.clone(),
-                    scheduler_actor,
-                };
+                let outbound = ServedLinearEgress::new(&vault, scheduler_actor, inbound.clone());
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |time| time.as_secs());

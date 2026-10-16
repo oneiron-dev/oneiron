@@ -295,6 +295,37 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
 }
 
 impl Vault {
+    /// Resolve the TASKs of an already-applied cut under one durable snapshot.
+    /// The seal must match the validated plan before any per-task ref is served.
+    pub fn wave_plan_task_refs(
+        &self,
+        plan: &ValidatedWavePlan,
+    ) -> crate::Result<Option<BTreeMap<String, EntityId>>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(seal) = WAVE_PLAN_INDEX.get(&self.store, &txn, &index_key(plan.plan_ref(), ""))?
+        else {
+            return Ok(None);
+        };
+        if seal != fingerprint(plan) {
+            return Err(Error::InvalidConfig(
+                "wave plan seal does not match the cut".into(),
+            ));
+        }
+        let mut refs = BTreeMap::new();
+        for local in plan.topological_order() {
+            let raw = WAVE_PLAN_INDEX
+                .get(&self.store, &txn, &index_key(plan.plan_ref(), local))?
+                .ok_or(Error::CorruptedIndex("wave task index"))?;
+            let id = EntityId::from_bytes(
+                raw.as_slice()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("wave task index"))?,
+            )?;
+            refs.insert(local.clone(), id);
+        }
+        Ok(Some(refs))
+    }
+
     /// Scan one bounded slice of durable TASKs for unfinished wave work.
     /// No readiness bit is stored: the running host checks the live graph
     /// again before handing these refs to its executor.

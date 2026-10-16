@@ -43,6 +43,7 @@ pub(crate) mod test_support;
 mod tests;
 mod turn_actions;
 mod turns;
+pub(crate) mod waves;
 mod workflows;
 
 pub(crate) use policy::route_dreamer_extraction;
