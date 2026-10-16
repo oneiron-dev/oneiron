@@ -242,6 +242,12 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// A case where a person changed the decision ladder's answer, kept until the Coach's
+    /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
+    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
+    /// When the Coach's person-threshold run read a source's record, so a replay never counts
+    /// twice. Key: id16.
+    COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
     /// Immutable tested snapshot of a code document at one exact operation frontier (document id + op
     /// fold hash). Key: hash32 + hash32.
     CODE_DOCUMENT_FRONTIER: VaultMeta b"code_document:frontier:v1:" Named;

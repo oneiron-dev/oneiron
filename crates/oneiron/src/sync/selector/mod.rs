@@ -18,6 +18,7 @@ pub(in crate::sync) use document_admission::{
 mod edge;
 mod held_retire;
 mod note_admission;
+mod peer_confidence;
 mod scope;
 mod text_egress;
 pub(crate) use note_admission::admit_note_in_txn;
@@ -38,6 +39,7 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
+pub use self::peer_confidence::{DEFAULT_FEDERATED_CONFIDENCE_SCALE, PeerConfidence};
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
