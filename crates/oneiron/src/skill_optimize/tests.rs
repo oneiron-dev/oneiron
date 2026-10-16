@@ -564,7 +564,8 @@ fn a_losing_skill_drafts_one_gated_proposal_citing_its_defect_evidence() -> Resu
     let Value::Map(ref provenance) = proposal.provenance else {
         panic!("proposal provenance is a map");
     };
-    let authority = vault.dreamer_authority()?;
+    // SKILL-OPT is the Coach's job (owner ruling 2026-10-16).
+    let authority = vault.coach_authority()?;
     assert!(provenance.iter().any(|(key, value)| {
         key.as_str() == Some("actor_entity_ref")
             && value.as_slice() == Some(authority.entity_ref().as_bytes().as_slice())
@@ -5095,7 +5096,9 @@ fn jev_band_is_bound_and_only_outside_band_settles() -> Result<()> {
     let jev = decided.tradeoff_jev.as_ref().unwrap();
     assert_eq!(jev.pin.model, "jev");
     let resolution = decided.tradeoff_resolution.as_ref().unwrap();
-    assert_eq!(resolution.rung, TradeoffRung::Jev);
+    assert_eq!(resolution.rung, TradeoffRung::Judgment);
+    // Stored verdict rows carry the rung as JSON; the rename kept the v1 token.
+    assert_eq!(serde_json::to_string(&resolution.rung).unwrap(), "\"jev\"");
     assert_eq!(resolution.evidence, jev.question_digest);
     assert_eq!(resolution.authentication, "jev@pinned-1");
     assert_eq!(
