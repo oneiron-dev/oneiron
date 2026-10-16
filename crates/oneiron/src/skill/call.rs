@@ -10,8 +10,7 @@ use crate::claim::ClaimSource;
 use crate::code_run::{CodeRunDeterminism, SelfCall};
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    SelfDispatchResponse,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, SelfDispatchResponse,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::SkillRole;

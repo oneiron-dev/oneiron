@@ -350,7 +350,8 @@ impl HeldOutput {
         match target {
             StreamTarget::Console => self.console.extend_from_slice(&frame),
             StreamTarget::Finish { .. } => self.finish.extend_from_slice(&frame),
-            StreamTarget::File(path) => match self.files.iter_mut().find(|(held, _)| *held == path) {
+            StreamTarget::File(path) => match self.files.iter_mut().find(|(held, _)| *held == path)
+            {
                 Some((_, bytes)) => bytes.extend_from_slice(&frame),
                 None => self.files.push((path, frame)),
             },
@@ -361,7 +362,11 @@ impl HeldOutput {
     /// The step's outcome with what was held: the answer of a finished
     /// step, else its console lines, and its files.
     fn into_outcome(self, mut outcome: JsCodeModeStepOutcome) -> Result<JsCodeModeStepOutcome> {
-        let text = if outcome.done { self.finish } else { self.console };
+        let text = if outcome.done {
+            self.finish
+        } else {
+            self.console
+        };
         if outcome.observation.is_empty() {
             outcome.observation = String::from_utf8(text)
                 .map_err(|_| failure("streamed observation is not UTF-8"))?;

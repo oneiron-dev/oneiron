@@ -13,8 +13,8 @@ use super::record::{
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES,
     checkpoint_label, fallback_speech_marker, implicit_speak_output_path, load_observation_window,
-    load_utf8_output, observation_output_path, observation_ref, publish_output,
-    record_text_output, recoverable_chunk_path, script_output_path, validate_runtime_outputs,
+    load_utf8_output, observation_output_path, observation_ref, publish_output, record_text_output,
+    recoverable_chunk_path, script_output_path, validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -248,35 +248,35 @@ impl EngineNativeExecutor<'_> {
                         .map(|paths| (bodies, paths))
                 });
             let (bodies, runtime_output_paths) = match step_bodies {
-                    Ok(found) => found,
-                    Err(err) => {
-                        let durable_wait = host.durable_wait;
-                        let bridge_calls = host.bridge_calls;
-                        if !bridge_calls.is_empty()
-                            && let Some(status) = self.persist_failed_step_after_bridge_calls(
-                                &mut record,
-                                expected_generation,
-                                completed_steps,
-                                &request_hash,
-                                &script,
-                                bridge_start,
-                                bridge_calls,
-                                durable_wait,
-                                format!(
-                                    "Runtime output recording failed after host bridge calls: {err}"
-                                ),
-                                repairs.healed(),
-                                config,
-                            )?
-                        {
-                            if let Some(shadow) = &mut shadow {
-                                shadow.ended(Some(&status));
-                            }
-                            return Ok(self.outcome(status, steps_run + 1, record));
+                Ok(found) => found,
+                Err(err) => {
+                    let durable_wait = host.durable_wait;
+                    let bridge_calls = host.bridge_calls;
+                    if !bridge_calls.is_empty()
+                        && let Some(status) = self.persist_failed_step_after_bridge_calls(
+                            &mut record,
+                            expected_generation,
+                            completed_steps,
+                            &request_hash,
+                            &script,
+                            bridge_start,
+                            bridge_calls,
+                            durable_wait,
+                            format!(
+                                "Runtime output recording failed after host bridge calls: {err}"
+                            ),
+                            repairs.healed(),
+                            config,
+                        )?
+                    {
+                        if let Some(shadow) = &mut shadow {
+                            shadow.ended(Some(&status));
                         }
-                        return Err(err);
+                        return Ok(self.outcome(status, steps_run + 1, record));
                     }
-                };
+                    return Err(err);
+                }
+            };
             self.gated_write.refuse_a_step_that_dropped_a_write(
                 config.run_id,
                 bridge_start as u64,
