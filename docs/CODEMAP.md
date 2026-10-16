@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2914 | 903 | 90 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2915 | 903 | 90 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -225,7 +225,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `secret_rotation` | file+dir | 3 | m | yes | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
 | `secret_snapshot` | file+dir | 2 | s | yes | Snapshot-time secret custody filtering (ARCH-0069 S4/S5) |
 | `self_heal` | dir | 31 | m | yes | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
-| `serialize` | dir | 26 | m | — | Context-pack serialization |
+| `serialize` | dir | 27 | m | — | Context-pack serialization |
 | `session_lifecycle` | file+dir | 2 | m | yes | RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy… |
 | `session_overlay` | dir | 13 | m | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `settings` | file+dir | 5 | m | yes | Persisted customization settings and client-visible change events |

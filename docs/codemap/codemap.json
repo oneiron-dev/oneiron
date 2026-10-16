@@ -3753,8 +3753,8 @@
      "path": "src/batch/export/archive_types.rs",
      "purpose": "The whole-vault archive (OF-222): one ZIP holding `manifest.json`, one JSONL file per record kind under…",
      "surface": {
-      "const": 2,
-      "crate-vis": 7,
+      "const": 3,
+      "crate-vis": 8,
       "enum": 2,
       "struct": 4
      }
@@ -3830,8 +3830,8 @@
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 6,
-      "fn": 1
+      "crate-vis": 7,
+      "fn": 2
      }
     },
     {
@@ -27098,7 +27098,7 @@
      "path": "src/memory/export.rs",
      "purpose": "Full-vault memory export: the whole-vault archive (OF-222)",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 2,
       "fn": 4,
       "struct": 3
@@ -36230,6 +36230,16 @@
      "surface": {
       "crate-vis": 8,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/okf_bundle.rs",
+     "purpose": "\"Export to OKF\" (OF-222): the vault as an Open Knowledge Format v0.1 bundle for importing into other tools",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -48022,7 +48032,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48339,7 +48349,7 @@
    },
    "over_bar": 90,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2914,
+   "source_files": 2915,
    "test_files": 903
   },
   "oneiron-android": {
