@@ -103,13 +103,13 @@ mod host {
     use hyper::body::Incoming;
     use hyper_util::rt::{TokioIo, TokioTimer};
     use hyper_util::service::TowerToHyperService;
+    use oneiron_llm_own_server::{LLM_ALPN, LlmMeshService};
     use oneiron_mesh_transport::iroh_transport::{IrohTransport, private_relay_map};
     use oneiron_mesh_transport::transport_key::TransportKey;
     use oneiron_mesh_transport::{
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
         PairedMachineGrants, SYNC_ALPN, VaultMachineRoster,
     };
-    use oneiron_llm_own_server::{LLM_ALPN, LlmMeshService};
     use oneiron_organ_host::{
         AskHandlers, HostConfig, ORGAN_ALPN, OrganHost, OrganRouter, OrganService,
     };

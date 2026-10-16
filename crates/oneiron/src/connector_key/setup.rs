@@ -96,7 +96,10 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
             let session = self.require_pack_setup_in_txn(&txn, &binding)?;
-            check_allowed(declared_connection(&binding.setup.connections, connection)?, allowed)?;
+            check_allowed(
+                declared_connection(&binding.setup.connections, connection)?,
+                allowed,
+            )?;
             let mut withdrawn = Vec::new();
             for grant in &session.grants {
                 if grant.connection == connection
@@ -142,7 +145,11 @@ impl Vault {
                         && grant.grant_ref == grant_ref
                 });
                 if held
-                    && crate::consent::standing_grant_is_active_in_txn(&self.store, txn, &grant_ref)?
+                    && crate::consent::standing_grant_is_active_in_txn(
+                        &self.store,
+                        txn,
+                        &grant_ref,
+                    )?
                 {
                     continue;
                 }
@@ -185,8 +192,8 @@ impl Vault {
                 .connector
                 .as_deref()
                 .ok_or_else(|| invalid("the connection governs no connector key"))?;
-            let record =
-                read_connector_key_in_txn(&self.store, txn, &key_id)?.ok_or(Error::EntityNotFound)?;
+            let record = read_connector_key_in_txn(&self.store, txn, &key_id)?
+                .ok_or(Error::EntityNotFound)?;
             if record.connector != normalize_connector_key(connector) {
                 return Err(invalid("the key governs another connector"));
             }
@@ -197,7 +204,10 @@ impl Vault {
                 return Err(invalid("the key is suspended or revoked"));
             }
             if let Some(secret_ref) = record.secret_ref.as_deref()
-                && !declared.secrets.iter().any(|secret| secret.name == secret_ref)
+                && !declared
+                    .secrets
+                    .iter()
+                    .any(|secret| secret.name == secret_ref)
             {
                 return Err(invalid(
                     "the key's custody is not a credential this connection names",
@@ -326,13 +336,34 @@ impl Vault {
             (declared, sessions)
         };
         for session in &sessions {
-            if self.connection_state_in_txn(&txn, &declared, session)?.ready {
+            if self
+                .connection_state_in_txn(&txn, &declared, session)?
+                .ready
+            {
                 return Ok(());
             }
         }
         Err(invalid(
             "the connection is not checked; run the pack's setup before using it",
         ))
+    }
+
+    /// The credential a checked connection presents to its provider: the
+    /// first one it declares. A served send reads its value only through the
+    /// credential door for the declared effector (OF-187).
+    pub fn verified_pack_connection_secret(
+        &self,
+        pack: &str,
+        connection: &str,
+    ) -> Result<PackSetupSecret> {
+        self.require_pack_connection_verified(pack, connection)?;
+        let txn = self.store.env.read_txn()?;
+        let (setup, _) = self.installed_pack_setup_in_txn(&txn, pack)?;
+        declared_connection(&setup.connections, connection)?
+            .secrets
+            .first()
+            .cloned()
+            .ok_or_else(|| invalid("the connection names no credential"))
     }
 
     /// Every grant a run asks for that a setup connection serves needs one
@@ -358,7 +389,10 @@ impl Vault {
             let mut ready = false;
             'serving: for connection in serving {
                 for session in &sessions {
-                    if self.connection_state_in_txn(&txn, connection, session)?.ready {
+                    if self
+                        .connection_state_in_txn(&txn, connection, session)?
+                        .ready
+                    {
                         ready = true;
                         break 'serving;
                     }
@@ -410,13 +444,14 @@ impl Vault {
             .iter()
             .find(|key| key.connection == connection.id)
         {
-            let usable = read_connector_key_in_txn(&self.store, txn, &EntityId::from_hex(&bound.key_id)?)?
-                .is_some_and(|record| {
-                    matches!(
-                        record.status,
-                        ConnectorKeyStatus::Pending | ConnectorKeyStatus::Active
-                    )
-                });
+            let usable =
+                read_connector_key_in_txn(&self.store, txn, &EntityId::from_hex(&bound.key_id)?)?
+                    .is_some_and(|record| {
+                        matches!(
+                            record.status,
+                            ConnectorKeyStatus::Pending | ConnectorKeyStatus::Active
+                        )
+                    });
             frame(&mut hasher, bound.key_id.as_bytes());
             let state: &[u8] = if usable { b"usable" } else { b"unusable" };
             frame(&mut hasher, state);
@@ -428,7 +463,10 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         pack: &str,
-    ) -> Result<(crate::skill_hub::pack_catalog::PackSetup, Vec<PackSetupSession>)> {
+    ) -> Result<(
+        crate::skill_hub::pack_catalog::PackSetup,
+        Vec<PackSetupSession>,
+    )> {
         let receipt = self
             .installed_pack_in_txn(txn, pack)?
             .ok_or_else(|| invalid("the pack is not installed"))?;
@@ -471,7 +509,10 @@ impl Vault {
                 .iter()
                 .any(|permission| permission.id == id && permission.granted)
         };
-        if declared.required().any(|permission| !granted(&permission.id)) {
+        if declared
+            .required()
+            .any(|permission| !granted(&permission.id))
+        {
             return Err(invalid(
                 "allow the connection's required permissions before checking it",
             ));
@@ -526,8 +567,11 @@ pub struct ProviderConnectionChecks {
 
 impl ProviderConnectionChecks {
     /// Every check name this verifier answers.
-    pub const CHECKS: [&'static str; 3] =
-        [SLACK_AUTH_TEST_CHECK, LINE_BOT_INFO_CHECK, GMAIL_PROFILE_CHECK];
+    pub const CHECKS: [&'static str; 3] = [
+        SLACK_AUTH_TEST_CHECK,
+        LINE_BOT_INFO_CHECK,
+        GMAIL_PROFILE_CHECK,
+    ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
     pub fn new() -> Result<Self> {
@@ -598,7 +642,9 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
         let (status, scopes, body) = reply.ok_or_else(|| "the check did not run".to_owned())?;
         let evidence = blake3::hash(&body).to_hex().to_string();
         if !(200..300).contains(&status) {
-            return Err(format!("the provider refused the credential (HTTP {status})"));
+            return Err(format!(
+                "the provider refused the credential (HTTP {status})"
+            ));
         }
         let reply: serde_json::Value = serde_json::from_slice(&body)
             .map_err(|_| "the provider's reply is not JSON".to_owned())?;
@@ -651,8 +697,8 @@ fn connection_bound(
     connection: &str,
     permission: &PackSetupPermission,
 ) -> Result<GrantBound> {
-    let actor = ActorBound::new(format!("pack:{pack}"))?
-        .with_actor_class(PACK_CONNECTION_ACTOR_CLASS)?;
+    let actor =
+        ActorBound::new(format!("pack:{pack}"))?.with_actor_class(PACK_CONNECTION_ACTOR_CLASS)?;
     let class = ActionClass::new(
         permission
             .grant
@@ -704,10 +750,7 @@ fn judge_evidence(
             .filter(|scope| explained.contains(scope) && !allowed.iter().any(|a| a == scope))
             .collect();
         if !missing.is_empty() {
-            Some(format!(
-                "the provider did not grant {}",
-                missing.join(", ")
-            ))
+            Some(format!("the provider did not grant {}", missing.join(", ")))
         } else if !unexplained.is_empty() {
             Some(format!(
                 "the credential holds permissions this pack never explained: {}",

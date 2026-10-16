@@ -47,6 +47,9 @@ declare namespace self {
   };
   const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
+  const grants: {
+    ask(input: { pr: string; scope: { kind: 'messages' | 'summaries' | 'relationship_claims'; space_ref: string } | { kind: 'companion_profile'; facet_ref?: string | null } }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;
@@ -54,6 +57,7 @@ declare namespace self {
       review(input: { request: string; approve: boolean }): Promise<unknown>;
     };
   };
+  const message: (input: { pr: string; text: string }) => Promise<unknown>;
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;
     callables(input: object): Promise<unknown>;
@@ -92,6 +96,7 @@ declare const vault: {
     handoff_alarms: ((input: object) => Promise<unknown>) & {
       acknowledge(input: { signer: string }): Promise<unknown>;
     };
+    audit(input: { after?: string | null; kinds?: ("grant" | "revoke" | "confirm" | "other")[]; limit?: number | null }): Promise<unknown>;
   };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
@@ -115,6 +120,9 @@ declare const vault: {
     };
   };
   delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
+  disclosure: {
+    offer(input: { ask?: string | null; beneficiary: string; channel: string; contact: string; expires_at: number; owner_ref: string; purpose: string; scope: unknown }): Promise<unknown>;
+  };
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
@@ -130,6 +138,9 @@ declare const vault: {
   hydrate(input: { refs: string[] }): Promise<unknown>;
   images: {
     view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
+  };
+  inspection: {
+    resolve(input: { handle: string }): Promise<unknown>;
   };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;
@@ -159,6 +170,16 @@ declare const vault: {
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
+    setup: {
+      answer(input: { answer?: object | null; card_action?: object | null; pack: string; source?: string | null }): Promise<unknown>;
+      get(input: { pack: string; source?: string | null }): Promise<unknown>;
+      prepare(input: { pack: string; source?: string | null }): Promise<unknown>;
+      verify(input: { connection: string; pack: string; source?: string | null }): Promise<unknown>;
+    };
+  };
+  people: {
+    get(input: { pr: string }): Promise<unknown>;
+    list(input: { vault?: string | null; page?: number | null }): Promise<unknown>;
   };
   projects: {
     confirm(input: { action_id: string; card_id: string; occurred_at: number }): Promise<unknown>;
@@ -177,6 +198,7 @@ declare const vault: {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
   refs: {
+    links(input: { text?: string | null; turn_ref?: string | null }): Promise<unknown>;
     resolve(input: { reference: string }): Promise<unknown>;
   };
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
@@ -189,6 +211,7 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
+    participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
     reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;
     sharing(input: { room_ref: string }): Promise<unknown>;
@@ -206,6 +229,9 @@ declare const vault: {
     propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
     propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
     receipt(input: { receipt_id: string }): Promise<unknown>;
+  };
+  shares: {
+    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
   };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;

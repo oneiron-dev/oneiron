@@ -15,7 +15,8 @@ use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
 use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, ResidentDreamModel,
-    RoleBackend, RoleBackends, resident_of_dream_input, run_resident_dream,
+    RoleBackend, RoleBackends, TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel,
+    resident_of_dream_input, run_resident_dream, run_task_realize,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::llm::manifest::ModelRole;
@@ -186,8 +187,12 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             egress,
             summary_instruction: settings.summary_instruction.clone(),
             resident_instruction: settings.resident_instruction.clone(),
+            task_instruction: settings.task_instruction.clone().unwrap_or_else(|| {
+                oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
+            }),
             windows,
             weaver: None,
+            task_route: None,
             line: None,
             inner: None,
             status: Arc::clone(&status),
@@ -295,10 +300,15 @@ struct ObservedFactory {
     summary_instruction: Option<String>,
     /// Each resident's own dreaming is written with this (OF-490).
     resident_instruction: Option<String>,
+    /// A Dreamer-lane TASK realizes with this: the host's wording, else the
+    /// catalogue's own.
+    task_instruction: String,
     windows: BTreeMap<ModelId, u64>,
     /// The weaver's narrative route: the model and window a resident that
     /// inherits dreams on, never its diary.
     weaver: Option<RoleBackend>,
+    /// The route a TASK realizes on: narrative, else extraction.
+    task_route: Option<(ModelRole, RoleBackend)>,
     /// The pass's budget line, which a resident's own model also runs on.
     line: Option<oneiron::BudgetGuard>,
     inner: Option<ConsolidationExecutorFactory>,
@@ -354,6 +364,9 @@ impl ObservedFactory {
             );
         }
         self.weaver = roles.get(DREAMER_NARRATIVE_ROLE).cloned();
+        self.task_route = [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE]
+            .into_iter()
+            .find_map(|role| roles.get(role).cloned().map(|route| (role, route)));
         self.line = Some(line.clone());
         let extraction = roles
             .get(DREAMER_EXTRACTION_ROLE)
@@ -369,7 +382,12 @@ impl ObservedFactory {
             self.egress.then(|| extraction_egress(selected.collect())),
             Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
         )
-        .with_role_backends(roles);
+        .with_role_backends(roles)
+        // A fired commitment proposes its reminder where the vault already
+        // reaches the obligor; the owner approves it in run review (OF-187).
+        .with_commitment_wake_planner(Box::new(
+            oneiron::commitment_wake::CommitmentReminderPlanner,
+        ))?;
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
@@ -392,7 +410,11 @@ impl PassExecutorFactory for ObservedFactory {
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
         self.prepare(guard)?;
-        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+        let resident = match (
+            &self.weaver,
+            &self.line,
+            self.resident_instruction.as_deref(),
+        ) {
             (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,
@@ -405,6 +427,14 @@ impl PassExecutorFactory for ObservedFactory {
             }),
             _ => None,
         };
+        let task = self.task_route.as_ref().map(|(role, route)| TaskLend {
+            role: *role,
+            route,
+            guard,
+            egress: self.egress,
+            actor: self.actor,
+            instruction: &self.task_instruction,
+        });
         Ok(ObservedExecutor {
             inner: self
                 .inner
@@ -413,6 +443,7 @@ impl PassExecutorFactory for ObservedFactory {
                 .executor(guard)?,
             status: &self.status,
             resident,
+            task,
         })
     }
 
@@ -423,7 +454,11 @@ impl PassExecutorFactory for ObservedFactory {
     ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
         self.prepare(guard)?;
         let status = self.status.as_ref();
-        let resident = match (&self.weaver, &self.line, self.resident_instruction.as_deref()) {
+        let resident = match (
+            &self.weaver,
+            &self.line,
+            self.resident_instruction.as_deref(),
+        ) {
             (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,
@@ -436,6 +471,14 @@ impl PassExecutorFactory for ObservedFactory {
             }),
             _ => None,
         };
+        let task = self.task_route.as_ref().map(|(role, route)| TaskLend {
+            role: *role,
+            route,
+            guard,
+            egress: self.egress,
+            actor: self.actor,
+            instruction: &self.task_instruction,
+        });
         self.inner
             .as_mut()
             .expect("prepared factory")
@@ -447,6 +490,7 @@ impl PassExecutorFactory for ObservedFactory {
                         inner,
                         status,
                         resident,
+                        task,
                     })
                     .collect()
             })
@@ -462,6 +506,49 @@ struct ObservedExecutor<'p, E> {
     status: &'p StatusCell,
     /// What a resident's own dreaming borrows; none without an instruction.
     resident: Option<ResidentLend<'p>>,
+    /// What a Dreamer-lane TASK's realization borrows; none without a route.
+    task: Option<TaskLend<'p>>,
+}
+
+/// The host's loan to a Dreamer-lane TASK's realization: the pass's route
+/// and line, the Dreamer's stamp and the wording.
+#[derive(Clone, Copy)]
+struct TaskLend<'p> {
+    role: ModelRole,
+    route: &'p RoleBackend,
+    guard: &'p oneiron::BudgetGuard,
+    egress: bool,
+    actor: WriteActor,
+    instruction: &'p str,
+}
+
+impl TaskLend<'_> {
+    async fn realize(
+        self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+    ) -> oneiron::Result<DreamerAttemptExecution> {
+        let egress = self
+            .egress
+            .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
+        run_task_realize(
+            attempt,
+            ctx,
+            TaskRealizeModel {
+                backend: self.route.backend.as_ref(),
+                guard: self.guard,
+                model: self.route.model.clone(),
+                inference: HostInferenceContext {
+                    binding: self.route.binding.clone(),
+                    extraction_egress: egress.as_deref(),
+                },
+                role: self.role,
+                actor: self.actor,
+                instruction: self.instruction,
+            },
+        )
+        .await
+    }
 }
 
 /// The host's loan to one resident's dreaming (OF-490): its own model when
@@ -564,6 +651,15 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 Some(lend) => lend.dream(attempt, ctx).await,
                 // Without the host's instruction no resident dreams tonight.
                 None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
+        {
+            match self.task {
+                Some(lend) => lend.realize(attempt, ctx).await,
+                None => Ok(DreamerAttemptExecution::Park {
+                    reason: TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
+                }),
             }
         } else {
             self.inner.execute(attempt, ctx).await

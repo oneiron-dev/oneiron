@@ -31,6 +31,10 @@ report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+vaultPeopleList(input: unknown): unknown
+vaultPeopleGet(input: unknown): unknown
+selfMessage(input: unknown): unknown
+selfGrantsAsk(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
@@ -52,6 +56,12 @@ vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultPacksSetupPrepare(input: unknown): unknown
+vaultPacksSetupGet(input: unknown): unknown
+vaultPacksSetupAnswer(input: unknown): unknown
+vaultPacksSetupVerify(input: unknown): unknown
+vaultAuthorityAudit(input: unknown): unknown
+vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
 vaultSharedProposeRemoveOwner(input: unknown): unknown
@@ -70,6 +80,8 @@ vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
+vaultDisclosureOffer(input: unknown): unknown
+vaultSharesCreate(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
@@ -91,6 +103,7 @@ tasksAnswer(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
+vaultRoomsParticipants(input: unknown): unknown
 vaultRoomsRender(input: unknown): unknown
 vaultRoomsFind(input: unknown): unknown
 vaultRoomsGet(input: unknown): unknown
@@ -140,6 +153,7 @@ vaultWritesPending(input: unknown): unknown
 vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
 vaultRefsResolve(input: unknown): unknown
+vaultRefsLinks(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown

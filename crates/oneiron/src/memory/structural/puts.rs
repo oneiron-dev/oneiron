@@ -370,7 +370,8 @@ impl Memory<'_> {
         })
     }
 
-    /// Reads one blob artifact version's bytes (hash-verified by the engine).
+    /// Reads one blob artifact version's bytes (hash-verified by the engine),
+    /// with any keys in them masked unless the bound actor is the owner.
     pub fn read_blob_version(
         &self,
         artifact_ref: &str,
@@ -378,7 +379,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<Vec<u8>>> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
         self.vault
-            .read_blob_artifact_version(&artifact_id, version)
+            .read_blob_artifact_version_as(&artifact_id, version, self.secret_sight()?)
             .map_err(MemoryError::from)
     }
 }

@@ -1,7 +1,33 @@
 //! Connects typed MEMORIES projections to the shared board frame and shed ladder.
 use super::frame::{BoardFrameError, BoardSection, SectionPolicy, ShedRank};
-use super::memories::{MemoriesSection, MemoryTier};
+use super::memories::{MemoriesSection, MemoryRow, MemoryTier};
 use std::collections::BTreeMap;
+
+/// One MEMORIES row as the board renders it. A foreign row shows no snippet.
+/// A hook block's row carries its hook's tag, as a quoted leaf.
+pub(super) fn memory_row_text(row: &MemoryRow, foreign: bool) -> String {
+    let label = row
+        .claim_source
+        .map_or("unknown", crate::claim::ClaimSource::as_str);
+    let tier = match row.tier {
+        MemoryTier::Pinned => "PINNED",
+        MemoryTier::Snippet if !foreign => "snippet",
+        _ => "index-only",
+    };
+    let mut text = format!(
+        "{}:{} trust={} tier={}",
+        row.short_id, row.content_hash, label, tier
+    );
+    if let Some(hook) = &row.hook {
+        text.push_str(" hook=");
+        text.push_str(&super::quoted_leaf(hook));
+    }
+    if !foreign && let Some(snippet) = &row.snippet {
+        text.push(' ');
+        text.push_str(snippet);
+    }
+    text
+}
 
 pub fn assemble_memories_sections(
     section: &MemoriesSection,
@@ -18,22 +44,7 @@ pub fn assemble_memories_sections(
         let mut pinned = Vec::new();
         let mut details = Vec::new();
         for row in &rows {
-            let label = row
-                .claim_source
-                .map_or("unknown", crate::claim::ClaimSource::as_str);
-            let tier = match row.tier {
-                MemoryTier::Pinned => "PINNED",
-                MemoryTier::Snippet if !foreign => "snippet",
-                _ => "index-only",
-            };
-            let mut text = format!(
-                "{}:{} trust={} tier={}",
-                row.short_id, row.content_hash, label, tier
-            );
-            if !foreign && let Some(snippet) = &row.snippet {
-                text.push(' ');
-                text.push_str(snippet);
-            }
+            let text = memory_row_text(row, foreign);
             if row.tier == MemoryTier::Pinned {
                 pinned.push(text);
             } else {
@@ -71,6 +82,7 @@ impl MemoriesSection {
                 header,
                 legend: &super::frame::BoardLegend::canonical(),
                 sections: &sections,
+                you: None,
                 changes: None,
             },
             budget,
