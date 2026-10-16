@@ -165,6 +165,12 @@ pub(crate) use rooms::RoomThreadTask;
 
 pub(crate) use rooms::project_room_audience_in;
 
+pub use rooms::JoinCause;
+pub(crate) use rooms::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    record_participation_in_txn, require_join_covering_in_txn,
+};
+
 pub use crate::gate::RoomThreadFill;
 
 mod join_consent;

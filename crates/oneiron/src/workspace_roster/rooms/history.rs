@@ -75,7 +75,7 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
             HANDLES.delete(store, txn, key)?;
         }
     }
-    Ok(())
+    super::participation::delete_room_facts(store, txn, room)
 }
 impl Memory<'_> {
     /// The turns among `turns` this reader may read. Membership admits none

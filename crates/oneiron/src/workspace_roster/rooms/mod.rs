@@ -2,6 +2,7 @@
 mod history;
 mod hosting;
 mod liveness;
+mod participation;
 #[cfg(test)]
 mod tests;
 mod witness;
@@ -17,6 +18,11 @@ pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
+};
+pub use participation::JoinCause;
+pub(crate) use participation::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    record_participation_in_txn, require_join_covering_in_txn,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
