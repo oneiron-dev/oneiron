@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::skill_hub::{HubImportReceipt, default_skill_hub_commit, default_skill_hub_id};
@@ -42,7 +42,8 @@ async fn restore_defaults(
     let receipts = blocking(move || {
         let vault = server.vault();
         let at = unix_seconds_now();
-        let restored = vault.restore_default_skills(&owner, TimeRange { start: at, end: at }, at)?;
+        let restored =
+            vault.restore_default_skills(&owner, TimeRange { start: at, end: at }, at)?;
         restored
             .into_iter()
             .map(|entity| {

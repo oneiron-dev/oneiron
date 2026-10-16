@@ -67,6 +67,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         let mut answers = self.decide_pack(&DecisionPack {
             questions: &[call.question],
             evidence: call.evidence,
+            images: call.images,
             state: call.state,
             deadline: call.deadline,
         })?;
@@ -99,7 +100,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             let labels = match &question.contract {
                 AnswerContract::Noul => LabelSet::Noul,
                 AnswerContract::Choice { options } => LabelSet::Choice(options),
-                AnswerContract::Score { .. } => {
+                AnswerContract::Score { .. } | AnswerContract::Box => {
                     return Err(invalid("a decision read takes noul and choice questions"));
                 }
             };

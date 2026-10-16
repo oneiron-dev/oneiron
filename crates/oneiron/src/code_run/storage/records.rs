@@ -71,7 +71,7 @@ impl RawValue for StoredBody {
 ///
 /// A sidecar keyed by the SAME handle, written in the SAME transaction, and
 /// absent for the overwhelmingly common untainted run.
-const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
+pub(super) const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
 
 /// The secret scan's hit in one raw-output body, keyed by the same handle

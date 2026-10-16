@@ -82,6 +82,10 @@ const SCOPED_TO_DEFAULT_WEIGHT: f32 = match EdgeKind::ScopedTo.default_weight() 
 /// mutable `assignee` field is display and never admission. ConsentRequired
 /// records that an interruption asked for a human verdict, so the body's
 /// mutable `consent_required` flag is display and never a waiver.
+/// Assigned records who a TASK the highway landed is addressed to, so the
+/// body's `assignee` is display and never proof that an actor may take it.
+/// Accepted records each taker and the binding generation it held, the fence
+/// a human-lane report is checked against (OF-220).
 /// None of them is ever rewritten or deleted, so the set only grows.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,6 +96,8 @@ pub enum TaskAuthorityFactKind {
     HumanAssigned = 4,
     ConsultAssignee = 5,
     ConsentRequired = 6,
+    Assigned = 7,
+    Accepted = 8,
 }
 
 impl TaskAuthorityFactKind {
@@ -104,6 +110,8 @@ impl TaskAuthorityFactKind {
             Self::HumanAssigned => 4,
             Self::ConsultAssignee => 5,
             Self::ConsentRequired => 6,
+            Self::Assigned => 7,
+            Self::Accepted => 8,
         }
     }
 
@@ -116,6 +124,8 @@ impl TaskAuthorityFactKind {
             4 => Some(Self::HumanAssigned),
             5 => Some(Self::ConsultAssignee),
             6 => Some(Self::ConsentRequired),
+            7 => Some(Self::Assigned),
+            8 => Some(Self::Accepted),
             _ => None,
         }
     }
@@ -170,6 +180,30 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) consult_parties: ConsultParties,
     /// Set once any interruption of the consult asked for a human verdict.
     pub(crate) consent_required: bool,
+    /// `(assigner, assignee)` from the Assigned fact.
+    pub(crate) assigned: Option<(EntityId, EntityId)>,
+    /// The latest taker an Accepted fact names.
+    pub(crate) accepted: Option<TaskTaker>,
+}
+
+/// One taker of a TASK: who accepted it, the binding generation it held,
+/// and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TaskTaker {
+    pub(crate) actor: EntityId,
+    pub(crate) generation: Option<BindingGeneration>,
+    pub(crate) at: u64,
+}
+
+/// What one TASK's immutable facts prove about who may act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TaskStanding {
+    pub(crate) owner: EntityId,
+    /// The actor the TASK is assigned to: the Assigned fact's assignee, else
+    /// the human-assignment witness's agent. `None` when no fact names one.
+    pub(crate) assignee: Option<EntityId>,
+    pub(crate) taker: Option<TaskTaker>,
+    pub(crate) cancelled: bool,
 }
 
 /// The parties a consult's ConsultAssignee facts name.
@@ -280,6 +314,35 @@ impl TaskAuthorityFacts {
                 };
             }
             TaskAuthorityFactKind::ConsentRequired => self.consent_required = true,
+            TaskAuthorityFactKind::Assigned => {
+                let assigned = fact
+                    .assigned_ref
+                    .ok_or(Error::InvariantViolation("task assignment lacks assignee"))?;
+                match self.assigned {
+                    Some(binding) if binding != (fact.actor_ref, assigned) => {
+                        return Err(Error::InvariantViolation("task assignment fork"));
+                    }
+                    _ => self.assigned = Some((fact.actor_ref, assigned)),
+                }
+            }
+            TaskAuthorityFactKind::Accepted => {
+                let taker = TaskTaker {
+                    actor: fact.actor_ref,
+                    generation: fact.actor_generation,
+                    at: fact.occurred_at,
+                };
+                // The latest acceptance stands; the order is total over the
+                // facts themselves, so every merge order folds the same taker.
+                self.accepted = match self.accepted {
+                    Some(held)
+                        if (held.at, *held.actor.as_bytes())
+                            >= (taker.at, *taker.actor.as_bytes()) =>
+                    {
+                        Some(held)
+                    }
+                    _ => Some(taker),
+                };
+            }
         }
         Ok(())
     }
@@ -459,13 +522,22 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             .transpose()
     };
     let (assigned_ref, actor_generation, assigned_generation) = match kind {
-        TaskAuthorityFactKind::HumanAssigned => {
+        TaskAuthorityFactKind::HumanAssigned | TaskAuthorityFactKind::Assigned => {
             if entries.len() != FACT_BODY_KEY_COUNT + 1 {
                 return Err(Error::Record(RecordError::InvalidTaskBody(
                     "task human assignment key set",
                 )));
             }
             (Some(entity_ref(BODY_KEY_ASSIGNED_REF)?), None, None)
+        }
+        TaskAuthorityFactKind::Accepted => {
+            let actor_generation = generation(BODY_KEY_ACTOR_GENERATION)?;
+            if entries.len() != FACT_BODY_KEY_COUNT + usize::from(actor_generation.is_some()) {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task acceptance key set",
+                )));
+            }
+            (None, actor_generation, None)
         }
         TaskAuthorityFactKind::ConsultAssignee => {
             let assigned_ref = optional_fact_body_field(entries, BODY_KEY_ASSIGNED_REF)?
@@ -745,6 +817,30 @@ impl Vault {
             )),
             _ => Ok(None),
         }
+    }
+
+    /// What `task_ref`'s facts prove about who may act on it, or `None`
+    /// when no Owner fact proves an owner. The body's `assignee` is never
+    /// read: it is display.
+    pub(crate) fn task_standing_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> Result<Option<TaskStanding>> {
+        let facts = self.task_authority_facts_in(txn, task_ref)?;
+        let Some(owner) = facts.owner_ref else {
+            return Ok(None);
+        };
+        let witnessed = match facts.human_assigner {
+            Some((assigner, assigned)) if assigner == owner => Some(assigned),
+            _ => None,
+        };
+        Ok(Some(TaskStanding {
+            owner,
+            assignee: facts.assigned.map(|(_, assignee)| assignee).or(witnessed),
+            taker: facts.accepted,
+            cancelled: facts.cancelled,
+        }))
     }
 
     /// Folds every authority fact scoped to `task_ref`.
