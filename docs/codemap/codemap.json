@@ -4684,9 +4684,27 @@
      "purpose": "One public signing executor: turn, access, viewed, terminal, then action",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeldSigning",
+      "HeldSigningAnswer",
+      "HeldSigningState"
+     ],
+     "path": "src/blob_artifact/esign/escalation.rs",
+     "purpose": "The sign act the dial does not open goes up to the vault owner role (ARCH-0064 D6, ARCH-0064a, ARCH-0076…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -4746,7 +4764,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -4849,7 +4867,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -5132,7 +5150,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -15530,7 +15548,7 @@
      "path": "src/deletion/delete/markers.rs",
      "purpose": "pt:/ac: marker and gate-decision commit helpers plus the cleanup-archive door",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -16407,9 +16425,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 2,
-      "re-export": 14
+      "re-export": 16
      }
     },
     {
@@ -16487,6 +16505,21 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PersonAboutExecutor"
+     ],
+     "path": "src/dreamer_consolidation/person_about.rs",
+     "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -16716,8 +16749,22 @@
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "—",
      "surface": {
-      "const": 11,
+      "const": 12,
       "crate-vis": 30
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskRealizeModel"
+     ],
+     "path": "src/dreamer_consolidation/task_realize.rs",
+     "purpose": "A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -17125,7 +17172,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 19
+      "fn": 20
      }
     },
     {
@@ -17256,7 +17303,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 22,
+      "const": 23,
       "crate-vis": 34
      }
     },
@@ -21782,13 +21829,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 13
      }
     },
     {
@@ -25204,9 +25251,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "LinkedText",
+      "ProseSpan",
+      "RecordLinks",
+      "RecordLinksRequest",
       "RecordRef",
       "RecordRefPreview",
       "ResolveRecordRefRequest"
@@ -25214,9 +25265,10 @@
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 3,
-      "fn": 2,
-      "struct": 3
+      "const": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -25847,7 +25899,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 29,
+      "const": 32,
       "fn": 1,
       "struct": 1
      }
@@ -26334,6 +26386,7 @@
       "CalibratedVerdict",
       "ConfidenceBand",
       "ModelBinding",
+      "ModelDisposition",
       "ModelManifest",
       "ModelRole",
       "ModelSlot",
@@ -26346,8 +26399,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "enum": 5,
-      "fn": 13,
+      "enum": 6,
+      "fn": 15,
       "re-export": 2,
       "struct": 4
      }
@@ -27697,7 +27750,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 2,
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
@@ -27807,6 +27860,28 @@
      "purpose": "The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GrantAskReceipt",
+      "GrantAskRequest",
+      "GrantAskScope",
+      "MessagePersonReceipt",
+      "MessagePersonRequest",
+      "PeopleListRequest",
+      "PeoplePage",
+      "PersonRequest"
+     ],
+     "path": "src/memory/people_verbs.rs",
+     "purpose": "PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 7
      }
     },
     {
@@ -28755,7 +28830,7 @@
       "crate-vis": 24,
       "enum": 3,
       "fn": 4,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 2
      }
     },
@@ -28937,6 +29012,25 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FolderFile",
+      "FolderFileState",
+      "FolderRescan",
+      "FolderRescanReport",
+      "FolderSource",
+      "FolderSourceFile"
+     ],
+     "path": "src/note/folder_source.rs",
+     "purpose": "A local folder that stays attached to the vault (OF-554, ARCH-0027)",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -28961,6 +29055,7 @@
      "purpose": "A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027…",
      "surface": {
       "const": 1,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 6,
       "struct": 5
@@ -34089,9 +34184,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/receipt/reference_refusal.rs",
-     "purpose": "Reference-refusal receipts (OF-063): a write was refused because a record ref it named does not resolve for…",
+     "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -43089,7 +43184,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -43466,11 +43561,11 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 149
+      "fn": 158
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AiAnswer",
@@ -43491,15 +43586,21 @@
       "PackFileInput",
       "PackPutOutcome",
       "PackPutReceipt",
-      "PackPutRequest"
+      "PackPutRequest",
+      "PackSetupAnswerRequest",
+      "PackSetupCardActionInput",
+      "PackSetupReceipt",
+      "PackSetupRequest",
+      "PackSetupStoreSecret",
+      "PackSetupVerifyRequest"
      ],
      "path": "src/task_verb/sdk_host.rs",
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "enum": 5,
-      "fn": 8,
-      "struct": 14
+      "fn": 16,
+      "struct": 20
      }
     },
     {
@@ -45021,9 +45122,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "BankBound",
       "BankVoiceBinding",
       "MediaAsrAdapter",
       "MediaTtsAdapter",
@@ -45039,8 +45141,8 @@
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
       "const": 2,
-      "enum": 3,
-      "fn": 10,
+      "enum": 4,
+      "fn": 11,
       "struct": 6,
       "trait": 1
      }
@@ -45343,7 +45445,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "mod": 1,
       "re-export": 1,
       "struct": 6,
@@ -45440,7 +45542,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 6
      }
     },
@@ -47798,7 +47900,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48176,7 +48278,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 59,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48526,7 +48628,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 125,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48547,7 +48649,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -49130,7 +49232,7 @@
     "voice_cascade": {
      "files": 31,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
@@ -49184,9 +49286,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 100,
+   "over_bar": 102,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2966,
+   "source_files": 2971,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56772,7 +56874,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 127
+      "fn": 136
      }
     },
     {
@@ -57785,7 +57887,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 128
+      "fn": 137
      }
     },
     {
@@ -59410,7 +59512,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/blob_artifacts.rs",
@@ -60154,7 +60256,7 @@
      "path": "src/api/esign.rs",
      "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60165,6 +60267,16 @@
      "purpose": "Router-owned admission for public, capability-free editor computation",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/hold_worker.rs",
+     "purpose": "The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks the vault…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60224,7 +60336,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 22
      }
     },
     {
@@ -60458,7 +60570,7 @@
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60684,7 +60796,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -60695,6 +60807,26 @@
      "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openai_proxy/mod.rs",
+     "purpose": "OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openai_proxy/wire.rs",
+     "purpose": "The OpenAI chat-completions wire the proxy speaks (OF-445): a closed request body, and the reply built from…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -61854,6 +61986,11 @@
       "ImportBatchArgs",
       "ImportCommand",
       "ImportDecisionArgs",
+      "ImportFolderAttachArgs",
+      "ImportFolderCommand",
+      "ImportFolderListArgs",
+      "ImportFolderPathArgs",
+      "ImportFolderRescanArgs",
       "ImportNotesArgs",
       "ImportSourceArgs",
       "MaintainArgs",
@@ -61875,8 +62012,8 @@
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 6,
-      "struct": 20
+      "enum": 7,
+      "struct": 24
      }
     },
     {
@@ -61905,7 +62042,7 @@
       "const": 1,
       "crate-vis": 4,
       "fn": 12,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 1
      }
     },
@@ -61985,7 +62122,17 @@
      "path": "src/commands/history_import/notes.rs",
      "purpose": "`oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/notes/folder.rs",
+     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes that stays attached to the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -62073,6 +62220,7 @@
      "path": "src/commands/init.rs",
      "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
      "surface": {
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -62114,6 +62262,23 @@
      "purpose": "JSON renderings of MessagePack claim values for command output",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DistillArgs",
+      "ExportArgs",
+      "OneironerCommand",
+      "PublishArgs"
+     ],
+     "path": "src/commands/oneironer.rs",
+     "purpose": "`oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 \"one base, two…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -62508,7 +62673,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -62530,15 +62695,16 @@
       "OneironerConfigOverride",
       "OneironerMode",
       "OneironerProvider",
-      "OneironerRuntime"
+      "OneironerRuntime",
+      "OneironerTier"
      ],
      "path": "src/config/oneironer.rs",
      "purpose": "The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table",
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
-      "struct": 3
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -64248,7 +64414,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -64285,7 +64451,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 11,
+      "fn": 12,
       "struct": 3
      }
     },
@@ -64481,6 +64647,16 @@
      "purpose": "The voice cascade's routes on the media seats (OF-410)",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/voxcpm2_speech.rs",
+     "purpose": "The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -65884,7 +66060,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 243,
+     "files": 246,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65926,7 +66102,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 31,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66052,7 +66228,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66171,9 +66347,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 23,
+   "over_bar": 24,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 458,
+   "source_files": 464,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -60,6 +60,7 @@ mod settle;
 mod sieve_attempt;
 mod step_charge;
 mod support;
+mod task_realize;
 mod turn_text;
 mod wake_plan;
 mod watermark;
@@ -85,6 +86,7 @@ pub use resident_dream::{
     resident_of_dream_input, run_resident_dream,
 };
 pub use resources::ScopedConsolidationWrite;
+pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,
