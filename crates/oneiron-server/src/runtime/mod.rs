@@ -3,6 +3,8 @@ mod gpu;
 pub use gpu::{
     GPU_LEASE_SECONDS, GPU_RENEW_SECONDS, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
 };
+mod gpu_pool;
+pub use gpu_pool::{GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPool, GpuPoolConfig};
 mod defaults;
 mod mode;
 mod routes;
