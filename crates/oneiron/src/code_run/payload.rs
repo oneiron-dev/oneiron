@@ -123,6 +123,24 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
                 ("occurred_at", Value::from(call.occurred_at)),
             ])
         }
+        // The guest's call: the source the host bound to it is not the
+        // guest's, and a replay resolves it again.
+        SelfCall::ReaderSpawn(call) => request_map(vec![
+            ("source", Value::from(call.source.as_str())),
+            ("ask", Value::from(call.ask.as_str())),
+            ("intent_key", Value::from(call.intent_key.as_str())),
+        ]),
+        SelfCall::ReaderReport(call) => request_map(vec![
+            ("task", entity_id_value(call.task)),
+            ("result_ref", Value::from(call.result_ref.as_str())),
+        ]),
+        SelfCall::TasksWaitSet(call) => request_map(vec![(
+            "call",
+            Value::from(
+                serde_json::to_string(call)
+                    .map_err(|_| invalid_code_run_replay("task wait set does not encode"))?,
+            ),
+        )]),
     })
 }
 
@@ -309,7 +327,28 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("is_visible", Value::Boolean(result.is_visible)),
             ("emitted", Value::Boolean(result.emitted)),
         ]),
+        SelfDispatchOutcome::ReaderSpawn(receipt) => json_outcome("reader_spawn", receipt)?,
+        SelfDispatchOutcome::ReaderReport(receipt) => json_outcome("reader_report", receipt)?,
+        SelfDispatchOutcome::TaskWaitSet(result) => json_outcome("task_wait_set", result)?,
     })
+}
+
+/// An outcome kept as its JSON, as a fold's answer is.
+fn json_outcome(kind: &'static str, value: &impl serde::Serialize) -> Result<Value> {
+    let json = serde_json::to_string(value)
+        .map_err(|_| invalid_code_run_replay("dispatch outcome does not encode"))?;
+    Ok(request_map(vec![
+        ("kind", Value::from(kind)),
+        ("json", Value::from(json)),
+    ]))
+}
+
+/// An outcome [`json_outcome`] kept.
+fn decode_json_outcome<T: serde::de::DeserializeOwned>(
+    entries: &[(Value, Value)],
+) -> Result<T> {
+    serde_json::from_str(str_value(map_get(entries, "json")?)?)
+        .map_err(|_| invalid_code_run_replay("dispatch outcome does not decode"))
 }
 
 pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
@@ -322,6 +361,15 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "fold" => Ok(SelfDispatchOutcome::Fold(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
+        "reader_spawn" => Ok(SelfDispatchOutcome::ReaderSpawn(decode_json_outcome(
+            entries,
+        )?)),
+        "reader_report" => Ok(SelfDispatchOutcome::ReaderReport(decode_json_outcome(
+            entries,
+        )?)),
+        "task_wait_set" => Ok(SelfDispatchOutcome::TaskWaitSet(decode_json_outcome(
+            entries,
+        )?)),
         "task_refusal" => Ok(SelfDispatchOutcome::TaskRefusal(
             super::SelfTaskRefusalResult {
                 task_ref: entity_value(map_get(entries, "task_ref")?)?,
@@ -528,6 +576,9 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "dreamer.wake_policy.set" => Ok(SelfEffect::WakePolicyWrite),
         "self.verbs.call" => Ok(SelfEffect::AgentVerb),
         "self.fold" => Ok(SelfEffect::Fold),
+        "self.spawn" => Ok(SelfEffect::ReaderSpawn),
+        "tasks.update" => Ok(SelfEffect::ReaderReport),
+        "tasks.wait_set" => Ok(SelfEffect::TasksWaitSet),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }

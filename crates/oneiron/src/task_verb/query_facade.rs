@@ -171,6 +171,19 @@ impl Memory<'_> {
         })
     }
 
+    /// `tasks.update` at a host door: the owner's acknowledgement, as
+    /// [`Self::tasks_update`]. A `resultRef` names a code run's result, which
+    /// only that run resolves, so a host door refuses it.
+    pub fn tasks_update_request(
+        &self,
+        input: &super::sdk::TaskUpdateRequest,
+    ) -> MemoryResult<TaskUpdateReceipt> {
+        if input.result_ref.is_some() {
+            return Err(MemoryError::bad_request("task_update_result_needs_run"));
+        }
+        self.tasks_update(EntityId::from_hex(&input.task_ref)?)
+    }
+
     /// The free render-tier acknowledgement bit of a failed task, as the
     /// highway's `Ack` report runs it.
     ///

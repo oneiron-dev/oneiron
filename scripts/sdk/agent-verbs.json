@@ -251,10 +251,10 @@
     },
     {
       "name": "tasks.update",
-      "input": "TaskRequest",
+      "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
-      "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "call": "memory.tasks_update_request(&input)?",
       "scope": "Write",
       "mcp_scope": "addressed",
       "mcp_fields": {
@@ -2614,6 +2614,20 @@
       "scope": "Write",
       "context": "run",
       "effect": "SkillsCall"
+    },
+    {
+      "name": "self.spawn",
+      "input": "crate::code_run::ReaderSpawnInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ReaderSpawn"
+    },
+    {
+      "name": "tasks.wait",
+      "input": "crate::code_run::TaskWaitSetRequest",
+      "scope": "Read",
+      "context": "run",
+      "effect": "TasksWaitSet"
     }
   ]
 }

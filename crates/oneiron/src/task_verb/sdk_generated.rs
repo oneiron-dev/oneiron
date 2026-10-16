@@ -78,7 +78,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "tasks.update",
-                crate::code_run::vault_read::request_schema::<TaskRequest>(),
+                crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
             (
                 "vault.witness",
@@ -752,6 +752,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
+            ),
+            (
+                "self.spawn",
+                crate::code_run::vault_read::request_schema::<crate::code_run::ReaderSpawnInput>(),
+            ),
+            (
+                "tasks.wait",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitSetRequest>(
+                ),
             ),
         ])
     });
@@ -1844,7 +1853,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: TaskCreateRequest = decode(value.clone())?;
         }
         "tasks.update" => {
-            let _input: TaskRequest = decode(value.clone())?;
+            let _input: TaskUpdateRequest = decode(value.clone())?;
         }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
@@ -2719,9 +2728,9 @@ pub fn tasks_create(
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
-    input: TaskRequest,
+    input: TaskUpdateRequest,
 ) -> MemoryResult<crate::task_verb::TaskUpdateReceipt> {
-    memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)
+    memory.tasks_update_request(&input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,

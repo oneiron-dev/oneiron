@@ -549,6 +549,82 @@ impl OffRecordSession<'_> {
         }
     }
 
+    /// One transaction over side tables on a route the caller captured, in
+    /// which `f` reads every row through the composed view and writes along
+    /// the route: [`Self::side_table_compare_and_put_routed`]'s two arms with
+    /// the body handed over. `f` gets the base write transaction too, so a
+    /// base row it writes (a spend scope) commits with the routed ones.
+    ///
+    /// While the room is off record the reads and writes are the view's,
+    /// staged into one segment that commits with the base transaction. Once
+    /// it is on record they write base, and only while the saver holds; the
+    /// reads stay composed, since a row may still be one an earlier
+    /// off-record run of the room wrote.
+    pub(crate) fn routed_side_txn<T>(
+        &self,
+        route: &SessionWriteRoute,
+        f: impl FnOnce(
+            &mut heed::RwTxn<'_>,
+            crate::side_table::RoutedDbs<'_>,
+            crate::side_table::RoutedDbs<'_>,
+        ) -> Result<T>,
+    ) -> Result<T> {
+        use crate::side_table::RoutedDbs;
+        route.require_recording(&self.session_ref)?;
+        match route.target() {
+            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
+            RouteTarget::Overlay => {
+                let overlay = self.entry.overlay.clone();
+                let (segment, answer) = self.vault.with_write_txn_grouped(|wtxn| {
+                    let segment = overlay.install_txn_segment()?;
+                    self.participant_in_txn(wtxn)?;
+                    route.revalidate()?;
+                    let view = self.vault.store.session_view(overlay.clone())?;
+                    let answer = f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
+                    Ok((segment, answer))
+                })?;
+                segment.commit()?;
+                Ok(answer)
+            }
+            RouteTarget::Base => {
+                self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
+                    route.revalidate()?;
+                    let view = self.vault.store.session_view(self.entry.overlay.clone())?;
+                    f(
+                        wtxn,
+                        RoutedDbs::Session(&view),
+                        RoutedDbs::Base(&self.vault.store),
+                    )
+                })
+            }
+        }
+    }
+
+    /// One composed read of side tables over overlay ∪ base, while the
+    /// handle's participant is in the room, checked in the read.
+    pub(crate) fn routed_side_read<T>(
+        &self,
+        f: impl FnOnce(&heed::RoTxn<'_>, crate::side_table::RoutedDbs<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let view = self.read_view()?;
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.participant_in_txn(&rtxn)?;
+        f(&rtxn, crate::side_table::RoutedDbs::Session(&view))
+    }
+
+    /// The base spend scopes this session's reader children spend under
+    /// (OF-532): units and ids, no content.
+    pub(crate) fn spend_book(&self) -> crate::code_run::SpendBook<'_> {
+        crate::code_run::SpendBook::new(self.vault)
+    }
+
+    /// The runner this session's vault wakes its reader children through.
+    pub(crate) fn reader_job_runner(
+        &self,
+    ) -> Option<Arc<dyn crate::code_run::ReaderJobRunner>> {
+        self.vault.reader_job_runner()
+    }
+
     /// One overlay write of the caller's own, on a route the caller captured:
     /// [`Self::side_table_compare_and_put_routed`]'s Overlay arm with the
     /// body handed over. `write` runs inside the base writer once the segment

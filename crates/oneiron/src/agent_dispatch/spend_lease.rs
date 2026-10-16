@@ -301,6 +301,16 @@ impl AgentDispatcher<'_> {
         self.available_from_in_txn(&txn, &target)
     }
 
+    /// [`Self::available_units`] in the caller's snapshot.
+    pub(crate) fn available_units_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        scope: &SpendScopeId,
+    ) -> Result<u64> {
+        let target = self.effective_scope_in_txn(txn, scope)?;
+        self.available_from_in_txn(txn, &target)
+    }
+
     pub fn read_spend_scope(&self, scope: &SpendScopeId) -> Result<Option<SpendScope>> {
         let txn = self.vault.store.env.read_txn()?;
         SCOPE.get(&self.vault.store, &txn, &scope.0)

@@ -297,27 +297,52 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
             name: decode::<Store>(args.input)?.name,
         }),
         "describe" => result_ref(args.input).map(JsResultCall::Describe),
-        "can" => can_read(args.input)?.map(JsResultCall::CanRead),
+        "can" => can_read(args.input)?.map(|(target, child)| JsResultCall::CanRead {
+            target,
+            child,
+        }),
         _ => None,
     })
 }
 
 /// The result a `can` input asks to read, when it asks: `{read: r}`, with
-/// `r` a result as `describe` takes one. Any other `can` is the manifest's
-/// ask preflight.
-fn can_read(input: Value) -> Result<Option<JsResultTarget>> {
+/// `r` a result as `describe` takes one, and whether it asks too whether a
+/// reader child could be spawned over it (`child: {}`). Any other `can` is
+/// the manifest's ask preflight.
+fn can_read(input: Value) -> Result<Option<(JsResultTarget, bool)>> {
     let Value::Object(mut fields) = input else {
         return Ok(None);
     };
     let Some(read) = fields.remove("read") else {
         return Ok(None);
     };
+    let child = match fields.remove("child") {
+        None => false,
+        Some(Value::Object(child)) if child.is_empty() => true,
+        Some(_) => return Err(failure("can({read, child}) takes an empty child")),
+    };
     if !fields.is_empty() {
         return Err(failure("can({read}) takes only the result to read"));
     }
     result_ref(read)
-        .map(Some)
+        .map(|target| Some((target, child)))
         .ok_or_else(|| failure("result ref must be a name, handle or card"))
+}
+
+/// The result a `self.spawn` source names: its ref as a string, or a card's
+/// `ref` or `handle`.
+fn reader_source(source: Value) -> Result<String> {
+    match source {
+        Value::String(text) => Ok(text),
+        Value::Object(mut fields) => ["ref", "handle"]
+            .into_iter()
+            .find_map(|key| match fields.remove(key) {
+                Some(Value::String(text)) => Some(text),
+                _ => None,
+            })
+            .ok_or_else(|| failure("spawn source must be a result ref or card")),
+        _ => Err(failure("spawn source must be a result ref or card")),
+    }
 }
 
 /// The result a `describe` input names, when it names one: a string (a bound
@@ -403,6 +428,24 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             if verb == AgentVerb::Wait {
                 let request: crate::task_verb::sdk::TaskWaitRequest = decode(args.input)?;
                 return Ok(SelfCall::TasksWait(request.handle));
+            }
+            // A reader child's finding names one of its own results, which
+            // only the run resolves; a bare acknowledgement stays the row's.
+            if verb == AgentVerb::TasksUpdate
+                && args
+                    .input
+                    .get("resultRef")
+                    .is_some_and(|result| !result.is_null())
+            {
+                let request: crate::task_verb::sdk::TaskUpdateRequest = decode(args.input)?;
+                let result_ref = request
+                    .result_ref
+                    .ok_or_else(|| failure("invalid task update"))?;
+                return Ok(SelfCall::ReaderReport(crate::code_run::SelfReaderReportCall {
+                    task: EntityId::from_hex(&request.task_ref)?,
+                    result_ref,
+                    bound: None,
+                }));
             }
             SelfCall::AgentVerb(crate::code_run::SelfAgentVerbCall {
                 verb,
@@ -541,6 +584,25 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 args: args.args,
             })
         }
+        RunVerb::SelfSpawn => {
+            let args: crate::code_run::ReaderSpawnInput = decode(input)?;
+            SelfCall::ReaderSpawn(Box::new(crate::code_run::SelfReaderSpawnCall {
+                source: reader_source(args.source)?,
+                ask: args.ask,
+                intent_key: args.intent_key,
+                bound: None,
+            }))
+        }
+        RunVerb::TasksWait => {
+            let args: crate::code_run::TaskWaitSetRequest = decode(input)?;
+            SelfCall::TasksWaitSet(crate::code_run::TaskWaitSetCall {
+                tasks: args.tasks,
+                all: args.all,
+                n_of: args.n_of,
+                until: args.until.map(js_time).transpose()?,
+                step_key: args.step_key,
+            })
+        }
     })
 }
 
@@ -652,6 +714,9 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 serde_json::from_str(json).map_err(|_| failure("fold answer is not JSON"))?;
             json!({ "output": output })
         }
+        SelfDispatchOutcome::ReaderSpawn(receipt) => json!({ "output": receipt }),
+        SelfDispatchOutcome::ReaderReport(receipt) => json!({ "output": receipt }),
+        SelfDispatchOutcome::TaskWaitSet(result) => json!({ "output": result }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }

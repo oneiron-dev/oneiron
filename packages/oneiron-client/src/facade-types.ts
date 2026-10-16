@@ -67,6 +67,10 @@ export type WorkCompanionSetRequest = {
 export type TaskRequest = {
   task_ref: string
 }
+export type TaskUpdateRequest = {
+  task_ref: string
+  resultRef?: string | null
+}
 export type ProjectConversationRequest = {
   conversation_ref: string
 }

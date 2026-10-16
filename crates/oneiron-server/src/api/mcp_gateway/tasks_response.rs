@@ -1684,7 +1684,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "tasks.update" => {
-            let input: oneiron::task_verb::sdk::TaskRequest =
+            let input: oneiron::task_verb::sdk::TaskUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
             let output =

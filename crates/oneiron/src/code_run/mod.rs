@@ -17,6 +17,7 @@ mod codec;
 mod coordination_codec;
 mod dispatcher;
 mod payload;
+mod reader;
 mod replay;
 mod result_read;
 mod run_verbs;
@@ -76,9 +77,23 @@ pub use self::types::{
     SelfSkillCallResult, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
     SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
+pub(crate) use self::reader::{
+    READER_KEY_MAX_BYTES, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
+    reduce_task_wait_set, valid_reader_key, vault_ref,
+};
+pub use self::reader::{
+    ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DelegatedSource, ReaderActor, ReaderFindingRef,
+    ReaderJob, ReaderJobRunner, ReaderJobState, ReaderJobWake, ReaderParent, ReaderReportReceipt,
+    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, RunDeadline, SelfReaderReportCall,
+    SelfReaderSpawnCall, SpawnHostSeat, SpawnParentBinding, TaskWaitFailure, TaskWaitFinding,
+    TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult, reader_task_brief,
+};
+pub use self::storage::ReaderJobs;
+pub(crate) use self::storage::SpendBook;
 pub use run_verbs::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange, SkillCallInput, TaskRefuseDomain, TaskRefuseInput,
+    MemoryTimeRange, ReaderSpawnInput, SkillCallInput, TaskRefuseDomain, TaskRefuseInput,
+    TaskWaitSetRequest,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,

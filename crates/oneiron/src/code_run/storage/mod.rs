@@ -2,11 +2,16 @@
 
 mod compaction;
 mod folds;
+mod reader_jobs;
 mod records;
 mod routing;
 mod speech_identity;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
+pub use self::reader_jobs::ReaderJobs;
+pub(crate) use self::reader_jobs::{
+    NewReaderJob, ReportOutcome, SpawnAdmission, SpendBook, WaitSetOutcome,
+};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{FinishedOutput, code_run_body_file_of_row};
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
