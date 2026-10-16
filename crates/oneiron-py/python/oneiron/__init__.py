@@ -255,6 +255,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_memory_diary_reads(json.dumps(spec))))
         def review(self, spec):
             return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
+        def query(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

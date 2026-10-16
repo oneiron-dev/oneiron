@@ -240,6 +240,37 @@ pub(crate) async fn ai_video_cancel(
     Ok(AiVideoCancelled { job: input.job })
 }
 
+/// `self.memory.diary.query`: the caller reads an agent's diary, stating a
+/// reason the agent sees in its read log (`Memory::read_agent_diary`). The
+/// caller's `diary.read` Grants decide what it gets. A person reads with
+/// their authentication, so the vault owner's own credential carries the
+/// proof `/v1/owner` takes from the request; any other caller passes none
+/// and the gate decides: an agent or system reads as itself, and a person
+/// without the proof is refused.
+pub(crate) async fn self_memory_diary_query(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::DiaryQueryRequest,
+) -> MemoryResult<oneiron::task_verb::sdk::DiaryQueryOutcome> {
+    let owner = crate::api::owner_routes::owner(auth, server).ok();
+    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "self.memory.diary.query reads as the credential's own principal",
+            &["Present a slip paired with a principal ref and an actor class."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality());
+        oneiron::task_verb::sdk::diary_query_as(&memory, owner.as_ref(), input)
+    })
+    .await
+    .map_err(|_| internal("self.memory.diary.query"))?
+}
+
 /// `ai.verdict`: the caller's own typed question through the host's
 /// decision ladder, asked for the caller: the slip's principal, or the
 /// vault's own owner for an owner-grade credential that names none. Its

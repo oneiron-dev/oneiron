@@ -212,6 +212,7 @@ pub(crate) use symbol_lease::forget_symbols;
 mod recall_door;
 pub mod sdk;
 mod sdk_connector;
+mod sdk_diary;
 mod sdk_host;
 mod sdk_self;
 mod sdk_shared;
