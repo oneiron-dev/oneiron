@@ -121,10 +121,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | s | 1 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | m | 8 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 9 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | s | 1 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | XL | 1 crate-vis | — | — |
 | `src/api/facade/host_doors.rs` | src | m | 17 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and… |
+| `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/shared_act_doors.rs` | src | m | 13 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
@@ -191,7 +192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/pack_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
 | `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
 | `src/api/owner_routes/proactivity_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
-| `src/api/owner_routes/skill_judge_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/skills/judge`: the serve skill judge (OF-495) |
+| `src/api/owner_routes/skill_judge_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/skills/judge`: the serve skill judge (OF-495) |
 | `src/api/owner_routes/space_posting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/space-posting`: the per-space ghost-mode dial (ARCH-0063 R10, INB-08) |
 | `src/api/owner_routes/weave_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/weave`: the owner's doors to the weave lens (OF-499) |
 | `src/api/owner_routes/wire_health_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
@@ -556,7 +557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 7 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 30 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
-| `src/replay_judge.rs` | src | m | 4 struct · 7 fn · 1 const | JournalRow, PersonTime, ServeAxisBandit, ServeReplayJudge | The serve host's skill judge (OF-495) |
+| `src/replay_judge.rs` | src | m | 4 struct · 9 fn · 1 const | JournalRow, PersonTime, ServeAxisBandit, ServeReplayJudge | The serve host's skill judge (OF-495) |
 | `src/runtime/config.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
 | `src/runtime/defaults.rs` | src | m | 5 struct · 11 fn · 6 crate-vis | RuntimeConfigOverride, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults, RuntimeRoleTarget, RuntimeRoleTargetOverride | Per-role default targets, explicitness tracking, and the full override-merge cluster |
 | `src/runtime/gpu.rs` | src | s | 4 struct · 1 enum · 12 fn · 2 const | GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError | Per-region single-writer GPU registry, suitable for a Durable Object owner |
