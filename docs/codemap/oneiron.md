@@ -3172,10 +3172,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/forward/tombstone_pass.rs` | src | s | 2 crate-vis | — | Tombstone pass of forward rematerialization: reason-aware replay of window tombstones |
 | `src/sync/window/history_free.rs` | src | m | 1 enum · 7 fn · 7 crate-vis | WindowExport | History-free window transport: what a window pinned history-free, or already shallow, ships to a peer that… |
 | `src/sync/window/history_free_tests.rs` | test | XL | — | — | The stall ticket's invariants over the code's own list of pin causes and replacement steps |
-| `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 8 re-export · 16 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
+| `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 8 re-export · 17 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
 | `src/sync/window/project_history.rs` | src | s | 1 crate-vis | — | Project history beside the PROJECT carriers a window document holds (PR 3 decision 9) |
 | `src/sync/window/replacement.rs` | src | m | 2 struct · 1 fn | PreparedReplacement, ReplacementConflict | Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and… |
-| `src/sync/window/reverse.rs` | src | m | 1 fn · 9 crate-vis | — | Reverse rematerialization plus skip/policy predicates and carrier removal |
+| `src/sync/window/reverse.rs` | src | m | 1 fn · 10 crate-vis | — | Reverse rematerialization plus skip/policy predicates and carrier removal |
 | `src/sync/window/test_hooks.rs` | src | s | 4 fn · 2 crate-vis | — | Test-only hooks |
 | `src/sync/window/tests.rs` | test | XL | — | — | — |
 | `src/sync/window/tombstone_index_tests.rs` | test | s | — | — | H15: a sync pass reads a peer-sized tombstones map once, not once per carrier it checks |
@@ -3476,10 +3476,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/tests/authorization.rs` | test | L | — | — | — |
 | `src/workspace_roster/tests/current_architecture.rs` | test | m | 2 crate-vis | — | — |
 | `src/workspace_roster/tests/onboarding_replay.rs` | test | m | — | — | — |
+| `src/world_keys/content.rs` | src | m | 4 struct · 1 enum · 14 fn · 1 const · 7 crate-vis | OpenedSealedContent, SealedContentBinding, SealedContentId, SealedContentKind, SealedResidenceContent | Sealed world content (OF-570 (d), world privacy fix 8): one window of a private world, sealed under a key… |
+| `src/world_keys/content_window.rs` | src | s | 2 fn | — | The window side of sealed world content: what a reader seals from a private world's window, and how a reader… |
 | `src/world_keys/doors.rs` | src | L | 1 enum · 4 fn · 22 crate-vis | WorldKeyStatus | The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this… |
 | `src/world_keys/machine.rs` | src | s | 2 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
-| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 12 re-export · 8 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
-| `src/world_keys/pads.rs` | src | m | 1 struct · 1 enum · 1 fn · 11 crate-vis | WorldKeyDestroyCause, WorldKeyDestruction | A world key's erasable half, and the world delete that destroys it (world privacy fix 7) |
+| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 13 re-export · 8 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
+| `src/world_keys/pads.rs` | src | m | 1 struct · 1 enum · 1 fn · 13 crate-vis | WorldKeyDestroyCause, WorldKeyDestruction | A world key's erasable half, and the world delete that destroys it (world privacy fix 7) |
 | `src/world_keys/reassert.rs` | src | s | 1 fn | — | The owner's re-assertion of one world after a pin change (contract §4) |
 | `src/world_keys/repin.rs` | src | m | 2 struct · 1 enum · 6 crate-vis | NarrowedWorld, RepinReport, Withheld | The one re-wrap sequence (contract §4) |
 | `src/world_keys/root.rs` | src | s | 2 struct · 1 enum · 9 fn · 1 re-export | RecoveryRoot, RecoveryRootSeed, SeedOrigin | The owner's recovery root: 32 random bytes that only the recovery kit carries |
