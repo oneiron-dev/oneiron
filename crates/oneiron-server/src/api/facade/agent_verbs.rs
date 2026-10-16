@@ -858,9 +858,12 @@ async fn vault_authority_audit(
     facade_outside_room_turn(&headers, "vault.authority.audit")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.authority.audit", &value)?;
-    Ok(Json(facade_output(
-        super::host_doors::vault_authority_audit(&server, &auth, facade_input(value)?).await?,
-    )?))
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.authority.audit", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_authority_audit(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_inspection_resolve(
     auth: CoreAuth,
