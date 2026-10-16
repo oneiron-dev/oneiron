@@ -32,7 +32,9 @@ pub struct TaskAskShort {
 }
 
 impl TaskAskRequest {
-    fn into_spec(self) -> MemoryResult<TaskAskSpec> {
+    /// The ask spec this request names: a short call's retry key is derived
+    /// from exactly what it requested.
+    pub fn into_spec(self) -> MemoryResult<TaskAskSpec> {
         match self {
             Self::Rich(spec) => Ok(*spec),
             Self::Short(short) => {
@@ -97,8 +99,8 @@ pub struct RoomClaimRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
-/// `describe`'s one input: the task to describe, or none for the whole
-/// TASKS section.
+/// `describe`'s one input: the task to describe, a board card's key, or
+/// none for the whole TASKS section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DescribeRequest {
@@ -108,18 +110,23 @@ pub struct DescribeRequest {
     pub self_target: bool,
     #[serde(default)]
     pub session_id: Option<String>,
+    /// A board card's key: describe expands that card, under the board's
+    /// scope and frame-epoch checks.
+    #[serde(default)]
+    pub key: Option<String>,
+    /// The board frame the card key was read from; a stale one is refused.
+    #[serde(default)]
+    pub frame_epoch: Option<u64>,
+    /// A fold of the run's own log (`f1`): its span, its stub and the ids it
+    /// holds. Only the run that folded it answers this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fold: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateRequest {
     pub spec: serde_json::Value,
     pub label: Option<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BoardExpandRequest {
-    pub key: String,
-    pub frame_epoch: Option<u64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -144,7 +151,7 @@ pub struct RoomEntry {
     pub id: String,
     pub room: crate::workspace_roster::ProjectRoom,
 }
-/// `recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
+/// `vault.recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
 ///
 /// Every field but `query` is optional and defaults to the contract's default,
 /// so an omitting client and a spelling-everything client reach the same
@@ -176,20 +183,40 @@ pub struct RecallRequest {
 
 pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
 
-/// `receipts`'s one input.
+/// `vault.receipts`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
+}
+/// `inbox.list`'s one input (OF-221): the exclusive entity-ID cursor a
+/// previous page returned as `next_after`, and a page size
+/// ([`crate::inbox::INBOX_PAGE_DEFAULT`] when absent).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InboxListRequest {
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+/// `inbox.mark`'s one input (OF-221): one delivered notification and the
+/// mark to record for the caller.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InboxMarkRequest {
+    pub notification_ref: String,
+    pub mark: crate::inbox::NotificationMark,
 }
 
 include!("verb_catalog.rs");
 include!("run_verb_catalog.rs");
 include!("sdk_generated.rs");
 
-/// The verb table as code mode serves it, one `self.memory.<name>` per row:
-/// the rows a host door answers, then the rows the run answers itself. The
-/// guest's method table, the executor prompt and dispatch all read this list.
+/// The verb table as code mode serves it, each row at its full path (`vault.recall`,
+/// `self.focus.refresh`, a bare `describe`): the rows a host door answers, then
+/// the rows the run answers itself. The guest's method table, the executor
+/// prompt and dispatch all read this list.
 pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> + Clone {
     let host = AgentVerb::ALL.iter().map(|verb| verb.as_str());
     host.chain(RunVerb::ALL.iter().map(|verb| verb.as_str()))
@@ -290,10 +317,11 @@ fn verb_leaves(name: &str, written: bool) -> Vec<&str> {
     leaves
 }
 
-/// The verb table as code mode's `self.memory` declarations: one signature
-/// per row, rendered from that verb's own input schema, so the methods a
-/// model is shown are exactly the rows the host serves. `self.memory` is an
-/// object type, not a namespace, so a row named by a reserved word (`export`)
+/// The verb table as code mode's declarations: one signature per row at its
+/// full path, rendered from that verb's own input schema, so the methods a
+/// model is shown are exactly the rows the host serves. `self` is a namespace
+/// of object-typed members, every other root an object-typed constant and a
+/// bare verb a function, so a row named by a reserved word (`vault.export`)
 /// is a valid method: a namespace's `function export` does not parse.
 #[must_use]
 pub fn code_mode_declarations() -> &'static str {
@@ -308,9 +336,29 @@ pub fn code_mode_declarations() -> &'static str {
             }
             node.verb = Some(verb);
         }
-        let mut out = String::from("declare namespace self {\n  const memory: {\n");
-        render_declarations(&tree.children, 2, &mut out);
-        out.push_str("  };\n}\n");
+        let mut out = String::new();
+        for (root, node) in &tree.children {
+            match (*root, node.verb) {
+                ("self", _) => {
+                    out.push_str("declare namespace self {\n");
+                    for (name, child) in &node.children {
+                        let kind = declaration_type(child, 1);
+                        out.push_str(&format!("  const {name}: {kind};\n"));
+                    }
+                    out.push_str("}\n");
+                }
+                (root, Some(verb)) if node.children.is_empty() => {
+                    let input = verb_input_type(verb);
+                    out.push_str(&format!(
+                        "declare function {root}(input: {input}): Promise<unknown>;\n"
+                    ));
+                }
+                (root, _) => {
+                    let kind = declaration_type(node, 0);
+                    out.push_str(&format!("declare const {root}: {kind};\n"));
+                }
+            }
+        }
         out
     });
     &DECLARATIONS
@@ -332,29 +380,42 @@ fn render_declarations(
 ) {
     let indent = "  ".repeat(depth);
     for (name, node) in tree {
-        let input = node
-            .verb
-            .map(|verb| input_schema(verb).map_or_else(|| "object".to_owned(), schema_type));
-        match input {
-            Some(input) if node.children.is_empty() => {
+        match node.verb {
+            Some(verb) if node.children.is_empty() => {
+                let input = verb_input_type(verb);
                 out.push_str(&format!(
                     "{indent}{name}(input: {input}): Promise<unknown>;\n"
                 ));
             }
-            Some(input) => {
-                out.push_str(&format!(
-                    "{indent}{name}: ((input: {input}) => Promise<unknown>) & {{\n"
-                ));
-                render_declarations(&node.children, depth + 1, out);
-                out.push_str(&format!("{indent}}};\n"));
-            }
-            None => {
-                out.push_str(&format!("{indent}{name}: {{\n"));
-                render_declarations(&node.children, depth + 1, out);
-                out.push_str(&format!("{indent}}};\n"));
+            _ => {
+                let kind = declaration_type(node, depth);
+                out.push_str(&format!("{indent}{name}: {kind};\n"));
             }
         }
     }
+}
+
+/// One declaration's type: a verb's call signature, the members it holds, or
+/// both at once.
+fn declaration_type(node: &DeclarationNode, depth: usize) -> String {
+    let call = node
+        .verb
+        .map(|verb| format!("(input: {}) => Promise<unknown>", verb_input_type(verb)));
+    if node.children.is_empty() {
+        return call.unwrap_or_else(|| "{}".to_owned());
+    }
+    let mut members = String::from("{\n");
+    render_declarations(&node.children, depth + 1, &mut members);
+    members.push_str(&"  ".repeat(depth));
+    members.push('}');
+    match call {
+        Some(call) => format!("({call}) & {members}"),
+        None => members,
+    }
+}
+
+fn verb_input_type(verb: &str) -> String {
+    input_schema(verb).map_or_else(|| "object".to_owned(), schema_type)
 }
 
 /// A schema's TypeScript spelling, one level deep: nested objects stay `object`.

@@ -122,11 +122,13 @@ impl Vault {
     }
 
     /// Card tap uses host-held placement and revalidates its authenticated
-    /// owner inside the same transaction that mints the project and forks.
+    /// owner inside the same transaction that mints the project and forks;
+    /// the owner-project signer signs the new state for the owner.
     pub(crate) fn convert_thread_with_card(
         &self,
         intent: &crate::genui::ProjectMintIntent,
         owner: &crate::consent::AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         project_id: EntityId,
         now: u64,
     ) -> Result<ProjectRecord> {
@@ -139,7 +141,7 @@ impl Vault {
             message,
             project_id,
             None,
-            Some((intent, owner)),
+            Some((intent, owner, signer)),
             now,
         )
     }
@@ -158,12 +160,13 @@ impl Vault {
         card: Option<(
             &crate::genui::ProjectMintIntent,
             &crate::consent::AuthenticatedOwner,
+            &OwnerProjectSigner<'_>,
         )>,
         now: u64,
     ) -> Result<ProjectRecord> {
         let kind = self.project_type_byte()?;
         self.with_write_txn_grouped(|txn| {
-            if let Some((intent, owner)) = card {
+            if let Some((intent, owner, _)) = card {
                 let principal_ref = owner.principal_ref_in_txn(self, txn)?;
                 if intent.principal_ref != principal_ref
                     || intent.source_message_ref != source_message.to_hex()
@@ -203,7 +206,7 @@ impl Vault {
             // final. Only an unchosen leader falls back to the task holder,
             // then the room host.
             let confirmed = card
-                .map(|(intent, _)| EntityId::from_hex(&intent.leader_agent_def_ref))
+                .map(|(intent, _, _)| EntityId::from_hex(&intent.leader_agent_def_ref))
                 .transpose()?;
             let mut holder = None;
             let mut tasks = Vec::new();
@@ -260,7 +263,7 @@ impl Vault {
             project.origin_room = Some(room.to_hex());
             project.origin_thread = Some(thread.to_hex());
             project.origin_at = Some(row.at);
-            if let Some((intent, _)) = card {
+            if let Some((intent, _, _)) = card {
                 self.apply_card_terms_in_txn(txn, intent, project_id, now, &mut project)?;
                 if policy.roster_selection == RosterSelection::LeaderOnly
                     && project.board.iter().any(|id| id != &project.leader)
@@ -268,18 +271,36 @@ impl Vault {
                     return Err(invalid());
                 }
             }
-            self.batch_in()
-                .put(
-                    &project_id,
-                    kind,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&project)?,
-                )
-                .apply(txn)?;
+            let at = TimeRange {
+                start: now,
+                end: now,
+            };
+            match card {
+                // The owner's card: the host signs the new state for the
+                // owner, it lands as history, and only an installed head
+                // commits.
+                Some((_, owner, signer)) => {
+                    let signed_at = owner_signer::owner_signed_at(self, txn)?;
+                    self.sign_owner_project_in_txn(
+                        txn,
+                        owner,
+                        signer,
+                        project_id,
+                        &mut project,
+                        None,
+                        signed_at,
+                    )?;
+                    self.batch_in()
+                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
+                        .apply(txn)?;
+                    self.require_owner_head_in_txn(txn, project_id, &project)?;
+                }
+                None => {
+                    self.batch_in()
+                        .put(&project_id, kind, at, now, &encode(&project)?)
+                        .apply(txn)?;
+                }
+            }
             row.task_ids.clear();
             row.converted_project = Some(project_id.to_hex());
             rooms::TURNS.put(&self.store, txn, &thread, &row)?;

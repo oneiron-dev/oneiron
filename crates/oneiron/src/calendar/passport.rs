@@ -199,6 +199,56 @@ fn resolve_uid(
     Ok(found)
 }
 
+/// Resolves an invite inside its publication snapshot, without repairing an
+/// index through a second writer. Admitted synced truth wins; a first confirm
+/// may fall back to the UID index written by the EVENT minter.
+pub(crate) fn resolve_invite_event_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    uid: &str,
+) -> Result<Option<EntityId>, CalendarError> {
+    let indexed = PASSPORT_INDEX.get(&vault.store, txn, &passport_digest(uid))?;
+    let mut found = None;
+    for entry in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_EVENT, None)?
+    {
+        let event = entry?;
+        let mut exception = false;
+        for id in vault.claims_for_subject_in_txn(txn, &event)? {
+            if vault.get_claim_in_txn(txn, &id)?.is_some_and(|body| {
+                body.predicate == super::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+            }) {
+                exception = true;
+                break;
+            }
+        }
+        if exception {
+            continue;
+        }
+        if admitted_passports_for_event_in_txn(vault, txn, &event)?
+            .iter()
+            .any(|(_, passport)| passport.uid == uid)
+        {
+            if indexed == Some(event) {
+                return Ok(Some(event));
+            }
+            if found.is_none_or(|current: EntityId| event.as_bytes() < current.as_bytes()) {
+                found = Some(event);
+            }
+        }
+    }
+    if found.is_some() {
+        return Ok(found);
+    }
+    if let Some(event) = indexed
+        && vault.get_entity_type_in_txn(txn, &event)? == Some(ENTITY_TYPE_EVENT)
+    {
+        return Ok(Some(event));
+    }
+    Ok(None)
+}
+
 /// Classifies one feed row against the current passport state.
 ///
 /// The diff is SEQUENCE-first: a higher SEQUENCE updates; the same SEQUENCE

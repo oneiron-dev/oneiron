@@ -1,8 +1,13 @@
 //! Scheduled curator and harness-evaluation facets on one gated Dreamer
-//! authority, and the Coach's nightly retrieval tune on the same lane.
+//! authority, and the Coach's nightly retrieval tune on the same lane. Both
+//! Dreamer facets ride the nightly wake: the curator grades the Dreamer's own
+//! consolidations and applies what the owner approved, and the harness audit
+//! flags the Dreamer's tuning config for a retune. Neither deploys anything.
 pub mod coach;
 mod curator;
 mod evaluation;
+pub(crate) mod optimize;
+pub use optimize::CoachSkillOptimizer;
 mod proposals;
 pub mod representation;
 mod retrieval_policy;
@@ -16,13 +21,14 @@ use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
-pub use evaluation::{DreamerTuningConfig, HarnessEvaluation, RetuneThresholds};
+pub use evaluation::{
+    DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
+    HarnessEvaluationTarget, RetuneThresholds,
+};
 use rmpv::Value;
 pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";
 pub const CURATOR_FACET: &str = "dreamer.curator";
 pub const HARNESS_FACET: &str = "dreamer.harness_maintenance";
-/// Executable, zero-model wake-policy receipt. Recipe jobs may be attached by the loop.
-const POLICY_WAKE_FACET: &str = "dreamer.policy_wake";
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer maintenance row".into())
 }
@@ -49,26 +55,26 @@ impl DreamerRunnerStore<'_> {
             )
         })
     }
-    /// Transactional policy wake receipt. It is a maintenance facet rather than
-    /// a fake consolidation partition: a source-only wake has no TURN slice.
-    pub(crate) fn enqueue_policy_wake_in_txn(
+    /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
+    /// a Nightly recipe: the curator pass (one per rubric cadence, however
+    /// many wakes ask) and the harness self-audit (one per wake key).
+    pub(crate) fn enqueue_dreamer_nightly_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        trigger: &crate::dreamer_wake::WakePolicyTrigger,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
         now: u64,
-    ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.enqueue_kind_in_txn(
+    ) -> Result<()> {
+        self.enqueue_curator_in_txn(
             txn,
-            MAINTENANCE_QUEUE_KIND,
-            DreamerAttemptPayload {
-                attempt_type: POLICY_WAKE_FACET.into(),
-                input: Value::from(serde_json::to_string(trigger).map_err(|_| invalid())?),
-                parent_attempt: None,
-            },
-            None,
-            None,
+            CuratorTrigger::Nightly,
+            parent_attempt,
+            run_id.clone(),
             now,
-        )
+        )?;
+        self.enqueue_harness_audit_in_txn(txn, parent_attempt, wake_key, run_id, now)?;
+        Ok(())
     }
     /// The Coach's nightly retrieval tune, co-committed with a Timer wake. The
     /// lane is shared by several facets, so the key is namespaced (one dedupe
@@ -126,19 +132,10 @@ pub(crate) fn execute(
         super::COACH_RETRIEVAL_TUNE_FACET => {
             retrieval_policy::run(ctx.vault)?;
         }
-        coach::COACH_READ_HARDENING_FACET => coach::run_read_hardening(ctx.vault)?,
-        POLICY_WAKE_FACET => {
-            let trigger: crate::dreamer_wake::WakePolicyTrigger =
-                serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
-                    .map_err(|_| invalid())?;
-            if (trigger.turn_count == 0 && trigger.record_count == 0 && trigger.nightly_count == 0)
-                || !crate::dreamer_wake::wake_policy_input_covers(ctx.vault, &trigger)?
-            {
-                return Err(invalid());
-            }
-            // Completion acknowledges a durable recipe-input handoff, not the recipe body. Its
-            // replayable input remains in the policy outbox.
+        coach::COACH_READ_HARDENING_FACET => {
+            coach::run_read_hardening(ctx.vault, ctx.now_ms / 1000)?;
         }
+        coach::COACH_TRIPWIRES_FACET => coach::run_tripwires(ctx.vault, ctx.now_ms / 1000)?,
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })

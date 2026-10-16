@@ -11,8 +11,9 @@ use super::types::GroupKey;
 use super::yaml_format::write_yaml_groups;
 use crate::batch::export::ExportSnapshot;
 use crate::batch::export::{
-    ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportSourceVault,
-    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
+    ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportResultBody, ExportRun,
+    ExportRunOutput, ExportRunResults, ExportSourceVault, WHOLE_VAULT_DOCUMENT_VERSION,
+    WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
 };
 use crate::context_pack::PackFormat;
 use crate::error::{Error, Result};
@@ -55,6 +56,7 @@ pub(crate) fn serialize_vault_snapshot(
         skills: Vec::new(),
         agent_packs: Vec::new(),
         derivation_envelopes: Vec::new(),
+        run_results: export_run_results(snapshot.run_results, snapshot.result_bodies),
     };
     for raw in snapshot.entities {
         let body = if raw.tainted {
@@ -149,6 +151,64 @@ pub(crate) fn serialize_vault_snapshot(
     })
 }
 
+/// The run results section: each body's text through the release door's
+/// scan, or why it is withheld. A body that is no UTF-8 text has no carrier
+/// in a text document, and is never base64-encoded around that scan.
+fn export_run_results(
+    runs: Vec<crate::batch::export::ExportSnapshotRun>,
+    bodies: std::collections::BTreeMap<[u8; 32], crate::batch::export::ExportSnapshotBody>,
+) -> ExportRunResults {
+    let hex = crate::entity_id::bytes_to_hex_lower;
+    ExportRunResults {
+        runs: runs
+            .into_iter()
+            .map(|run| ExportRun {
+                run_id: run.run_id.to_hex(),
+                outputs: run
+                    .outputs
+                    .into_iter()
+                    .map(|output| ExportRunOutput {
+                        blake3: hex(&output.raw_blake3),
+                        bytes: output.raw_len,
+                        kind: match output.kind {
+                            crate::code_run::CodeRunOutputKind::Text => "text",
+                            crate::code_run::CodeRunOutputKind::Binary => "binary",
+                        }
+                        .to_owned(),
+                        lines: output.lines,
+                        complete: output.complete,
+                        path: output.path,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        bodies: bodies
+            .into_iter()
+            .map(|(digest, body)| {
+                let (content, withheld) = match body.body {
+                    Err(reason) => (None, Some(reason)),
+                    Ok(bytes) => match String::from_utf8(bytes) {
+                        Err(_) => (None, Some("binary")),
+                        Ok(text) => {
+                            match crate::batch::secret_scan::scan_file_content("", text.as_bytes())
+                            {
+                                Some(_) => (None, Some("credential")),
+                                None => (Some(text), None),
+                            }
+                        }
+                    },
+                };
+                ExportResultBody {
+                    blake3: hex(&digest),
+                    bytes: body.bytes,
+                    content,
+                    withheld: withheld.map(str::to_owned),
+                }
+            })
+            .collect(),
+    }
+}
+
 fn format_name(format: PackFormat) -> &'static str {
     match format {
         PackFormat::Json => "json",
@@ -181,6 +241,7 @@ fn encode_document(document: &WholeVaultDocument, format: PackFormat) -> Result<
         "skills",
         "agent_packs",
         "derivation_envelopes",
+        "run_results",
     ] {
         let content = value.get(name).cloned().unwrap_or(Value::Null);
         // One document-section row preserves empty sections in every format.

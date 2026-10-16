@@ -171,6 +171,18 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     // `json!` above is at its recursion limit, so these join after it.
     inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
     inputs.config["affect_retrieval"] = affect_retrieval;
+    inputs.config["media_search"] = json!(
+        builder
+            .media_search
+            .iter()
+            .map(|query| json!({
+                "space": query.space_id,
+                "query_kind": query.query_kind,
+                "kinds": query.kinds,
+                "limit": query.limit,
+            }))
+            .collect::<Vec<_>>()
+    );
     inputs.config["context_pack_world_share"] = json!(builder.context_pack_world_share);
     inputs.config["fusion"] = json!({
         "list_length": crate::fusion::FUSION_LIST_LENGTH,

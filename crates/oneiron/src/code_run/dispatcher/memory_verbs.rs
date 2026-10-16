@@ -18,7 +18,7 @@ use super::HostSelfDispatcher;
 use super::envelope::edge_operation_gate_id;
 use crate::error::{CodeError, OffRecordError};
 
-/// Maximum results a first-party `self.memory.search` call can request.
+/// Maximum results a first-party `vault.search` call can request.
 pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
 
 impl HostSelfDispatcher<'_> {
@@ -92,7 +92,10 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::Context
             | SelfEffect::Speak
             | SelfEffect::Think
-            | SelfEffect::Express => Ok(()),
+            | SelfEffect::Express
+            // A fold is the run's own view of its own log: its ledger rides
+            // the room's route into the overlay and evaporates with it.
+            | SelfEffect::Fold => Ok(()),
         }
     }
 
@@ -444,7 +447,7 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         | EdgeKind::BlockedBy
         // ONE-1608: `blocks` is the L2 code-memory readiness edge. Its
         // dedicated door binds the actor entity to its asserted class and
-        // proves acyclicity; a guest `self.memory.put_edge` carries neither,
+        // proves acyclicity; a guest `vault.edges.put` carries neither,
         // so guest code may not mint readiness dependencies.
         | EdgeKind::Blocks
         // ONE-1541 (CMT-4): the brief-fulfillment pair is structural and its
@@ -462,7 +465,7 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         // consent surface, and no actor — so it lands on the refusal side
         // with the rest of the structural kinds.
         | EdgeKind::SameAs => Err(Error::InvalidClaimBody(
-            "self.memory.put_edge rejects structural edge kinds",
+            "vault.edges.put rejects structural edge kinds",
         )),
     }
 }

@@ -3,7 +3,7 @@
 //! text (options, image, video, speech, transcribe, embed).
 use std::sync::Arc;
 
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -12,6 +12,7 @@ use oneiron_driver::SessionHint;
 use serde::Deserialize;
 
 use crate::auth::{CoreAuth, CoreScope};
+use crate::models::QuotaChoice;
 use crate::server::SyncServer;
 
 mod chat;
@@ -23,6 +24,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/session", post(session))
         .route("/chat", post(chat::chat_turn))
         .route("/options", get(media::options))
+        .route("/quota/{question}", post(answer_quota))
         .merge(media_routes())
 }
 
@@ -61,8 +63,51 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     Json(serde_json::json!({
         "ai": server.ai.status(),
         "models": server.ai.models_status(),
+        "quota_questions": server.ai.model_runtime().quota_questions(),
     }))
     .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QuotaAnswer {
+    choice: QuotaChoice,
+}
+
+/// The owner's answer to a quota question in `GET /v1/ai/status` (OF-305):
+/// `top_up` or `pay_as_you_go` puts the parked offer back in rotation now,
+/// `wait` and `add_account` close the question and leave it parked until
+/// its reset.
+async fn answer_quota(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(question): Path<String>,
+    Json(answer): Json<QuotaAnswer>,
+) -> Response {
+    if !auth.is_owner_grade() {
+        return refusal(
+            StatusCode::FORBIDDEN,
+            "owner_required",
+            "quota questions are the owner's",
+        );
+    }
+    match server
+        .ai
+        .model_runtime()
+        .answer_quota(&question, answer.choice)
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => refusal(
+            StatusCode::NOT_FOUND,
+            "no_such_question",
+            "no open quota question offers that choice",
+        ),
+        Err(_) => refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "quota_unwritable",
+            "the answer could not be kept",
+        ),
+    }
 }
 
 #[derive(Deserialize)]

@@ -12,8 +12,17 @@ impl CompactionDriver {
         used_tokens: u64,
         watermark: CompactionWatermark,
     ) -> CompactionDirective {
+        if used_tokens < self.compact_at() {
+            return CompactionDirective::Quiet;
+        }
+        self.begin_positioned(watermark)
+    }
+
+    /// `self.compact`: the agent's own breakpoint. The same transition a
+    /// crossing makes, at any size: one flight, a watermark that advances.
+    pub fn begin_positioned(&mut self, watermark: CompactionWatermark) -> CompactionDirective {
         match self.state {
-            CompactionState::Idle if used_tokens >= self.compact_at() => {
+            CompactionState::Idle => {
                 if watermark.turn.is_none()
                     || self
                         .completed_watermark
@@ -37,16 +46,19 @@ impl CompactionDriver {
     /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut,
     /// `prior` is the host's last epoch and the last turn it covers, and
     /// `calls` is how many of the host's calls `sources` were read from.
+    /// The host mints `request_id` from the store it reads: base, or its
+    /// room's view.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn request_for_log(
         &mut self,
-        vault: &Vault,
+        request_id: EntityId,
         session_ref: &EntityId,
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
         sources: Vec<EntityId>,
         prior: Option<crate::compaction::PriorEpoch>,
         calls: u64,
+        note: Option<String>,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, .. } = &self.state else {
             return Err(Error::InvariantViolation(
@@ -87,13 +99,57 @@ impl CompactionDriver {
         }
         let mut seen = std::collections::BTreeSet::new();
         let sources = sources.into_iter().filter(|id| seen.insert(*id)).collect();
-        self.seal_request(
-            vault,
+        self.seal_request_as(
+            request_id,
             session_ref,
             window,
             pins,
             sources,
+            prior,
+            note,
             WindowLog::Host { prior, calls },
         )
+    }
+
+    /// The request for one fold of a host-numbered log (ARCH-0067 §2.2): an
+    /// arbitrary span `window` covers, not the next epoch. It leaves the
+    /// driver's state alone, since a fold mints no epoch and moves no
+    /// watermark; the pass runs on the same backend and clears the same gate.
+    pub(crate) fn fold_request(
+        &self,
+        request_id: EntityId,
+        session_ref: &EntityId,
+        window: Vec<CompactionWindowMessage>,
+        pins: Vec<String>,
+        note: Option<String>,
+        calls: u64,
+    ) -> Result<CompactionRequest> {
+        let (turn_start, last) = validate_window_span(&window)?;
+        if pins.iter().any(|pin| {
+            pin.trim().is_empty()
+                || !window
+                    .iter()
+                    .any(|message| message.content.contains(pin.as_str()))
+        }) {
+            return Err(Error::InvariantViolation(
+                "a verbatim pin does not occur in the window",
+            ));
+        }
+        Ok(CompactionRequest {
+            request_id,
+            session_ref: *session_ref,
+            summary_token_budget: self.summary_token_budget(),
+            window,
+            turn_start,
+            watermark: CompactionWatermark {
+                learned_at: 0,
+                turn_id: None,
+                turn: Some(last),
+            },
+            pins,
+            sources: Vec::new(),
+            note,
+            log: WindowLog::Host { prior: None, calls },
+        })
     }
 }

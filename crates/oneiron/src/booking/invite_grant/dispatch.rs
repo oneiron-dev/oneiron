@@ -11,9 +11,8 @@ use crate::booking::constraint::BookingError;
 use crate::booking::lifecycle::{ConfirmReceipt, booking_confirmation_context, hex_lower};
 use crate::calendar::ics::emit_imip_ics_with_organizer_zones;
 use crate::calendar::{
-    CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarInviteAdmission, CalendarInviteMethod,
-    CalendarInvitePayload, ImipEmitRequest, admit_calendar_invite, decode_frozen_calendar_invite,
-    persist_imip_blob,
+    CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarInviteMethod, CalendarInvitePayload,
+    ImipEmitRequest, admit_calendar_invite, decode_frozen_calendar_invite, persist_imip_blob,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -65,8 +64,8 @@ impl OutboundExecutionSink for NoConfirmInviteSink {
 /// 5. Dispatch. Gate, opt-out wall, rate/budget, intent ledger, and connector
 ///    are the ordinary ones; a denied invite records no intent and therefore
 ///    fails here.
-/// 6. Move the passport head only AFTER the frozen intent exists, so no
-///    bumped SEQUENCE survives without the intent that spent it.
+/// 6. The outbound door publishes the passport and frozen intent in the
+///    same transaction before transport. No follow-up passport commit exists.
 ///
 /// # Errors
 ///
@@ -163,7 +162,6 @@ pub fn enqueue_confirm_invite(
     // nothing to return and nothing moved.
     let intent_id = recorded_intent_id(vault, &payload)?
         .ok_or_else(|| refused("the outbound door recorded no intent for this invite"))?;
-    commit_invite_passport(vault, &admission, now)?;
     Ok(intent_id)
 }
 
@@ -280,25 +278,6 @@ fn recorded_intent_id(
         }
     }
     Ok(None)
-}
-
-/// Applies CAL-04's passport head in its own transaction, after the intent.
-fn commit_invite_passport(
-    vault: &Vault,
-    admission: &CalendarInviteAdmission,
-    now: u64,
-) -> Result<(), BookingError> {
-    let mut wtxn = vault
-        .store
-        .env
-        .write_txn()
-        .map_err(|error| engine_failure("invite passport writer", error))?;
-    admission
-        .commit_in_txn(vault, &mut wtxn, now)
-        .map_err(calendar_wrap)?;
-    wtxn.commit()
-        .map_err(|error| engine_failure("invite passport commit", error))?;
-    Ok(())
 }
 
 /// The stable logical-send ref one booking's first REQUEST dispatches under.
