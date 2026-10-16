@@ -55,10 +55,9 @@ impl Vault {
     // -----------------------------------------------------------------
     // ARCH-0050 R6 L2 code-memory doors (ONE-1608).
     //
-    // Every wrapper here opens ONE transaction, delegates to the internal
-    // `crate::code_memory` implementation, and commits exactly once on
-    // success. None exposes `Store`, `RoTxn`, or `RwTxn`; the public
-    // contract suite reaches only these methods.
+    // Every wrapper here opens ONE transaction, delegates to the internal `crate::code_memory`
+    // implementation, and commits exactly once on success. None exposes `Store`, `RoTxn`, or
+    // `RwTxn`; the public contract suite reaches only these methods.
     // -----------------------------------------------------------------
 
     // Read/write/list helpers intentionally remain behind `feature = "sync"` instead of `cfg(test)`
