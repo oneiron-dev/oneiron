@@ -4,6 +4,7 @@
 //! receipts. No mailbox, renderer, or independent approval store is created.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -22,14 +23,26 @@ pub enum AgentInboxItemKind {
     CoordinationUpdate,
 }
 
+/// One receiving identity on a row and the actor it is bound to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AgentInboxParticipant {
+    pub identity_ref: EntityId,
+    pub actor_ref: EntityId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentInboxLensItem {
     pub item_id: String,
     pub kind: AgentInboxItemKind,
     pub thread_ref: Option<String>,
+    /// The identity, actor and facet of the row's newest entry.
     pub identity_ref: EntityId,
     pub actor_ref: EntityId,
     pub facet_ref: Option<EntityId>,
+    /// Every identity the row speaks for, sorted. A conversation row lists
+    /// each identity that received or sent on its thread (R4: one view across
+    /// all identities); the identity filter and agent slice match any of them.
+    pub participants: Vec<AgentInboxParticipant>,
     pub impact: InboxImpact,
     pub occurred_at: u64,
     pub receipt_ref: Option<String>,
@@ -57,6 +70,34 @@ impl Vault {
     }
 
     pub fn agent_inbox_lens(&self, query: AgentInboxLensQuery) -> Result<Vec<AgentInboxLensItem>> {
+        let wanted = query.identity_ref;
+        self.agent_inbox_view(&query, |row| {
+            wanted.is_none_or(|wanted| wanted == row.identity_ref)
+        })
+    }
+
+    /// One agent's slice of the same lens (rider 2026-10-09): the rows
+    /// addressed to it on any identity bound to it, in the owner view's order.
+    /// The board draws it as INBOX. It stores nothing.
+    pub fn agent_inbox_slice(
+        &self,
+        actor: EntityId,
+        limit: usize,
+        before: Option<(InboxImpact, u64, String)>,
+    ) -> Result<Vec<AgentInboxLensItem>> {
+        let query = AgentInboxLensQuery {
+            identity_ref: None,
+            limit,
+            before,
+        };
+        self.agent_inbox_view(&query, |row| row.actor_ref == actor)
+    }
+
+    fn agent_inbox_view(
+        &self,
+        query: &AgentInboxLensQuery,
+        keep: impl Fn(&AgentInboxParticipant) -> bool,
+    ) -> Result<Vec<AgentInboxLensItem>> {
         if query.limit == 0 {
             return Ok(Vec::new());
         }
@@ -73,16 +114,71 @@ impl Vault {
         let mut items = project_receipts(
             &scan.records,
             AgentInboxLensQuery {
-                identity_ref: query.identity_ref,
+                identity_ref: None,
                 limit: usize::MAX,
                 before: None,
             },
             true,
         )?;
-        items.extend(self.inbound_inbox_items(query.identity_ref)?);
-        sort_page(&mut items, &query);
+        // A receipt carries the thread ref it was sent on; the passport graph
+        // may since have joined that thread to another root.
+        for item in &mut items {
+            if let Some(thread) = &item.thread_ref {
+                item.thread_ref = Some(self.canonical_thread_ref(thread)?);
+            }
+        }
+        items.extend(self.inbound_inbox_items(None)?);
+        // Filter after folding, so a filtered conversation still names every
+        // identity on its thread.
+        let mut items = fold_threads(items);
+        items.retain(|item| item.participants.iter().any(&keep));
+        sort_page(&mut items, query);
         Ok(items)
     }
+}
+
+/// Conversations by thread (R4): every row on one canonical thread folds into
+/// one Conversation row, whichever identity received or sent it. Approvals
+/// stay their own rows, each with its own decision. Impact is the highest on
+/// the thread, so a blocked entry lifts its conversation (the residue law).
+fn fold_threads(items: Vec<AgentInboxLensItem>) -> Vec<AgentInboxLensItem> {
+    let mut out = Vec::new();
+    let mut threads: BTreeMap<String, AgentInboxLensItem> = BTreeMap::new();
+    for item in items {
+        let thread = match &item.thread_ref {
+            Some(thread) if item.kind != AgentInboxItemKind::ApprovalRequired => thread.clone(),
+            _ => {
+                out.push(item);
+                continue;
+            }
+        };
+        let row = match threads.entry(thread) {
+            Entry::Vacant(slot) => {
+                slot.insert(item);
+                continue;
+            }
+            Entry::Occupied(slot) => slot.into_mut(),
+        };
+        row.participants.extend(item.participants.iter().copied());
+        row.impact = row.impact.max(item.impact);
+        if (item.occurred_at, &item.item_id) > (row.occurred_at, &row.item_id) {
+            row.identity_ref = item.identity_ref;
+            row.actor_ref = item.actor_ref;
+            row.facet_ref = item.facet_ref;
+            row.occurred_at = item.occurred_at;
+            row.receipt_ref = item.receipt_ref;
+            row.payload_ref = item.payload_ref;
+            row.item_id = item.item_id;
+        }
+    }
+    for (thread, mut row) in threads {
+        row.participants.sort();
+        row.participants.dedup();
+        row.kind = AgentInboxItemKind::Conversation;
+        row.item_id = format!("conversation:{thread}");
+        out.push(row);
+    }
+    out
 }
 
 /// Projects both durable and session-local engine receipts. A later non-held
@@ -182,6 +278,10 @@ fn project_receipts(
             thread_ref: receipt.fields.get("thread_ref").cloned(),
             identity_ref,
             actor_ref,
+            participants: vec![AgentInboxParticipant {
+                identity_ref,
+                actor_ref,
+            }],
             facet_ref: receipt
                 .fields
                 .get("facet_ref")

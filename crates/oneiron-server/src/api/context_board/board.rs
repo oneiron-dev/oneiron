@@ -21,6 +21,8 @@ use utoipa::ToSchema;
 
 /// WORLDS rows past this many collapse into the section's additive overflow.
 const BOARD_WORLDS_CAP: usize = 16;
+/// Most INBOX rows one board renders; the lens orders them by impact.
+const BOARD_INBOX_CAP: usize = 16;
 
 /// Names the room whose ROOM section this board renders.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -310,6 +312,31 @@ pub(super) fn board_parts(
     .map_err(|error| core_engine_error("board skills failed", error))?;
     let skills_section = skills.board_section().map_err(board_frame_error)?;
 
+    // INBOX: the caller's own slice of the inbox lens, kept to rows that
+    // reach it through an identity its read admits. Hidden when empty.
+    let inbox = match targets.actor() {
+        Some(actor) => {
+            let mut rows = Vec::new();
+            let slice = vault
+                .agent_inbox_slice(actor, BOARD_INBOX_CAP, None)
+                .map_err(|error| core_engine_error("board inbox failed", error))?;
+            for item in slice {
+                let mut readable = false;
+                for participant in item.participants.iter().filter(|row| row.actor_ref == actor) {
+                    readable |= read
+                        .is_ref_readable(&participant.identity_ref)
+                        .map_err(|error| core_engine_error("board inbox failed", error))?;
+                }
+                if readable {
+                    rows.push(item);
+                }
+            }
+            oneiron::context_board::assemble_inbox_section(actor, &rows)
+                .map_err(board_frame_error)?
+        }
+        None => None,
+    };
+
     let mut sections = vec![worlds.clone()];
     if let Some(memories) = memories {
         sections.extend(
@@ -321,6 +348,7 @@ pub(super) fn board_parts(
     sections.push(agents_section);
     sections.push(skills_section);
     sections.extend(room_section.clone());
+    sections.extend(inbox);
     Ok(BoardParts {
         authority,
         scope,

@@ -198,6 +198,8 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
 
     /// Production ingress: verified bytes -> untrusted semantic envelope ->
     /// identity quarantine gate -> durable, idempotent surface-event handoff.
+    /// Mail with threading headers joins its thread and is handed to
+    /// propose/confirm (INB-05, CC-the-agent).
     pub fn accept_webhook(
         &self,
         vault: &Vault,
@@ -209,8 +211,9 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
             return Err(Error::InvalidConfig("mail webhook too large".into()));
         }
         let verified = self.host.verify_webhook(body, headers)?;
+        let thread = verified.thread_headers.clone();
         let input = self.parse_inbound(ChannelIdentityProviderInbound::Email(verified))?;
-        vault.enqueue_inbound_surface_event(input, now)
+        vault.enqueue_inbound_email(input, thread.as_ref(), now)
     }
 }
 impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> {
