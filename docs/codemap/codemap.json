@@ -489,7 +489,7 @@
      "surface": {
       "crate-vis": 16,
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -558,6 +558,26 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RefusalDial",
+      "RefusalDomain",
+      "RefusalLevel",
+      "RefusalOutcome",
+      "VaultKind"
+     ],
+     "path": "src/agent_def/refusal.rs",
+     "purpose": "The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 4,
+      "fn": 12,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -583,9 +603,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 13,
-      "crate-vis": 48,
+      "crate-vis": 49,
       "enum": 5,
-      "fn": 20,
+      "fn": 21,
       "struct": 4
      }
     },
@@ -39966,7 +39986,7 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -39993,7 +40013,7 @@
      "surface": {
       "crate-vis": 20,
       "mod": 1,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -40109,6 +40129,21 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SelfRefusalInput",
+      "SelfRefusalReceipt",
+      "TaskRefusalRecord"
+     ],
+     "path": "src/task_verb/refusal.rs",
+     "purpose": "The agent's own refusal of a TASK, applied through her dial (OF-533)",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -44057,7 +44092,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45338,7 +45373,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45480,7 +45515,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2730,
+   "source_files": 2732,
    "test_files": 903
   },
   "oneiron-android": {
