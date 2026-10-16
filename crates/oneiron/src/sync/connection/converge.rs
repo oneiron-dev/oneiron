@@ -10,7 +10,9 @@ use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::queue::QueuedUpdate;
 
 use super::SyncConnection;
-use super::session::{ConvergenceSession, MAX_CONVERGENCE_ROUNDS, PumpBudget, WsSink, WsSource};
+use super::session::{
+    ConvergenceSession, FullResyncMarker, MAX_CONVERGENCE_ROUNDS, PumpBudget, WsSink, WsSource,
+};
 
 impl SyncConnection {
     /// Runs the convergence protocol after queue replay (ARCH-0023b Fig. 2,
@@ -121,6 +123,16 @@ impl SyncConnection {
         let frames = self
             .re_bootstrap_local_state(client, force_resync)
             .map_err(|e| format!("Re-bootstrap queue clear failed: {e}"))?;
+        // A forced window's replacement retires its queued sends, deletes included, into the
+        // window itself: until this re-bootstrap proves the window, `fr:w:` is what makes a later
+        // connect, after a restart too, fetch and prove it again.
+        let markers: Vec<FullResyncMarker> = force_resync
+            .iter()
+            .map(|window_key| FullResyncMarker {
+                window_key: window_key.clone(),
+            })
+            .collect();
+        self.set_full_resync_markers(&markers)?;
         for frame in frames {
             write
                 .send(Message::Binary(frame.into()))
@@ -159,7 +171,7 @@ impl SyncConnection {
                 "Failed to clear converged queue: {e}"
             )));
         }
-        Ok(())
+        self.clear_full_resync_markers(&markers)
     }
 
     /// The queue clear of every re-bootstrap (`clear_all`). A row a

@@ -204,14 +204,15 @@ async fn spawn_fake_sync_server(
     mut server: FakeServer,
     close_on_forced_window: Option<&'static str>,
     forced_window_requests: Arc<AtomicUsize>,
-) -> (String, tokio::task::JoinHandle<()>) {
+) -> (String, tokio::task::JoinHandle<FakeServer>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    // The task hands its server back once the client's socket is gone.
     let handle = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-        while let Some(msg) = ws.next().await {
-            let Message::Binary(data) = msg.unwrap() else {
+        'serve: while let Some(Ok(msg)) = ws.next().await {
+            let Message::Binary(data) = msg else {
                 continue;
             };
             let responses = match data[0] {
@@ -247,9 +248,12 @@ async fn spawn_fake_sync_server(
                 other => panic!("unexpected client tag {other}"),
             };
             for response in responses {
-                ws.send(Message::Binary(response.into())).await.unwrap();
+                if ws.send(Message::Binary(response.into())).await.is_err() {
+                    break 'serve;
+                }
             }
         }
+        server
     });
     (format!("ws://{addr}"), handle)
 }
@@ -521,7 +525,11 @@ async fn full_resync_marker_retained_when_rebootstrap_errors() {
 async fn connect_to_fake(
     manager: &Arc<WindowManager>,
     server: FakeServer,
-) -> (SyncConnection, Result<(), String>) {
+) -> (
+    SyncConnection,
+    Result<(), String>,
+    tokio::task::JoinHandle<FakeServer>,
+) {
     let (server_url, server_task) =
         spawn_fake_sync_server(server, None, Arc::new(AtomicUsize::new(0))).await;
     let conn = SyncConnection::new(
@@ -542,8 +550,7 @@ async fn connect_to_fake(
         .connect_and_sync(&mut client, &event_tx)
         .await
         .map(drop);
-    server_task.abort();
-    (conn, result)
+    (conn, result, server_task)
 }
 
 /// F25 H21: a protocol error while the forced window re-bootstraps fails the
@@ -558,7 +565,7 @@ async fn full_resync_marker_retained_when_rebootstrap_reply_is_malformed() {
     let mut server = FakeServer::new();
     server.garble_window = Some(FULL_RESYNC_TEST_WINDOW.to_string());
 
-    let (_conn, result) = connect_to_fake(&manager, server).await;
+    let (_conn, result, _server) = connect_to_fake(&manager, server).await;
 
     assert!(
         result.is_err(),
@@ -571,12 +578,14 @@ async fn full_resync_marker_retained_when_rebootstrap_reply_is_malformed() {
     );
 }
 
-/// F25 H17: a delete row the server never confirms survives the convergence
-/// fallback, and the connect that ran it does not end Synced. Before, the
-/// re-bootstrap returned Ok on any reply without sending the kept row again.
+/// F25 H17: a delete the server never confirms outlives the convergence
+/// fallback. The connect that ran it does not end Synced, its window keeps
+/// `fr:w:`, and the next connect delivers it. Before, the re-bootstrap returned
+/// Ok on any reply, so the delete's window was never proven.
 #[tokio::test]
-async fn unconfirmed_delete_row_fails_the_rebootstrap_connect() {
+async fn unconfirmed_delete_fails_the_rebootstrap_connect_and_reaches_the_next_server() {
     let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
     let seeder = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
     let writer = window_doc();
     writer
@@ -584,30 +593,46 @@ async fn unconfirmed_delete_row_fails_the_rebootstrap_connect() {
         .insert("victim-entity", b"t".as_slice())
         .unwrap();
     writer.commit();
-    let seq = seeder
+    seeder
         .queue()
         .push_delete_bearing(
             "2026-03",
             &writer.export(ExportMode::all_updates()).unwrap(),
         )
         .unwrap();
-    let mut server = FakeServer::new();
-    server.forget_window = Some("2026-03".to_string());
+    let mut forgetful = FakeServer::new();
+    forgetful.forget_window = Some("2026-03".to_string());
 
     drop(seeder);
-    let (conn, result) = connect_to_fake(&manager, server).await;
+    let (_conn, result, _forgetful) = connect_to_fake(&manager, forgetful).await;
 
     match result {
         Ok(()) => panic!("a re-bootstrap with an unconfirmed delete must not end Synced"),
         Err(e) => assert!(e.contains("Re-bootstrap not confirmed"), "{e}"),
     }
+    assert_eq!(
+        vault.sync_state_get("fr:w:2026-03").unwrap().as_deref(),
+        Some([1u8].as_slice()),
+        "the unconfirmed window stays marked for the next connect"
+    );
+
+    let (_conn, result, server) = connect_to_fake(&manager, FakeServer::new()).await;
+    result.expect("a server that keeps the delete confirms the window");
+    let mut server = tokio::time::timeout(std::time::Duration::from_secs(30), server)
+        .await
+        .expect("the fake server stops when the client hangs up")
+        .unwrap();
     assert!(
-        conn.queue()
-            .drain_updates()
-            .unwrap()
-            .iter()
-            .any(|update| update.seq == seq),
-        "the unconfirmed delete row stays queued for the next connect"
+        server
+            .doc("2026-03")
+            .get_map("tombstones")
+            .get("victim-entity")
+            .is_some(),
+        "the delete reaches the server on the next connect"
+    );
+    assert!(
+        vault.sync_state_get("fr:w:2026-03").unwrap().is_none(),
+        "the marker clears once the window is proven"
     );
 }
 

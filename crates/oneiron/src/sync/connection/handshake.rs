@@ -551,7 +551,33 @@ impl SyncConnection {
         Ok(markers)
     }
 
-    fn clear_full_resync_markers(&self, markers: &[FullResyncMarker]) -> Result<(), String> {
+    pub(super) fn set_full_resync_markers(
+        &self,
+        markers: &[FullResyncMarker],
+    ) -> Result<(), String> {
+        if markers.is_empty() {
+            return Ok(());
+        }
+        let vault = self.manager.vault();
+        vault
+            .with_write_txn_grouped(|wtxn| {
+                for marker in markers {
+                    WINDOW_FULL_RESYNC_MARKER.put(
+                        &vault.store,
+                        wtxn,
+                        &marker.window_key,
+                        &[1u8],
+                    )?;
+                }
+                Ok(())
+            })
+            .map_err(|e| format!("Set full-resync markers failed: {e}"))
+    }
+
+    pub(super) fn clear_full_resync_markers(
+        &self,
+        markers: &[FullResyncMarker],
+    ) -> Result<(), String> {
         if markers.is_empty() {
             return Ok(());
         }
