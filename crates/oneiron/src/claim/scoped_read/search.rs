@@ -1,5 +1,24 @@
 use super::*;
 
+/// The rows a bounded search's plan refused that its key's own ceiling
+/// admits: rows the request excluded, which its receipt counts (B7). A row
+/// the key cannot read is never among them. A text scan checks every
+/// matching posting; a vector walk checks only the nodes it visits.
+pub(super) struct RequestExclusions {
+    ceiling: Option<ResolvedRetrievalFilter>,
+    ids: Mutex<HashSet<EntityId>>,
+}
+
+impl RequestExclusions {
+    pub(super) fn count(&self) -> Result<usize> {
+        Ok(self
+            .ids
+            .lock()
+            .map_err(|_| Error::InvariantViolation("request exclusions lock"))?
+            .len())
+    }
+}
+
 impl ScopedRead<'_> {
     /// Resolve a bounded query's actor/proof ceiling once. The terminal read
     /// checks fresh authority again, so this snapshot can never widen it.
@@ -25,13 +44,30 @@ impl ScopedRead<'_> {
         Ok(())
     }
 
+    /// The exclusions a search under `requested` counts. With no request
+    /// the plan is the key's own ceiling, so it refuses none the key reads.
+    pub(super) fn request_exclusions(
+        &self,
+        policy: &PolicyManifestResolution,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<RequestExclusions> {
+        Ok(RequestExclusions {
+            ceiling: requested
+                .map(|_| self.filter_under(policy, None))
+                .transpose()?,
+            ids: Mutex::default(),
+        })
+    }
+
     /// The plan admission a bounded search runs inside its retrieval: a
     /// candidate the plan's authority refuses takes no place in any channel,
-    /// so the search needs no fetch past what it was asked for.
+    /// so the search needs no fetch past what it was asked for. A refused
+    /// row the key's own ceiling admits lands in `excluded`.
     pub(super) fn plan_admits<'p>(
         &'p self,
         filter: &'p ResolvedRetrievalFilter,
         policy: &'p PolicyManifestResolution,
+        excluded: &'p RequestExclusions,
     ) -> impl Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> Result<bool>
     + Send
     + Sync
@@ -45,7 +81,19 @@ impl ScopedRead<'_> {
             {
                 return Ok(false);
             }
-            self.recall_candidate_in(txn, policy, filter, id)
+            if self.recall_candidate_in(txn, policy, filter, id)? {
+                return Ok(true);
+            }
+            if let Some(ceiling) = &excluded.ceiling
+                && self.recall_candidate_in(txn, policy, ceiling, id)?
+            {
+                excluded
+                    .ids
+                    .lock()
+                    .map_err(|_| Error::InvariantViolation("request exclusions lock"))?
+                    .insert(*id);
+            }
+            Ok(false)
         }
     }
 
@@ -75,7 +123,8 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let admitted = self.plan_admits(&filter, &policy);
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let results = self
             .vault
             .query()
@@ -91,7 +140,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )
     }
@@ -154,12 +203,22 @@ impl ScopedRead<'_> {
         }
         self.owner_live_in(txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
-        let filter = crate::gate::narrow_retrieval_filter(
+        let filter = self.filter_under(&policy, requested)?;
+        Ok((filter, policy))
+    }
+
+    /// This key's read filter under `policy`, narrowed by `requested`; with
+    /// no request, the key's own ceiling.
+    fn filter_under(
+        &self,
+        policy: &PolicyManifestResolution,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ResolvedRetrievalFilter> {
+        Ok(crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
             requested,
         )?
-        .under_credential_of(&self.actor_key);
-        Ok((filter, policy))
+        .under_credential_of(&self.actor_key))
     }
 
     #[expect(

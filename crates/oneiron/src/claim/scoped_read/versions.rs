@@ -31,7 +31,8 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let admitted = self.plan_admits(&filter, &policy);
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let results = self
             .vault
             .query()
@@ -48,7 +49,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -85,7 +86,8 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let admitted = self.plan_admits(&filter, &policy);
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let mut pipeline = self
             .vault
             .query()
@@ -105,7 +107,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
