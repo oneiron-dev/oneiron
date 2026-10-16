@@ -14,7 +14,7 @@ use super::payload::{
 };
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, code_run_layout_hash,
-    expect_map, invalid_code_run_replay, map_get, sha256_bytes, str_value, validate_label,
+    expect_map, invalid_code_run_replay, map_get, str_value, validate_label,
     validate_text,
 };
 use super::types::{
@@ -312,59 +312,107 @@ pub struct CodeRunOutputPreview {
     pub truncated: bool,
 }
 
-/// Raw code-run output metadata. Bytes are stored separately by handle.
+/// What a result body holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeRunOutputKind {
+    /// The whole body is UTF-8.
+    Text,
+    /// Anything else, kept byte for byte.
+    Binary,
+}
+
+impl CodeRunOutputKind {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Binary => "binary",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "text" => Some(Self::Text),
+            "binary" => Some(Self::Binary),
+            _ => None,
+        }
+    }
+}
+
+/// One result occurrence's manifest (OF-597): what the body is, measured
+/// as it was written. The body is stored once by its content handle, inline
+/// in LMDB or as a file beside `data.mdb`; authority stays with the
+/// occurrence, here, never with the shared bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CodeRunRawOutput {
     pub handle: String,
     pub path: String,
-    pub raw_sha256: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    pub raw_blake3: [u8; CODE_RUN_REPLAY_HASH_LEN],
     pub raw_len: u64,
+    pub kind: CodeRunOutputKind,
+    /// Lines in a text body: its newlines, plus one for an unterminated last
+    /// line.
+    pub lines: u64,
+    /// Whether the producer finished the body. An incomplete one is kept as
+    /// far as it got, and says so; it never reads as a success.
+    pub complete: bool,
     pub preview: CodeRunOutputPreview,
 }
 
 impl CodeRunRawOutput {
+    /// The manifest of a complete body held whole in memory.
     pub fn from_bytes(path: impl Into<String>, raw: &[u8]) -> Result<Self> {
+        let mut meter = crate::store::BodyMeter::new();
+        meter.feed(raw);
+        Self::from_facts(
+            path,
+            &meter.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS),
+            true,
+        )
+    }
+
+    /// The manifest of a body measured as it streamed.
+    pub(crate) fn from_facts(
+        path: impl Into<String>,
+        facts: &crate::store::BodyFacts,
+        complete: bool,
+    ) -> Result<Self> {
         let path = path.into();
         validate_text(
             &path,
             CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
             "raw output path",
         )?;
-
-        let raw_sha256 = sha256_bytes(raw);
-        let handle = format!(
-            "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
-            crate::entity_id::bytes_to_hex_lower(&raw_sha256)
-        );
-        let raw_len = u64::try_from(raw.len())
-            .map_err(|_| invalid_code_run_replay("raw output length overflow"))?;
-        let (text, truncated) = crate::serialize::compressed_code_run_output_preview(
-            raw,
-            crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS,
-        );
-
         Ok(Self {
-            handle,
+            handle: format!(
+                "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
+                crate::entity_id::bytes_to_hex_lower(&facts.digest)
+            ),
             path,
-            raw_sha256,
-            raw_len,
+            raw_blake3: facts.digest,
+            raw_len: facts.len,
+            kind: if facts.text {
+                CodeRunOutputKind::Text
+            } else {
+                CodeRunOutputKind::Binary
+            },
+            lines: facts.lines,
+            complete,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
-                text,
-                truncated,
+                text: facts.preview.clone(),
+                truncated: facts.preview_truncated,
             },
         })
     }
 
-    /// Checks stored bytes against this metadata: digest, length and preview.
-    pub(crate) fn verify_bytes(&self, raw: &[u8]) -> Result<()> {
-        if Self::from_bytes(self.path.clone(), raw)? != *self {
-            return Err(invalid_code_run_replay(
-                "stored raw output bytes drifted from metadata",
-            ));
+    /// The model-context reference of this body: its digest and length.
+    #[must_use]
+    pub fn output_ref(&self) -> crate::compaction::output::OutputRef {
+        crate::compaction::output::OutputRef {
+            hash: self.raw_blake3,
+            byte_len: self.raw_len,
         }
-        Ok(())
     }
 }
 

@@ -1,7 +1,7 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
 use super::store::{
-    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path, text_output_body,
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path,
 };
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
@@ -71,7 +71,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// Bind only committed observations from the current run to the linked
     /// file-read import. A guest cannot turn a hash into another run's output.
-    /// Each reference was derived from its verified stored bytes.
+    /// Each reference is its body's manifest digest and length.
     pub(super) fn with_recoverable_outputs(
         mut self,
         storage: &'s ExecutorStorage<'a>,
@@ -168,18 +168,17 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
                     "recoverable output offset exceeds source".into(),
                 ));
             }
-            // Only the chunk leaves the store: the body is read in place.
+            // Only the chunk leaves the store: an inline body is read in
+            // place, a file body by range.
+            if output.output_ref() != *source {
+                return Err(Error::CorruptedIndex("recoverable output integrity"));
+            }
             let chunk = storage
-                .with_code_run_raw_output_bytes(output, |raw| {
-                    let text = text_output_body(&output.path, raw)?;
-                    if text.len() as u64 != source.byte_len {
-                        return Err(Error::CorruptedIndex("recoverable output integrity"));
-                    }
-                    let end = offset
-                        .saturating_add(RECOVERABLE_OUTPUT_CHUNK_BYTES)
-                        .min(text.len());
-                    Ok(text[offset..end].to_vec())
-                })?
+                .read_code_run_raw_output_range(
+                    output,
+                    offset as u64,
+                    RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                )?
                 .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
             return Ok(Some(chunk));
         }

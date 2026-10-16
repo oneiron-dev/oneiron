@@ -17,6 +17,8 @@ doctest = false
 blake3 = { workspace = true }
 # `Error::Storage` carries the LMDB error. Same vendored heed as `oneiron`.
 heed = { workspace = true }
+# The machine-memory probe behind the memory-derived `[limits]` rows.
+libc = "0.2"
 rand_core = { workspace = true }
 # The Beta posterior seam (`posterior`) samples with these; same versions as `oneiron`.
 rand = "0.8"

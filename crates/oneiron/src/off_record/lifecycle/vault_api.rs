@@ -264,6 +264,10 @@ impl Vault {
             // callers must drop all read views before consuming close.
             entry.overlay.close()?;
         }
+        // The room's spilled result bodies go with its overlay: nothing it
+        // wrote off record outlives the close on disk either.
+        #[cfg(unix)]
+        self.store.remove_session_bodies(session_ref)?;
         let (internal_receipt_log, post_flip_emit_log) = {
             let mut state = session_entry_state(&entry)?;
             if state.gone || state.record != record {
