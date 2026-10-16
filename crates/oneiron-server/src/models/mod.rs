@@ -44,6 +44,7 @@ mod kept_on_device_tests;
 mod ladder;
 mod offer;
 mod openai;
+pub(crate) mod outbound_wait;
 mod output_cap;
 mod raw;
 mod receipts;
