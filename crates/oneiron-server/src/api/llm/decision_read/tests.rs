@@ -77,8 +77,8 @@ impl LabelReadModel for Reader {
     }
 }
 
-fn answered() -> LlmResult<LabelReadResponse> {
-    Ok(LabelReadResponse {
+fn answered() -> LabelReadResponse {
+    LabelReadResponse {
         primary: vec![0.3, 0.7],
         paired_yes: 0.2,
         person_yes: Some(0.6),
@@ -94,7 +94,7 @@ fn answered() -> LlmResult<LabelReadResponse> {
             },
             raw_provider: JsonValue::Null,
         },
-    })
+    }
 }
 
 /// A vault's server whose probe reads with `reader` on a fresh meter, holding
@@ -192,7 +192,7 @@ fn split() -> JsonValue {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_owner_alone_reads_once_on_the_meter_and_a_failed_check_is_refused_typed() {
-    let reader = reader(answered(), false);
+    let reader = reader(Ok(answered()), false);
     let (_dir, server, meter) = server(&reader, 2_048);
 
     // A scoped credential is not the owner: refused before anything is read.
@@ -254,7 +254,7 @@ async fn the_owner_alone_reads_once_on_the_meter_and_a_failed_check_is_refused_t
 /// reads wait their turn behind a held read, all are answered once it lets
 /// go, and the row asks.
 pub(crate) async fn cross_the_decision_reads(callers: usize) -> Crossing {
-    let reader = reader(answered(), true);
+    let reader = reader(Ok(answered()), true);
     let (_dir, server, _) = server(&reader, 1);
     let body = split();
     let calls =
