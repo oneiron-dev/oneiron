@@ -98,7 +98,10 @@ impl SyncServer {
                     tracing::warn!(%what, %reason, "the resident pump cannot serve this; it retries");
                 }
             }
-            for what in failing.keys().filter(|what| !pass.faults.contains_key(*what)) {
+            for what in failing
+                .keys()
+                .filter(|what| !pass.faults.contains_key(*what))
+            {
                 tracing::info!(%what, "the resident pump serves this again");
             }
             failing = pass.faults;
@@ -175,7 +178,10 @@ impl SyncServer {
     async fn run_resident(self: Arc<Self>, id: AttemptId, agent: EntityId) -> bool {
         let key = format!("resident:{}", agent.to_hex());
         let permit = loop {
-            let wait = match self.code_execution_host().and_then(|host| host.engine_native()) {
+            let wait = match self
+                .code_execution_host()
+                .and_then(|host| host.engine_native())
+            {
                 Some(host) => host.runs().admit_in_line(key.clone()),
                 None => return false,
             };
@@ -285,8 +291,8 @@ fn enter_run(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
 ) -> Result<EngineExecutorOutcome, String> {
-    let bound =
-        HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt).map_err(text)?;
+    let bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
+        .map_err(text)?;
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let has_seat = vault.model_manifest().map_err(text)?.is_some()
@@ -324,13 +330,8 @@ fn enter_run(
         None
     };
     let mut routed_config = config.clone();
-    let mut executor = EngineNativeExecutor::new(
-        vault,
-        provider.backend(),
-        provider.lease(),
-        runtime,
-        &bound,
-    );
+    let mut executor =
+        EngineNativeExecutor::new(vault, provider.backend(), provider.lease(), runtime, &bound);
     if let Some(seat) = &seat {
         routed_config.model = seat.model().clone();
         routed_config.model_locality = seat.locality();
@@ -343,9 +344,7 @@ fn enter_run(
     if let Some(shadow) = provider.code_check() {
         executor = executor.with_code_check(shadow);
     }
-    reactor
-        .block_on(executor.run(&routed_config))
-        .map_err(text)
+    reactor.block_on(executor.run(&routed_config)).map_err(text)
 }
 
 /// The run's task: its frozen definition's instructions, then what woke it.
