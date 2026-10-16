@@ -186,6 +186,63 @@ async fn credentials_behind_one_address_keep_their_own_windows() {
     assert!(!asked(&fixture), "no window was crossed");
 }
 
+/// The owner's cap on one address's active bookings sheds anonymous visitors:
+/// an owner-grade credential books past it, and a visitor with that address
+/// is still asked to cancel one first.
+#[tokio::test]
+async fn an_owner_grade_caller_is_not_held_to_the_per_email_booking_cap() {
+    let fixture = Fixture::new();
+    let slots = fixture.slots().await;
+    assert!(slots.len() > 2);
+    install(
+        &fixture,
+        BookingAntiAbuseRule::BookRate {
+            per_minute_per_ip: per_minute(100),
+            max_active_future_per_email: 1,
+        },
+    );
+
+    for (nth, slot) in slots.iter().take(2).enumerate() {
+        let session = format!("owner-cap-{nth}");
+        let request = book_input(hold(selected(slot), &session, None));
+        let held = served(owner(&fixture, "owner", "book", request).await).await;
+        let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held
+        else {
+            panic!("held, got {held:?}")
+        };
+        let request = book_input(confirm(hold_token, &session));
+        let confirmed = served(owner(&fixture, "owner", "book", request).await).await;
+        assert!(
+            matches!(
+                confirmed,
+                BookingOperationResponse::Book(BookingBookResult::Confirmed { .. })
+            ),
+            "confirmed, got {confirmed:?}"
+        );
+    }
+
+    let held = fixture
+        .dispatch(
+            "booking.hold",
+            hold(selected(&slots[2]), "visitor-cap", None),
+        )
+        .await
+        .expect("the visitor's hold");
+    let BookingOperationResponse::Book(BookingBookResult::Held { hold_token, .. }) = held else {
+        panic!("held, got {held:?}")
+    };
+    let refused = fixture
+        .route(
+            "POST",
+            &format!("/public/booking/{}/verbs/booking.confirm", fixture.token),
+            serde_json::to_value(confirm(hold_token, "visitor-cap")).expect("wire"),
+        )
+        .await;
+    assert!(!refused.status().is_success(), "{}", refused.status());
+    let body = String::from_utf8(bytes(refused).await).expect("utf-8");
+    assert!(body.contains("active upcoming"), "{body}");
+}
+
 /// Rule five at the booking windows row: `callers` listings on one
 /// credential, past a window of half as many a minute, all complete and the
 /// row asks. It runs on a paused runtime of its own.
