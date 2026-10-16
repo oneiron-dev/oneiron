@@ -403,10 +403,7 @@ impl ScopedRead<'_> {
                 .store
                 .validate_entity_type(header.entity_type)
                 .is_ok()
-            && filter
-                .entity_types
-                .as_ref()
-                .is_none_or(|types| types.contains(&header.entity_type))
+            && filter.read_scope().bands.contains(&header.entity_type)
             && !matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
@@ -493,10 +490,7 @@ impl ScopedRead<'_> {
                 .store
                 .validate_entity_type(header.entity_type)
                 .is_err()
-            || filter
-                .entity_types
-                .as_ref()
-                .is_some_and(|types| !types.contains(&header.entity_type))
+            || !filter.read_scope().bands.contains(&header.entity_type)
         {
             return Ok(false);
         }

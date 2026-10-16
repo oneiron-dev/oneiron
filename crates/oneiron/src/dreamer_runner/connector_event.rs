@@ -4,7 +4,12 @@ use super::{
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::connector_key::events::ConnectorEvent;
-use crate::{ClaimSource, EntityId, Error, Result};
+use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
+use crate::outbound::{
+    ConnectorReply, ConnectorReplyDispatch, OutboundDispatchError, OutboundExecutionOutcome,
+    OutboundExecutionRequest, OutboundExecutionSink, connector_reply_request,
+};
+use crate::{ClaimSource, EntityId, Error, Result, Vault};
 use rmpv::Value;
 
 pub const CONNECTOR_EVENT_QUEUE_KIND: &str = "dreamer.connector_event";
@@ -87,5 +92,88 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(CONNECTOR_EVENT_QUEUE_KIND, input)
+    }
+}
+
+/// What a host runs for one connector wake (OF-218): the target agent's turn
+/// on the event, and the sink its reply leaves through. The executor never
+/// sends on its own; a reply crosses
+/// [`Vault::dispatch_connector_reply`](crate::Vault::dispatch_connector_reply),
+/// so gate, budget, window, intent ledger and receipt all apply.
+pub trait ConnectorEventResponder {
+    /// Runs `wake.agent` on the event. `Ok(None)`: the agent wrote no reply.
+    ///
+    /// # Errors
+    /// The turn could not run; the driver parks the attempt.
+    fn reply(&mut self, vault: &Vault, wake: &ConnectorEventWake) -> Result<Option<ConnectorReply>>;
+
+    /// The host's sink for the reply's channel and thread, its per-send plan
+    /// keyed by `dispatch.request.intent_ref`.
+    ///
+    /// # Errors
+    /// The host has no transport for this channel.
+    fn sink(
+        &mut self,
+        wake: &ConnectorEventWake,
+        dispatch: &ConnectorReplyDispatch,
+    ) -> Result<&mut dyn OutboundExecutionSink>;
+}
+
+/// Wraps the Dreamer's executor chain with the connector-event arm.
+///
+/// Installed by the production factory always, responder or not: a typed
+/// connector wake reaching the partition decoder is a decode error and a
+/// parked driver. With no responder a wake is delivered and settled at zero
+/// units; a surface-born event already sits in the agent's inbox.
+pub struct ConnectorEventExecutor<'p, E> {
+    inner: E,
+    responder: Option<&'p mut dyn ConnectorEventResponder>,
+}
+
+impl<'p, E> ConnectorEventExecutor<'p, E> {
+    #[must_use]
+    pub fn new(inner: E, responder: Option<&'p mut dyn ConnectorEventResponder>) -> Self {
+        Self { inner, responder }
+    }
+}
+
+impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecutor<'_, E> {
+    async fn execute(
+        &mut self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        if attempt.status.attempt.kind != CONNECTOR_EVENT_QUEUE_KIND {
+            return self.inner.execute(attempt, ctx).await;
+        }
+        let wake = ConnectorEventWake::from_attempt(attempt)?;
+        let Some(responder) = self.responder.as_deref_mut() else {
+            tracing::info!(
+                agent = %wake.agent.to_hex(),
+                connector = %wake.event.connector,
+                "connector wake delivered with no responder installed"
+            );
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        };
+        if let Some(reply) = responder.reply(ctx.vault, &wake)? {
+            let dispatch = connector_reply_request(&wake.event, &reply)?;
+            let sink = responder.sink(&wake, &dispatch)?;
+            ctx.vault
+                .dispatch_connector_reply(&wake.event, &reply, &mut BorrowedSink(sink))
+                .map_err(|err| match err {
+                    OutboundDispatchError::Engine(err) => err,
+                    other => Error::InvalidConfig(format!("connector reply dispatch: {other}")),
+                })?;
+        }
+        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    }
+}
+
+/// A host's borrowed sink, sized for the generic dispatch door.
+struct BorrowedSink<'a>(&'a mut dyn OutboundExecutionSink);
+
+impl OutboundExecutionSink for BorrowedSink<'_> {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        self.0.execute(request)
     }
 }

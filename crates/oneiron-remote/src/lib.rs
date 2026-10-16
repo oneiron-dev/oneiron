@@ -15,18 +15,10 @@
 //! [`oneiron::task_verb::sdk::AgentVerb`] is the ordered, authoritative list of verbs this
 //! SDK ships, and it is the same list the server's `/v1/core/facade` nest
 //! routes and the same list both language export censuses assert against. It
-//! holds four quickstart calls, five exact actor-owned keyed-memory calls,
-//! the `ask` / `wait` / `tasks.answer` / `tasks.outcomes` calls and the
-//! `vault.rooms.*` calls. Every catalog row is implemented
-//! on both backends and bindings.
-//!
-//! The remaining §HEAD-CONTRACT verbs are ABSENT rather than stubbed, for the
-//! reason `oneiron-server`'s `api/facade.rs` header already gives: a `501` stub
-//! is still a registered row. It enters the route census, a client's catalog
-//! test counts it as shipped, and the only thing it proves is that somebody
-//! meant to write the verb. Extending the catalog means adding a server
-//! handler, a client row, and both language bindings together — which is a
-//! sequenced follow-on, not a silent partial row here.
+//! is generated from `scripts/sdk/agent-verbs.json`. Each facade row has a
+//! typed Rust method and one shared dispatch path, on both backends, beside
+//! the generated N-API, Python, HTTP and MCP projections. Adding a row extends
+//! all of those doors rather than leaving a transport-only stub.
 //!
 //! # What this crate never does
 //!

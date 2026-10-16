@@ -37,8 +37,14 @@ impl DevRunnerTarget {
 
     fn operation(self, patch_ref: String) -> RepairOperation {
         match self {
-            Self::Code { repo_ref } => RepairOperation::DevPatch { repo_ref, patch_ref },
-            Self::Schema { schema_ref } => RepairOperation::SchemaPatch { schema_ref, patch_ref },
+            Self::Code { repo_ref } => RepairOperation::DevPatch {
+                repo_ref,
+                patch_ref,
+            },
+            Self::Schema { schema_ref } => RepairOperation::SchemaPatch {
+                schema_ref,
+                patch_ref,
+            },
         }
     }
 }
@@ -226,9 +232,7 @@ impl HealerRegistration<'_> {
         // Recheck current scoped access, including policy changes since dispatch.
         let current = self.dev_runner_corpus(&diagnostic_refs)?;
         if current.value != task.failure_corpus.value {
-            return Err(
-                Error::InvalidConfig("dev runner failure corpus changed".into()).into(),
-            );
+            return Err(Error::InvalidConfig("dev runner failure corpus changed".into()).into());
         }
         let patch_ref = record
             .result_ref

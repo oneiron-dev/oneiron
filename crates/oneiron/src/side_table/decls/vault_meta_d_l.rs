@@ -18,6 +18,15 @@ side_tables! {
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
+    /// OF-490: one read of an agent's diary: reader, stated reason, entries and Grants (the agent
+    /// sees it). Key: id16 (agent) + id16 (read).
+    DIARY_READ_LOG: VaultMeta b"diary:read_log:v1:" Named;
+    /// OF-490: a reader's reason waiting on, or answered by, the agent's Y/N review. Key: id16
+    /// (agent) + id16 (request).
+    DIARY_READ_REQUEST: VaultMeta b"diary:read_request:v1:" Named;
+    /// OF-490: an agent reviews each read of its diary before it is read (on for Eiri; absent
+    /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
+    DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw;
     /// Enforcement-truth per-counterparty-contact disclosure scope row (rmpv-encoded), dual-written
     /// with an owner-visible claim. Key: id16.
     DISCLOSURE_SCOPE: VaultMeta b"disclosure.scope.v1:" Raw;
@@ -145,6 +154,18 @@ side_tables! {
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
     /// id16.
     DREAMER_REPRESENTATION_PROPOSAL: VaultMeta b"dreamer:representation:v1:proposal:" LegacyJson;
+    /// OF-490: the resident one dreaming attempt runs as, its own stamp, and the Gate receipt that
+    /// admitted it. Key: id16 (attempt).
+    DREAMER_RESIDENT_ATTEMPT: VaultMeta b"dreamer:resident:attempt:v1:" Named;
+    /// OF-490: the diary entry one resident dreaming attempt landed, so a replay writes none.
+    /// Key: id16 (attempt).
+    DREAMER_RESIDENT_LANDED: VaultMeta b"dreamer:resident:landed:v1:" Named;
+    /// OF-490: a sealed scratchpad a resident's dreaming already read. Value: one byte. Key:
+    /// id16 (resident) + id16 (pad).
+    DREAMER_RESIDENT_PADS: VaultMeta b"dreamer:resident:pads:v1:" Raw;
+    /// OF-490: what a resident's dreaming has read so far: newest receipt and INBOX times, last
+    /// dreaming, entries written. Key: id16 (resident).
+    DREAMER_RESIDENT_PROGRESS: VaultMeta b"dreamer:resident:progress:v1:" Named;
     /// Parent/child attempt-tree edge row (parent_attempt, created_at) keyed by attempt id. Key:
     /// id16.
     DREAMER_RUN_TREE: VaultMeta b"dreamer:run_tree:" Raw;
@@ -265,6 +286,9 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// An organ call held until one of the owner's nodes can run it (OF-575 MESH): the call's
+    /// bytes, why it waits, and its tries. Key: id16 + hash32 (blake3 of the run ref).
+    EDIT_SETTLE_ORGAN_WAIT: VaultMeta b"edit_settle:organ_wait:v1:" Named;
     /// A proposal retained beside its artifact until Keep or Discard: an edit proposal or a native
     /// organ output. Key: id16 + hash32 (blake3 of the proposal ref).
     EDIT_SETTLE_PENDING_PROPOSAL: VaultMeta b"edit_settle:pending:v1:" Named;
@@ -385,9 +409,6 @@ side_tables! {
     /// the single byte 1. No hold defers that retirement or lands while it stands. Key: id16
     /// (claim).
     GATE_DECISION_PARTITION_ERASE_PENDING: VaultMeta b"gate_decision:partition_erase_pending:v1:" Raw;
-    /// Legal hold on one exterior-key partition of the gate decision ledger; the value is the
-    /// single byte 1. Key: 0 (claim-free partition) or 1 + id16 (claim).
-    GATE_DECISION_PARTITION_HOLD: VaultMeta b"gate_decision:partition_hold:v1:" Raw;
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
@@ -585,8 +606,44 @@ side_tables! {
     /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
     /// (setting key).
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
+    /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
+    /// deletion receipt completes (OF-470 C4). Key: id16 (record).
+    LEGAL_HOLD_ERASE_LINK: VaultMeta b"legal_hold:erase_link:v1:" Named;
+    /// The owner-visible legal-hold log: ids, times and reason codes only (OF-470 C3). Key: id16
+    /// (hold) + u64be (sequence).
+    LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
+    /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
+    /// no checkpoint image carries it. Key: id16 (record).
+    LEGAL_HOLD_HOST_ERASE_LINK: VaultMeta b"legal_hold:host:erase_link:v1:" Named;
+    /// The host-only legal-hold log (OF-470 C2). Runtime-tier: no checkpoint image carries it.
+    /// Key: id16 (hold) + u64be (sequence).
+    LEGAL_HOLD_HOST_EVENT: VaultMeta b"legal_hold:host:event:v1:" Named;
+    /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
+    /// checkpoint image carries it. Key: id16 (hold).
+    LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
+    /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
+    /// zero bytes for the claim-free gate partition) + id16 (hold).
+    LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
+    /// An owner-confirmed erase a host order keeps waiting; it names no hold. Key: id16 (record).
+    LEGAL_HOLD_PENDING_ERASE: VaultMeta b"legal_hold:pending_erase:v1:" Named;
+    /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16
+    /// (hold).
+    LEGAL_HOLD_ROW: VaultMeta b"legal_hold:row:v1:" Named;
+    /// What a standing customer hold holds; the value is empty. Key: held key (1 + id16, or 17
+    /// zero bytes for the claim-free gate partition) + id16 (hold).
+    LEGAL_HOLD_TARGET: VaultMeta b"legal_hold:target:v1:" Raw;
+    /// A record kept after a refused privacy erasure, serving only that legal reason (OF-470 C6).
+    /// Key: id16 (record).
+    LEGAL_HOLD_USE_LIMIT: VaultMeta b"legal_hold:use_limit:v1:" Named;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
+    /// One proposed pack lens: its frozen compiled tree, the pack/skill slot and pack content
+    /// hash it is bound to, and who proposed it. It mounts only once the owner selects it. Key:
+    /// id16 (lens).
+    LENS_PROPOSAL: VaultMeta b"lens/proposal/v1\0" Named;
+    /// The owner's consented selection of one proposed lens revision for a pack/skill slot.
+    /// Key: string (pack name "\0" skill id hex).
+    LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().

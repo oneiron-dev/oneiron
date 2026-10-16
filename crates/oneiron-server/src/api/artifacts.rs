@@ -94,17 +94,18 @@ pub(crate) const OWN_ORIGIN_CODE_ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat
 pub(crate) struct ArtifactOnlyListener;
 
 /// The policy a code bundle's documents get where this request arrived. Where
-/// no artifact listener serves (managed serve, an embedder's bare app), `/a/`
-/// keeps the policy every artifact had before the listener existed, so that
-/// bundles there keep their modules until such a listener does.
+/// no artifact listener serves (a managed vault given no artifact socket, an
+/// embedder's bare app), `/a/` keeps the policy every artifact had before the
+/// listener existed, so that bundles there keep their modules until such a
+/// listener does.
 fn code_artifact_policy(
     server: &SyncServer,
     listener: Option<Extension<ArtifactOnlyListener>>,
 ) -> &'static str {
-    match (listener, server.artifact_port()) {
+    match (listener, server.has_artifact_origin()) {
         (Some(_), _) => OWN_ORIGIN_CODE_ARTIFACT_CONTENT_SECURITY_POLICY,
-        (None, Some(_)) => CODE_ARTIFACT_CONTENT_SECURITY_POLICY,
-        (None, None) => ARTIFACT_CONTENT_SECURITY_POLICY,
+        (None, true) => CODE_ARTIFACT_CONTENT_SECURITY_POLICY,
+        (None, false) => ARTIFACT_CONTENT_SECURITY_POLICY,
     }
 }
 
@@ -134,8 +135,8 @@ pub(crate) async fn serve_artifact_root(
     vault_host: Option<Extension<VaultHostRoute>>,
 ) -> Result<Response, EnvelopedApiError> {
     let mut route = ArtifactRoute::parse(&uri, &artifact, &query)?;
-    if vault_host.is_some() {
-        route.on_vault_host();
+    if let Some(Extension(host)) = vault_host {
+        route.on_vault_host(host.app);
     }
     let code_policy = code_artifact_policy(&server, listener);
     let response = serve_artifact_file(server, &route, &headers, code_policy)?;
@@ -155,8 +156,8 @@ pub(crate) async fn serve_artifact_path(
     vault_host: Option<Extension<VaultHostRoute>>,
 ) -> Result<Response, EnvelopedApiError> {
     let mut route = ArtifactRoute::parse(&uri, &artifact, &query)?;
-    if vault_host.is_some() {
-        route.on_vault_host();
+    if let Some(Extension(host)) = vault_host {
+        route.on_vault_host(host.app);
     }
     let code_policy = code_artifact_policy(&server, listener);
     let response = serve_artifact_file(server, &route, &headers, code_policy)?;

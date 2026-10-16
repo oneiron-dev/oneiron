@@ -17,6 +17,9 @@ pub use self::codec::{
     encode_standing_outbound_grant_body,
 };
 pub use self::consume::CHANNEL_IDENTITY_GRANT_USAGE_PREFIX;
+pub(crate) use self::consume::{
+    ChannelIdentityGrantReservation, reserve_channel_identity_grant_in_txn,
+};
 pub use self::grant::{StandingOutboundGrant, StandingOutboundGrantStatus};
 pub use self::scope::{
     BookingPageInviteGrantMintIntent, ScopedMcpGrantMintIntent, StandingOutboundGrantScope,

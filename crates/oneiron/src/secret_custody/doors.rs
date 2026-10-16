@@ -328,11 +328,45 @@ pub(crate) fn put_secret_custody_in_txn(
     rec: &SecretCustodyRecord,
     occurred_at: u64,
 ) -> Result<()> {
+    put_custody_body_in_txn(&CustodyWrite::of(vault), wtxn, id, rec, occurred_at)
+}
+
+/// What a custody write applies through: the vault's store, config and
+/// analyzer, and whether its text index is trusted. The batch door's mask on
+/// write (OF-560) holds these without a [`Vault`].
+pub(crate) struct CustodyWrite<'a> {
+    pub(crate) store: &'a Store,
+    pub(crate) config: &'a crate::config::VaultConfig,
+    pub(crate) analyzer: &'a crate::analyzer::MultilingualAnalyzer,
+    pub(crate) text_index_trusted: bool,
+}
+
+impl<'a> CustodyWrite<'a> {
+    pub(crate) fn of(vault: &'a Vault) -> Self {
+        Self {
+            store: &vault.store,
+            config: &vault.config,
+            analyzer: &vault.analyzer,
+            text_index_trusted: vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        }
+    }
+}
+
+/// [`put_secret_custody_in_txn`] through `write`.
+fn put_custody_body_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rec: &SecretCustodyRecord,
+    occurred_at: u64,
+) -> Result<()> {
     let data = encode_secret_custody_body(rec)?;
     apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
+        write.store,
+        write.config,
+        write.analyzer,
         wtxn,
         vec![BatchOp::Put {
             id: *id,
@@ -347,9 +381,7 @@ pub(crate) fn put_secret_custody_in_txn(
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }],
-        vault
-            .text_index_trusted
-            .load(std::sync::atomic::Ordering::Acquire),
+        write.text_index_trusted,
         false,
         true,
     )
@@ -465,6 +497,17 @@ pub(super) fn register_secret_in_txn(
     id: &EntityId,
     rec: &mut SecretCustodyRecord,
 ) -> Result<()> {
+    register_custody_in_txn(&CustodyWrite::of(vault), wtxn, id, rec)
+}
+
+/// [`register_secret_in_txn`] through `write`: the batch door's mask on write
+/// (OF-560) registers each secret it lifts here, in the batch's transaction.
+pub(crate) fn register_custody_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rec: &mut SecretCustodyRecord,
+) -> Result<()> {
     if rec.status != SecretCustodyStatus::Active {
         return Err(invalid_body("registration requires status active"));
     }
@@ -482,7 +525,7 @@ pub(super) fn register_secret_in_txn(
     // Resolve the floor against the LIVE vault inside this write
     // transaction and enforce narrow-only against it (never against the
     // caller-supplied snapshot, which may be stale).
-    let live_band = refuse_bindings_wider_than_live_floor(&vault.store, wtxn, rec)?;
+    let live_band = refuse_bindings_wider_than_live_floor(write.store, wtxn, rec)?;
     // The audit snapshot attached to the record must be narrower-or-equal
     // to the live floor: a caller-attested WIDER floor would lie about
     // the register-time posture. Most-restrictive-wins merge means a
@@ -497,12 +540,12 @@ pub(super) fn register_secret_in_txn(
         }));
     }
 
-    if let Some(existing_id) = NAME_INDEX.get(&vault.store, wtxn, &rec.name)? {
+    if let Some(existing_id) = NAME_INDEX.get(write.store, wtxn, &rec.name)? {
         // A live name denies; a revoked or missing record frees the index.
         // The admission projection reads status and generation without
         // copying the existing value out of the store.
         if let Some(existing) =
-            read_secret_custody_admission_in_txn(&vault.store, wtxn, &existing_id)?
+            read_secret_custody_admission_in_txn(write.store, wtxn, &existing_id)?
         {
             if existing.status != SecretCustodyStatus::Revoked {
                 return Err(Error::Secret(SecretError::SecretNameInUse {
@@ -546,7 +589,21 @@ pub(super) fn register_secret_in_txn(
 
     // SECRET-01 dedicated door: the sealed type-77 put shape lives in
     // `put_secret_custody_in_txn`, shared with SECRET-04's rotate/revoke.
-    put_secret_custody_in_txn(vault, wtxn, id, rec, rec.registered_at)?;
-    NAME_INDEX.put(&vault.store, wtxn, &rec.name, id)?;
+    put_custody_body_in_txn(write, wtxn, id, rec, rec.registered_at)?;
+    NAME_INDEX.put(write.store, wtxn, &rec.name, id)?;
     Ok(())
+}
+
+/// OF-222: restores one custody record from the owner's own whole-vault
+/// archive under its archived id, inside the import's write transaction and
+/// through every check registration makes. The owner's own archive carries
+/// custody records so a re-import keeps every key (owner ruling 2026-10-17);
+/// no export to a contact or share carries one.
+pub(crate) fn restore_secret_custody_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rec: &mut SecretCustodyRecord,
+) -> Result<()> {
+    register_secret_in_txn(vault, wtxn, id, rec)
 }

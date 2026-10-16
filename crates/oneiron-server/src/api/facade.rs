@@ -8,14 +8,10 @@
 //! types ARE the engine DTOs — so this projection and the in-process N-API
 //! binding cannot drift into two dialects of the same verb.
 //!
-//! L1 ships the canonical quickstart, which is four calls: `vault.witness` →
-//! `vault.claims.upsert` → `vault.recall` → `vault.receipts`. The rest of the §HEAD-CONTRACT
-//! catalog is deliberately ABSENT rather than stubbed, except the five
-//! exact keyed-memory routes below and eight generated tasks/rooms routes.
-//! A `501` stub is still a
-//! registered row: it enters the route census, a client's catalog test counts
-//! it as shipped, and the only thing it proves is that somebody meant to write
-//! the verb. An absent route says the same thing without the false positive.
+//! The route projection is generated from `scripts/sdk/agent-verbs.json`.
+//! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
+//! all use the same inventory and engine DTOs as the native clients. Live
+//! subscriptions remain owned by the held socket rather than this router.
 //!
 //! ERRORS are the facade's own, not the server's closed
 //! [`crate::error::ErrorCode`] enum.
@@ -25,8 +21,11 @@
 //! instead of collapsing into `INTERNAL_SERVER_ERROR`. `crate::error` is not
 //! edited to admit these codes; that is the whole point of the local type.
 
+pub(super) mod action_routes;
 mod agent_verbs;
+pub(super) mod role_picks;
 pub(super) mod host_doors;
+mod shared_act_doors;
 #[cfg(test)]
 pub(super) mod tests;
 
@@ -671,6 +670,11 @@ impl From<MemoryError> for FacadeApiError {
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            // OF-063: the write named a record its writer cannot resolve. The
+            // request was well formed and refused, so it is the caller's
+            // to correct, and a missing record and an unreadable one are this
+            // same status.
+            oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => StatusCode::UNPROCESSABLE_ENTITY,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

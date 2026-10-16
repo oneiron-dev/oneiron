@@ -79,7 +79,8 @@ pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
-/// Replay scores, independent judge audits, blind preferences and skill tradeoffs.
+/// Replay scores, independent judge audits, blind preferences, hidden-flaw findings per
+/// objective (`honesty`) and skill tradeoffs.
 pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
     name: "skill_optimize.judgment",
     version: 1,
@@ -125,6 +126,25 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// A caller's own question through the host's ladder (`ai.verdict`): yes or
+/// no, or one of its labels. The wording is the caller's; keyed by the
+/// answer contract, so a changed label set is a new question.
+pub const AI_VERDICT: QuestionFamily = QuestionFamily {
+    name: "ai.verdict",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// A routine driver step through `ai.verdict` (OF-523, the CUA-S1 pattern): which of the
+/// step's candidates the driver acts on (NONE, reobserve or ask up reserved), or where its
+/// target is in a screenshot. Keyed by the answer contract, as [`AI_VERDICT`] is, so a
+/// step's bands learn apart from plain verdicts.
+pub const AI_VERDICT_ROUTINE: QuestionFamily = QuestionFamily {
+    name: "ai.verdict.routine",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// The paired yes/no question every decision read asks beside the labels: does this need
 /// more thinking? Keyed by its wording alone.
 pub const THINK_MORE: QuestionFamily = QuestionFamily {
@@ -165,10 +185,84 @@ pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Is everything okay past a wire, limit or scan threshold: a bot, or a valid burst
+/// (OF-520)? Keyed by the crossing.
+pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
+    name: "server.wire_health",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Which capability setting one connector grant-slate row drafts (auto, always ask or
 /// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
 pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
     name: "connector.grant_slate.draft",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How a conflicting claim set the Dreamer extracted resolves (merge, supersede, accumulate
+/// or escalate), and which listed candidate's identity a merge keeps. Keyed by `resolution`,
+/// or by `identity` and the option group.
+pub const CONFLICT_RESOLUTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_resolution",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Which listed claim, if any, a candidate the Dreamer extracted corrects. Keyed by the
+/// candidate's position and the option group.
+pub const CORRECTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.correction",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does this candidate belong to the saved query its owner's rubric describes? Keyed by the
+/// rubric's hash and version.
+pub const SAVED_QUERY_MATCH: QuestionFamily = QuestionFamily {
+    name: "saved_query.match",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does the owner policy's safeguard model find a violation (binary contract), or which
+/// policy row the candidate violates, if any (category contracts)? Keyed by the document
+/// hash, the contract and the option group.
+pub const POLICY_OWNER_VIOLATION: QuestionFamily = QuestionFamily {
+    name: "policy_model.owner_violation",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// The owner question for an attested hosted-legal policy. Keyed as the owner question is,
+/// with the policy version.
+pub const POLICY_HOSTED_VIOLATION: QuestionFamily = QuestionFamily {
+    name: "policy_model.hosted_violation",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Is this booking turn off topic for scheduling (the turn ends with a deflect)? Keyed by
+/// the constraint schema version.
+pub const BOOKING_OFF_TOPIC: QuestionFamily = QuestionFamily {
+    name: "booking.off_topic",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Does this conversation turn sound like a project (yes or no)? Asked by the house mind on a
+/// person's on-record turn; no key parts, so every conversation asks the one question.
+pub const PROJECT_PROPOSAL: QuestionFamily = QuestionFamily {
+    name: "conversation.project_proposal",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// How well one arm of a session-branch claim edit fits the owner's held-out labels, from 0
+/// to 1. Unkeyed: the wording is the key.
+pub const CLAIM_REPLAY: QuestionFamily = QuestionFamily {
+    name: "skill_hub.claim_replay",
     version: 1,
     class: DecisionClass::Judgment,
 };
@@ -186,10 +280,21 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    AI_VERDICT,
+    AI_VERDICT_ROUTINE,
     THINK_MORE,
     ASK_UP,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
+    WIRE_HEALTH,
     CONNECTOR_SLATE_DRAFT,
+    CONFLICT_RESOLUTION,
+    CORRECTION,
+    SAVED_QUERY_MATCH,
+    POLICY_OWNER_VIOLATION,
+    POLICY_HOSTED_VIOLATION,
+    BOOKING_OFF_TOPIC,
+    PROJECT_PROPOSAL,
+    CLAIM_REPLAY,
 ];

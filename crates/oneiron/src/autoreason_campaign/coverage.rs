@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 
 use crate::llm::decision::{DecisionQuestion, TypedDecision};
 use crate::skill_optimize::{
-    GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayScorer,
-    HonestyReplayObservation, SkillOptimizeDecisions, SkillReplayPair,
+    GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
+    HonestyReplay, SkillOptimizeDecisions, SkillReplayPair,
 };
 use crate::workspace_roster::GoalRecord;
 use crate::{EntityId, Error, Result};
@@ -61,11 +61,23 @@ impl CoverageReplay {
     fn matches(&self, case: &HeldOutReplayCase<'_>) -> bool {
         let mut receipts = case.held_out_receipts.to_vec();
         receipts.sort();
+        self.matches_body(case) && self.held_out_receipts == receipts
+    }
+
+    fn matches_body(&self, case: &HeldOutReplayCase<'_>) -> bool {
         self.skill == case.skill
             && self.skill_id == case.skill_id
             && self.version == case.version
             && self.instructions_digest == instructions_digest(case.instructions)
-            && self.held_out_receipts == receipts
+    }
+
+    fn matches_replay(&self, case: &HeldOutReplayCase<'_>) -> bool {
+        self.matches_body(case)
+            && !case.held_out_receipts.is_empty()
+            && case
+                .held_out_receipts
+                .iter()
+                .all(|receipt| self.held_out_receipts.binary_search(receipt).is_ok())
     }
 }
 
@@ -171,15 +183,16 @@ impl CoverageFloorComparison {
 /// Decorates the existing admission scorer with measured output coverage.
 /// The authenticated goal must ALREADY declare `coverage` as a floor; this
 /// adapter cannot rewrite that goal, mint a preference or bypass the gate.
-/// All non-coverage scores and judge audits retain their existing executor.
+/// Measured coverage loss refuses scoring. All scores and judge audits use
+/// the inner scorer's shared typed-decision path.
 pub struct CoverageFloorScorer<'a> {
-    inner: &'a dyn HeldOutReplayScorer,
+    inner: &'a dyn HeldOutReplayNotes,
     comparison: &'a CoverageFloorComparison,
 }
 
 impl<'a> CoverageFloorScorer<'a> {
     pub fn new(
-        inner: &'a dyn HeldOutReplayScorer,
+        inner: &'a dyn HeldOutReplayNotes,
         comparison: &'a CoverageFloorComparison,
         goal: &GoalRecord,
     ) -> CampaignResult<Self> {
@@ -189,7 +202,7 @@ impl<'a> CoverageFloorScorer<'a> {
     }
 }
 
-impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
+impl HeldOutReplayNotes for CoverageFloorScorer<'_> {
     fn judge_revision(&self) -> &str {
         self.inner.judge_revision()
     }
@@ -199,7 +212,23 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
     }
 
     fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<serde_json::Value> {
-        self.inner.replay_state(case)
+        // Task-success judgments replay one reserved receipt at a time.
+        if !self.comparison.before.matches_replay(case)
+            && !self.comparison.after.matches_replay(case)
+        {
+            return Err(Error::InvalidConfig(
+                "coverage evidence does not match the skill body and held-out replay".into(),
+            ));
+        }
+        if !self.comparison.preserves_coverage() {
+            return Err(Error::InvalidConfig(
+                "held-out replay loses required output coverage".into(),
+            ));
+        }
+        Ok(serde_json::json!({
+            "replay": self.inner.replay_state(case)?,
+            "coverage_floor": self.comparison.goal_axis_score(),
+        }))
     }
 
     fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
@@ -215,11 +244,12 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         self.inner.record_decision(question, decision, state)
     }
 
-    fn replay_honesty(
-        &self,
-        case: &HeldOutReplayCase<'_>,
-    ) -> Result<Vec<HonestyReplayObservation>> {
-        self.inner.replay_honesty(case)
+    fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+        self.inner.honesty_replays(case)
+    }
+
+    fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        self.inner.human_minutes(case)
     }
 
     fn coverage_floor(&self) -> Option<&CoverageFloorComparison> {

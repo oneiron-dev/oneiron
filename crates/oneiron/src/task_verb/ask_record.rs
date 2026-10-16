@@ -66,6 +66,8 @@ pub(super) struct AskGroup {
     #[serde(default)]
     pub guest_grants: std::collections::BTreeMap<EntityId, EntityId>,
     pub policy_surface: super::TaskAskSurface,
+    /// Stated after the census and before any member TASK (OF-393).
+    pub statement: crate::agent_dispatch::FanoutStatement,
 }
 
 impl AskGroup {

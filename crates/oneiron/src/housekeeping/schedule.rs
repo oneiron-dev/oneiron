@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::HousekeepingSweep;
 use crate::Vault;
-use crate::deletion::HARD_ERASE_SWEEP_PREFIX;
+use crate::deletion::{HARD_ERASE_SWEEP_PREFIX, WITHDRAWN_GENERATION_SWEEP_PREFIX};
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
@@ -223,12 +223,15 @@ pub(super) fn write_state(
     Ok(())
 }
 
-/// Whether any erasure obligation (an `h:` row) is queued.
+/// Whether any erasure obligation (an `h:` row, or a `hw:` withdrawn
+/// generation's) is queued.
 pub(super) fn erase_obligation_waiting(vault: &Vault) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    let mut rows = vault
-        .store
-        .sync_queue
-        .prefix_iter(&txn, HARD_ERASE_SWEEP_PREFIX)?;
-    Ok(rows.next().transpose()?.is_some())
+    for prefix in [HARD_ERASE_SWEEP_PREFIX, WITHDRAWN_GENERATION_SWEEP_PREFIX] {
+        let mut rows = vault.store.sync_queue.prefix_iter(&txn, prefix)?;
+        if rows.next().transpose()?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

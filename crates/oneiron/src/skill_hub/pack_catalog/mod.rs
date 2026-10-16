@@ -10,6 +10,10 @@ mod hub_install;
 mod local;
 mod manifest;
 mod migrations;
+mod organs;
+mod setup;
+mod setup_cards;
+mod setup_session;
 mod source;
 
 pub use crate::gate::PackInstallPolicyOverride;
@@ -23,7 +27,23 @@ pub use hub_install::hub_pin;
 pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
+pub use organs::{
+    MAX_ORGAN_BUILD_BYTES, PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree,
+    host_platform,
+};
 pub use screening::PackInstallRules;
+pub use setup::{
+    MAX_SETUP_ACCOUNTS, MAX_SETUP_CONNECTIONS, MAX_SETUP_PERMISSIONS, MAX_SETUP_SECRETS,
+    PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission,
+    PackSetupRisk, PackSetupSecret,
+};
+pub use setup_cards::PackSetupCardAction;
+pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_txn};
+pub use setup_session::{
+    PackSetupAnswer, PackSetupCheck, PackSetupCheckRecord, PackSetupConnectionState,
+    PackSetupCustodyRef, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermissionState,
+    PackSetupSecretState, PackSetupSession, PackSetupView,
+};
 pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(

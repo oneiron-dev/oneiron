@@ -102,6 +102,7 @@ pub use owner_rows::{
     PolicyRowSubmission, SecretScanReceipt, WorldPrivacyReceipt, policy_row_grant_target,
 };
 pub(crate) use owner_rows::{is_live_vault_owner_in_txn, owners_in_txn};
+mod notes;
 mod notice;
 mod pattern;
 mod planes;

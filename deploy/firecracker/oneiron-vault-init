@@ -14,17 +14,28 @@ mount -t ext4 -o noatime /dev/vdb /vault
 vault=""
 owner=""
 allowed_origins=""
+artifact_origin=""
+artifact_domains=""
 for word in $(cat /proc/cmdline); do
   case "$word" in
     oneiron.vault=*) vault="${word#oneiron.vault=}" ;;
     oneiron.owner=*) owner="${word#oneiron.owner=}" ;;
     oneiron.allowed_origins=*) allowed_origins="${word#oneiron.allowed_origins=}" ;;
+    oneiron.artifact_origin=*) artifact_origin="${word#oneiron.artifact_origin=}" ;;
+    oneiron.artifact_domains=*) artifact_domains="${word#oneiron.artifact_domains=}" ;;
   esac
 done
 
 set --
 if [ -n "$allowed_origins" ]; then
   set -- --allowed-origins "$allowed_origins"
+fi
+# The artifact origin, reached on vsock port 1028 (OF-356).
+if [ "$artifact_origin" = "1" ]; then
+  set -- "$@" --artifact-http-socket /run/oneiron/artifacts.sock
+  if [ -n "$artifact_domains" ]; then
+    set -- "$@" --artifact-domains "$artifact_domains"
+  fi
 fi
 
 # The credential frame and the ready byte ride the vsock boot port; the host

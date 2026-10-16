@@ -52,6 +52,10 @@ pub(crate) struct ContextBoardSelectionView {
     allowed: Vec<String>,
     default_on: Vec<String>,
     active: Vec<String>,
+    /// Whether base reality is in each world tier: base is no entity id.
+    allowed_base: bool,
+    default_on_base: bool,
+    active_base: bool,
     pinned: Vec<String>,
     top_snippet: Vec<String>,
 }
@@ -338,6 +342,9 @@ pub(crate) async fn context_board_turn_history(
             allowed: ids(&board.selection.allowed),
             default_on: ids(&board.selection.default_on),
             active: ids(&board.selection.active),
+            allowed_base: board.selection.allowed_base,
+            default_on_base: board.selection.default_on_base,
+            active_base: board.selection.active_base,
             pinned: ids(&board.selection.pinned),
             top_snippet: ids(&board.selection.top_snippet),
         },

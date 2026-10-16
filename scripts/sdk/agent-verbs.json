@@ -66,7 +66,40 @@
       "output": "crate::task_verb::sdk::DiaryEntryReceipt",
       "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.memory.diary.reads",
+      "input": "crate::memory::DiaryReadsRequest",
+      "output": "crate::memory::DiaryReadsView",
+      "call": "memory.diary_reads(&input)?",
+      "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.memory.diary.review",
+      "input": "crate::memory::DiaryReviewAnswer",
+      "output": "crate::memory::DiaryReadRequest",
+      "call": "memory.answer_diary_read(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.memory.diary.query",
+      "input": "crate::task_verb::sdk::DiaryQueryRequest",
+      "output": "crate::task_verb::sdk::DiaryQueryOutcome",
+      "call": "crate::task_verb::sdk::self_memory_diary_query_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
       "section": false
     },
     {
@@ -110,7 +143,9 @@
       "output": "crate::task_verb::sdk::SteerReceipt",
       "call": "crate::task_verb::sdk::steer_child(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -227,6 +262,7 @@
     },
     {
       "name": "vault.claims.upsert",
+      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "input": "crate::memory::ClaimInput",
       "output": "crate::memory::CommitReceipt",
       "call": "memory.claim_upsert(&input)?",
@@ -336,6 +372,7 @@
       "binding": {
         "native": "agent_verb",
         "assemble": true,
+        "defaults": true,
         "args": [
           {
             "name": "format",
@@ -343,18 +380,18 @@
           }
         ],
         "docs": {
-          "remote": "    /// Exports the full vault through the shared five-format serializer.\n",
-          "ts": "/** Exports the live vault as toon (default), md, json, yaml, or txt. */",
-          "py": "Exports the live vault through the five-format serializer."
+          "remote": "    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL\n    /// records, files by BLAKE3 and a manifest), custody secrets included.\n",
+          "ts": "/** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */",
+          "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
         }
       }
     },
     {
       "name": "vault.receipts",
-      "input": "ReceiptsRequest",
+      "input": "crate::task_verb::sdk::VaultReceiptsRequest",
       "output": "Vec<crate::memory::MemoryReceipt>",
       "mcp_served_output": "output.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
-      "call": "memory.receipts(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?",
+      "call": "memory.receipts_of_kinds(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT), &input.kinds)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -363,6 +400,7 @@
       "section": false,
       "binding": {
         "assemble": true,
+        "defaults": true,
         "args": [
           {
             "name": "limit",
@@ -384,6 +422,29 @@
       }
     },
     {
+      "name": "vault.images.view",
+      "input": "crate::memory::ImageViewRequest",
+      "output": "crate::memory::PulledImage",
+      "call": "memory.view_image(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.\n",
+          "ts": "/** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */",
+          "py": "The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull."
+        }
+      }
+    },
+    {
       "name": "vault.receipts.get",
       "input": "crate::receipt::CallReceiptRequest",
       "output": "Option<crate::receipt::CallReceipt>",
@@ -400,7 +461,9 @@
       "output": "Option<crate::memory::KeyValueItem>",
       "call": "memory.key_value_get(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -481,7 +544,9 @@
       "output": "Vec<crate::memory::KeyValueItem>",
       "call": "memory.key_value_search(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -510,7 +575,9 @@
       "output": "Vec<Vec<String>>",
       "call": "memory.key_value_namespaces(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -531,13 +598,236 @@
       }
     },
     {
+      "name": "vault.weave.report",
+      "input": "crate::claim::WeaveReportRequest",
+      "output": "crate::claim::WeaveReportView",
+      "call": "memory.weave_report(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.digest",
+      "input": "crate::claim::WeaveDigestRequest",
+      "output": "Option<crate::claim::WeaveDigestView>",
+      "call": "memory.weave_digest(None, &input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shared.propose_delete",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::propose_shared_delete(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_delete\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.propose_transfer",
+      "input": "crate::task_verb::sdk::SharedTransferRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::propose_shared_transfer(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_transfer\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.propose_remove_owner",
+      "input": "crate::task_verb::sdk::SharedRemoveOwnerRequest",
+      "output": "crate::federation::PendingAuthorityAct",
+      "call": "crate::task_verb::sdk::propose_shared_remove_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_remove_owner\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.execute",
+      "input": "crate::task_verb::sdk::SharedActRequest",
+      "output": "crate::task_verb::sdk::SharedActExecuted",
+      "call": "crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.receipt",
+      "input": "crate::task_verb::sdk::SharedReceiptRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::read_shared_receipt(memory.vault(), &memory.embedded_owner(\"vault.shared.receipt\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.outcomes",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::SharedActOutcome>",
+      "call": "crate::task_verb::sdk::read_shared_outcomes(memory.vault(), &memory.embedded_owner(\"vault.shared.outcomes\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shared.deletion",
+      "input": "EmptyRequest",
+      "output": "Option<crate::federation::SharedVaultDeletion>",
+      "call": "crate::task_verb::sdk::read_shared_deletion(memory.vault())?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.add",
+      "input": "crate::task_verb::sdk::SharedMemberAddRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.change",
+      "input": "crate::task_verb::sdk::SharedMemberRoleRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::change_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.change\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.remove",
+      "input": "crate::task_verb::sdk::SharedMemberRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::remove_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.remove\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.leave",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::leave_shared_vault_as(memory.vault(), &memory.embedded_owner(\"vault.members.leave\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.authority.handoff_alarms",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::authority::AuthorityHandoffAlarm>",
+      "call": "crate::task_verb::sdk::read_handoff_alarms(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms\")?)?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.authority.handoff_alarms.acknowledge",
+      "input": "crate::task_verb::sdk::HandoffAlarmRequest",
+      "output": "crate::authority::AuthorityHandoffAlarm",
+      "call": "crate::task_verb::sdk::acknowledge_handoff_alarm(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms.acknowledge\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.lenses.propose",
+      "input": "crate::lens::LensProposeRequest",
+      "output": "crate::receipt::LensProposalReceipt",
+      "call": "memory.lenses_propose(input)?",
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.activate",
+      "input": "crate::lens::LensActivateRequest",
+      "output": "crate::receipt::LensActivationReceipt",
+      "call": "crate::lens::activate_lens_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.deactivate",
+      "input": "crate::lens::LensDeactivateRequest",
+      "output": "crate::receipt::LensActivationReceipt",
+      "call": "crate::lens::deactivate_lens_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.list",
+      "input": "crate::lens::LensListRequest",
+      "output": "crate::lens::LensListPage",
+      "call": "memory.lenses_list(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.lenses.default",
+      "input": "crate::lens::LensDefaultRequest",
+      "output": "crate::claim::ScopedReadResult<crate::lens::GeneratedLens>",
+      "call": "memory.lenses_default(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.hooks.replay",
+      "input": "crate::task_verb::sdk::HooksReplayRequest",
+      "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.hooks.replay\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.limit()?;"
+      },
       "section": false
     },
     {
@@ -546,7 +836,9 @@
       "output": "Option<crate::blob_artifact::ArtifactView>",
       "call": "memory.artifacts_view(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -569,7 +861,9 @@
       "output": "Option<crate::blob_artifact::ArtifactExportFile>",
       "call": "memory.artifacts_export(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -592,7 +886,9 @@
       "output": "crate::blob_artifact::BornFromView",
       "call": "memory.artifacts_born_from(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -615,7 +911,9 @@
       "output": "Vec<crate::edit_settle::PendingProposalView>",
       "call": "memory.artifacts_proposals(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -633,7 +931,78 @@
       }
     },
     {
+      "name": "vault.artifacts.waits",
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Vec<crate::edit_settle::OrganWaitView>",
+      "call": "memory.artifacts_waits(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The organ calls held beside one artifact until one of your nodes can run them, each with why it waits.\n",
+          "ts": "/** The organ calls held beside one artifact until one of your nodes can run them, each with why it waits. */",
+          "py": "The organ calls held beside one artifact until one of your nodes can run them, each with why it waits."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.release_wait",
+      "input": "crate::blob_artifact::ProposalSettleRequest",
+      "output": "crate::blob_artifact::ReleasedWait",
+      "call": "memory.artifacts_release_wait(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Lets one held organ call go, by its run ref, under the consent a Discard needs.\n",
+          "ts": "/** Lets one held organ call go, by its run ref, under the consent a Discard needs. */",
+          "py": "Lets one held organ call go, by its run ref, under the consent a Discard needs."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.review_slides",
+      "input": "crate::blob_artifact::SlideReviewSubmit",
+      "output": "crate::blob_artifact::SlideReviewOutcome",
+      "call": "memory.artifacts_review_slides(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep.\n",
+          "ts": "/** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */",
+          "py": "Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.propose_deck",
+      "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::DeckProposeRequest",
       "output": "crate::blob_artifact::DeckProposeOutcome",
       "call": "memory.artifacts_propose_deck(&input)?",
@@ -657,6 +1026,7 @@
     },
     {
       "name": "vault.artifacts.propose_output",
+      "refs": ["/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::NativeOutputRequest",
       "output": "crate::edit_settle::PendingProposalView",
       "call": "memory.artifacts_propose_output(&input)?",
@@ -753,7 +1123,9 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -777,7 +1149,9 @@
       "mcp_served": "[input.group_ref]",
       "call": "memory.tasks_ask_peek(input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -796,6 +1170,7 @@
     },
     {
       "name": "ask",
+      "refs": ["/what/reference/claim", "/what/reference/turn", "/what/context_refs/*/claim", "/what/context_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -821,6 +1196,7 @@
     },
     {
       "name": "tasks.answer",
+      "refs": ["/word/provenance_refs/*/claim", "/word/provenance_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",
@@ -840,7 +1216,9 @@
       "mcp_served_output": "output.iter().flat_map(|pair| pair.derived_from.iter().copied())",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "spec": "$"
       },
@@ -901,8 +1279,12 @@
       "output": "Vec<String>",
       "call": "memory.rooms_render_threads(crate::EntityId::from_hex(&input.room_ref)?, crate::workspace_roster::RoomThreadPolicy::default())?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"room_ref": "room_ref"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "room_ref": "room_ref"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -912,10 +1294,21 @@
       "output": "crate::workspace_roster::RoomThreadPage",
       "call": "memory.rooms_find_threads_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "after"},
-      "mcp_required_fields": ["room_ref"],
-      "page": {"rows": "rows", "cursor": "next_after", "resume": "turn_ref"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "room_ref": "room_ref",
+        "turn_ref": "after"
+      },
+      "mcp_required_fields": [
+        "room_ref"
+      ],
+      "page": {
+        "rows": "rows",
+        "cursor": "next_after",
+        "resume": "turn_ref"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -925,8 +1318,13 @@
       "output": "Option<crate::workspace_roster::RoomThread>",
       "call": "memory.rooms_get_thread(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "room_ref": "room_ref",
+        "turn_ref": "turn_ref"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -936,8 +1334,25 @@
       "output": "crate::workspace_roster::RoomTrunk",
       "call": "memory.rooms_trunk(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "room_ref": "room_ref",
+        "turn_ref": "turn_ref"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.reply_strips",
+      "input": "crate::conversation_dag::ReplyStripsRequest",
+      "output": "crate::conversation_dag::ReplyStripsPage",
+      "call": "memory.rooms_reply_strips(&input)?",
+      "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
+      "mcp_fields": {"spec": "$"},
+      "page": {"rows": "groups", "cursor": "next_after"},
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -969,6 +1384,56 @@
       "section": false
     },
     {
+      "name": "vault.projects.propose",
+      "input": "crate::workspace_roster::ProjectProposalRequest",
+      "output": "crate::genui::ProjectProposalCard",
+      "call": "memory.projects_propose(&input)?",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.proposals",
+      "input": "ProjectConversationRequest",
+      "output": "Vec<crate::workspace_roster::ProjectCardRecord>",
+      "call": "memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)?",
+      "scope": "Read",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.dismiss_card",
+      "input": "ProjectCardRequest",
+      "output": "crate::task_verb::sdk::ProjectCardDismissal",
+      "call": "ProjectCardDismissal { dismissed: memory.projects_dismiss_card(&input.card_id)?, card_id: input.card_id }",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.confirm",
+      "input": "crate::workspace_roster::ProjectCardConfirmRequest",
+      "output": "crate::workspace_roster::ProjectMintReceipt",
+      "call": "memory.projects_confirm(&input)?",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.intake",
+      "input": "ProjectRefRequest",
+      "output": "crate::workspace_roster::ProjectGoalInterviewContext",
+      "call": "memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)?",
+      "scope": "Read",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.join",
       "input": "crate::workspace_roster::JoinRequest",
       "output": "crate::workspace_roster::JoinOutcome",
@@ -990,6 +1455,38 @@
       "mcp_fields": {
         "spec": "$"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.revisions",
+      "input": "ProjectRefRequest",
+      "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
+      "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.goal.dismiss",
+      "input": "ProjectGoalDismissRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
+      "call": "ProjectGoalDismissReceipt { dismissed: memory.projects_goal_dismiss(crate::EntityId::from_hex(&input.project_ref)?, crate::EntityId::from_hex(&input.expected_goal_ref)?, &input.question_digest)? }",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.route_tradeoff",
+      "input": "ProjectTradeoffRouteRequest",
+      "output": "crate::task_verb::TaskAskReceipt",
+      "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -1023,7 +1520,9 @@
       "output": "crate::workspace_roster::RoomStanding",
       "call": "memory.rooms_host(crate::EntityId::from_hex(&input.room_ref)?, input.session_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "spec": "$"
       },
@@ -1036,7 +1535,9 @@
       "output": "crate::workspace_roster::RoomSharingView",
       "call": "memory.rooms_sharing(crate::EntityId::from_hex(&input.room_ref)?)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "room_ref": "room_ref"
       },
@@ -1049,7 +1550,9 @@
       "output": "crate::workspace_roster::CompanionSharingView",
       "call": "memory.companion_sharing_get(&crate::workspace_roster::CompanionSharingTarget { companion: crate::EntityId::from_hex(&input.companion_ref)?, contact: crate::EntityId::from_hex(&input.contact_ref)? })?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "spec": "$"
       },
@@ -1062,7 +1565,9 @@
       "output": "crate::workspace_roster::WorkCompanionPolicy",
       "call": "memory.workspace_work_companion_get(&input.workspace_ref)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "spec": "$"
       },
@@ -1075,7 +1580,9 @@
       "output": "crate::workspace_roster::WorkCompanionPolicy",
       "call": "memory.workspace_work_companion_set(&input.workspace_ref, input.policy)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "spec": "$"
       },
@@ -1123,7 +1630,9 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
       "host_door": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1133,7 +1642,9 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
       "host_door": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1143,7 +1654,9 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
       "host_door": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1153,7 +1666,9 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
       "host_door": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1163,7 +1678,9 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
       "host_door": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1173,7 +1690,9 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
       "host_door": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1183,7 +1702,9 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
       "host_door": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1193,7 +1714,22 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
       "host_door": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.verdict",
+      "input": "crate::task_verb::sdk::AiVerdictRequest",
+      "output": "crate::task_verb::sdk::AiVerdict",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.verdict\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_batch_len(\"evidence\", input.evidence.len())?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
+      },
       "section": false
     },
     {
@@ -1202,7 +1738,9 @@
       "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
       "call": "crate::task_verb::sdk::connector_catalog(memory, input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1211,7 +1749,9 @@
       "output": "Option<crate::task_verb::sdk::ConnectorView>",
       "call": "crate::task_verb::sdk::connector_description(memory, input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1305,24 +1845,90 @@
       "section": false
     },
     {
+      "name": "self.browser.view",
+      "input": "oneiron_browser::ViewInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.view(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.crop",
+      "input": "oneiron_browser::CropInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.crop(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.zoom",
+      "input": "oneiron_browser::ZoomInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.zoom(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.batch",
+      "input": "oneiron_browser::BatchInput",
+      "output": "oneiron_browser::BatchOutput",
+      "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
+      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
         },
         "output": "Vec<CommitReceipt>"
       },
-      "context": "definition"
+      "input": "CommitRequest",
+      "output": "Vec<crate::memory::CommitReceipt>",
+      "call": "memory.commit(&input.claims)?",
+      "scope": "Write",
+      "admission": {
+        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?; for claim in &input.claims { crate::memory::caps::check_claim_input(claim)?; }"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "proposes": true
     },
     {
       "name": "vault.remember",
+      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "uniffi": {
         "args": {
           "claim": "ClaimInput"
         },
         "output": "CommitReceipt"
       },
-      "context": "definition"
+      "input": "crate::memory::ClaimInput",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.claim_upsert(&input)?",
+      "scope": "Write",
+      "admission": {
+        "validate": "crate::memory::caps::check_claim_input(&input)?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "proposes": true
     },
     {
       "name": "vault.claims.retract",
@@ -1332,7 +1938,16 @@
         },
         "output": "CommitReceipt"
       },
-      "context": "definition"
+      "input": "ClaimRefRequest",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.claim_retract(&input.claim_ref)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.forget",
@@ -1342,7 +1957,16 @@
         },
         "output": "Vec<CommitReceipt>"
       },
-      "context": "definition"
+      "input": "ForgetRequest",
+      "output": "Vec<crate::memory::CommitReceipt>",
+      "call": "memory_requests::forget_claims(memory, input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.claims.list",
@@ -1352,7 +1976,20 @@
         },
         "output": "ClaimViews"
       },
-      "context": "definition"
+      "input": "crate::memory::ClaimListFilter",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+      "call": "memory.claim_list(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.claims.history",
@@ -1362,7 +1999,19 @@
         },
         "output": "ClaimViews"
       },
-      "context": "definition"
+      "input": "ClaimRefRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+      "call": "memory.claim_history(&input.claim_ref)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.delete",
@@ -1373,7 +2022,16 @@
         },
         "output": "DeleteReceipt"
       },
-      "context": "definition"
+      "input": "SafeDeleteRequest",
+      "output": "crate::memory::DeleteReceipt",
+      "call": "memory.safe_delete(&input.entity_ref, input.reason)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.writes.pending",
@@ -1383,7 +2041,19 @@
         },
         "output": "Vec<PendingWrite>"
       },
-      "context": "definition"
+      "input": "ReceiptsRequest",
+      "output": "Vec<crate::memory::PendingWrite>",
+      "call": "memory.pending_writes(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.hydrate",
@@ -1393,7 +2063,20 @@
         },
         "output": "EntityViews"
       },
-      "context": "definition"
+      "input": "HydrateRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>",
+      "call": "memory.hydrate(&input.refs)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_batch_len(\"refs\", input.refs.len())?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.get",
@@ -1403,7 +2086,31 @@
         },
         "output": "EntityRead"
       },
-      "context": "definition"
+      "input": "EntityRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>",
+      "call": "memory.get_entity(&input.entity_ref)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.refs.resolve",
+      "input": "crate::lens::ResolveRecordRefRequest",
+      "output": "crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>",
+      "call": "memory.resolve_record_ref(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.search.bm25",
@@ -1414,7 +2121,20 @@
         },
         "output": "LexicalHits"
       },
-      "context": "definition"
+      "input": "QueryBm25Request",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>",
+      "call": "memory.query_bm25(&input.query, input.limit)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.neighbors",
@@ -1425,37 +2145,87 @@
         },
         "output": "NeighborHits"
       },
-      "context": "definition"
+      "input": "NeighborsRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>",
+      "call": "memory.neighbors(&input.entity_ref, &input.opts)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.opts.limit)?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.structural.put",
+      "refs": ["/edges/*/target_ref"],
       "uniffi": {
         "args": {
           "input": "StructuralPutInput"
         },
         "output": "EntityRefReceipt"
       },
-      "context": "definition"
+      "input": "crate::memory::StructuralPutInput",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.put_structural(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.habits.checkin",
+      "refs": ["/habit_ref"],
       "uniffi": {
         "args": {
           "input": "HabitCheckinInput"
         },
         "output": "EntityRefReceipt"
       },
-      "context": "definition"
+      "input": "crate::memory::HabitCheckinInput",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.put_habit_checkin(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.claims.admit",
+      "refs": ["/subject_ref"],
       "uniffi": {
         "args": {
           "input": "AdmitImportedClaimInput"
         },
         "output": "CommitReceipt"
       },
-      "context": "definition"
+      "input": "crate::memory::AdmitImportedClaimInput",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.admit_imported_claim(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "proposes": true
     },
     {
       "name": "vault.artifacts.put",
@@ -1465,7 +2235,18 @@
         },
         "output": "EntityRefReceipt"
       },
-      "context": "definition"
+      "input": "crate::memory::BlobArtifactInput",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.put_blob_artifact(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.artifacts.append",
@@ -1479,7 +2260,22 @@
         },
         "output": "BlobVersionView"
       },
-      "context": "definition"
+      "input": "AppendBlobVersionRequest",
+      "output": "crate::memory::BlobVersionView",
+      "call": "memory_requests::append_blob(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ],
+        "validate": "if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN { return Err(MemoryError::bad_request(\"blob base64 exceeds the content ceiling\")); }"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.artifacts.read",
@@ -1490,7 +2286,21 @@
         },
         "output": "Option<Vec<u8>>"
       },
-      "context": "definition"
+      "input": "ReadBlobVersionRequest",
+      "output": "Option<crate::task_verb::sdk::BlobContent>",
+      "call": "memory_requests::read_blob(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.consolidation.enqueue",
@@ -1524,11 +2334,14 @@
     },
     {
       "name": "connector.outbound.schedule",
+      "refs": ["/content_ref"],
       "input": "OutboundScheduleRequest",
       "output": "crate::memory::OutboundIntentReceipt",
       "call": "crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "uniffi": {
         "args": {
@@ -1564,6 +2377,58 @@
       "scope": "Write",
       "context": "run",
       "effect": "MemoryPutEdge"
+    },
+    {
+      "name": "vault.notes.create",
+      "input": "CreateNoteRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.create_note(&input.kind, &input.markdown)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
+    },
+    {
+      "name": "vault.notes.from_entity",
+      "refs": ["/source_ref"],
+      "input": "CreateNoteFromEntityRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.create_note_from_entity(&input.source_ref, &input.kind)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "source_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
+    },
+    {
+      "name": "vault.notes.edit",
+      "input": "EditNoteRequest",
+      "output": "crate::note::NoteProgramEditOutcome",
+      "call": "memory.edit_note(&input.note_ref, &input.edit)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "section": false
     },
     {
       "name": "self.fold",

@@ -206,13 +206,29 @@ impl Vault {
     /// Owner-only history destruction. No policy/standing grant can call this
     /// door. The registry lock excludes concurrent local edits; all durable
     /// state is loaded, clamped, replaced and receipted in ONE write transaction.
-    /// Cache entries are invalidated only after that transaction commits.
+    /// Cache entries are invalidated only after that transaction commits. A
+    /// legal hold on the entity refuses it (OF-470). With two or more live
+    /// Owners it runs only through the vault's `erase` veto window
+    /// ([`Self::start_text_history_erase`], Docs Q05).
     pub fn purge_entity_text_history(
         &self,
         entity: &EntityId,
         requested: &[u8],
         authorization: &DocAuthorization<'_>,
         at: u64,
+    ) -> Result<PurgeReceipt> {
+        self.purge_entity_text_history_for(entity, requested, authorization, at, None)
+    }
+
+    /// [`Self::purge_entity_text_history`], claiming the completed `erase`
+    /// act `act` in its writer when one admits it.
+    pub(crate) fn purge_entity_text_history_for(
+        &self,
+        entity: &EntityId,
+        requested: &[u8],
+        authorization: &DocAuthorization<'_>,
+        at: u64,
+        act: Option<&str>,
     ) -> Result<PurgeReceipt> {
         let DocAuthorization::Owner(owner) = authorization else {
             return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
@@ -225,6 +241,18 @@ impl Vault {
             .map_err(|_| invalid("document registry poisoned"))?;
         let receipt = self.with_write_txn_grouped(|txn| {
             let owner_actor = super::forks::owner_in_txn(self, txn, owner)?;
+            // A held record keeps its history (OF-470).
+            self.store
+                .reject_legal_hold_in_txn(txn, entity.as_bytes())?;
+            let receipt_id = EntityId::now();
+            super::admit_history_erase_in_txn(
+                self,
+                txn,
+                entity,
+                Some(requested),
+                act,
+                &receipt_id,
+            )?;
             let mut h = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
@@ -255,7 +283,6 @@ impl Vault {
                 DocumentSlot::from_hex(&h.document)?,
                 &shallow.doc.shallow_since_vv().encode(),
             )?;
-            let receipt_id = EntityId::now();
             let receipt = PurgeReceipt {
                 receipt: receipt_id.to_hex(),
                 entity: entity.to_hex(),
@@ -319,7 +346,9 @@ impl Vault {
     /// `owner`; no Grant reaches it. A NOTE goes through
     /// [`crate::memory::Memory::purge_note_history_as`]. Any other entity's
     /// text goes through [`Self::purge_entity_text_history`], which clamps
-    /// `through` (the head when absent) to the pin floor.
+    /// `through` (the head when absent) to the pin floor. A shared vault with
+    /// two or more live Owners refuses it: its erase waits on the `erase`
+    /// veto window through [`Self::start_text_history_erase`] (Docs Q05).
     pub fn erase_text_history_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -345,7 +374,77 @@ impl Vault {
     }
 }
 
-fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
+impl Vault {
+    /// Pins a quoted span of a MESSAGE that owns a document, inside the
+    /// caller's write transaction: the conversation reply door's quote.
+    /// `start..end` is a half-open range of Unicode scalar values, the index
+    /// space of the document's text API, so it becomes stable cursors at the
+    /// current frontier unconverted and is not kept. The quote is proven
+    /// against that version as [`Self::pin_entity_text`] proves one. A quote
+    /// adds no text operation, so it asks no edit grant: the reply door has
+    /// already admitted `actor` to the message's room.
+    pub(crate) fn pin_message_quote_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        citation: &EntityId,
+        message: &EntityId,
+        start: usize,
+        end: usize,
+        actor: WriteActor,
+    ) -> Result<CitationPin> {
+        super::forks::validate_actor(self, txn, actor)?;
+        let is_message = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, message)?
+            .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE);
+        let h = storage::head(&self.store, txn, message)?;
+        if !is_message || h.field != super::TextField::MapField("content".to_owned()) {
+            return Err(invalid("quote pin requires a MESSAGE document"));
+        }
+        if start >= end {
+            return Err(invalid("quote span is empty"));
+        }
+        let doc = storage::load(&self.store, txn, &h)?;
+        let anchor = super::verbs::make_anchor(&doc, *message, start, end)?;
+        let origin = doc.fork(&anchor.frontier)?;
+        let (from, to) = super::verbs::resolve(&origin, *message, &anchor)?;
+        let quote: String = origin.text().chars().skip(from).take(to - from).collect();
+        if quote.is_empty()
+            || quote != anchor.quote
+            || blake3::hash(quote.as_bytes()).as_bytes() != &anchor.hash
+        {
+            return Err(invalid("citation quote does not match pinned version"));
+        }
+        let key = HexPair(HexId(*message), HexId(*citation));
+        if ENTITY_DOC_PIN.contains(&self.store, txn, &key)? {
+            return Err(invalid("citation pin is immutable"));
+        }
+        let pin = CitationPin {
+            citation: citation.to_hex(),
+            entity: message.to_hex(),
+            document: h.document,
+            anchor,
+            actor: actor.entity_ref().to_hex(),
+        };
+        ENTITY_DOC_PIN.put(&self.store, txn, &key, &pin)?;
+        Ok(pin)
+    }
+
+    /// The citation pin `citation` holds on `message`, in the caller's snapshot.
+    pub(crate) fn message_quote_pin_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        message: &EntityId,
+        citation: &EntityId,
+    ) -> Result<Option<CitationPin>> {
+        ENTITY_DOC_PIN.get(
+            &self.store,
+            txn,
+            &HexPair(HexId(*message), HexId(*citation)),
+        )
+    }
+}
+
+pub(super) fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
     let txn = vault.store.env.read_txn()?;
     Ok(
         crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, entity)?

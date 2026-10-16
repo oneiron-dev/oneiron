@@ -337,6 +337,18 @@ impl Vault {
             {
                 return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
             }
+            // The fact hooks' settlement feed names who answered: the
+            // actor the confirm's signing key speaks for, else the owner.
+            let settled_by = match fold.actor_bindings.get(&state.signer) {
+                Some(binding) => binding.actor_ref,
+                None => crate::vault::embedded_owner_actor_id()?,
+            };
+            let settled = |outcome| crate::runtime_hooks::SettledFact {
+                proposal: binding.claim_id,
+                outcome,
+                settled_by,
+                kind: crate::runtime_hooks::SettlementKind::CriticalWriteConfirm,
+            };
             match state.action.disposition {
                 CriticalWriteConfirmDisposition::Clear => {
                     // The owner's Clear answers the item this confirm bound.
@@ -398,6 +410,11 @@ impl Vault {
                         binding.claim_id,
                         &body,
                     )?;
+                    crate::runtime_hooks::record_settlement_in_txn(
+                        self,
+                        wtxn,
+                        settled(crate::runtime_hooks::SettledOutcome::Approved),
+                    )?;
                     Ok(Ok(CriticalWriteConfirmResolution::Cleared))
                 }
                 CriticalWriteConfirmDisposition::Decline => {
@@ -436,6 +453,17 @@ impl Vault {
                     )?;
                     self.store
                         .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                    // A retracted write, or a deferred one that never landed
+                    // and is cancelled: declined.
+                    crate::runtime_hooks::record_settlement_in_txn(
+                        self,
+                        wtxn,
+                        settled(if retract {
+                            crate::runtime_hooks::SettledOutcome::Retracted
+                        } else {
+                            crate::runtime_hooks::SettledOutcome::Declined
+                        }),
+                    )?;
                     Ok(Ok(if retract {
                         CriticalWriteConfirmResolution::Retracted
                     } else {

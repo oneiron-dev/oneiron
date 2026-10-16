@@ -24,6 +24,9 @@ pub struct BriefCitationView {
 pub struct BriefView {
     pub instrument: InstrumentView,
     pub citations: Vec<BriefCitationView>,
+    /// The brief's born-with text its share lets travel (OF-491); empty in
+    /// the owner's own view, where nothing leaves.
+    pub born_with: crate::share_travel::BornWith,
 }
 
 impl Vault {
@@ -69,7 +72,14 @@ impl Vault {
         else {
             return unresolved();
         };
-        self.render_brief_with_claims(id, frame, read, Some(&resolved.visible_claim_refs))
+        let mut rendered =
+            self.render_brief_with_claims(id, frame, read, Some(&resolved.visible_claim_refs))?;
+        if let Some(view) = rendered.value.as_mut() {
+            view.born_with = self
+                .share_travel(&share_id)?
+                .project(self.born_with_text(&id, None)?);
+        }
+        Ok(rendered)
     }
 
     fn render_brief_with_claims(
@@ -169,6 +179,7 @@ impl Vault {
             value: Some(BriefView {
                 instrument,
                 citations,
+                born_with: crate::share_travel::BornWith::new(),
             }),
             receipt,
         })

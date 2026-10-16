@@ -76,6 +76,15 @@ struct PromotionRequest {
     entity_id: String,
 }
 
+/// One window's version vector, asked before an opened machine demotes it
+/// (OF-534).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WindowVvRequest {
+    window: String,
+    selector: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchRequest {
@@ -135,6 +144,7 @@ pub(super) fn run(
             "residence.index" => index(server, auth, peer, request.params, index_cache, budgets),
             "residence.touch" => touch(server, auth, peer, request.params),
             "residence.promote" => promote(server, auth, peer, request.params),
+            "residence.window.vv" => window_vv(server, auth, peer, request.params),
             "residence.search" => search(server, auth, peer, request.params, budgets),
             "residence.sealed.put" => sealed_put(server, auth, peer, request.params),
             "residence.sealed.list" => sealed_list(server, peer, request.params),
@@ -562,6 +572,28 @@ fn promote(
             "snapshot": base64::engine::general_purpose::STANDARD.encode(snapshot),
         }),
         Some(rows),
+    ))
+}
+
+/// The home's version vector for a window, on the residence index's gate: a
+/// bound selector and a machine the grant admits. An opened machine demotes
+/// its promoted copy only once this covers every op it holds (OF-534).
+fn window_vv(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: WindowVvRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
+    let _admitted = admitted(server, auth, peer, &selector)?;
+    Ok((
+        json!({
+            "window": window.as_str(),
+            "vv": base64::engine::general_purpose::STANDARD.encode(doc.oplog_vv().encode()),
+        }),
+        None,
     ))
 }
 

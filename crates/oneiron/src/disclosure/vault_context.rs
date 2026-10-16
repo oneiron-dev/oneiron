@@ -56,6 +56,24 @@ pub(super) fn disclosure_tier_a_marked_in(
     DISCLOSURE_TIER_A_MARKS.contains(store, rtxn, id)
 }
 
+/// A contact's clearance row on the caller's transaction, for the owner's
+/// clearance doors (`consent::contact_clearance`).
+pub(crate) fn contact_clearance_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Option<DisclosureScope>> {
+    DISCLOSURE_SCOPES.get(store, rtxn, contact_id)
+}
+
+/// Every contact clearance row, Active and Revoked, for the consent registry.
+pub(crate) fn contact_clearances_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<Vec<(EntityId, DisclosureScope)>> {
+    DISCLOSURE_SCOPES.scan(store, rtxn)
+}
+
 /// Deterministic claim-mirror id for a subject's disclosure claim: the CID-7
 /// overwrite pattern — re-sets rewrite the SAME claim entity, so exactly one
 /// owner-visible claim per (family, subject) exists and a rewrite supersedes
@@ -79,21 +97,36 @@ pub(super) fn disclosure_tier_claim_id(id: &EntityId) -> Result<EntityId> {
 }
 
 impl Vault {
-    /// Sets (or replaces — dial-not-wall) the disclosure scope for a CID-7
-    /// contact record: dual-writes the `vault_meta` enforcement row and the
-    /// owner-visible `disclosure.scope` claim in one wtxn. Widening is one
-    /// owner call, but only through this owner-session write path (I6 — no
-    /// HTTP exposure in this chain).
+    /// Test fixture: writes a contact clearance with no owner proof. Product
+    /// clearance lands only through the owner's doors
+    /// ([`Vault::confirm_contact_disclosure`], its narrow and its revoke).
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_counterparty_disclosure_scope(
         &self,
         contact_id: &EntityId,
         scope: &DisclosureScope,
     ) -> Result<()> {
-        scope.validate()?;
         let mut wtxn = self.store.env.write_txn()?;
+        self.set_counterparty_disclosure_scope_in_txn(&mut wtxn, contact_id, scope)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Sets (or replaces — dial-not-wall) the disclosure scope for a CID-7
+    /// contact record: dual-writes the `vault_meta` enforcement row and the
+    /// owner-visible `disclosure.scope` claim in the caller's wtxn. Only an
+    /// owner-proved door calls this (I6 — no HTTP exposure in this chain);
+    /// it revalidates the owner, the contact and the prior state first.
+    pub(crate) fn set_counterparty_disclosure_scope_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        contact_id: &EntityId,
+        scope: &DisclosureScope,
+    ) -> Result<()> {
+        scope.validate()?;
         let raw = self
             .store
-            .port_entity_record(&wtxn, contact_id)?
+            .port_entity_record(&*wtxn, contact_id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -101,7 +134,7 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        DISCLOSURE_SCOPES.put(&self.store, &mut wtxn, contact_id, scope)?;
+        DISCLOSURE_SCOPES.put(&self.store, wtxn, contact_id, scope)?;
         let claim_id = disclosure_scope_claim_id(contact_id)?;
         let claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_SCOPE,
@@ -111,9 +144,7 @@ impl Vault {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
-        self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, scope.updated_at)?;
-        wtxn.commit()?;
-        Ok(())
+        self.put_disclosure_claim_in_txn(wtxn, &claim_id, &claim, scope.updated_at)
     }
 
     /// Reads the enforcement-truth scope row for a contact. Missing row ->

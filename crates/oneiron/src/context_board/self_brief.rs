@@ -8,6 +8,8 @@ use crate::skill_reliability::{skill_reliability_posterior, skill_reliability_pr
 use crate::{Vault, skill::SkillContentHash};
 
 use super::SessionReadSet;
+use super::people::{People, PeoplePrefix};
+use std::collections::BTreeSet;
 
 /// A class verdict is a dated description, not authorization. Execution rechecks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -49,6 +51,9 @@ pub struct SelfBriefInput<'a> {
     pub skill_index: &'a [EntityId],
     pub read_set: &'a SessionReadSet,
     pub working_set: &'a [EntityId],
+    /// The vault's people as the reader's read admits them, when the host
+    /// read them; the prefix holds a budgeted roster of them.
+    pub people: Option<&'a People>,
 }
 
 /// A skill index row is resolved from the skill record and reliability claim;
@@ -75,6 +80,10 @@ pub struct SelfBrief {
     pub clock_ms: u64,
     pub skills: Vec<BriefSkillRow>,
     pub working_set: Vec<EntityId>,
+    /// PEOPLE (ARCH-0067): the vault's `people` roster, chosen at this
+    /// epoch boundary. Rendered as its own block, never inside identity.
+    #[serde(skip)]
+    pub people: Option<PeoplePrefix>,
 }
 
 impl SelfBrief {
@@ -104,6 +113,13 @@ impl SelfBrief {
                 loaded_hash,
             });
         }
+        // Self, principal and cast are pinned residents; the rest of the
+        // roster fills the prefix budget in handle order.
+        let people = input.people.map(|people| {
+            let mut pinned = vec![input.self_ref, input.principal];
+            pinned.extend(input.cast.iter().copied());
+            people.residence(&pinned)
+        });
         Ok(Self {
             self_ref: input.self_ref,
             principal: input.principal,
@@ -117,6 +133,7 @@ impl SelfBrief {
             clock_ms: input.clock_ms,
             skills,
             working_set: input.working_set.to_vec(),
+            people,
         })
     }
 
@@ -140,11 +157,25 @@ impl SelfBrief {
                 .replace('<', "\\u003c")
                 .replace('>', "\\u003e")
         };
-        format!(
+        let mut out = format!(
             "<skills>{}</skills>\n<identity>{}</identity>",
             safe(&skills),
             safe(&identity)
-        )
+        );
+        if let Some(people) = &self.people {
+            out.push('\n');
+            out.push_str(&people.render());
+        }
+        out
+    }
+
+    /// The persons this brief's `people` roster holds.
+    #[must_use]
+    pub fn resident_people(&self) -> BTreeSet<EntityId> {
+        self.people
+            .as_ref()
+            .map(|people| people.resident.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -203,7 +234,12 @@ pub struct SelfBriefState {
 impl SelfBriefState {
     /// Resolve skill records and claims afresh for each render, against the
     /// session's read set rather than a previously rendered prompt.
-    pub fn describe(&self, vault: &Vault, read_set: &SessionReadSet) -> Result<SelfBrief> {
+    pub fn describe(
+        &self,
+        vault: &Vault,
+        read_set: &SessionReadSet,
+        people: Option<&People>,
+    ) -> Result<SelfBrief> {
         SelfBrief::describe(
             vault,
             SelfBriefInput {
@@ -220,6 +256,7 @@ impl SelfBriefState {
                 skill_index: &self.skill_index,
                 read_set,
                 working_set: &self.working_set,
+                people,
             },
         )
     }
@@ -230,6 +267,9 @@ impl SelfBriefState {
 #[derive(Debug, Clone, Default)]
 pub struct SelfBriefSession {
     cached_prefix: Option<String>,
+    /// The persons the cached prefix's `people` roster holds; the live board
+    /// names them by bare handle.
+    resident_people: BTreeSet<EntityId>,
 }
 
 impl SelfBriefSession {
@@ -238,8 +278,11 @@ impl SelfBriefSession {
         vault: &Vault,
         state: &SelfBriefState,
         read_set: &SessionReadSet,
+        people: Option<&People>,
     ) -> Result<PlacedSelfBrief> {
-        self.cached_prefix = Some(state.describe(vault, read_set)?.render());
+        let brief = state.describe(vault, read_set, people)?;
+        self.resident_people = brief.resident_people();
+        self.cached_prefix = Some(brief.render());
         Ok(PlacedSelfBrief {
             prefix: self.cached_prefix.clone(),
             tail: None,
@@ -251,13 +294,16 @@ impl SelfBriefSession {
         vault: &Vault,
         state: &SelfBriefState,
         read_set: &SessionReadSet,
+        people: Option<&People>,
     ) -> Result<PlacedSelfBrief> {
         if self.cached_prefix.is_none() {
             return Err(crate::Error::InvariantViolation(
                 "self brief fold before turn one",
             ));
         }
-        self.cached_prefix = Some(state.describe(vault, read_set)?.render());
+        let brief = state.describe(vault, read_set, people)?;
+        self.resident_people = brief.resident_people();
+        self.cached_prefix = Some(brief.render());
         Ok(PlacedSelfBrief {
             prefix: self.cached_prefix.clone(),
             tail: None,
@@ -269,6 +315,7 @@ impl SelfBriefSession {
         vault: &Vault,
         state: &SelfBriefState,
         read_set: &SessionReadSet,
+        people: Option<&People>,
     ) -> Result<PlacedSelfBrief> {
         if self.cached_prefix.is_none() {
             return Err(crate::Error::InvariantViolation(
@@ -277,12 +324,18 @@ impl SelfBriefSession {
         }
         Ok(PlacedSelfBrief {
             prefix: None,
-            tail: Some(state.describe(vault, read_set)?.render()),
+            tail: Some(state.describe(vault, read_set, people)?.render()),
         })
     }
 
     #[must_use]
     pub fn cached_prefix(&self) -> Option<&str> {
         self.cached_prefix.as_deref()
+    }
+
+    /// The persons the cached prefix's roster holds.
+    #[must_use]
+    pub fn resident_people(&self) -> &BTreeSet<EntityId> {
+        &self.resident_people
     }
 }
