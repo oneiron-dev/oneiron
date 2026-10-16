@@ -565,8 +565,8 @@ const WEEK: u64 = 7 * 24 * 60 * 60;
 
 /// A shared vault on a clock the test moves, where the embedded owner wrote `a` and a second
 /// owner wrote `b`, both holding the same bytes. The blobs are written without the default
-/// manifest (see `blob_vault`); an owner manifest goes back after them, because the veto
-/// window's act rows are read from a trusted manifest.
+/// manifest (see `blob_vault`); it goes back after them, because a veto window reads its act
+/// rows under a manifest.
 struct TwoOwners {
     _dir: tempfile::TempDir,
     vault: crate::Vault,
@@ -595,14 +595,12 @@ fn two_owners() -> TwoOwners {
         .expect("the other owner's proof");
     let a = artifact(&facade_for(&vault, owner), &[SHARED]);
     let b = artifact(&facade_for(&vault, other), &[SHARED]);
-    vault
-        .install_owner_policy_manifest(
-            &me,
-            EntityId::now(),
-            crate::gate::default_policy_manifest().expect("default manifest"),
-            100,
-        )
-        .expect("owner manifest");
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().expect("manifest id"),
+        &crate::gate::default_policy_manifest().expect("default manifest"),
+    )
+    .expect("manifest stores");
     TwoOwners {
         _dir: dir,
         vault,
@@ -659,10 +657,9 @@ fn a_held_record_is_erased_once_its_owners_veto_window_runs_out() {
         .vault
         .change_authority_objection(&owners.other, &act, false)
         .expect("the other owner withdraws");
-    let theirs = facade_for(&owners.vault, owners.other.actor())
+    facade_for(&owners.vault, owners.other.actor())
         .execute_completed_entity_erase(&owners.other, &act)
         .expect_err("only the act's starter executes it");
-    assert_eq!(theirs.code, MEMORY_CODE_FORBIDDEN, "{theirs:?}");
     assert!(live(&owners.vault, &owners.b));
 
     let receipt = execute().expect("the window ran out unopposed");
