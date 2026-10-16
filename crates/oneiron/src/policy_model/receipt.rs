@@ -58,6 +58,8 @@ impl Vault {
         reason_codes: Vec<String>,
         system_notices: Vec<GateSystemNoticeRecord>,
     ) -> Result<String> {
+        let mut system_notices = system_notices;
+        system_notices.extend(super::notice::policy_decision_receipt_notices(verdict));
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let mut reason_codes = reason_codes;
