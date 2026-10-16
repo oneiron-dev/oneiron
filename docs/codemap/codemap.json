@@ -22911,7 +22911,7 @@
      "path": "src/llm/decision/ladder.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 6,
       "trait": 3
@@ -23199,7 +23199,7 @@
      "path": "src/llm/decision/types.rs",
      "purpose": "Closed answer contracts and engine-owned decision receipts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 5,
       "fn": 6,
       "struct": 8
