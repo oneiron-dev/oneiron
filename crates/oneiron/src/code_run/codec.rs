@@ -8,7 +8,7 @@ use super::payload::self_effect_from_str;
 use super::replay::{
     CODE_RUN_REPLAY_SCHEMA_VERSION, CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayRecord,
-    CodeRunStepCheckpoint,
+    CodeRunResultBinding, CodeRunStepCheckpoint,
 };
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, bool_value,
@@ -17,7 +17,7 @@ use super::support::{
     validate_text,
 };
 
-pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 7] = [
+pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 8] = [
     "schema_version",
     "run_id",
     "determinism",
@@ -25,6 +25,7 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 7] = [
     "step_checkpoints",
     "outputs",
     "abi_layout_checks",
+    "bindings",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
 pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 6] = [
@@ -58,6 +59,7 @@ const KEY_BRIDGE_CALLS: &str = CODE_RUN_REPLAY_RECORD_KEYS[3];
 const KEY_STEP_CHECKPOINTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[4];
 const KEY_OUTPUTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[5];
 const KEY_ABI_LAYOUT_CHECKS: &str = CODE_RUN_REPLAY_RECORD_KEYS[6];
+const KEY_BINDINGS: &str = CODE_RUN_REPLAY_RECORD_KEYS[7];
 
 const KEY_FROZEN_UNIX_MS: &str = CODE_RUN_DETERMINISM_KEYS[0];
 const KEY_RNG_SEED: &str = CODE_RUN_DETERMINISM_KEYS[1];
@@ -134,6 +136,10 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
                     .collect(),
             ),
         ),
+        (
+            Value::from(KEY_BINDINGS),
+            Value::Array(record.bindings.iter().map(encode_binding).collect()),
+        ),
     ]);
     encode_value(&value, "code-run replay record MessagePack encode failed")
 }
@@ -183,6 +189,10 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         abi_layout_checks: decode_array(
             required(fields[6], "missing replay abi_layout_checks")?,
             decode_abi_layout_check,
+        )?,
+        bindings: decode_array(
+            required(fields[7], "missing replay bindings")?,
+            decode_binding,
         )?,
     };
     validate_code_run_replay_record(&record)?;
@@ -382,6 +392,29 @@ fn decode_abi_layout_check(value: &Value) -> Result<CodeRunAbiLayoutCheck> {
     Ok(check)
 }
 
+/// A binding is the pair `[name, handle]`.
+fn encode_binding(binding: &CodeRunResultBinding) -> Value {
+    Value::Array(vec![
+        Value::from(binding.name.as_str()),
+        Value::from(binding.handle.as_str()),
+    ])
+}
+
+fn decode_binding(value: &Value) -> Result<CodeRunResultBinding> {
+    let Value::Array(items) = value else {
+        return Err(invalid_code_run_replay("result binding must be an array"));
+    };
+    let [name, handle] = items.as_slice() else {
+        return Err(invalid_code_run_replay(
+            "result binding must be a [name, handle] pair",
+        ));
+    };
+    Ok(CodeRunResultBinding::new(
+        str_value(name)?,
+        str_value(handle)?,
+    ))
+}
+
 fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
     let mut expected_seq = 0_u64;
     for call in &record.bridge_calls {
@@ -415,6 +448,25 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
     }
     for check in &record.abi_layout_checks {
         validate_abi_layout_check(check)?;
+    }
+
+    let mut names = HashSet::new();
+    for binding in &record.bindings {
+        if !CodeRunResultBinding::is_valid_name(&binding.name) {
+            return Err(invalid_code_run_replay("invalid result binding name"));
+        }
+        if !names.insert(binding.name.as_str()) {
+            return Err(invalid_code_run_replay("duplicate result binding name"));
+        }
+        if !record
+            .outputs
+            .iter()
+            .any(|output| output.handle == binding.handle)
+        {
+            return Err(invalid_code_run_replay(
+                "result binding names no output of this run",
+            ));
+        }
     }
     Ok(())
 }

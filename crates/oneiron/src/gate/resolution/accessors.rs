@@ -833,6 +833,9 @@ impl PolicyManifestResolution {
                             (OwnerRowAction::RouteToHelp, _) | (_, OwnerRowAction::RouteToHelp) => {
                                 OwnerRowAction::RouteToHelp
                             }
+                            (OwnerRowAction::Reword, _) | (_, OwnerRowAction::Reword) => {
+                                OwnerRowAction::Reword
+                            }
                             _ => OwnerRowAction::Warn,
                         }
                     });

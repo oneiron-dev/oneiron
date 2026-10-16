@@ -278,7 +278,8 @@ pub struct HeldOutReplayCase<'a> {
 
 /// Host replay data and the Coach's configured typed-decision path.
 /// Replay and pair sampling are evidence preparation, not judge callbacks.
-/// Scores, blind preferences, audits and tradeoffs all run on that path.
+/// Judgment scores, blind preferences, audits and tradeoffs all run on that
+/// path. The archive coverage floor is computed from engine-owned evidence.
 pub trait HeldOutReplayScorer {
     fn judge_revision(&self) -> &str;
 
@@ -304,6 +305,13 @@ pub trait HeldOutReplayScorer {
         decision: &crate::llm::decision::TypedDecision,
         state: &serde_json::Value,
     ) -> Result<()>;
+
+    /// Engine-projected coverage evidence, not a host-supplied scalar score.
+    fn coverage_floor(
+        &self,
+    ) -> Option<&crate::autoreason_campaign::coverage::CoverageFloorComparison> {
+        None
+    }
 
     /// Declarations only; the authenticated goal still owns the axis set.
     fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {

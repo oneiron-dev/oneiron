@@ -1,7 +1,11 @@
 //! Local backups of one vault: take, list, prune, rehearse and restore.
 //!
-//! A backup is the engine's checkpoint image (`Vault::snapshot_checkpoint`):
-//! canonical rows only, never indexes, never exterior key custody. Each one is
+//! A backup is the engine's checkpoint image (`Vault::snapshot_backup`):
+//! canonical rows only, never indexes, never exterior key custody, sealed with
+//! the result bodies its rows name into one artifact under a key derived from
+//! the vault data key. The first backup mints that key, wrapped to this
+//! device, when the vault has none; a rehearsal or restore on this device
+//! unlocks it from the device wrap the backup carries. Each one is
 //! written under a hidden partial name and renamed into place, so a listing
 //! never shows a half-written file. File names carry the vault's directory
 //! name and a hash of its full path, so vaults sharing one backup directory
@@ -11,8 +15,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use oneiron::recovery::checkpoint::SideRestoreSource;
+use oneiron::recovery::checkpoint::{CheckpointKey, SideRestoreSource};
+use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
 use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
@@ -119,10 +125,9 @@ pub(crate) fn take_as(
     let partial = plan
         .dir
         .join(format!(".{}-{stamp}{PARTIAL_SUFFIX}", plan.label));
-    let snapshot = match owner {
-        Some(owner) => vault.snapshot_checkpoint_as(owner, &partial, vault.now_recorded_at()),
-        None => vault.snapshot_checkpoint(&partial, vault.now_recorded_at()),
-    };
+    let snapshot = vault
+        .ensure_vault_key()
+        .and_then(|()| vault.snapshot_backup(&partial, vault.now_recorded_at(), owner));
     let checkpoint_id = match snapshot {
         Ok(id) => id,
         Err(error) => {
@@ -335,10 +340,14 @@ fn rehearse_into(
     scratch: &Path,
     source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
+    let key = source
+        .checkpoint_key(backup)
+        .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?;
     // The copy sits beside the live vault, so its key custody forks: an erase
     // in a kept scratch copy never reaches the live vault's keys.
     let (restored, report) = oneiron::Vault::restore_checkpoint_beside(
         backup,
+        &key,
         scratch,
         config,
         source,
@@ -493,18 +502,23 @@ pub(crate) struct Restored {
 /// Once the swap is done the restore has happened, so a failed sync of the
 /// directory after it is reported in `durability_warning`, never as an error
 /// that would hide where the previous vault went.
+///
+/// The backup opens with `keystore`, the install's configured one, or the
+/// platform's at its defaults when there is none.
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
 ) -> anyhow::Result<Restored> {
-    restore_over_syncing(backup, vault_path, config, exchange, sync_dir)
+    restore_over_syncing(backup, vault_path, config, keystore, exchange, sync_dir)
 }
 
 fn restore_over_syncing(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
     swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
@@ -527,6 +541,15 @@ fn restore_over_syncing(
         .ok_or_else(|| anyhow::anyhow!("vault path {} has no name", vault_path.display()))?
         .to_string_lossy()
         .into_owned();
+    // The backup opens before anything is made: this install's keystore
+    // unlocks its key from the device wrap it carries, and trusts the signers
+    // it holds.
+    let key = match keystore {
+        Some(keystore) => CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
+            .map(|key| key.trusting_device(keystore)),
+        None => CheckpointKey::unlock_on_this_device(backup, vault_path),
+    }
+    .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?;
     let stamp = file_stamp(now_unix_ms());
     let previous = vault_path.with_file_name(format!("{name}.pre-restore-{stamp}"));
     anyhow::ensure!(
@@ -554,6 +577,7 @@ fn restore_over_syncing(
     // The copy replaces the vault at its path, so it keeps the vault's key custody.
     let (restored, report) = match oneiron::Vault::restore_checkpoint_replacing(
         backup,
+        &key,
         &restored_path,
         config,
         &live,

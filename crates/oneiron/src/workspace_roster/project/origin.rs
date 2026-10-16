@@ -53,7 +53,7 @@ fn sole_edge(
         _ => Err(reject()),
     }
 }
-fn marker_parent(body: &[u8]) -> Result<Option<EntityId>> {
+fn marker_ref(body: &[u8], name: &str) -> Result<Option<EntityId>> {
     let mut input = body;
     let decoded = rmpv::decode::read_value(&mut input).map_err(|_| reject())?;
     if !input.is_empty() {
@@ -68,7 +68,7 @@ fn marker_parent(body: &[u8]) -> Result<Option<EntityId>> {
     };
     metadata
         .iter()
-        .find(|(k, _)| k.as_str() == Some("room_thread_of"))
+        .find(|(k, _)| k.as_str() == Some(name))
         .map(|(_, value)| {
             EntityId::from_hex(value.as_str().ok_or_else(reject)?).map_err(|_| reject())
         })
@@ -111,11 +111,11 @@ pub(super) fn validate_binding(
     present(store, txn, message, ENTITY_TYPE_MESSAGE)?;
     let turn = crate::conversation_dag::edge_ids(store, txn, &message, EdgeKind::PartOf, false, 2)
         .map_err(|_| reject())?;
-    match turn.as_slice() {
+    let message_turn = match turn.as_slice() {
         [] => return Err(pending()),
-        [only] if *only == thread => {}
+        [only] => *only,
         _ => return Err(reject()),
-    }
+    };
     sole_edge(store, txn, message, EdgeKind::BelongsTo, room)?;
     let raw_thread = store
         .entities
@@ -135,7 +135,7 @@ pub(super) fn validate_binding(
         crate::conversation_dag::edge_ids(store, txn, &thread, EdgeKind::PartOf, true, 65536)?
     {
         let bytes = present(store, txn, child, ENTITY_TYPE_MESSAGE)?;
-        if let Some(parent) = marker_parent(&bytes)?
+        if let Some(parent) = marker_ref(&bytes, "room_thread_of")?
             && marker.replace(parent).is_some_and(|prior| prior != parent)
         {
             return Err(reject());
@@ -144,6 +144,34 @@ pub(super) fn validate_binding(
     let parent = marker.ok_or_else(pending)?;
     present(store, txn, parent, ENTITY_TYPE_TURN)?;
     sole_edge(store, txn, parent, EdgeKind::ChildOf, room)?;
+    // A card may sit on a later reply. Prove its chain reaches the chosen
+    // thread root using replicated MESSAGE links, never local room sidecars.
+    let mut cursor = message_turn;
+    let mut seen = BTreeSet::new();
+    while cursor != thread {
+        if !seen.insert(cursor) || cursor == parent {
+            return Err(reject());
+        }
+        present(store, txn, cursor, ENTITY_TYPE_TURN)?;
+        sole_edge(store, txn, cursor, EdgeKind::ChildOf, room)?;
+        let mut reply_to = None;
+        for child in
+            crate::conversation_dag::edge_ids(store, txn, &cursor, EdgeKind::PartOf, true, 65536)?
+        {
+            let bytes = present(store, txn, child, ENTITY_TYPE_MESSAGE)?;
+            if marker_ref(&bytes, "room_thread_of")?.is_some_and(|anchor| anchor != parent) {
+                return Err(reject());
+            }
+            if let Some(previous) = marker_ref(&bytes, "room_reply_to")?
+                && reply_to
+                    .replace(previous)
+                    .is_some_and(|prior| prior != previous)
+            {
+                return Err(reject());
+            }
+        }
+        cursor = reply_to.ok_or_else(pending)?;
+    }
     Ok(())
 }
 

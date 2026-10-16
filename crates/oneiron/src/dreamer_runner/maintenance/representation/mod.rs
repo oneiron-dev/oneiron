@@ -11,7 +11,7 @@ pub use approval::{
     ApprovedRepresentation, RepresentationReview, schedule_approved_representation,
 };
 pub use context::{RepresentationContext, RepresentationSource};
-pub use proposal::{RepresentationDraft, RepresentationPlanner};
+pub use proposal::{PrematerializedDraft, RepresentationDraft, RepresentationPlanner};
 use serde::{Deserialize, Serialize};
 
 pub const REPRESENTATION_FACET: &str = "dreamer.representation";
