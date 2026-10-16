@@ -75,6 +75,10 @@ use super::{
     TextSearchQuery, TurnVadAnnotateQuery, TurnVadAnnotateRequest, TurnVadAnnotateResponse,
     TurnVadAnnotationSource, VadPayload, VectorSearchQuery,
 };
+use super::{
+    __path_context_board_scratchpad, ContextBoardScratchpadMark, ContextBoardScratchpadRequest,
+    ContextBoardScratchpadResponse,
+};
 use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, ErrorCode};
 use crate::projection::View;
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
@@ -129,6 +133,7 @@ use utoipa::OpenApi;
         core_context_pack,
         context_board_hydrate,
         context_board_turn_history,
+        context_board_scratchpad,
         core_run_tree,
         core_run_tree_observe,
         core_run_tree_intervene,
@@ -300,6 +305,9 @@ use utoipa::OpenApi;
         ContextBoardTurnControls,
         ContextBoardTurnHistory,
         ContextBoardTurnRecord,
+        ContextBoardScratchpadMark,
+        ContextBoardScratchpadRequest,
+        ContextBoardScratchpadResponse,
         ContextBoardSession,
         ContextBoardNotification,
         ContextBoardUnprocessedItem,

@@ -6,6 +6,7 @@ mod cursor;
 mod history;
 mod memories;
 mod prefix;
+mod scratchpad;
 mod session;
 mod standing;
 
@@ -13,6 +14,7 @@ pub(crate) use cursor::*;
 pub(crate) use history::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
+pub(crate) use scratchpad::*;
 pub(crate) use session::*;
 
 use super::CoreContextPackRequest;
@@ -110,6 +112,11 @@ pub(crate) struct ContextBoardResponse {
     self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
     /// This turn's capability agent candidates.
     agents: Vec<String>,
+    /// The SCRATCHPAD rows of an agent run's live session pad; absent for
+    /// any other caller, a run without a session, or a session with no
+    /// live pad.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scratchpad: Option<Vec<String>>,
     /// What recording the named TURN's board wrote; absent without `turn`.
     #[serde(skip_serializing_if = "Option::is_none")]
     board_turn: Option<ContextBoardTurnRecord>,
@@ -375,6 +382,14 @@ pub(crate) async fn context_board_hydrate(
         })?
         .map(|render| render.text);
 
+    // An agent run's own live pad, read as the agent before any session lock.
+    let (scratchpad_pad, scratchpad) = scratchpad_rows(
+        &server,
+        &auth,
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+    )?
+    .unzip();
+
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
     // never filled with fabricated grant or budget data.
@@ -430,6 +445,7 @@ pub(crate) async fn context_board_hydrate(
         changed,
         skills,
         agents,
+        scratchpad,
         self_brief,
         board_turn: None,
     };
@@ -480,6 +496,7 @@ pub(crate) async fn context_board_hydrate(
     admit.extend(rider_admits(&changed_line));
     admit.extend(pack_sources);
     admit.extend(named_refs);
+    admit.extend(scratchpad_pad);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
     }
