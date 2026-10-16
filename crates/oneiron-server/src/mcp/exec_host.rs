@@ -9,7 +9,7 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
 };
-use oneiron::llm::seat::{SeatJudge, SeatKind, SeatTask};
+use oneiron::llm::seat::{SeatDecisions, SeatKind, SeatTask};
 use oneiron::{BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
 use std::collections::HashSet;
 use std::fmt;
@@ -202,8 +202,8 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn compaction(&self, _byline: WriteActor, _credential: &str) -> Option<RunCompaction> {
         None
     }
-    /// Injected typed judgment, above the raw backend; absent for legacy vaults.
-    fn seat_judge(&self) -> Option<&dyn SeatJudge> {
+    /// The host's typed seat pick, above the raw backend; absent for legacy vaults.
+    fn seat_decisions(&self) -> Option<&SeatDecisions> {
         None
     }
     /// Host-owned capability profile, never taken from execute_code arguments.
@@ -430,8 +430,8 @@ fn run_engine_native_code_mode(
             .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
             .is_some();
     let seat = if has_seat {
-        let judge = provider.seat_judge().ok_or_else(|| {
-            McpCodeExecutionError::RunBinding("manifest-backed run requires a seat judge".into())
+        let decisions = provider.seat_decisions().ok_or_else(|| {
+            McpCodeExecutionError::RunBinding("manifest-backed run requires seat decisions".into())
         })?;
         let facet = provider.seat_facet().ok_or_else(|| {
             McpCodeExecutionError::RunBinding(
@@ -454,7 +454,7 @@ fn run_engine_native_code_mode(
         };
         Some(
             vault
-                .birth_model_seat(config.run_id, &task, judge)
+                .birth_model_seat(config.run_id, &task, decisions)
                 .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?,
         )
     } else {

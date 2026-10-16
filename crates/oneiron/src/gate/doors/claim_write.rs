@@ -31,7 +31,7 @@ use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
 use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
-use crate::llm::{AutoCheckCandidate, AutoCheckOutcome, AutoChecker};
+use crate::llm::{AutoCheckCandidate, AutoCheckOutcome};
 use crate::ports::EntityStoreRead;
 use crate::store::{
     GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store, TrayRemoval,

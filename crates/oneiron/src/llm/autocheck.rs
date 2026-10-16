@@ -5,25 +5,32 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
 
 use super::NormalizedBurstInputs;
+use super::decision::catalogue::AUTO_CHECK;
+use super::decision::{
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, HeldLadder, Reversibility,
+};
+use super::manifest::{CalibratedVerdict, ConfidenceBand, VerdictBasis};
 use super::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
     LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 use crate::claim::ClaimSource;
 use crate::entity_id::bytes_to_hex_lower;
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::SourceLineage;
+use crate::{EntityId, Result};
 use oneiron_model::llm::dynamic_model_id;
 
 // ---------------------------------------------------------------------------
 // Auto-check seam (ONE-1296).
 //
-// The engine owns exactly three things here: the synchronous `AutoChecker`
-// trait a host implements, the bounded wrapper that keeps a host answer from
+// The engine owns exactly three things here: the typed allow-or-hold decision
+// a host's ladder answers, the bounded wrapper that keeps that answer from
 // becoming an engine liveness problem, and the request contract an auto check
 // is entitled to make. It owns no model choice, no prompt tuning and no
 // verdict policy — the write gate reads only Allow / Hold / Unavailable.
@@ -92,8 +99,8 @@ pub struct AutoCheckCandidate<'a> {
 
 /// [`AutoCheckCandidate`] with every borrow resolved.
 ///
-/// [`BoundedAutoChecker`] hands this — not the borrowed form — to the host, so
-/// the host's answer can outlive the gate's deadline without the gate having
+/// [`BoundedAutoChecker`] hands this — not the borrowed form — to its worker,
+/// so the host's answer can outlive the gate's deadline without the gate having
 /// to keep anything alive for it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AutoCheckCandidateOwned {
@@ -112,7 +119,7 @@ pub struct AutoCheckCandidateOwned {
 }
 
 impl AutoCheckCandidateOwned {
-    /// Borrows this candidate back into the shape the trait takes.
+    /// Borrows this candidate back into the shape the decisions take.
     #[must_use]
     pub fn borrowed(&self) -> AutoCheckCandidate<'_> {
         AutoCheckCandidate {
@@ -143,12 +150,11 @@ impl From<&AutoCheckCandidate<'_>> for AutoCheckCandidateOwned {
     }
 }
 
-/// A host checker's verdict on one candidate.
+/// The auto check's verdict on one candidate.
 ///
-/// There is no error arm on purpose: a host maps its own failures — budget
-/// denial, fatal model error, unparseable answer — onto
-/// [`Self::Unavailable`], and the gate treats that exactly like a hold that
-/// could not name its reasons.
+/// There is no error arm on purpose: a failed or abstained decision — budget
+/// denial, fatal model error, no rung left — is [`Self::Unavailable`], and the
+/// gate treats that exactly like a hold that could not name its reasons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutoCheckOutcome {
     Verdict(super::manifest::CalibratedVerdict),
@@ -189,17 +195,145 @@ impl AutoCheckOutcome {
     }
 }
 
-/// The host-implemented auto-check seam.
-///
-/// Synchronous by design: the write gate runs inside an LMDB write
-/// transaction, which is not a place to hold an async runtime open. Bound an
-/// implementation with [`BoundedAutoChecker`] before injecting it.
-pub trait AutoChecker: Send + Sync + 'static {
-    fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome;
+/// The answer that lets a candidate self-approve.
+const ALLOW: &str = "allow";
+/// The answer that holds it.
+const HOLD: &str = "hold";
+
+/// Generation beside a decided hold: the reasons the gate's receipt keeps, from
+/// the host's own model transport. The hold is already decided; reasons cannot
+/// turn it into an allow. A hold with no surviving reason is
+/// [`AutoCheckOutcome::Unavailable`].
+pub trait AutoCheckNotes: Send + Sync {
+    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>) -> Result<Vec<String>>;
 }
 
-/// The wrapper that makes an arbitrary host checker safe to call from the
-/// write gate.
+/// The host's auto check as one typed decision through its ladder: allow or
+/// hold, over the candidate as the call's bounded state, under the gate's own
+/// clock ([`AUTO_CHECKER_DEADLINE_MS`]). The check is a self-approval, so a
+/// cut abstains rather than take an unfinished answer.
+///
+/// Synchronous by design: the write gate runs inside an LMDB write
+/// transaction, which is not a place to hold an async runtime open. Bound it
+/// with [`BoundedAutoChecker`] before injecting it.
+pub struct AutoCheckDecisions {
+    pub ladder: HeldLadder,
+    pub principal: EntityId,
+    pub dial: DecisionDial,
+    pub bands: DecisionBandPolicy,
+    pub wording: String,
+    pub notes: Arc<dyn AutoCheckNotes>,
+    /// The model a vault's verdict binding names, when the host's ladder
+    /// answers as that calibrated model: the answer then reaches the gate as
+    /// its calibrated verdict, the decision's probability as the confidence,
+    /// and the floor decides. `None` answers Allow or Hold.
+    pub calibrated: Option<ModelId>,
+}
+
+impl AutoCheckDecisions {
+    /// An error, an abstention or a hold with no reasons is
+    /// [`AutoCheckOutcome::Unavailable`], never a third label.
+    fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+        self.decide(candidate)
+            .unwrap_or(AutoCheckOutcome::Unavailable)
+    }
+
+    fn decide(&self, candidate: &AutoCheckCandidate<'_>) -> Result<AutoCheckOutcome> {
+        let question = AUTO_CHECK.question(
+            &[],
+            self.wording.clone(),
+            AnswerContract::Choice {
+                options: vec![ALLOW.to_owned(), HOLD.to_owned()],
+            },
+        )?;
+        let decision = self.ladder.ladder().run(
+            &question,
+            self.principal,
+            &[],
+            &candidate_state(candidate),
+            self.dial,
+            &self.bands,
+            Reversibility::OutboundEffect,
+            &RetrievalDeadline::hard(
+                Instant::now(),
+                Duration::from_millis(AUTO_CHECKER_DEADLINE_MS),
+            ),
+        )?;
+        let (DecisionAnswer::Choice(label), Some(probability)) =
+            (&decision.answer, decision.probability)
+        else {
+            return Ok(AutoCheckOutcome::Unavailable);
+        };
+        let allow = label == ALLOW;
+        if let Some(model) = &self.calibrated {
+            return Ok(calibrated(model, allow, probability));
+        }
+        Ok(if allow {
+            AutoCheckOutcome::Allow
+        } else {
+            AutoCheckOutcome::Hold {
+                reasons: self.notes.hold_reasons(candidate)?,
+            }
+        })
+    }
+}
+
+/// The answer as `model`'s calibrated verdict, in the band its confidence
+/// falls in.
+fn calibrated(model: &ModelId, allow: bool, probability: f64) -> AutoCheckOutcome {
+    let confidence_millionths = millionths(probability);
+    [
+        ConfidenceBand::Low,
+        ConfidenceBand::Medium,
+        ConfidenceBand::High,
+        ConfidenceBand::Certain,
+    ]
+    .into_iter()
+    .map(|band| CalibratedVerdict {
+        model: model.clone(),
+        allow,
+        confidence_millionths,
+        band,
+        basis: VerdictBasis::CalibratedModel,
+    })
+    .find(|verdict| verdict.validate().is_ok())
+    .map_or(AutoCheckOutcome::Unavailable, AutoCheckOutcome::Verdict)
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a unit-interval probability as millionths fits a u32"
+)]
+fn millionths(probability: f64) -> u32 {
+    (probability.clamp(0.0, 1.0) * 1_000_000.0).round() as u32
+}
+
+/// The candidate as the call's state. The value is the gate's bounded preview,
+/// never the whole value.
+fn candidate_state(candidate: &AutoCheckCandidate<'_>) -> JsonValue {
+    json!({
+        "predicate": candidate.predicate,
+        "value_preview": candidate.value_preview,
+        "source": candidate.source.as_str(),
+        "lineage": candidate
+            .lineage
+            .map(|lineage| lineage.iter().map(ClaimSource::as_str).collect::<Vec<_>>()),
+        "actor_class": candidate.actor_class,
+        "sensitivity_band": candidate.sensitivity_band,
+        "burst": candidate
+            .burst
+            .map(|burst| json!({"rate_ratio": burst.rate_ratio, "streak": burst.streak})),
+        "signals": {
+            "recent_writes": candidate.signals.recent_writes,
+            "window_secs": candidate.signals.window_secs,
+            "failure_streak": candidate.signals.failure_streak,
+        },
+    })
+}
+
+/// The wrapper that makes the host's auto-check decisions safe to call from
+/// the write gate.
 ///
 /// Each wrapper owns one worker and admits only one outstanding consult.
 /// Clones share that worker and its capacity. A timeout stops the caller's wait,
@@ -222,7 +356,7 @@ struct AutoCheckJob {
 
 impl BoundedAutoChecker {
     #[must_use]
-    pub fn new(inner: Arc<dyn AutoChecker>) -> Self {
+    pub fn new(decisions: AutoCheckDecisions) -> Self {
         let (sender, receiver) = mpsc::sync_channel::<AutoCheckJob>(1);
         let occupied = Arc::new(AtomicBool::new(false));
         let worker_occupied = Arc::clone(&occupied);
@@ -234,7 +368,7 @@ impl BoundedAutoChecker {
             .spawn(move || {
                 while let Ok(job) = receiver.recv() {
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        inner.check(&job.candidate.borrowed()).normalized()
+                        decisions.check(&job.candidate.borrowed()).normalized()
                     }))
                     .unwrap_or(AutoCheckOutcome::Unavailable);
                     drop(job.candidate);
@@ -258,8 +392,8 @@ impl fmt::Debug for BoundedAutoChecker {
     }
 }
 
-impl AutoChecker for BoundedAutoChecker {
-    fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+impl BoundedAutoChecker {
+    pub fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
         let Some(sender) = &self.sender else {
             return AutoCheckOutcome::Unavailable;
         };
@@ -298,7 +432,7 @@ impl AutoChecker for BoundedAutoChecker {
 /// not how a failure is read.
 ///
 /// `checker_ref` is the manifest's OPAQUE selector. The host resolves it and
-/// injects the matching checker; the engine encodes it as the model identity
+/// injects the matching decisions; the engine encodes it as the model identity
 /// without choosing a model. `system_prompt` is supplied by the host, including
 /// any instructions for interpreting candidate data. The engine owns the typed
 /// response schema and call contract, not natural-language prompt policy.

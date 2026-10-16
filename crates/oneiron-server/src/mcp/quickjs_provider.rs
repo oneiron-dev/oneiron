@@ -10,7 +10,7 @@ use oneiron::engine_executor::{
 };
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::RunReceiptSink;
-use oneiron::llm::seat::SeatJudge;
+use oneiron::llm::seat::SeatDecisions;
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault, WriteActor};
 use oneiron_code_check::ShadowCheck;
 use std::sync::Arc;
@@ -66,7 +66,7 @@ pub struct McpQuickJsProvider {
     config: EngineExecutorConfig,
     /// Builds each run's compaction seat; none keeps every window raw.
     compaction: Option<RunCompactionSeat>,
-    seat_router: Option<(Arc<dyn SeatJudge>, String)>,
+    seat_router: Option<(SeatDecisions, String)>,
     /// Each run's clock is frozen at its first start, and a resumed run keeps
     /// it; otherwise every run shares the configured frozen clock.
     clock_from_first_start: bool,
@@ -158,14 +158,14 @@ impl McpQuickJsProvider {
         self
     }
 
-    /// Install the host's typed model judgment and profile for manifest-backed runs.
+    /// Install the host's typed seat pick and profile for manifest-backed runs.
     #[must_use]
     pub fn with_model_seat_router(
         mut self,
-        judge: Arc<dyn SeatJudge>,
+        decisions: SeatDecisions,
         facet: impl Into<String>,
     ) -> Self {
-        self.seat_router = Some((judge, facet.into()));
+        self.seat_router = Some((decisions, facet.into()));
         self
     }
 }
@@ -174,8 +174,8 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     fn production_runtime_available(&self) -> bool {
         true
     }
-    fn seat_judge(&self) -> Option<&dyn SeatJudge> {
-        self.seat_router.as_ref().map(|(judge, _)| judge.as_ref())
+    fn seat_decisions(&self) -> Option<&SeatDecisions> {
+        self.seat_router.as_ref().map(|(decisions, _)| decisions)
     }
     fn seat_facet(&self) -> Option<&str> {
         self.seat_router.as_ref().map(|(_, facet)| facet.as_str())

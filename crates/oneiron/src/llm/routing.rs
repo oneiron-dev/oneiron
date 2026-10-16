@@ -1,8 +1,8 @@
 //! Vault-owned description routing above the raw LLM call seam.
 //!
 //! A generative seat is selected once and persisted; schema verdicts are selected
-//! independently for each call. The judge is host-supplied, so this layer does not
-//! hard-code a model, a prompt, or a quality threshold.
+//! independently for each call. The host's ladder grades each candidate, so this layer
+//! does not hard-code a model, a prompt, or a quality threshold.
 
 use std::collections::BTreeMap;
 
@@ -20,6 +20,10 @@ use crate::{
     Vault,
     error::{Error, Result},
 };
+
+mod decisions;
+use decisions::Candidate;
+pub use decisions::{DescriptionDecisions, DescriptionNotes};
 
 const POLICY: SideTable<(), DescriptionPolicy, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_POLICY);
@@ -125,24 +129,6 @@ pub struct MeasuredDescription {
     pub model: ModelId,
     pub text: String,
     pub quality_millionths: u32,
-}
-
-/// A typed, task-specific judgment. The host provides the judgment; this
-/// layer keeps evidence ordering, constraints, and seat pinning deterministic.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DescriptionJudgment {
-    pub fitness: u32,
-    pub reason: String,
-}
-
-pub trait DescriptionJudge {
-    fn judge(
-        &self,
-        task: &str,
-        model: &ModelId,
-        description: &str,
-        effort: ReasoningEffort,
-    ) -> DescriptionJudgment;
 }
 
 /// Overrides filter the description candidates; they never bypass judgment.
@@ -409,7 +395,8 @@ fn apply_controls(
     Ok(())
 }
 /// Seats and verdicts share the seat policy's composition, ceiling and
-/// evidence order; this router adds no default of its own.
+/// evidence order; this router adds no default of its own. The highest
+/// positive grade wins, with its description line, grade and effort.
 fn resolve<'a>(
     policy: &'a DescriptionPolicy,
     seat_policy: &SeatPolicy,
@@ -417,10 +404,10 @@ fn resolve<'a>(
     settings: &SeatSettings,
     purpose: &CallPurpose,
     task: &str,
-    judge: &dyn DescriptionJudge,
-) -> Result<(&'a ModelDescription, DescriptionJudgment, ReasoningEffort)> {
+    decisions: &DescriptionDecisions<'_>,
+) -> Result<(&'a ModelDescription, &'a str, f64, ReasoningEffort)> {
     let composed = seat_policy.compose_defaults(&purpose_key(purpose), Some(policy))?;
-    policy
+    let rows: Vec<_> = policy
         .models
         .iter()
         .filter(|row| {
@@ -434,10 +421,28 @@ fn resolve<'a>(
                 .choose(composed, settings.effort, &row.effort_ladder)
                 .ok()?;
             row.line(measurements.get(&row.model), &seat_policy.evidence_order)
-                .map(|line| (row, judge.judge(task, &row.model, line, effort), effort))
+                .map(|line| (row, line, effort))
         })
-        .filter(|(_, verdict, _)| verdict.fitness > 0 && !verdict.reason.trim().is_empty())
-        .max_by_key(|(_, verdict, _)| verdict.fitness)
+        .collect();
+    let fitness = decisions.fitness(
+        task,
+        &rows
+            .iter()
+            .map(|&(row, description, effort)| Candidate {
+                model: &row.model,
+                description,
+                effort,
+            })
+            .collect::<Vec<_>>(),
+    )?;
+    rows.into_iter()
+        .zip(fitness)
+        .filter_map(|((row, line, effort), fitness)| {
+            fitness
+                .filter(|fitness| *fitness > 0.0)
+                .map(|fitness| (row, line, fitness, effort))
+        })
+        .max_by(|a, b| a.2.total_cmp(&b.2))
         .ok_or_else(|| invalid("no description candidate passed judgment"))
 }
 
@@ -566,7 +571,8 @@ impl Vault {
     pub fn route_seat(
         &self,
         birth: SeatBirth<'_>,
-        judge: &dyn DescriptionJudge,
+        decisions: &DescriptionDecisions<'_>,
+        notes: &dyn DescriptionNotes,
     ) -> Result<RoutedSeat> {
         let SeatBirth {
             id,
@@ -598,15 +604,19 @@ impl Vault {
             .map(|bytes| MEASUREMENTS.decode_value(bytes))
             .transpose()?
             .unwrap_or_default();
-        let (chosen, verdict, effort) = resolve(
+        let (chosen, line, fitness, effort) = resolve(
             &policy,
             &self.seat_policy()?,
             &measurements,
             settings,
             purpose,
             task,
-            judge,
+            decisions,
         )?;
+        let reason = notes.reason(task, &chosen.model, line, effort, fitness)?;
+        if reason.trim().is_empty() {
+            return Err(invalid("a routed seat needs its reason"));
+        }
         let seat = RoutedSeat {
             id: id.into(),
             role: role.into(),
@@ -623,7 +633,7 @@ impl Vault {
                     .expect("effort serializes as a string")
                     .as_str()
                     .expect("effort is a string"),
-                verdict.reason
+                reason
             ),
         };
         let mut txn = self.store.env.write_txn()?;
@@ -655,7 +665,7 @@ impl Vault {
     pub fn routed_verdict_request(
         &self,
         task: &str,
-        judge: &dyn DescriptionJudge,
+        decisions: &DescriptionDecisions<'_>,
         settings: &SeatSettings,
         mut request: LlmRequest,
         payload: VerdictPayload,
@@ -670,14 +680,14 @@ impl Vault {
             .description_policy()?
             .ok_or_else(|| invalid("description policy not configured"))?;
         let measurements = self.description_measurements()?;
-        let (chosen, _, effort) = resolve(
+        let (chosen, _, _, effort) = resolve(
             &policy,
             &self.seat_policy()?,
             &measurements,
             settings,
             &request.envelope.purpose,
             task,
-            judge,
+            decisions,
         )?;
         request.model = chosen.model.clone();
         request.envelope.locality = chosen.locality;
@@ -712,13 +722,13 @@ impl Vault {
     pub async fn call_routed_verdict(
         &self,
         task: &str,
-        judge: &dyn DescriptionJudge,
+        decisions: &DescriptionDecisions<'_>,
         settings: &SeatSettings,
         request: LlmRequest,
         payload: VerdictPayload,
         execution: VerdictExecution<'_>,
     ) -> DurableStepResult<StepOutcome> {
-        let request = self.routed_verdict_request(task, judge, settings, request, payload)?;
+        let request = self.routed_verdict_request(task, decisions, settings, request, payload)?;
         call_as_step(
             execution.context,
             execution.backend,
