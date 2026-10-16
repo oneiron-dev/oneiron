@@ -155,6 +155,7 @@ pub mod engine_executor;
 pub mod failure_ladder;
 pub mod failure_signals;
 pub mod run_tree;
+pub mod runtime_hooks;
 pub mod self_heal;
 pub mod session_lifecycle;
 pub mod wave_orchestration;

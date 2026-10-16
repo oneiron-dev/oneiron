@@ -305,6 +305,10 @@ pub enum ReceiptKind {
     ///
     /// Not emit-adjacent: the read answers its own caller.
     ServedForm,
+    /// One fact-hook run (ARCH-0080 §6): the hook, its CODE id and body hash,
+    /// the duration, the outcome, `now` and the rows it read. Written by the
+    /// runner in the run's own transaction, to its own store.
+    Hook,
 }
 
 impl ReceiptKind {
@@ -322,6 +326,7 @@ impl ReceiptKind {
             Self::CommitmentLifecycle => "commitment_lifecycle",
             Self::Extraction => "extraction",
             Self::ServedForm => "served_form",
+            Self::Hook => "hook",
         }
     }
 
@@ -339,6 +344,7 @@ impl ReceiptKind {
             "commitment_lifecycle" => Some(Self::CommitmentLifecycle),
             "extraction" => Some(Self::Extraction),
             "served_form" => Some(Self::ServedForm),
+            "hook" => Some(Self::Hook),
             _ => None,
         }
     }
