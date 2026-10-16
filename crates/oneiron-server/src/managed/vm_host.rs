@@ -275,11 +275,9 @@ impl VaultVm {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("vault VM has no lifecycle connection"))?;
         let mut line = String::new();
-        let read = (&mut lifecycle.reader)
-            .take(MAX_VM_FRAME as u64 + 1)
-            .read_line(&mut line);
+        let mut bounded = (&mut lifecycle.reader).take(MAX_VM_FRAME as u64 + 1);
         anyhow::ensure!(
-            tokio::time::timeout(timeout, read).await?? > 0,
+            tokio::time::timeout(timeout, bounded.read_line(&mut line)).await?? > 0,
             "vault VM closed its lifecycle connection"
         );
         decode_vm_frame(&line)
