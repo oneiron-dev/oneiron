@@ -364,3 +364,105 @@ fn a_malformed_tool_call_never_decodes_as_a_finished_answer() {
         .is_ok()
     );
 }
+
+/// F12 (H90): a tool or structured-output control that arrives through raw
+/// params or provider options needs the capability its typed field would.
+/// The typed checks read only the typed fields, so a model without tool
+/// calling or JSON output used to get these controls on the wire.
+#[test]
+fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
+    use oneiron::LlmCapability;
+    let config = |capabilities: Vec<LlmCapability>| {
+        OpenAiCompatConfig::from_catalog([LlmCatalogEntry {
+            model: ModelId::new(MODEL).expect("model"),
+            display_name: "teacher".to_owned(),
+            locality: ModelLocality::ThirdParty,
+            context_window_tokens: 8_192,
+            max_output_tokens: None,
+            cost: None,
+            capabilities,
+            metadata: BTreeMap::new(),
+        }])
+    };
+    let bare = config(vec![LlmCapability::Streaming]);
+    for (key, value, capability) in [
+        (
+            "tools",
+            json!([{ "type": "function", "function": { "name": "run" } }]),
+            LlmCapability::ToolCalling,
+        ),
+        ("tool_choice", json!("required"), LlmCapability::ToolCalling),
+        (
+            "functions",
+            json!([{ "name": "run" }]),
+            LlmCapability::ToolCalling,
+        ),
+        (
+            "function_call",
+            json!({ "name": "run" }),
+            LlmCapability::ToolCalling,
+        ),
+        (
+            "parallel_tool_calls",
+            json!(true),
+            LlmCapability::ToolCalling,
+        ),
+        (
+            "response_format",
+            json!({ "type": "json_object" }),
+            LlmCapability::JsonResponse,
+        ),
+        // Own-server spellings of a JSON schema (vLLM, llama.cpp).
+        (
+            "structured_outputs",
+            json!({ "json": { "type": "object" } }),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            "guided_json",
+            json!({ "type": "object" }),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            "json_schema",
+            json!({ "type": "object" }),
+            LlmCapability::JsonResponse,
+        ),
+    ] {
+        for via_options in [false, true] {
+            let mut call = request();
+            if via_options {
+                let mut options = serde_json::Map::new();
+                options.insert(key.to_owned(), value.clone());
+                call.provider_options
+                    .insert("openai".to_owned(), serde_json::Value::Object(options));
+            } else {
+                call.params.insert(key.to_owned(), value.clone());
+            }
+            for stream in [false, true] {
+                match super::build_openai_chat_request(&bare, &call, stream) {
+                    Err(LlmError::Fatal(FatalLlmError::Unsupported(refused))) => {
+                        assert_eq!(refused.capability, capability, "{key}");
+                    }
+                    other => panic!(
+                        "raw {key} (options: {via_options}, stream: {stream}) must be refused: {other:?}"
+                    ),
+                }
+            }
+            let able = config(vec![LlmCapability::Streaming, capability.clone()]);
+            let body = super::build_openai_chat_request(&able, &call, false)
+                .expect("a capable model takes the raw control")
+                .body;
+            assert_eq!(body[key], value, "{body}");
+        }
+    }
+
+    let mut call = request();
+    call.params.insert("temperature".to_owned(), json!(0.2));
+    call.params
+        .insert("response_format".to_owned(), json!({ "type": "text" }));
+    let body = super::build_openai_chat_request(&bare, &call, false)
+        .expect("a sampling field and a text format need no capability")
+        .body;
+    assert_eq!(body["temperature"], 0.2, "{body}");
+}

@@ -171,6 +171,9 @@ fn advertised_host_verbs(dts: &str) -> Vec<String> {
 /// Class of a host import linked into a guest program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SandboxImportClass {
+    /// Reads only: the guest gains no write. Host bookkeeping the owner opted
+    /// into (retrieval telemetry, an access grant's clock) is not a write
+    /// import.
     ReadOnly,
     CredentialHandle,
     Determinism,
@@ -316,6 +319,7 @@ pub struct SandboxBoundaryContract {
     linked_imports: &'static [SandboxLinkedImport],
     proposal_delta_channel: bool,
     credential_call_effect: SandboxCredentialEffect,
+    host_services: bool,
 }
 
 impl SandboxBoundaryContract {
@@ -329,6 +333,7 @@ impl SandboxBoundaryContract {
                 linked_imports: FIRST_PARTY_IMPORTS,
                 proposal_delta_channel: false,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
+                host_services: true,
             },
             SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => Self {
                 tier,
@@ -336,6 +341,7 @@ impl SandboxBoundaryContract {
                 linked_imports: NON_WRITE_IMPORTS,
                 proposal_delta_channel: true,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
+                host_services: true,
             },
         }
     }
@@ -385,6 +391,25 @@ impl SandboxBoundaryContract {
     #[must_use]
     pub const fn credential_call_effect(self) -> SandboxCredentialEffect {
         self.credential_call_effect
+    }
+
+    /// The same contract with the file and credential imports cut off from
+    /// any host-attached service adapter. They stay linked, because the
+    /// component imports them, and refuse every call; only the reserved
+    /// recoverable-output reads the host answers itself still resolve.
+    #[must_use]
+    pub const fn without_host_services(self) -> Self {
+        Self {
+            host_services: false,
+            ..self
+        }
+    }
+
+    /// Whether the file and credential imports may reach a host-attached
+    /// service adapter.
+    #[must_use]
+    pub const fn links_host_services(self) -> bool {
+        self.host_services
     }
 
     /// True if any linked import can commit or trap a host write.

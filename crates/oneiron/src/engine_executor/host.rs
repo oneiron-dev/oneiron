@@ -333,7 +333,11 @@ pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
 ];
 
 pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBoundaryContract> {
-    let boundary = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
+    // Generated code reaches the host through `self.*` and its own recorded
+    // outputs alone: a file or credential service a host attached to the
+    // runtime is not part of the executor's contract.
+    let boundary = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer)
+        .without_host_services();
     if boundary.guest_language() != SandboxGuestLanguage::PlainJavaScript {
         return Err(Error::InvariantViolation("executor sandbox is not plain JavaScript").into());
     }
