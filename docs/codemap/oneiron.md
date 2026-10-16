@@ -162,7 +162,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/checkpoint.rs` | src | m | 1 struct · 7 fn · 1 const | AuthorityCheckpoint | Quorum-signed authority roster checkpoints, linked to exact signed history |
 | `src/authority/claim_write.rs` | src | s | 1 fn · 3 crate-vis | — | Claim write-window admission and read-time quarantine share one causal predicate |
 | `src/authority/engine_machine.rs` | src | s | 3 fn · 2 crate-vis | — | Host-provisioned software identities for the engine's own MACHINE writers |
-| `src/authority/entry_transition.rs` | src | m | 9 crate-vis | — | Per-entry state transition and the consent / quorum predicates |
+| `src/authority/entry_transition.rs` | src | m | 8 crate-vis | — | Per-entry state transition and the consent / quorum predicates |
 | `src/authority/federation_activation.rs` | src | s | 1 fn | — | Grant activation under the folded pact states |
 | `src/authority/first_seen_clock.rs` | src | s | 15 crate-vis | — | First-seen sidecar keys and the per-vault logical observation clock |
 | `src/authority/fold_engine.rs` | src | m | 1 re-export · 7 crate-vis | — | Top-level fold orchestration |
@@ -170,7 +170,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/fold_project.rs` | src | s | 4 crate-vis | — | The fold's projection: from the raw merge of the surviving rows' states to the folded authority |
 | `src/authority/fold_resume.rs` | src | m | 8 crate-vis | — | A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head… |
 | `src/authority/fold_schedule.rs` | src | s | 1 crate-vis | — | The fold's per-entry scheduler |
-| `src/authority/fold_state.rs` | src | m | 3 struct · 3 enum · 3 fn · 7 crate-vis | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFold, AuthorityFoldIssue, FoldedActorBinding | Folded-state data model and the two-state merge |
+| `src/authority/fold_state.rs` | src | m | 3 struct · 3 enum · 3 fn · 6 crate-vis | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFold, AuthorityFoldIssue, FoldedActorBinding | Folded-state data model and the two-state merge |
 | `src/authority/handoff_equivocation.rs` | src | m | 3 struct · 4 fn · 1 const · 4 crate-vis | AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation | Evidence that a retired key signed beside the handoff that retired it: the first record of OF-166, ahead of… |
 | `src/authority/history_transfer.rs` | src | m | 1 struct · 6 fn · 2 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/host_actor.rs` | src | s | 1 crate-vis | — | The owner a self-hosted root binds (H149) |
@@ -197,7 +197,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/readonly_fold.rs` | src | m | 10 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
 | `src/authority/recover_many.rs` | src | s | 2 struct · 2 enum · 1 fn | VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep | M-vault recovery (OF-169): each vault recovers on its own chain |
 | `src/authority/retired_signers.rs` | src | m | 10 crate-vis | — | A handoff retires its predecessor for good (engine-crates-03) |
-| `src/authority/revoke_proof.rs` | src | m | 9 crate-vis | — | Log-derived, typed restrictive facts (actor revocations, slip withdrawals, slip burns and machine removals)… |
+| `src/authority/revoke_proof.rs` | src | m | 8 crate-vis | — | Log-derived, typed restrictive facts (actor revocations, slip withdrawals, slip burns and machine removals)… |
 | `src/authority/sequence_ancestry.rs` | src | s | 1 crate-vis | — | Causally vouched history may arrive after its already-observed descendant |
 | `src/authority/sequence_observation.rs` | src | s | 6 crate-vis | — | Durable signer sequence maxima and content-addressed first-observation receipts |
 | `src/authority/slip.rs` | src | m | 4 struct · 14 fn · 7 crate-vis | CapabilitySlip, SignedCaveat, SlipCaveat, VerifiedSlip | Host-signed capability slips with holder-signed offline narrowing and proof |
@@ -270,7 +270,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/tests/world_reissue_windows.rs` | test | s | — | — | World privacy P6b acceptance for the windows a re-issue opens (contract §4, check 7c): whatever the old… |
 | `src/authority/tests/world_root_flood.rs` | test | m | — | — | Strangers' roots at the store gate (Astra #1422e F1; the Engine, r23) |
 | `src/authority/tests/world_root_spam.rs` | test | s | — | — | World privacy P6b acceptance for root spam (contract §8, check 7b; Wonder R1-F5, Sol R1b-F8): roots are… |
-| `src/authority/tier_floor.rs` | src | s | 8 crate-vis | — | Causal floor updates: softenings clear only observed restrictions |
 | `src/authority/vault_api.rs` | src | m | 5 fn · 3 crate-vis | — | `impl Vault` — the AUTHORITY_LOG read/write door |
 | `src/authority/world_key_fold.rs` | src | m | 2 struct · 6 fn · 1 const · 4 crate-vis | FoldedWorldKey, WrappedKey | A world's key records, folded (world privacy P6b, contract §4) |
 | `src/authority/world_key_support.rs` | src | s | 8 crate-vis | — | The authority side of the world-key doors (world privacy P6b): the sequence and parents a key record takes… |
