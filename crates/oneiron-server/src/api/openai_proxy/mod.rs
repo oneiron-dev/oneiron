@@ -148,10 +148,11 @@ async fn complete(
     ))
 }
 
-/// The paired connector the request's credential names, holding both grants
-/// the loop uses over the whole record scope, and both verbs when it binds
-/// verbs. A narrowed credential's bounds are not projected here: it is
-/// refused, never widened.
+/// The paired connector the request's credential names: it reads, and
+/// proposes or writes, over the whole record scope, and binds both verbs
+/// when it binds verbs. The exchange lands Proposed whatever the ceiling,
+/// so either write grant serves. A narrowed credential's bounds are not
+/// projected here: it is refused, never widened.
 async fn admit_connector(
     headers: &HeaderMap,
     locality: CallerLocality,
@@ -171,10 +172,12 @@ async fn admit_connector(
     if !auth.credential_is_live(&server.vault) {
         return Err(unauthorized());
     }
-    if auth.require(CoreScope::Read).is_err() || auth.require(CoreScope::Propose).is_err() {
+    let proposes =
+        auth.require(CoreScope::Propose).is_ok() || auth.require(CoreScope::Write).is_ok();
+    if auth.require(CoreScope::Read).is_err() || !proposes {
         return Err(forbidden(
             "scope_refused",
-            "the proxy reads and proposes: the credential needs Read and Propose over the whole vault",
+            "the proxy reads and proposes: the credential needs Read and Propose (or Write) over the whole vault",
         ));
     }
     if !actor.admits_tool("vault.recall") || !actor.admits_tool("vault.remember") {
