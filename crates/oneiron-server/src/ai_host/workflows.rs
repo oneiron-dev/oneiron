@@ -6,6 +6,8 @@
 //! of its own, so while any workflow is open but waiting the pump also
 //! re-checks on a slow timer; with nothing open it only waits for a signal.
 //! A failed step goes to the engine's failure ladder ([`super::step_failure`]).
+//! A metered leaf with no spend left under its lease's cap stops before its
+//! model call (OF-532); the engine pump settles each leaf's lease.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -135,6 +137,18 @@ fn pump_once(
                         status.workflows.state = WorkState::Working;
                         status.workflows.started += 1;
                     });
+                    // OF-532: a metered leaf runs under its spend lease. With
+                    // nothing left under the cap it stops here, before any
+                    // model call, and is not retried; the steps already done
+                    // keep their saved results.
+                    if let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)? {
+                        let guard = dispatcher.guard_for_scope(&scope)?;
+                        if guard.read().remaining_units == 0 {
+                            return Err(oneiron::Error::InvalidConfig(format!(
+                                "workflow step spend cap reached under scope {scope}"
+                            )));
+                        }
+                    }
                     runner.run(runtime, vault, step, context).map_err(|fault| {
                         retryable = fault.retryable;
                         fault.error

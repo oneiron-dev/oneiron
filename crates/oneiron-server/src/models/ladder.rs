@@ -1,12 +1,17 @@
 //! One role's ladder under a run: the engine sees a single seat model; each
 //! rung a call reaches is admitted on its own one-use permit and sent through
 //! the run's gate for that rung's offer, and a rung that fails hands the call
-//! to the next. An offer refused for a quota or a limit rests until its reset
-//! and the same request goes to the next offer; a request error ends the call.
+//! to the next. An offer refused for a quota or a limit rests (a rate limit
+//! for a backoff, a spent window until its reset, spent credit until the
+//! owner clears it) and the same request goes to the next offer; while only
+//! rests stop the call, it waits for the first offer back and tries again,
+//! until its wait budget is spent. A request error ends the call.
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::llm::media::MediaRequest;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
+use oneiron::llm::SpentKind;
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
@@ -15,9 +20,10 @@ use oneiron::{
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
-use super::cooldown::{OfferCooldowns, Rest, leaves_device};
+use super::cooldown::{Asked, OfferCooldowns, Refusal, Rest, leaves_device};
 use super::driven::Driven;
 use super::forward::{Ended, forward};
+use super::media::{HeldJob, MediaAnswer, MediaRung};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::walk::{Passed, Walk, ends_call, failure_kind};
@@ -34,6 +40,9 @@ pub(super) struct LadderRung {
     pub(super) wire_model: String,
     pub(super) prompt: Option<String>,
     pub(super) offer: ServedOffer,
+    /// A media seat's rung: the media wire it sends `ai.*` media calls
+    /// through, and what it serves. A chat rung has none.
+    pub(super) media: Option<MediaRung>,
 }
 
 impl LadderRung {
@@ -143,6 +152,7 @@ impl OfferLadder {
                 model,
                 prompt: None,
                 offer,
+                media: None,
             },
             OfferCooldowns::unkept(),
         )
@@ -282,23 +292,38 @@ impl OfferLadder {
         (0..self.rungs.len()).find(|index| !sent[*index] && !self.passes_over(call, *index, walk))
     }
 
-    /// Rests the offer at `index` when `error` is a limit refusal, until the
-    /// reset it names.
+    /// Rests the offer at `index` when `error` is a limit refusal: a rate
+    /// limit for its wait or a backoff, a spent window until its reset,
+    /// spent credit until the owner clears it (OF-305).
     fn rest_if_limited(&self, index: usize, error: &LlmError) -> Option<Option<Rest>> {
-        let LlmError::Retryable(RetryableLlmError::RateLimited {
-            retry_after,
-            resets_at,
-        }) = error
-        else {
-            return None;
+        let refusal = match error {
+            LlmError::Retryable(RetryableLlmError::RateLimited {
+                retry_after,
+                resets_at,
+            }) => Refusal {
+                retry_after: *retry_after,
+                resets_at,
+                spent: None,
+            },
+            LlmError::Retryable(RetryableLlmError::QuotaSpent {
+                kind,
+                retry_after,
+                resets_at,
+            }) => Refusal {
+                retry_after: *retry_after,
+                resets_at,
+                spent: Some(*kind),
+            },
+            _ => return None,
         };
         let rung = &self.rungs[index];
-        let rest = self.rests.rest(
-            &rung.offer.binding,
-            &rung.wire_model,
-            *retry_after,
-            resets_at,
-        );
+        let asked = Asked {
+            provider: &rung.provider,
+            wire_model: &rung.wire_model,
+        };
+        let rest = self
+            .rests
+            .rest(&rung.offer.binding, &rung.wire_model, refusal, asked);
         tracing::warn!(
             rung = rung.position,
             kind = failure_kind(error),
@@ -343,7 +368,7 @@ impl OfferLadder {
     /// cooling chain is not refused for rate; its call waits for the first
     /// offer back. Each rung is judged again first, one already sent too, so
     /// the wait goes only to an offer the call may use now.
-    fn waits_for(&self, call: Call<'_>, walk: &mut Walk) -> Option<Back> {
+    fn waits_for(&self, call: Call<'_>, walk: &mut Walk, budget_secs: u64) -> Option<Back> {
         if !walk.limited() {
             return None;
         }
@@ -354,7 +379,7 @@ impl OfferLadder {
         }
         let (index, at) = walk.back()?;
         let wait = at.saturating_sub(self.rests.now()?);
-        (wait <= self.rests.max_wait_secs()).then(|| Back {
+        (wait <= budget_secs).then(|| Back {
             index,
             at,
             wait: Duration::from_secs(wait),
@@ -377,6 +402,16 @@ impl OfferLadder {
             return RetryableLlmError::KeptOnDevice {
                 retry_after,
                 resets_at,
+            }
+            .into();
+        }
+        // Every offer the call could use is parked on spent credit: no
+        // reset brings one back, only the owner.
+        if back.as_ref().is_some_and(|(_, resets)| resets == &[u64::MAX]) && walk.limited() {
+            return RetryableLlmError::QuotaSpent {
+                kind: SpentKind::Credit,
+                retry_after: None,
+                resets_at: Vec::new(),
             }
             .into();
         }
@@ -419,6 +454,23 @@ impl OfferLadder {
         selector: Option<&str>,
         may_send: &(dyn Fn() -> bool + Sync),
     ) -> LlmResult<LlmResponse> {
+        let budget = Duration::from_secs(self.rests.max_wait_secs());
+        self.generate_within(run, request, selector, may_send, budget)
+            .await
+    }
+
+    /// [`Self::generate_while`] for a caller with its own deadline: the
+    /// call waits for offers back for at most `wait_budget` in all, the
+    /// vault's longest wait or not (OF-305: a rate-limited chain backs off
+    /// and retries until the caller's deadline).
+    pub async fn generate_within(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        wait_budget: Duration,
+    ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         let call = Call {
             run,
@@ -426,13 +478,20 @@ impl OfferLadder {
             selector,
         };
         let mut walk = Walk::default();
-        // The chain, each rung at most once, then, when only rests stopped
-        // it, the chain once more after one wait for its first offer back.
-        for waited in [false, true] {
-            if waited {
-                let Some(back) = self.waits_for(call, &mut walk).filter(|_| may_send()) else {
+        let mut budget = wait_budget.as_secs();
+        // The chain, each rung at most once a pass; then, while only rests
+        // stopped it, a wait for its first offer back and the chain again,
+        // until the waits would pass the call's budget.
+        for pass in 0.. {
+            if pass > 0 {
+                let Some(back) = self
+                    .waits_for(call, &mut walk, budget)
+                    .filter(|_| may_send())
+                else {
                     break;
                 };
+                // Each wait spends at least a second, so a chain ends.
+                budget = budget.saturating_sub(back.wait.as_secs().max(1));
                 self.rests.wait(back.wait, back.at, may_send).await;
             }
             let mut sent = vec![false; self.rungs.len()];
@@ -495,6 +554,119 @@ impl OfferLadder {
         }
     }
 
+    /// One media call (`ai.image`, `ai.video`, ...) under `run`, on the
+    /// same walk as a text call: each rung it reaches whose row serves the
+    /// call is admitted on its own permit, sent through the run's media gate
+    /// and settled on its own, in token units; an offer refused for a limit
+    /// rests and the call goes to the next, and a chain that only rests
+    /// waits once for its first offer back. A job (`ai.video`) answers with
+    /// its started permit held, to settle when the job ends.
+    pub(super) async fn media(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        selector: Option<&str>,
+    ) -> LlmResult<MediaAnswer> {
+        let admission = request.admission_request();
+        self.admits(&admission)?;
+        let call = Call {
+            run,
+            request: &admission,
+            selector,
+        };
+        let mut walk = Walk::default();
+        let mut budget = self.rests.max_wait_secs();
+        for pass in 0.. {
+            if pass > 0 {
+                let Some(back) = self.waits_for(call, &mut walk, budget) else {
+                    break;
+                };
+                // Each wait spends at least a second, so a chain ends.
+                budget = budget.saturating_sub(back.wait.as_secs().max(1));
+                self.rests.wait(back.wait, back.at, &|| true).await;
+            }
+            let mut sent = vec![false; self.rungs.len()];
+            while let Some(index) = self.next_rung(call, &sent, &mut walk) {
+                sent[index] = true;
+                if let Some(answer) = self.send_media(call, index, &request, &mut walk).await? {
+                    return Ok(answer);
+                }
+            }
+        }
+        Err(self.unanswered(walk))
+    }
+
+    /// Sends the media call to the rung at `index`: its answer, `None` when
+    /// the call goes on, or the failure that ends it.
+    async fn send_media(
+        &self,
+        call: Call<'_>,
+        index: usize,
+        request: &MediaRequest,
+        walk: &mut Walk,
+    ) -> LlmResult<Option<MediaAnswer>> {
+        let rung = &self.rungs[index];
+        let Some(media) = &rung.media else {
+            return Ok(None);
+        };
+        let mut bound = request.clone();
+        bound.model = rung.model.clone();
+        bound.envelope.locality = rung.offer.binding.locality;
+        // A rung whose row does not serve the call (its inputs, its
+        // references) is passed, unsent; a call no rung serves is refused.
+        if media.row.admit_media(&bound).is_err() {
+            return Ok(None);
+        }
+        let selector = Some(call.selector.unwrap_or(self.name.as_str()));
+        let permit = call
+            .run
+            .admit_media(selector, &bound, &rung.offer.binding)?;
+        if self.kept_on_device(index, call.request) {
+            settle_failed(permit);
+            self.hold(call, index, walk);
+            return Ok(None);
+        }
+        let gate = call
+            .run
+            .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
+        let operation = request.operation;
+        if operation.is_job() {
+            let submitted = gate.submit(bound, permit.lease()).await;
+            return match submitted {
+                Ok(provider_job) => Ok(Some(MediaAnswer::Job(HeldJob {
+                    gate,
+                    permit: Some(permit),
+                    provider_job,
+                    model: rung.model.clone(),
+                    operation,
+                    caps: media.caps.clone(),
+                }))),
+                Err(error) => {
+                    let sent = settle_failed(permit);
+                    self.failed(index, error, sent, walk)?;
+                    Ok(None)
+                }
+            };
+        }
+        let answered = gate.run(bound, permit.lease()).await;
+        match answered {
+            Ok(mut response) => {
+                permit.settle_media(response.usage.token_units(operation, &media.caps))?;
+                if self.receipt {
+                    let raw = std::mem::take(&mut response.usage.raw_provider);
+                    response.usage.raw_provider =
+                        rung.stamp(walk.went_out(), walk.passed_over(&self.rungs), raw);
+                }
+                Ok(Some(MediaAnswer::Done(response)))
+            }
+            Err(error) => {
+                let sent = settle_failed(permit);
+                self.failed(index, error, sent, walk)?;
+                Ok(None)
+            }
+        }
+    }
+
     /// One call under `run` as a stream. The first rung the call can use is
     /// admitted now, so a call the run refuses, or one whose every usable
     /// offer rests past the longest wait, is refused before anything starts.
@@ -518,7 +690,7 @@ impl OfferLadder {
         let (start, wait) =
             match (0..self.rungs.len()).find(|index| !self.passes_over(call, *index, &mut walk)) {
                 Some(start) => (start, None),
-                None => match self.waits_for(call, &mut walk) {
+                None => match self.waits_for(call, &mut walk, self.rests.max_wait_secs()) {
                     Some(back) => (back.index, Some(back)),
                     None => return Err(self.unanswered(walk)),
                 },
@@ -576,35 +748,40 @@ impl OfferLadder {
             }
             wait = None;
             if !usable {
-                let Some(back) = self.waits_for(call, &mut walk) else {
+                let Some(back) = self.waits_for(call, &mut walk, self.rests.max_wait_secs())
+                else {
                     let _ = events.send(Err(self.unanswered(walk))).await;
                     return;
                 };
                 wait = Some(back);
             }
         }
-        // The chain, then, when only rests stopped it, the chain once more
-        // after one wait for its first offer back. A stream that opened with
+        // The chain; then, while only rests stopped it, a wait for its first
+        // offer back and the chain again, until the waits would pass the
+        // vault's longest wait in all (OF-305). A stream that opened with
         // every usable offer resting starts with that wait.
-        let back = match wait {
+        let mut budget = self.rests.max_wait_secs();
+        let mut back = match wait {
             Some(back) => Some(back),
             None => match self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
                 .await
             {
                 Flow::Ended => return,
-                Flow::On => self.waits_for(call, &mut walk),
+                Flow::On => self.waits_for(call, &mut walk, budget),
             },
         };
-        if let Some(back) = back {
+        while let Some(next) = back {
+            budget = budget.saturating_sub(next.wait.as_secs().max(1));
             // Dropping the stream drops this wait: nothing else stops it.
-            self.rests.wait(back.wait, back.at, &|| true).await;
-            if let Flow::Ended = self
+            self.rests.wait(next.wait, next.at, &|| true).await;
+            back = match self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
                 .await
             {
-                return;
-            }
+                Flow::Ended => return,
+                Flow::On => self.waits_for(call, &mut walk, budget),
+            };
         }
         if let Some((_, (_, permit))) = held {
             settle_failed(permit);

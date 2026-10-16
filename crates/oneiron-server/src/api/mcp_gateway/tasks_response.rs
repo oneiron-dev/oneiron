@@ -501,22 +501,14 @@ fn mcp_agent_verb_input(
         )
     };
     match tool {
-        "board.expand" => {
-            let mut map = serde_json::Map::new();
-            map.insert("key".to_owned(), json!(a.key.as_ref().ok_or_else(invalid)?));
-            if let Some(value) = &a.frame_epoch {
-                map.insert("frame_epoch".to_owned(), json!(value));
-            }
-            Ok(Value::Object(map))
-        }
-        "board.refresh" => {
+        "self.focus.refresh" => {
             let mut map = serde_json::Map::new();
             if let Some(value) = &a.frame_epoch {
                 map.insert("frame_epoch".to_owned(), json!(value));
             }
             Ok(Value::Object(map))
         }
-        "board.subscribe" => {
+        "self.focus.subscribe" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "scopes".to_owned(),
@@ -524,7 +516,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
-        "board.unsubscribe" => {
+        "self.focus.unsubscribe" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "scopes".to_owned(),
@@ -551,6 +543,12 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.session_id {
                 map.insert("session_id".to_owned(), json!(value));
             }
+            if let Some(value) = &a.key {
+                map.insert("key".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.frame_epoch {
+                map.insert("frame_epoch".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.create" => {
@@ -572,24 +570,24 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
-        "witness" => a.spec.clone().ok_or_else(invalid),
-        "claim_upsert" => a.spec.clone().ok_or_else(invalid),
-        "recall" => a.spec.clone().ok_or_else(invalid),
-        "export" => a.spec.clone().ok_or_else(invalid),
-        "receipts" => a.spec.clone().ok_or_else(invalid),
-        "key_value_get" => a.spec.clone().ok_or_else(invalid),
-        "key_value_put" => a.spec.clone().ok_or_else(invalid),
-        "key_value_delete" => a.spec.clone().ok_or_else(invalid),
-        "key_value_search" => a.spec.clone().ok_or_else(invalid),
-        "key_value_namespaces" => a.spec.clone().ok_or_else(invalid),
+        "vault.witness" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.upsert" => a.spec.clone().ok_or_else(invalid),
+        "vault.recall" => a.spec.clone().ok_or_else(invalid),
+        "vault.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.receipts" => a.spec.clone().ok_or_else(invalid),
+        "vault.kv.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.kv.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.kv.delete" => a.spec.clone().ok_or_else(invalid),
+        "vault.kv.search" => a.spec.clone().ok_or_else(invalid),
+        "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
         "can" => a.spec.clone().ok_or_else(invalid),
         "peek" => a.spec.clone().ok_or_else(invalid),
-        "tasks.ask" => a.spec.clone().ok_or_else(invalid),
-        "tasks.wait" => a.spec.clone().ok_or_else(invalid),
+        "ask" => a.spec.clone().ok_or_else(invalid),
+        "wait" => a.spec.clone().ok_or_else(invalid),
         "tasks.answer" => a.spec.clone().ok_or_else(invalid),
         "tasks.outcomes" => a.spec.clone().ok_or_else(invalid),
-        "rooms.list" => Ok(Value::Object(serde_json::Map::new())),
-        "rooms.messages" => {
+        "vault.rooms.list" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.rooms.messages" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "room_ref".to_owned(),
@@ -600,7 +598,7 @@ fn mcp_agent_verb_input(
             }
             Ok(Value::Object(map))
         }
-        "rooms.render" => {
+        "vault.rooms.render" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "room_ref".to_owned(),
@@ -608,7 +606,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
-        "rooms.find" => {
+        "vault.rooms.find" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "room_ref".to_owned(),
@@ -619,7 +617,7 @@ fn mcp_agent_verb_input(
             }
             Ok(Value::Object(map))
         }
-        "rooms.get" => {
+        "vault.rooms.get" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "room_ref".to_owned(),
@@ -631,7 +629,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
-        "rooms.trunk" => {
+        "vault.rooms.trunk" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "room_ref".to_owned(),
@@ -643,7 +641,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
-        "rooms.claim" => {
+        "vault.rooms.claim" => {
             let mut map = serde_json::Map::new();
             map.insert(
                 "room_ref".to_owned(),
@@ -655,7 +653,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
-        "rooms.speak" => {
+        "vault.rooms.speak" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
             let map = input.as_object_mut().ok_or_else(invalid)?;
             if a.room_ref.as_deref() != map.get("conversation_ref").and_then(Value::as_str) {
@@ -681,25 +679,17 @@ pub(crate) fn mcp_agent_verb_arguments(
     };
     let mut arguments = serde_json::Map::new();
     match tool {
-        "board.expand" => {
-            if let Some(value) = input.get("key") {
-                arguments.insert("key".to_owned(), value.clone());
-            }
+        "self.focus.refresh" => {
             if let Some(value) = input.get("frame_epoch") {
                 arguments.insert("frame_epoch".to_owned(), value.clone());
             }
         }
-        "board.refresh" => {
-            if let Some(value) = input.get("frame_epoch") {
-                arguments.insert("frame_epoch".to_owned(), value.clone());
-            }
-        }
-        "board.subscribe" => {
+        "self.focus.subscribe" => {
             if let Some(value) = input.get("scopes") {
                 arguments.insert("scopes".to_owned(), value.clone());
             }
         }
-        "board.unsubscribe" => {
+        "self.focus.unsubscribe" => {
             if let Some(value) = input.get("scopes") {
                 arguments.insert("scopes".to_owned(), value.clone());
             }
@@ -719,6 +709,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("session_id") {
                 arguments.insert("session_id".to_owned(), value.clone());
             }
+            if let Some(value) = input.get("key") {
+                arguments.insert("key".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("frame_epoch") {
+                arguments.insert("frame_epoch".to_owned(), value.clone());
+            }
         }
         "tasks.create" => {
             if let Some(value) = input.get("spec") {
@@ -733,34 +729,34 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("task_ref".to_owned(), value.clone());
             }
         }
-        "witness" => {
+        "vault.witness" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "claim_upsert" => {
+        "vault.claims.upsert" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "recall" => {
+        "vault.recall" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "export" => {
+        "vault.export" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "receipts" => {
+        "vault.receipts" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "key_value_get" => {
+        "vault.kv.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "key_value_put" => {
+        "vault.kv.put" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "key_value_delete" => {
+        "vault.kv.delete" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "key_value_search" => {
+        "vault.kv.search" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "key_value_namespaces" => {
+        "vault.kv.namespaces" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "can" => {
@@ -769,10 +765,10 @@ pub(crate) fn mcp_agent_verb_arguments(
         "peek" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "tasks.ask" => {
+        "ask" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "tasks.wait" => {
+        "wait" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.answer" => {
@@ -781,8 +777,8 @@ pub(crate) fn mcp_agent_verb_arguments(
         "tasks.outcomes" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "rooms.list" => {}
-        "rooms.messages" => {
+        "vault.rooms.list" => {}
+        "vault.rooms.messages" => {
             if let Some(value) = input.get("room_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
@@ -790,12 +786,12 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("turn_ref".to_owned(), value.clone());
             }
         }
-        "rooms.render" => {
+        "vault.rooms.render" => {
             if let Some(value) = input.get("room_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
         }
-        "rooms.find" => {
+        "vault.rooms.find" => {
             if let Some(value) = input.get("room_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
@@ -803,7 +799,7 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("turn_ref".to_owned(), value.clone());
             }
         }
-        "rooms.get" => {
+        "vault.rooms.get" => {
             if let Some(value) = input.get("room_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
@@ -811,7 +807,7 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("turn_ref".to_owned(), value.clone());
             }
         }
-        "rooms.trunk" => {
+        "vault.rooms.trunk" => {
             if let Some(value) = input.get("room_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
@@ -819,7 +815,7 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("turn_ref".to_owned(), value.clone());
             }
         }
-        "rooms.claim" => {
+        "vault.rooms.claim" => {
             if let Some(value) = input.get("room_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
@@ -827,7 +823,7 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("turn_ref".to_owned(), value.clone());
             }
         }
-        "rooms.speak" => {
+        "vault.rooms.speak" => {
             arguments.insert("spec".to_owned(), input.clone());
             if let Some(value) = input.get("conversation_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
@@ -919,35 +915,27 @@ async fn execute_agent_verb_listing(
         None => memory,
     };
     match tool {
-        "board.expand" => {
-            let input: oneiron::task_verb::sdk::BoardExpandRequest =
-                serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, served, |context| {
-                oneiron::task_verb::sdk::board_expand(context, input)
-            })
-            .await
-        }
-        "board.refresh" => {
+        "self.focus.refresh" => {
             let input: oneiron::task_verb::sdk::BoardRefreshRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             execute_mcp_board_verb(server, actor, served, |context| {
-                oneiron::task_verb::sdk::board_refresh(context, input)
+                oneiron::task_verb::sdk::self_focus_refresh(context, input)
             })
             .await
         }
-        "board.subscribe" => {
+        "self.focus.subscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             execute_mcp_board_verb(server, actor, served, |context| {
-                oneiron::task_verb::sdk::board_subscribe(context, input)
+                oneiron::task_verb::sdk::self_focus_subscribe(context, input)
             })
             .await
         }
-        "board.unsubscribe" => {
+        "self.focus.unsubscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             execute_mcp_board_verb(server, actor, served, |context| {
-                oneiron::task_verb::sdk::board_unsubscribe(context, input)
+                oneiron::task_verb::sdk::self_focus_unsubscribe(context, input)
             })
             .await
         }
@@ -973,6 +961,16 @@ async fn execute_agent_verb_listing(
             }
             let input: oneiron::task_verb::sdk::DescribeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            if let Some(key) = input.key.clone() {
+                let frame_epoch = input.frame_epoch;
+                return execute_mcp_board_verb(server, actor, served, |context| {
+                    oneiron::board_verb::dispatch_board_verb(
+                        context,
+                        oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch },
+                    )
+                })
+                .await;
+            }
             if input.task_ref.is_none() && !input.self_target {
                 // The section is narrowed to this credential before its
                 // render cap, so its counts are the credential's rows alone.
@@ -1008,22 +1006,22 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "witness" => {
+        "vault.witness" => {
             let input: oneiron::memory::WitnessTurn =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
-                oneiron::task_verb::sdk::witness(&memory, input).map_err(mcp_facade_error)?;
+                oneiron::task_verb::sdk::vault_witness(&memory, input).map_err(mcp_facade_error)?;
             server
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "claim_upsert" => {
+        "vault.claims.upsert" => {
             let input: oneiron::memory::ClaimInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::claim_upsert(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_claims_upsert(&memory, input)
+                .map_err(mcp_facade_error)?;
             served.extend(
                 [
                     Some(output.claim_short_id.as_str()),
@@ -1038,8 +1036,9 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "recall" => {
-            oneiron::task_verb::sdk::validate_input("recall", &input).map_err(mcp_facade_error)?;
+        "vault.recall" => {
+            oneiron::task_verb::sdk::validate_input("vault.recall", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RecallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let proof = actor
@@ -1063,7 +1062,7 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "export" => {
+        "vault.export" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             if !auth.is_owner_grade() {
                 return Err(McpGatewayError::new(
@@ -1072,7 +1071,8 @@ async fn execute_agent_verb_listing(
                     "full-vault export requires owner authority",
                 ));
             }
-            oneiron::task_verb::sdk::validate_input("export", &input).map_err(mcp_facade_error)?;
+            oneiron::task_verb::sdk::validate_input("vault.export", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ExportOptions =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let proof = auth.verified_slip().ok_or_else(|| {
@@ -1093,11 +1093,11 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "receipts" => {
+        "vault.receipts" => {
             let input: oneiron::task_verb::sdk::ReceiptsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::receipts(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_receipts(&memory, input)
+                .map_err(mcp_facade_error)?;
             served.extend(
                 output
                     .iter()
@@ -1107,42 +1107,42 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
-        "key_value_get" => {
+        "vault.kv.get" => {
             let input: oneiron::memory::KeyValueAddress =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
-                oneiron::task_verb::sdk::key_value_get(&memory, input).map_err(mcp_facade_error)?;
+                oneiron::task_verb::sdk::vault_kv_get(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "key_value_put" => {
+        "vault.kv.put" => {
             let input: oneiron::memory::KeyValuePut =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
-                oneiron::task_verb::sdk::key_value_put(&memory, input).map_err(mcp_facade_error)?;
+                oneiron::task_verb::sdk::vault_kv_put(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "key_value_delete" => {
+        "vault.kv.delete" => {
             let input: oneiron::memory::KeyValueAddress =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::key_value_delete(&memory, input)
+            let output = oneiron::task_verb::sdk::vault_kv_delete(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "key_value_search" => {
+        "vault.kv.search" => {
             let input: oneiron::memory::KeyValueSearch =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::key_value_search(&memory, input)
+            let output = oneiron::task_verb::sdk::vault_kv_search(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
-        "key_value_namespaces" => {
+        "vault.kv.namespaces" => {
             let input: oneiron::memory::KeyValueNamespaces =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::key_value_namespaces(&memory, input)
+            let output = oneiron::task_verb::sdk::vault_kv_namespaces(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -1162,20 +1162,18 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
-        "tasks.ask" => {
+        "ask" => {
             let input: oneiron::task_verb::sdk::TaskAskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::tasks_ask(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::ask(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "tasks.wait" => {
+        "wait" => {
             let input: oneiron::task_verb::sdk::TaskWaitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             served.extend([input.handle.group_ref]);
-            let output =
-                oneiron::task_verb::sdk::tasks_wait(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::wait(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -1202,18 +1200,18 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
-        "rooms.list" => {
+        "vault.rooms.list" => {
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::rooms_list(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_rooms_list(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
-        "rooms.messages" => {
+        "vault.rooms.messages" => {
             let input: oneiron::task_verb::sdk::RoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::rooms_messages(&memory, input)
+            let output = oneiron::task_verb::sdk::vault_rooms_messages(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::scoped_window(
                 output.rows.len(),
@@ -1225,19 +1223,19 @@ async fn execute_agent_verb_listing(
             .resumed_by("next_after", "turn_ref");
             mcp_agent_verb_output(output, source)
         }
-        "rooms.render" => {
+        "vault.rooms.render" => {
             let input: oneiron::task_verb::sdk::RoomRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::rooms_render(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_rooms_render(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
-        "rooms.find" => {
+        "vault.rooms.find" => {
             let input: oneiron::task_verb::sdk::RoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::rooms_find(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_rooms_find(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::scoped_window(
                 output.rows.len(),
                 0,
@@ -1248,35 +1246,35 @@ async fn execute_agent_verb_listing(
             .resumed_by("next_after", "turn_ref");
             mcp_agent_verb_output(output, source)
         }
-        "rooms.get" => {
+        "vault.rooms.get" => {
             let input: oneiron::task_verb::sdk::RoomTurnRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::rooms_get(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_rooms_get(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "rooms.trunk" => {
+        "vault.rooms.trunk" => {
             let input: oneiron::task_verb::sdk::RoomTurnRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::rooms_trunk(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_rooms_trunk(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "rooms.claim" => {
+        "vault.rooms.claim" => {
             let input: oneiron::task_verb::sdk::RoomClaimRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::rooms_claim(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_rooms_claim(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "rooms.speak" => {
+        "vault.rooms.speak" => {
             let input: oneiron::memory::WitnessTurn =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::rooms_speak(&memory, input).map_err(mcp_facade_error)?;
+            let output = oneiron::task_verb::sdk::vault_rooms_speak(&memory, input)
+                .map_err(mcp_facade_error)?;
             server
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);

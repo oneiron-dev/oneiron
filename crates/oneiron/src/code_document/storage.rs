@@ -61,7 +61,7 @@ pub(super) struct ReceiptRow {
     session: String,
     actor: String,
     actor_class: u8,
-    provenance: ProvenanceRow,
+    provenance: CodeOpProvenance,
     sequence: u64,
     pub(super) peer_id: u64,
     pub(super) counter_start: i32,
@@ -69,46 +69,6 @@ pub(super) struct ReceiptRow {
     pub(super) edit: CodeFileEdit,
     pub(super) before: CodeDocumentFrontier,
     pub(super) after: CodeDocumentFrontier,
-}
-
-/// Hex-encoded `CodeOpProvenance`, hashed into the operation's Loro stamp.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProvenanceRow {
-    turn: Option<String>,
-    activity: Option<String>,
-    intent: Option<String>,
-    substrate_ref: Option<String>,
-    reasoning_effort: Option<String>,
-}
-
-impl ProvenanceRow {
-    fn new(provenance: &CodeOpProvenance) -> Result<Self> {
-        if provenance.reasoning_effort.as_ref().is_some_and(|effort| {
-            effort.is_empty() || effort.len() > crate::provenance::REASONING_EFFORT_MAX_BYTES
-        }) {
-            return Err(invalid());
-        }
-        let hex = |id: Option<EntityId>| id.map(|id| id.to_hex());
-        Ok(Self {
-            turn: hex(provenance.turn),
-            activity: hex(provenance.activity),
-            intent: hex(provenance.intent),
-            substrate_ref: hex(provenance.substrate_ref),
-            reasoning_effort: provenance.reasoning_effort.clone(),
-        })
-    }
-
-    fn provenance(&self) -> Result<CodeOpProvenance> {
-        let id = |hex: &Option<String>| hex.as_deref().map(EntityId::from_hex).transpose();
-        Ok(CodeOpProvenance {
-            turn: id(&self.turn)?,
-            activity: id(&self.activity)?,
-            intent: id(&self.intent)?,
-            substrate_ref: id(&self.substrate_ref)?,
-            reasoning_effort: self.reasoning_effort.clone(),
-        })
-    }
 }
 
 /// The Loro commit message of one operation. It binds the ingress identity,
@@ -122,7 +82,7 @@ fn op_stamp(
     peer_id: u64,
     counter_start: i32,
     edit: &CodeFileEdit,
-    provenance: &ProvenanceRow,
+    provenance: &CodeOpProvenance,
 ) -> Result<String> {
     Ok(format!(
         "oneiron.code_document.v2:{operation}:{session}:{actor}:{actor_class}:{peer_id}:{counter_start}:{}:{}",
@@ -156,7 +116,7 @@ impl ReceiptRow {
             session_id: EntityId::from_hex(&self.session)?,
             actor: self.actor()?,
             sequence: self.sequence,
-            provenance: self.provenance.provenance()?,
+            provenance: self.provenance.clone(),
         })
     }
 
@@ -184,7 +144,7 @@ impl ReceiptRow {
             operation: EntityId::from_hex(&self.operation)?,
             session_id: EntityId::from_hex(&self.session)?,
             actor: self.actor()?,
-            provenance: self.provenance.provenance()?,
+            provenance: self.provenance.clone(),
             sequence: self.sequence,
             peer_id: self.peer_id,
             counter_start: self.counter_start,
@@ -413,7 +373,8 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
         validate_path(&session.repo, &edit.path)?;
-        let provenance = ProvenanceRow::new(&session.provenance)?;
+        session.provenance.validate()?;
+        let provenance = session.provenance.clone();
         let before = session.frontier()?;
         if before.path != edit.path {
             return Err(invalid());
