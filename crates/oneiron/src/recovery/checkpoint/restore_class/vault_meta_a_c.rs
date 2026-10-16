@@ -1,8 +1,8 @@
 //! The restore class of every canonical `vault_meta`, `a` to `c` family, in declaration order.
 
 use super::{
-    CONNECTOR_KEYS, CONTENT, Class, LIVE, PUBLIC_BOOKING_PAGES, PUBLISHED_ARTIFACTS, ROOMS,
-    STANDING_GRANTS,
+    CONNECTOR_KEYS, CONTENT, Class, LIVE, PENDING_COMM_STOPS, PUBLIC_BOOKING_PAGES,
+    PUBLISHED_ARTIFACTS, ROOMS, STANDING_GRANTS,
 };
 use crate::side_table::{self as t, SideTableDecl};
 
@@ -135,6 +135,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::CODEBASE_SNAPSHOT, CONTENT),
     (&t::COMM_EVENT_SEQUENCE, CONTENT),
     (&t::COMM_PARTY_INDEX, CONTENT),
+    (&t::COMM_PENDING_STOP, PENDING_COMM_STOPS),
     (&t::COMMITMENT_DUE_PRIMARY, CONTENT),
     (&t::COMMITMENT_SERIES_INSTANCE, CONTENT),
     (&t::CONNECTOR_GRANT_SLATE_BINDING, CONNECTOR_KEYS),

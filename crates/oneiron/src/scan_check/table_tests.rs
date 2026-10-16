@@ -166,7 +166,9 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::TemporalSpannerRows
         | EngineScan::OccurredRangeRows
         | EngineScan::ChildOfMapEntries
-        | EngineScan::DreamerRetryPeers => None,
+        | EngineScan::DreamerRetryPeers
+        | EngineScan::PendingCommStops
+        | EngineScan::PartyContactClaims => None,
         EngineScan::MentionRows => {
             let seed = id(0x60, 0);
             // `Mentions` is semantic: the strict read refuses a structural value.

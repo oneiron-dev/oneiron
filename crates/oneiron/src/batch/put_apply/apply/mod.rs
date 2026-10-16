@@ -707,6 +707,9 @@ pub(in crate::batch) fn apply_put(
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
     }
+    if entity_type == ENTITY_TYPE_COMM_RECORD {
+        crate::comm::maintain_pending_stop_put(store, wtxn, &id, data)?;
+    }
     // A local put over an erased row is a sanctioned recreation: the row it
     // writes is live, so the fence goes in the same commit. A row that still
     // has its body is fenced by an accepted delete awaiting its retry, and a

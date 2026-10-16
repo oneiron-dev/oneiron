@@ -53,7 +53,10 @@ pub(crate) use self::codec::validate_campaign_pack_claim_structure;
 // absent otherwise so the non-test build carries no unused import.
 #[cfg(test)]
 use self::codec::decode_comm_bounce_value;
-pub(crate) use self::store::counterparty_do_not_contact_in_txn;
+pub(crate) use self::store::{
+    counterparty_do_not_contact_in_txn, do_not_contact_subjects_in_txn,
+    subjects_do_not_contact_in_txn,
+};
 pub(in crate::campaign) use self::store::{
     identical_live_head_in_txn, live_campaign_member_head_in_txn, live_campaign_member_heads_in_txn,
 };
