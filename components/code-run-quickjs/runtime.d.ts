@@ -7,6 +7,20 @@ declare function finish(value: unknown): void;
  * large file in pieces. */
 declare function writeOutput(path: `/mnt/outputs/${string}`, bytes: Uint8Array | number[]): void;
 declare const console: { log(...values: unknown[]): void };
+/** A host answer too large for one reply (a `self.memory` verb answer past
+ * 512 KiB of JSON) arrives as this handle in its place; nothing is refused for
+ * its size. Read the stored body a chunk at a time:
+ * `await sandbox.fs.read_file(`${r.read}/chunk/${offset}`)` returns up to
+ * 64 KiB from `offset`. */
+declare interface StoredResult {
+  handle: string;
+  bytes: number;
+  kind: "text" | "binary";
+  lines: number;
+  complete: boolean;
+  preview: string;
+  read: `/mnt/outputs/.oneiron-result/${string}`;
+}
 /** Foreign tier only. Proposals are data; they never commit host writes. */
 declare const propose: {
   file(path: `/mnt/outputs/${string}` | `/mnt/workspace/${string}`, bytes: Uint8Array | number[]): void;
