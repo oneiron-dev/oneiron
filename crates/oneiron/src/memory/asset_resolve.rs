@@ -954,6 +954,19 @@ impl AssetForms {
     }
 }
 
+/// The image `asset` holds, read through `lane` with no text decoded and no
+/// pull recorded: `None` when the lane withholds the asset, it is no ASSET,
+/// or it holds no image. A caller that hands the pixels to a model records
+/// the pull itself, as [`pull_image`] does.
+pub(crate) fn asset_image_in_lane(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+) -> MemoryResult<Option<ImageBytes>> {
+    Ok(asset_forms_in_lane(lane, asset, true, &mut |_| false)?
+        .value
+        .and_then(|forms| forms.image))
+}
+
 /// Reads the forms of `asset` through `lane`. The lane admits the ASSET and
 /// each ASSET_TEXT derived from it; only admitted rows become forms. With
 /// `images_only`, an ASSET that holds no image reads no text. Texts decode

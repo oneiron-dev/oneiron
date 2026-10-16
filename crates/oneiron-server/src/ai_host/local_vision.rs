@@ -75,6 +75,11 @@ impl LocalVisionModel {
         }))
     }
 
+    /// Whether a `[models.roles.local_vision]` seat is bound.
+    pub(crate) fn bound(ai: &AiHandle) -> bool {
+        ai.seat(ROLE).is_some()
+    }
+
     /// This seat at the Local rung, its pin naming the seat's model and
     /// revision.
     pub(crate) fn rung(self: &Arc<Self>) -> oneiron::Result<ModelDecisionProvider> {
