@@ -323,6 +323,7 @@ export class Oneiron {
     companions: {
       sharing: {
         get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as unknown),
+        set: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as unknown),
       },
     },
     workspace: {
