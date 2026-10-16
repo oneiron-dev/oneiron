@@ -404,6 +404,7 @@ impl PipelineBuilder<'_> {
                 && self.post_assessment_evidence_abstains(
                     &scores,
                     &signal_components,
+                    &media_evidence,
                     hyde_expansion.is_some(),
                 )?;
             if below_floor || scores.is_empty() {
