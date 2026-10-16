@@ -28,6 +28,21 @@ impl Vault {
         self.credential_read_key_in(&txn, proof)
     }
 
+    /// Whether `proof`'s facet bounds leave its holder unbound (owner ruling
+    /// FACET-READ = A), judged in one snapshot by the key
+    /// [`Self::credential_read_key`] builds: the owner's own live credential,
+    /// and a narrower one the owner still holds, read every facet; a
+    /// delegate's or a transferred one never does. A door that refuses a
+    /// facet narrowing asks this first, so it refuses the owner nothing the
+    /// read lane gives. It lifts no world, record or channel bound.
+    pub fn credential_facets_owner_exempt(&self, proof: &VerifiedSlip) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        match self.credential_read_key_in(&txn, proof)? {
+            Some(key) => key.facets_owner_exempt_in(self, &txn),
+            None => Ok(false),
+        }
+    }
+
     /// [`Self::credential_read_key`], judged in the caller's snapshot.
     pub(crate) fn credential_read_key_in(
         &self,

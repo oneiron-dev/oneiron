@@ -31,7 +31,7 @@ pub(crate) async fn execute_mcp_execute_code(
         .code_execution_host()
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
-    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor));
+    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor, run_id));
     let outcome = host
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
@@ -105,6 +105,7 @@ pub(crate) async fn execute_mcp_execute_code(
             "run_id": run_id.to_hex(),
             "terminal": terminal,
         },
+        "session_manifests": verbs.manifests(),
         "steps_run": outcome.steps_run,
         "bridge_calls": outcome.replay_record.bridge_calls.len(),
         "steps": steps,
