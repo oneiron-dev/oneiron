@@ -175,7 +175,7 @@ impl Memory<'_> {
         let now = self.vault().now_recorded_at();
         let step = self
             .with_verified_actor_write_txn(|wtxn| self.accept_in_txn(wtxn, via, task_ref, now))?;
-        let receipt = self.accept_receipt(via, task_ref, key, step, now);
+        let receipt = self.accept_receipt(via, task_ref, key, step, now)?;
         if matches!(receipt.outcome, TaskOutcome::Accepted { .. }) && !receipt.idempotent_replay {
             self.vault().store.notify_attempt_observers();
             self.vault().store.notify_task_updates([task_ref]);
@@ -195,7 +195,7 @@ impl Memory<'_> {
     ) -> MemoryResult<TaskCallReceipt> {
         let now = self.vault().now_recorded_at();
         let step = self.accept_in_txn(wtxn, via, task_ref, now)?;
-        Ok(self.accept_receipt(via, task_ref, key, step, now))
+        self.accept_receipt(via, task_ref, key, step, now)
     }
 
     /// One Accept's transaction: the lane's proof, the take, and on a new
@@ -371,7 +371,7 @@ impl Memory<'_> {
         key: String,
         step: AcceptStep,
         now: u64,
-    ) -> TaskCallReceipt {
+    ) -> MemoryResult<TaskCallReceipt> {
         let AcceptStep {
             accepted,
             brief,
@@ -406,6 +406,11 @@ impl Memory<'_> {
                             .fields
                             .insert("retry_of".to_owned(), attempt_hex(retry_of));
                     }
+                    // OF-540: the realizing attempt's frozen team run, never
+                    // the project's current pattern.
+                    if let Some(team) = crate::agent_dispatch::attempt_team_stamp(record)? {
+                        crate::receipt::append_team_receipt_fields(&mut lifecycle.fields, &team);
+                    }
                 }
                 if let Some(lease_owner) = lease_owner {
                     lifecycle
@@ -439,13 +444,13 @@ impl Memory<'_> {
                 (task, Vec::new(), TaskOutcome::WrongNode, false)
             }
         };
-        TaskCallReceipt {
+        Ok(TaskCallReceipt {
             handle,
             related,
             outcome,
             receipt_ref: None,
             lifecycle: Some(lifecycle),
             idempotent_replay: replay,
-        }
+        })
     }
 }

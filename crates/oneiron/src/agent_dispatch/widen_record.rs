@@ -78,6 +78,9 @@ pub(super) struct WidenIntent {
     /// The room the spawn works in (OF-531), re-proved at approval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room: Option<crate::workspace_roster::RoomWork>,
+    /// The spawn's explicit team-run stamp (OF-540); absent inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<super::TeamRunStamp>,
 }
 
 impl WidenIntent {
@@ -102,6 +105,7 @@ impl WidenIntent {
             type_ref: spawn.type_ref.clone(),
             budget: spawn.budget,
             room: spawn.room,
+            team: spawn.team.clone(),
         })
     }
 
@@ -149,6 +153,7 @@ impl WidenIntent {
                 // A widened spawn is a child: it inherits its parent's origin.
                 origin_conversation: None,
                 room: self.room,
+                team: self.team.clone(),
             },
         ))
     }

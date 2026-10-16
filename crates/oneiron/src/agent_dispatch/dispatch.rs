@@ -37,6 +37,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.budget,
         &spawn.spend,
         &spawn.room,
+        &spawn.team,
     ))
     .map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -207,16 +208,17 @@ impl<'a> AgentDispatcher<'a> {
     }
 
     /// Dispatches an in-process child that REALIZES a TASK: identical to
-    /// [`Self::dispatch`] except the queued attempt carries the TASK backlink,
-    /// and the caller owns the transaction so the TASK and its realizing
-    /// dispatch commit together (ONE-1700 assignee routing).
+    /// [`Self::dispatch_with_context`] except the queued attempt carries the
+    /// TASK backlink, and the caller owns the transaction so the TASK and its
+    /// realizing dispatch commit together (ONE-1700 assignee routing).
     pub(crate) fn dispatch_for_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: EntityId,
         input: DispatchAgent,
+        spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
-        self.dispatch_in_txn(wtxn, Some(task_ref), input, AgentSpawnContext::default())
+        self.dispatch_in_txn(wtxn, Some(task_ref), input, spawn)
     }
 
     pub(super) fn dispatch_in_txn(
@@ -444,6 +446,22 @@ impl<'a> AgentDispatcher<'a> {
             None => crate::task_type::TaskTypeRef::seeded_root(),
         };
 
+        // OF-540: the team run, frozen once here. An explicit stamp wins (a
+        // nested team names its own); otherwise a child keeps its parent's
+        // frozen stamp; a root without one is no team run.
+        let team = match (spawn.team, requested_parent) {
+            (Some(team), _) => {
+                team.validate()?;
+                Some(team)
+            }
+            (None, Some(parent)) => AttemptQueue::new(self.vault)
+                .get_in_write_txn(wtxn, parent)?
+                .map(|record| super::codec::attempt_team_stamp(&record))
+                .transpose()?
+                .flatten(),
+            (None, None) => None,
+        };
+
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
@@ -462,6 +480,7 @@ impl<'a> AgentDispatcher<'a> {
             launch: None,
             room: spawn.room,
             join: None,
+            team,
         })
     }
 
