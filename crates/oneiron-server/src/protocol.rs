@@ -96,6 +96,14 @@ pub(crate) struct ResponseMeta {
     /// the best that were ready when it came due.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
+    /// True when the request's `limit` was past the ceiling (1,000 rows) and
+    /// was served at it.
+    #[serde(
+        rename = "limitClamped",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub limit_clamped: bool,
 }
 
 impl ResponseMeta {
@@ -107,6 +115,7 @@ impl ResponseMeta {
             degradation: None,
             confidence_adjustment: None,
             partial: false,
+            limit_clamped: false,
         }
     }
 

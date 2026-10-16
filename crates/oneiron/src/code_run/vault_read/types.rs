@@ -65,6 +65,13 @@ pub struct CoreQueryMeta {
     /// Collapsed count mode actually applied.
     #[serde(rename = "countMode")]
     pub count_mode: CountMode,
+    /// The request's `limit` was past 1,000 and was served at 1,000.
+    #[serde(
+        rename = "limitClamped",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub limit_clamped: bool,
 }
 
 /// Query response.

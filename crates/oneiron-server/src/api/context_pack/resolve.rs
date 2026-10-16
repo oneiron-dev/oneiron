@@ -19,7 +19,7 @@ use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::projection::View;
-use crate::server::SyncServer;
+use crate::server::{QueryDoor, SyncServer};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
@@ -48,6 +48,7 @@ pub(crate) async fn core_context_pack(
     // lane judges, so a facet narrowing is refused rather than half kept.
     auth.require_unnarrowed_facets()?;
     let req = json_payload(payload)?;
+    req.check_query_bytes(&server, &auth, QueryDoor::ContextPack, "query")?;
     let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
     Ok(Json(response))
 }
@@ -61,7 +62,7 @@ pub(crate) async fn core_context_pack(
 pub(crate) async fn run_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
-    req: CoreContextPackRequest,
+    mut req: CoreContextPackRequest,
     memories: Option<MemoriesRequest>,
 ) -> Result<
     (
@@ -71,6 +72,9 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
+    // An over-large limit is served at the ceiling, before anything sizes
+    // work from it.
+    req.clamp_limits();
     // Every ref the request names resolves under the caller's own read: a
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
@@ -265,6 +269,7 @@ pub(crate) async fn run_context_pack(
         &mut response,
     )?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
+    response.limit_clamped = req.limit_clamped;
     Ok((response, memories, cursor))
 }
 

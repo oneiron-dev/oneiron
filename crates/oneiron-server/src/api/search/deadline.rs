@@ -43,7 +43,15 @@ pub(super) fn search_page(
     let total = results.hits.len();
     let mut meta = search_meta(page.count_mode, total).with_quality(&results.retrieval_quality);
     meta.partial = results.partial;
-    let response = search_depth_response(&scoped_read, &results, page.view, page.page_limit)?;
+    let mut bodies =
+        projection::BodyBudget::new(&server.vault, server.config.limits.projection_body_bytes);
+    let response = search_depth_response(
+        &scoped_read,
+        &results,
+        page.view,
+        page.page_limit,
+        &mut bodies,
+    )?;
     let mut narrowing = results.narrowing;
     narrowing.push(response.receipt);
     Ok(ScopedSearchResponse {

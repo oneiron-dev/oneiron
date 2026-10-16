@@ -115,6 +115,7 @@ fn empty_projection() -> CoreContextPackProjection {
             },
         },
         empty: None,
+        limit_clamped: false,
     }
 }
 
@@ -128,6 +129,7 @@ fn canned_response(method: VaultReadMethod) -> VaultReadResponse {
             meta: CoreQueryMeta {
                 total: 0,
                 count_mode: CountMode::Estimate,
+                limit_clamped: false,
             },
         }),
         VaultReadMethod::ContextPack => {
@@ -222,6 +224,7 @@ fn envelope_with_extra_key_is_protocol_mismatch() {
         meta: CoreQueryMeta {
             total: 0,
             count_mode: CountMode::Estimate,
+            limit_clamped: false,
         },
     });
     let (_transport, adapter) = wire_adapter(json!({ "ok": arm, "trace": "extra" }));

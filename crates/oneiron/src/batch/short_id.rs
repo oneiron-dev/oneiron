@@ -31,6 +31,13 @@ pub(super) enum ShortIdPlan {
     },
 }
 
+/// The content-hash byte a short reference to a revision with body `data`
+/// carries (`xxh32(data, 0) % 256`).
+#[must_use]
+pub fn short_id_content_hash(data: &[u8]) -> u8 {
+    (xxh32(data, 0) % 256) as u8
+}
+
 pub(super) fn plan_short_id_update(
     store: &impl ManifestDbs,
     txn: &heed::RwTxn<'_>,
@@ -39,7 +46,7 @@ pub(super) fn plan_short_id_update(
     short_id_prefix: &str,
     data: &[u8],
 ) -> Result<ShortIdPlan> {
-    let content_hash = (xxh32(data, 0) % 256) as u8;
+    let content_hash = short_id_content_hash(data);
 
     if let Some(existing) = store.short_ids_reverse().get(txn, id.as_bytes())? {
         let (short_id, old_content_hash) = parse_short_id_value(&existing)?;

@@ -421,6 +421,13 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("effective_scope".to_owned(), *effective_scope);
     }
+    if let Some(bound) = error.byte_bound
+        && let Some(object) = data.as_object_mut()
+    {
+        let (max_bytes, received_bytes) = *bound;
+        object.insert("max_bytes".to_owned(), json!(max_bytes));
+        object.insert("received_bytes".to_owned(), json!(received_bytes));
+    }
     json!({
         "jsonrpc": "2.0",
         "id": id,

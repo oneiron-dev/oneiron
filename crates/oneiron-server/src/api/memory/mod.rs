@@ -271,7 +271,12 @@ pub(crate) async fn core_memory_timeline(
         );
     }
 
-    let response = core_memory_timeline_response(&scoped_read, timeline, view)?;
+    let response = core_memory_timeline_response(
+        &scoped_read,
+        timeline,
+        view,
+        server.config.limits.projection_body_bytes,
+    )?;
     if response.records.is_empty() {
         return Err(
             EnvelopedApiError::from(ApiError::not_found("entity", Some(&id.to_hex())))
@@ -462,11 +467,15 @@ pub(crate) async fn core_memory_verb(
     }
 }
 
+/// Projects one timeline, its bodies, pinned changes included, decoded under
+/// one budget of `body_bytes` (`[limits].projection_body_bytes`).
 pub(crate) fn core_memory_timeline_response(
     read: &oneiron::claim::ScopedRead<'_>,
     result: oneiron::claim::ScopedReadResult<oneiron::MemoryTimeline>,
     view: View,
+    body_bytes: usize,
 ) -> Result<CoreMemoryTimelineResponse, ApiError> {
+    let mut bodies = projection::BodyBudget::new(read.vault(), body_bytes);
     let timeline = result.value;
     let mut narrowing = result.receipt;
     let projected = read
@@ -527,9 +536,7 @@ pub(crate) fn core_memory_timeline_response(
                 narrowing.add_suppressed(1);
                 continue;
             }
-            Some(projection::project_entity_parts(
-                &record.id, kind, learned_at, &body, view,
-            ))
+            Some(bodies.project(&record.id, kind, learned_at, &body, view))
         };
         records.push(CoreMemoryTimelineRecord {
             id: record.id.to_hex(),
@@ -579,27 +586,31 @@ pub(crate) fn core_memory_timeline_response(
                 )
                 .map_err(|error| core_engine_error("core memory pinned change failed", error))?;
             narrowing.restrict_with(&pinned.receipt);
-            let Some(((before_kind, before_at, before_body), (after_kind, after_at, after_body))) =
-                pinned.value
+            let Some((
+                (before_kind, before_at, before_body, before_revision),
+                (after_kind, after_at, after_body, after_revision),
+            )) = pinned.value
             else {
                 continue;
             };
             record.changes.push(CoreMemoryChange {
                 before_id: before_id.clone(),
                 after_id: record.id.clone(),
-                before: projection::project_entity_parts(
+                before: bodies.project_at(
                     &old_id,
                     before_kind,
                     before_at,
                     &before_body,
                     view,
+                    oneiron::memory::ReadMode::Pinned(before_revision),
                 ),
-                after: projection::project_entity_parts(
+                after: bodies.project_at(
                     &after_id,
                     after_kind,
                     after_at,
                     &after_body,
                     view,
+                    oneiron::memory::ReadMode::Pinned(after_revision),
                 ),
             });
         }

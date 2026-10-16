@@ -70,7 +70,8 @@ fn evidence_keeps_the_ranked_revision_when_idle_publication_wins_the_race() {
         1
     );
     assert_ne!(vault.indexed_revision(&id).unwrap(), Some(before));
-    let evidence = collect_evidence(&vault, &scoped, &mut retrieved).unwrap();
+    let mut bodies = crate::projection::BodyBudget::new(&vault, usize::MAX);
+    let (evidence, _) = collect_evidence(&vault, &scoped, &mut retrieved, &mut bodies).unwrap();
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].text, "ranked zebra");
     assert_eq!(

@@ -55,6 +55,8 @@ mod rate_law;
 mod reactive;
 mod recall_rerank;
 mod relay_widen;
+mod retrieval_bounds;
+mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_gate;

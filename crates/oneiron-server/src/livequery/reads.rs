@@ -112,8 +112,8 @@ impl Read {
                 Self::ClaimHistory(p.claim_ref)
             }
             "recall" => {
-                let mut request: RecallRequest = params(value)?;
-                request.limit = Some(facade_limit(request.limit, 10)?);
+                // Recall's door serves a limit past the ceiling at it.
+                let request: RecallRequest = params(value)?;
                 oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
                 Self::Recall(request)
             }

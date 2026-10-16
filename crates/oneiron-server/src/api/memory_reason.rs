@@ -52,7 +52,7 @@ use super::{json_payload, parse_entity_id_param, scoped_read_for_core_auth};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::projection::View;
-use crate::server::SyncServer;
+use crate::server::{QueryDoor, SyncServer, query_caller};
 
 mod deep_admission;
 mod render;
@@ -61,10 +61,6 @@ use render::render_evidence;
 
 /// Evidence rows a reasoning read retrieves when the caller names no limit.
 pub(crate) const MEMORY_REASON_DEFAULT_LIMIT: usize = 10;
-
-/// Ceiling on retrieved evidence rows. A reasoning answer is built from what
-/// it can cite, and a caller asking for a thousand rows is asking for a dump.
-pub(crate) const MEMORY_REASON_MAX_LIMIT: usize = 100;
 
 /// Default request budget, matching the engine's own recall budget.
 pub(crate) const MEMORY_REASON_DEFAULT_TOKEN_BUDGET: usize = 4_000;
@@ -149,7 +145,8 @@ pub(crate) struct MemoryReasonRequest {
     #[serde(default = "standard_effort")]
     #[schema(value_type = String, default = "medium", example = "medium")]
     pub(crate) depth: Effort,
-    /// Evidence rows to retrieve. Omitted means `10`; must be at least 1.
+    /// Evidence rows to retrieve. Omitted means `10`; must be at least 1. A
+    /// limit past 1,000 is served at 1,000 and `limitClamped` says so.
     #[schema(example = 10)]
     pub(crate) limit: Option<usize>,
     /// Total decompose + rerank + compose budget, `1..=65536` tokens; default `4000`.
@@ -226,6 +223,15 @@ pub(crate) struct MemoryReasonResponse {
     pub(crate) degradation: Vec<RetrievalDegradation>,
     #[schema(value_type = f32, example = -0.15)]
     pub(crate) confidence_adjustment: ConfidenceAdjustment,
+    /// The request's `limit` was past 1,000 and was served at 1,000.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) limit_clamped: bool,
+    /// Evidence rows whose bodies passed `[limits].projection_body_bytes`:
+    /// each names its row and carries `bodyOmitted`. They are neither cited
+    /// nor read into the answer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    pub(crate) evidence_omitted: Vec<Value>,
 }
 
 /// One retrieved, actor-admitted evidence row.
@@ -324,7 +330,13 @@ pub(crate) fn depth_search_error(error: oneiron::Error) -> ApiError {
         ),
         (
             status = 400,
-            description = "Blank query, out-of-range limit or tokenBudget, unknown depth, or an unknown field.",
+            description = "Blank query, a zero limit, an out-of-range tokenBudget, unknown depth, or an unknown field.",
+            body = ApiErrorEnvelope,
+            content_type = "application/json"
+        ),
+        (
+            status = 413,
+            description = "The query exceeds `[limits].retrieval_query_bytes` (1 MiB unless set).",
             body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
@@ -355,11 +367,19 @@ pub(crate) async fn companion_memory_reason(
 ) -> Result<Json<MemoryReasonResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let request = json_payload(payload)?;
+    server
+        .check_retrieval_query(
+            query_caller(&auth),
+            QueryDoor::MemoryReason,
+            "query",
+            &request.query,
+        )
+        .map_err(ApiError::from)?;
     let query = request.query.trim().to_owned();
     if query.is_empty() {
         return Err(ApiError::bad_request("query must not be blank", Some("query")).into());
     }
-    let limit = validate_limit(request.limit)?;
+    let (limit, limit_clamped) = resolve_limit(request.limit)?;
     let token_budget = validate_token_budget(request.token_budget)?;
     let scope = session_scope(request.session_context.as_ref())?;
 
@@ -394,15 +414,18 @@ pub(crate) async fn companion_memory_reason(
             .ok_or_else(|| {
                 ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
             })?;
-        let evidence = collect_evidence(&server.vault, &scoped_read, &mut retrieved)?;
+        let mut bodies = crate::projection::BodyBudget::new(
+            &server.vault,
+            server.config.limits.projection_body_bytes,
+        );
+        let (evidence, evidence_omitted) =
+            collect_evidence(&server.vault, &scoped_read, &mut retrieved, &mut bodies)?;
         let answered = answer_from(&request, &query, remaining, &evidence, admission.as_ref())?;
         let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
-        Ok(Json(reason_response(
-            request.depth,
-            &retrieved,
-            answered,
-            tokens_used,
-        )))
+        let mut response = reason_response(request.depth, &retrieved, answered, tokens_used);
+        response.limit_clamped = limit_clamped;
+        response.evidence_omitted = evidence_omitted;
+        Ok(Json(response))
     })();
     // The closure contains every fallible step after retrieval starts. Even
     // projection or composition errors must settle the usage already recorded.
@@ -432,19 +455,22 @@ fn reason_response(
         quality: retrieved.retrieval_quality.quality,
         degradation: retrieved.retrieval_quality.degradation.clone(),
         confidence_adjustment: retrieved.retrieval_quality.confidence_adjustment,
+        limit_clamped: false,
+        evidence_omitted: Vec::new(),
     }
 }
 
-fn validate_limit(limit: Option<usize>) -> Result<usize, ApiError> {
+/// The evidence rows to retrieve, and whether the caller's limit was served
+/// at the ceiling. A zero limit is refused, as it always was here.
+fn resolve_limit(limit: Option<usize>) -> Result<(usize, bool), ApiError> {
     let limit = limit.unwrap_or(MEMORY_REASON_DEFAULT_LIMIT);
-    if (1..=MEMORY_REASON_MAX_LIMIT).contains(&limit) {
-        Ok(limit)
-    } else {
-        Err(ApiError::bad_request(
-            format!("limit must be between 1 and {MEMORY_REASON_MAX_LIMIT}"),
+    if limit == 0 {
+        return Err(ApiError::bad_request(
+            "limit must be at least 1",
             Some("limit"),
-        ))
+        ));
     }
+    Ok(oneiron::memory::caps::clamp_search_limit(limit))
 }
 
 fn validate_token_budget(token_budget: Option<usize>) -> Result<usize, ApiError> {
@@ -497,16 +523,20 @@ fn trace_for(effort: Effort, retrieved: &DepthSearchResult) -> Option<MemoryReas
     })
 }
 
-/// Projects admitted hits into citable evidence rows.
+/// Projects admitted hits into citable evidence rows, and the rows whose
+/// bodies `bodies` could not hold.
 ///
 /// Every row goes back through the actor-keyed projection, so a hit the
 /// ranking produced but the projection cannot read is dropped here rather than
-/// cited as a source with no content behind it.
+/// cited as a source with no content behind it. A row past the body budget is
+/// not decoded, cited or read into the answer: it comes back in the second
+/// list, its marker naming the read that returns it whole.
 fn collect_evidence(
     vault: &oneiron::Vault,
     scoped_read: &ScopedRead<'_>,
     retrieved: &mut DepthSearchResult,
-) -> Result<Vec<MemoryReasonEvidence>, ApiError> {
+    bodies: &mut crate::projection::BodyBudget<'_>,
+) -> Result<(Vec<MemoryReasonEvidence>, Vec<Value>), ApiError> {
     let refs: Vec<_> = retrieved
         .hits
         .iter()
@@ -526,6 +556,7 @@ fn collect_evidence(
         .map_err(|_| ApiError::internal_server_error("memory reason projection failed"))?;
     retrieved.narrowing.push(projected.receipt);
     let mut evidence = Vec::with_capacity(refs.len());
+    let mut omitted = Vec::new();
     for (read, row) in refs.into_iter().zip(projected.value) {
         let Some(oneiron::claim::ReadRow {
             id,
@@ -538,6 +569,10 @@ fn collect_evidence(
             continue;
         };
         let mode = read.mode;
+        if !bodies.admits(body.len()) {
+            omitted.push(bodies.omitted(&id, kind, learned_at, &body, View::Summary, mode));
+            continue;
+        }
         let Value::Object(fields) =
             crate::projection::project_entity_parts(&id, kind, learned_at, &body, View::Full)
         else {
@@ -553,7 +588,7 @@ fn collect_evidence(
             short_id,
         });
     }
-    Ok(evidence)
+    Ok((evidence, omitted))
 }
 
 fn string_field(fields: &Map<String, Value>, key: &str) -> Option<String> {
