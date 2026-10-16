@@ -47,6 +47,7 @@ fn epoch_intent(
         verdict: DoorWindowVerdict::Clean,
         ref_updates: updates,
         lfs_pointers: Vec::new(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault
@@ -524,6 +525,7 @@ fn epoch_new_host_cannot_launder_old_observer_evidence_without_an_old_permit() {
         verdict: DoorWindowVerdict::Clean,
         ref_updates: outcome.ref_updates.clone(),
         lfs_pointers: Vec::new(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     let attribution = vault

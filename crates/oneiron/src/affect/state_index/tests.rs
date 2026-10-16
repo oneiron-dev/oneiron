@@ -10,6 +10,9 @@ fn composite_is_provenanced_idempotent_and_neutral_when_unknown() -> Result<()> 
         ..VaultConfig::default()
     };
     let vault = Vault::open(dir.path(), config.clone()).expect("open source state-index fixture");
+    // The host's signal predicates are its own; without a rule they take the
+    // criticality floor and wait for the owner before the index reads them.
+    crate::test_util::declare_predicates_normal(&vault, &["state."])?;
     let subject = EntityId::now();
     let time = TimeRange { start: 10, end: 10 };
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time, 10, b"subject")?;

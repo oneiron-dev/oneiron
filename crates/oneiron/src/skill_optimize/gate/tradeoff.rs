@@ -479,7 +479,7 @@ pub(super) fn plan(
                 return Ok(TradeoffPlan::Decided {
                     question,
                     choice,
-                    rung: TradeoffRung::Jev,
+                    rung: TradeoffRung::Judgment,
                     authentication,
                     jev,
                 });

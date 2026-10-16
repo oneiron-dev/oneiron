@@ -64,6 +64,10 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                             .ok_or(CheckoutError::Invalid("lease expiry overflow"))
                     })
                     .transpose()?;
+                // On the clock `checkout_act` redeems against, not the
+                // caller's `now`: a wall second can run ahead of the vault's
+                // authority clock, and the fresh lease then read as unissued.
+                let claimed_at = self.vault.instant_in_write_txn(t)?.secs();
                 let a = CheckoutLeaseAct {
                     checkout_id: r.checkout_id,
                     task_ref: r.task_ref,
@@ -72,7 +76,7 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                     epoch,
                     task_class: r.task_class,
                     state: CheckoutLeaseState::Active,
-                    claimed_at: r.now,
+                    claimed_at,
                     lease_expires_at: expires,
                     updated_at: r.now,
                 };

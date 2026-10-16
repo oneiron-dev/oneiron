@@ -58,9 +58,24 @@ pub(super) const CONFIDENCE_KEYS: [&str; 3] = ["compact", "text", "narrative"];
 
 pub(super) const MAX_COMPACT_BYTES: usize = 4096;
 
+pub(super) const TOO_MANY_SOURCE_REVISIONS: &str =
+    "sourceRevisionIds must contain at most 4096 revision ids";
+
 pub(super) const MAX_TEXT_BYTES: usize = 32 * 1024;
 
 pub(super) const MAX_NARRATIVE_BYTES: usize = 32 * 1024;
+
+/// Most source revisions one snapshot may cite, far above the handful a refresh
+/// selects. Counted before the ids are sorted, copied or encoded.
+pub const MAX_PSYCH_PROFILE_SOURCE_REVISIONS: usize = 4096;
+
+/// Largest body a valid snapshot encodes to: every text tier at its cap, every source
+/// id as a 34-byte hex string, and 4 KiB for keys, confidence and the subject.
+pub(super) const MAX_PSYCH_PROFILE_BODY_BYTES: usize = MAX_COMPACT_BYTES
+    + MAX_TEXT_BYTES
+    + MAX_NARRATIVE_BYTES
+    + MAX_PSYCH_PROFILE_SOURCE_REVISIONS * 34
+    + 4096;
 
 /// Per-tier confidence metadata stored with a PsychProfile snapshot.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -233,6 +248,9 @@ impl PsychProfile {
             return Err(invalid_profile(
                 "sourceRevisionIds must contain at least one revision id",
             ));
+        }
+        if self.source_revision_ids.len() > MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
+            return Err(invalid_profile(TOO_MANY_SOURCE_REVISIONS));
         }
         if !self
             .source_revision_ids

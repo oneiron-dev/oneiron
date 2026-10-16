@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::entity_id::EntityId;
-use crate::memory::tests::{facade_for, open_vault, put_person, witness_message};
+use crate::memory::tests::{facade_for, open_vault, put_owner, put_person, witness_message};
 
 /// One recorded composer invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,11 +181,11 @@ fn expect_abstained(response: ChatResponse) -> Abstained {
     }
 }
 
-/// Opens a vault holding one witnessed message and returns the actor bound to
-/// it, so tests recall real items instead of a stubbed pack.
+/// Opens a vault holding one message its owner witnessed and returns the
+/// owner, so tests recall real items instead of a stubbed pack.
 fn seeded_vault(seed: u8, content: &str) -> (tempfile::TempDir, crate::Vault, EntityId) {
     let (dir, vault) = open_vault();
-    let actor = put_person(&vault, seed);
+    let actor = put_owner(&vault);
     let conversation = EntityId::from_bytes([seed ^ 0xFF; 16]).expect("conversation id");
     facade_for(&vault, actor)
         .witness(&WitnessTurn {
@@ -203,7 +203,7 @@ fn seeded_vault(seed: u8, content: &str) -> (tempfile::TempDir, crate::Vault, En
 /// turn are one citable item.
 fn seeded_pair(seed: u8, one: &str, two: &str) -> (tempfile::TempDir, crate::Vault, EntityId) {
     let (dir, vault) = open_vault();
-    let actor = put_person(&vault, seed);
+    let actor = put_owner(&vault);
     let conversation = EntityId::from_bytes([seed ^ 0xFF; 16]).expect("conversation id");
     for content in [one, two] {
         facade_for(&vault, actor)

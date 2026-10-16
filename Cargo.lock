@@ -7986,6 +7986,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-browser"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "oneiron-container",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-code-check"
 version = "0.1.0"
 dependencies = [
@@ -7998,6 +8010,17 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "wasmtime",
+]
+
+[[package]]
+name = "oneiron-container"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-spawn",
+ "serde",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]

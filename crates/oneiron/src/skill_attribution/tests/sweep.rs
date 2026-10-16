@@ -331,11 +331,23 @@ fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> 
         at: 200,
         why: "this judge is calibrated low".to_owned(),
     };
-    // Seeds and pins are the owner's: an agent cannot move the floor.
+    // Seeds and pins are the owner's: an agent cannot move the floor, nor can
+    // a person of this vault who is not its owner (H149).
     let agent = crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent);
     assert!(put_setting_row(&vault, &agent, &pin).is_err());
+    let not_the_owner =
+        crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Human);
+    assert!(
+        put_setting_row(&vault, &not_the_owner, &pin).is_err(),
+        "a person who is not this vault's owner moved the floor"
+    );
     assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.6);
-    let owner = crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Human);
+    let owner = crate::write_envelope::WriteActor::new(
+        vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?,
+        crate::edge::EdgeActorClass::Human,
+    );
     put_setting_row(&vault, &owner, &pin)?;
     assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.3);
     let prior = skill_reliability_prior(&vault, &skill)?;

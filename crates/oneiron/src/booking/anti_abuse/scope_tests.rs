@@ -62,6 +62,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
     // Force the legitimate publication ahead of the configuration in the
     // validator's sorted scan. Random claim IDs can hide the original bug.
     assert!(id(0x01) < id(0x57));
+    crate::test_util::bind_test_owner(vault, id(OWNER));
     let receipt = vault
         .memory(id(OWNER), EdgeActorClass::Human)
         .claim_upsert(&ClaimInput {

@@ -123,7 +123,12 @@ impl BranchResources<'_> {
                 let body = decode_claim_body(&bytes, true)?;
                 Ok(body.world == scope.world
                     && facet(body.scope.as_ref())? == scope.facet
-                    && scope.relationship.is_none_or(|rel| body.rel == Some(rel)))
+                    && scope.relationship.is_none_or(|rel| body.rel == Some(rel))
+                    // A claim awaiting its owner's confirmation ranks nothing.
+                    && self.read.vault().claim_consolidation_eligible(
+                        id,
+                        crate::gate::ConsolidationReader::GraphSignal,
+                    )?)
             }
             ENTITY_TYPE_TURN => {
                 // TURNs have no relationship column. An explicit relationship
@@ -199,4 +204,28 @@ fn axis(entries: &[(Value, Value)], name: &str) -> Result<Option<EntityId>> {
         }
     }
     Ok(found)
+}
+
+impl crate::Vault {
+    #[cfg(test)]
+    pub(crate) fn graph_source_in_slice_for_test(
+        &self,
+        actor: crate::WriteActor,
+        conversation: EntityId,
+        source: &EntityId,
+    ) -> Result<bool> {
+        let resources = BranchResources::open(
+            self,
+            actor,
+            crate::dreamer_consolidation::ConsolidationPartitionKey {
+                conversation_ref: conversation,
+                world_ref: None,
+                facet_ref: None,
+            },
+            &[],
+            crate::attempt_queue::AttemptId::now(),
+            None,
+        )?;
+        resources.graph_source_in_slice(resources.scope(), source)
+    }
 }

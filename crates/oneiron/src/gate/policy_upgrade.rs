@@ -111,6 +111,7 @@ fn restage_claim(
             auto_checker: None,
             defer_metrics_until_commit: true,
             transition: None,
+            owner_authored: None,
         },
         &policy,
         super::GateWriteMode {
