@@ -115,6 +115,7 @@ fn empty_projection() -> CoreContextPackProjection {
             },
         },
         empty: None,
+        limit_clamped: false,
     }
 }
 
@@ -128,6 +129,7 @@ fn canned_response(method: VaultReadMethod) -> VaultReadResponse {
             meta: CoreQueryMeta {
                 total: 0,
                 count_mode: CountMode::Estimate,
+                limit_clamped: false,
             },
         }),
         VaultReadMethod::ContextPack => {
@@ -222,6 +224,7 @@ fn envelope_with_extra_key_is_protocol_mismatch() {
         meta: CoreQueryMeta {
             total: 0,
             count_mode: CountMode::Estimate,
+            limit_clamped: false,
         },
     });
     let (_transport, adapter) = wire_adapter(json!({ "ok": arm, "trace": "extra" }));
@@ -614,9 +617,11 @@ fn context_pack_run_row_publishes_only_actor_visible_ids() {
         vec![admitted_id.to_hex()],
         "only the admitted claim is answered"
     );
-    assert!(
-        response.0.stats.claims_suppressed >= 1,
-        "the scoped filter removed the denied claim from the assembled pack"
+    // F19 H287: the scoped filter removed the denied claim, and no stat says
+    // so: a count of withheld claims would tell the reader one matched.
+    assert_eq!(
+        response.0.stats.claims_suppressed, 0,
+        "no stat counts a claim the reader cannot read"
     );
 
     let denied_bytes = *denied_id.as_bytes();
@@ -674,6 +679,58 @@ fn context_pack_run_row_publishes_only_actor_visible_ids() {
         row_ids, returned,
         "the published ids are exactly the post-filter, post-truncate results"
     );
+
+    // FACET-READ: a read limited to a facet no row sits in answers beside
+    // both claims as it does in an empty vault: no result, stat, withheld
+    // count or empty reason tells it a row matched.
+    let (_empty_dir, empty_vault) = open_test_vault_with(telemetry_config());
+    let answers = [&vault, &empty_vault].map(|vault| {
+        let pack = InProcessVaultReadAdapter::new(vault, facet_limited_key(vault))
+            .context_pack(vector_pack_request())
+            .expect("facet-limited context pack")
+            .0;
+        assert!(
+            pack.results.is_empty(),
+            "an out-of-facet claim is no result"
+        );
+        (
+            pack.neighbors.len(),
+            pack.stats.claims_suppressed,
+            pack.stats.candidates_considered,
+            pack.stats.entities_hydrated,
+            pack.stats.neighbors_hydrated,
+            pack.narrowing.suppressed_count,
+            pack.empty,
+        )
+    });
+    assert_eq!(answers[0], answers[1]);
+}
+
+/// The vault's host root as a read key limited to one facet (FACET-READ),
+/// which no row these fixtures write sits in.
+fn facet_limited_key(vault: &Vault) -> ScopedReadActorKey {
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let issuer =
+        crate::authority::HostSlipIssuer::from_secret(b"code run facet root").expect("issuer");
+    let mut slip = vault.ensure_host_root_slip(&issuer).expect("host root");
+    let mut scope = Scope::top();
+    scope.facets = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(entity(0x5F))]));
+    issuer
+        .attenuate(
+            &mut slip,
+            crate::authority::SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+        )
+        .expect("attenuate to a facet");
+    let binding = issuer
+        .binding_proof(&slip, b"code run facet")
+        .expect("binding proof");
+    let proof = vault
+        .verify_capability_slip(&issuer.public_key(), &slip, b"code run facet", &binding)
+        .expect("verified facet slip");
+    ScopedReadActorKey::from_verified_slip(&proof).expect("read proof")
 }
 
 // ── Batch hydrate errors carry the BATCH method identity ────────────────

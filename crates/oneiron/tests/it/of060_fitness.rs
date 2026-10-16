@@ -295,15 +295,22 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
     BTreeMap::from([
         // W7-C10: host-owned key metadata and observed wire receipts, never
         // guest entity writes. Their fixed prefixes stay service-private.
+        // OF-520's limit questions are such rows too: one per crossed limits
+        // row and window, in the declared `wire:limit-question:v1:` table.
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&row)?)?;".to_owned()}, 3),
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &new_key, &encode(&new)?)?;".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &old_key, &encode(&old)?)?;".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn_grouped".to_owned(),line:"let result = self.vault.try_with_write_txn_grouped(|txn| {".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn_grouped".to_owned(),line:"self.vault.try_with_write_txn_grouped(|txn| {".to_owned()}, 3),
         (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(&key, &encode(&question)?)?;".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(MANIFEST, &encode(thresholds)?)".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&question)?)?;".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"with_write_txn_grouped".to_owned(),line:"self.vault.with_write_txn_grouped(|txn| {".to_owned()}, 1),
+        // OF-305: a provider's offer cooldowns, this deployment's routing state
+        // under a fixed service-private prefix, never a guest entity write.
+        (RawHit { path: "crates/oneiron-server/src/models/cooldown.rs".to_owned(),ident:"try_with_write_txn_grouped".to_owned(),line:"let kept = vault.try_with_write_txn_grouped(|txn| {".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/models/cooldown.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:"vault.sync_state_put_in_write_txn(txn, &key, &bytes)?;".to_owned()}, 1),
         (
             RawHit {
                 path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),

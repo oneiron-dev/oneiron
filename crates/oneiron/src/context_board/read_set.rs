@@ -144,14 +144,31 @@ pub struct ChangedDelivery {
     pub(super) connectors: Vec<(String, Option<ConnectorMount>)>,
 }
 
+/// Rows a session's read set holds past which each served snapshot asks the
+/// owner's threshold row. Below it no observation costs a read.
+const READ_SET_CHECKED_FROM: usize = 4096;
+
 impl SessionReadSet {
-    pub(super) fn require_capacity(&self, id: &str) -> crate::Result<()> {
-        if self.rows.len() >= 4096 && !self.rows.contains_key(id) {
-            return Err(crate::Error::IndexOverflow(
-                "context board session read set",
-            ));
+    /// Every row a session was served is kept, however many (rule 5). Past
+    /// the threshold row the owner's check is raised; it never refuses.
+    pub(super) fn check_size(&self, vault: &crate::Vault) {
+        if self.rows.len() < READ_SET_CHECKED_FROM {
+            return;
         }
-        Ok(())
+        let Ok(txn) = vault.store.env.read_txn() else {
+            return;
+        };
+        let Ok(mut count) = crate::scan_check::ScanCount::start(
+            &vault.store,
+            &txn,
+            crate::scan_check::EngineScan::ReadSetRows,
+            &[],
+        ) else {
+            return;
+        };
+        drop(txn);
+        count.rows(self.rows.len());
+        count.finish(vault);
     }
 
     /// Called only for rows actually served after budget shedding, or a get()

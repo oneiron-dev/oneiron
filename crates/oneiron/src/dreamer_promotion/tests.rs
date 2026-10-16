@@ -269,6 +269,35 @@ fn gate_decision_count(vault: &Vault) -> usize {
         .len()
 }
 
+/// Security pack 2, F14 H153: only a TURN, or a claim admissible as evidence,
+/// meets the promotion evidence floor. A PERSON or a SESSION named as
+/// evidence is no evidence at all.
+#[test]
+fn promotion_evidence_is_a_turn_or_an_admissible_claim() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let session = EntityId::now();
+    vault.put_entity(&session, ENTITY_TYPE_SESSION, occurred(1), 1, b"session")?;
+    let by_person = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.subject]);
+    let by_session = candidate(&fixture, "profile.city", "Tokyo", vec![session]);
+    // The positive control: the same kind of candidate citing its TURN.
+    let by_turn = candidate(&fixture, "profile.nickname", "Olety", vec![fixture.turn]);
+    let unsupported = [by_person.claim_id, by_session.claim_id];
+    let supported = by_turn.claim_id;
+
+    let outcome =
+        promote_consolidated_claims(&vault, &fixture.run, vec![by_person, by_session, by_turn])?;
+    assert_eq!(
+        outcome.landed,
+        vec![supported],
+        "H153: a PERSON or SESSION ref met the evidence floor"
+    );
+    for id in unsupported {
+        assert!(vault.get_claim(&id)?.is_none(), "no claim without evidence");
+    }
+    Ok(())
+}
+
 #[test]
 fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
@@ -517,7 +546,6 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
             &turn,
             EdgeKind::PartOf,
             Some(crate::registry::ENTITY_TYPE_MESSAGE),
-            "imported message",
         )?[0]
     };
     let conversation = EntityId::derive(
@@ -1093,6 +1121,9 @@ fn replay_path_still_skips_source_trust_gate() -> Result<()> {
     // An unrooted relay stores the signed row provisionally: the other
     // vault's key cannot verify it, and replay still never re-gates.
     let (_dir_b, vault_b) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    // A critical replica waits for this device's own Clear, which records a
+    // verdict here; this check is about source trust, so the name is normal.
+    crate::test_util::declare_predicates_normal(&vault_b, &["profile."])?;
     let decisions_before = gate_decision_count(&vault_b);
     vault_b
         .batch()
@@ -1643,10 +1674,11 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
             fixture.run.now_ms + 1,
             Some(&closure_checker),
         );
+        // Closing the old head admits nothing new, so it asks no checker.
         assert_eq!(
             closure_host.calls(),
-            if hold { 1 } else { 2 },
-            "an allowed closure checks both the replacement and its old head"
+            1,
+            "a closure checks its replacement once"
         );
         if hold {
             assert_eq!(
@@ -1817,6 +1849,55 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
                 .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old)
         );
     }
+    Ok(())
+}
+
+/// Security pack 2, F14 H282: closing a stored claim admits nothing new, so a
+/// stored value longer than the checker's preview never holds its closure. A
+/// claim that landed before the host named a checker is still superseded
+/// through the checked grant, and the replacement is still checked.
+#[test]
+fn a_checked_grant_closes_a_stored_value_too_long_to_preview() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fx = fixture(&vault)?;
+    let long = format!(
+        "Ada {}",
+        "a".repeat(crate::llm::AUTO_CHECK_VALUE_PREVIEW_BYTES)
+    );
+    let first = candidate(&fx, "profile.name", &long, vec![fx.turn]);
+    let old = first.claim_id;
+    assert_eq!(
+        promote_consolidated_claims(&vault, &fx.run, vec![first])?.landed,
+        vec![old],
+    );
+    // The host names a checker afterwards.
+    let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+    crate::test_util::put_policy_manifest_bytes(&vault, id, &auto_checker_manifest(CHECKER_REF))?;
+    let allow = CountingAutoChecker::new(AutoCheckOutcome::Allow);
+    let checker = BoundedAutoChecker::new(allow.clone());
+    let mut second = candidate(&fx, "profile.name", "Ada Lovelace", vec![fx.turn]);
+    second.supersedes = Some(old);
+    let new = second.claim_id;
+    assert_eq!(
+        promote_consolidated_claims_with_checker(&vault, &fx.run, vec![second], Some(&checker))?
+            .pended,
+        vec![new],
+    );
+    let granted =
+        vault.grant_deferred_claim_auto_with_checker(&new, fx.run.now_ms + 1, Some(&checker));
+    assert!(
+        granted.is_ok(),
+        "FAILBEFORE H282 closure: the closure of a stored long value was held: {granted:?}"
+    );
+    assert!(allow.calls() >= 1, "the replacement is still checked");
+    assert_eq!(
+        vault.get_claim(&old)?.expect("closed").lifecycle,
+        crate::ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        vault.get_claim(&new)?.expect("Auto").approval,
+        ClaimApprovalStatus::Auto
+    );
     Ok(())
 }
 

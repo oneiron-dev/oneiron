@@ -41,6 +41,9 @@ pub(crate) struct AuthorityCacheKey {
     now_secs: u64,
     posture: HostingPrivacyPosture,
     policy: AuthorityObservationPolicy,
+    /// This install's pin, read in the same snapshot: a pin write also moves
+    /// the generation, and the committed-fold probe rebuilds this key.
+    pin: Option<PinnedRoot>,
 }
 
 /// An immutable verified fold attached to one authority generation. The
@@ -70,6 +73,8 @@ pub(crate) struct AuthorityCachedFold {
     key: AuthorityCacheKey,
     next_deadline_secs: Option<u64>,
     view: AuthorityView,
+    /// What the fold of a later generation resumes from.
+    base: Option<Arc<super::fold_resume::FoldBase>>,
 }
 
 impl AuthorityCachedFold {
@@ -77,6 +82,7 @@ impl AuthorityCachedFold {
         self.key.generation == key.generation
             && self.key.posture == key.posture
             && self.key.policy == key.policy
+            && self.key.pin == key.pin
             && key.now_secs >= self.key.now_secs
             && self
                 .next_deadline_secs
@@ -97,6 +103,7 @@ fn authority_cache_key(
         now_secs: authority_observation_secs(store, floor, store.clock.now_recorded_at()),
         posture,
         policy: authority_observation_policy_in_txn(store, txn)?,
+        pin: super::pinned_root::read_pinned_root_in_txn(store, txn)?,
     })
 }
 
@@ -158,6 +165,7 @@ fn cache_fold_if_committed(
     key: AuthorityCacheKey,
     next_deadline_secs: Option<u64>,
     view: &AuthorityView,
+    base: Option<super::fold_resume::FoldBase>,
 ) {
     // LMDB read transactions use a thread-local reader slot. Opening a
     // second read txn on this thread while the caller's snapshot is alive
@@ -177,6 +185,7 @@ fn cache_fold_if_committed(
                             key,
                             next_deadline_secs,
                             view: view.clone(),
+                            base: None,
                         }
                         .matches(committed)
                     })
@@ -189,6 +198,7 @@ fn cache_fold_if_committed(
             key,
             next_deadline_secs,
             view: view.clone(),
+            base: base.map(Arc::new),
         });
     }
 }
@@ -236,6 +246,48 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         tracing::trace!(target: "oneiron::authority::cache", generation = fold.generation(), "exact authority fold cache hit");
         return Ok(fold);
     }
+    // A miss resumes from the last committed generation's fold where it can.
+    let base = store
+        .authority_fold_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.as_ref().and_then(|cached| cached.base.clone()));
+    let (view, next_deadline_secs, base) =
+        fold_view_for_key(store, posture, txn, key, base.as_deref())?;
+    cache_fold_if_committed(store, key, next_deadline_secs, &view, base);
+    Ok(view)
+}
+
+/// This vault's own log folded as an install pinned to `pin` would fold it,
+/// in the caller's snapshot: what a pin door compares before it moves the
+/// pin, and the read under another admitter. Never cached, so the cached
+/// view stays the stored pin's.
+pub(super) fn authority_view_under_pin_for_store_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    pin: Option<PinnedRoot>,
+) -> Result<AuthorityView> {
+    let key = AuthorityCacheKey {
+        pin,
+        ..authority_cache_key(store, posture, txn)?
+    };
+    Ok(fold_view_for_key(store, posture, txn, key, None)?.0)
+}
+
+/// The full fold behind `key`, resumed from `base` where it can be, the next
+/// stale-roster deadline it holds, and the base for the next generation.
+fn fold_view_for_key(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    key: AuthorityCacheKey,
+    base: Option<&super::fold_resume::FoldBase>,
+) -> Result<(
+    AuthorityView,
+    Option<u64>,
+    Option<super::fold_resume::FoldBase>,
+)> {
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
     let mut first_seen_at_secs = BTreeMap::new();
     // Read once: all entries in this fold share one snapshot clock and marker.
@@ -262,13 +314,17 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     let observations = authority_local_observations_in_txn(store, txn, &entries)?;
-    let fold = fold_authority_log_with_local_observations_and_posture(
-        &entries,
-        &first_seen_at_secs,
-        now_secs,
-        &peer_consent_roots,
-        &observations,
-        posture,
+    let (fold, base) = super::fold_resume::fold_stored_log(
+        super::fold_resume::StoredLog {
+            entries: &entries,
+            first_seen_at_secs: &first_seen_at_secs,
+            now_secs,
+            peer_consent_roots: &peer_consent_roots,
+            observations: &observations,
+            posture,
+            pin: key.pin.as_ref(),
+        },
+        base,
     );
     // The fold's only clock-sensitive transition is stale-roster approval
     // expiry, here and in the fold with no vouch that bounds this install's
@@ -288,8 +344,7 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         fold: Arc::new(fold),
         generation: key.generation,
     };
-    cache_fold_if_committed(store, key, next_deadline_secs, &view);
-    Ok(view)
+    Ok((view, next_deadline_secs, base))
 }
 
 /// First-seen seconds for ONE entry inside a readonly fold, reproducing the

@@ -337,6 +337,10 @@ pub struct RetrievalMeta {
     /// model whose scores ordered the top block, or why it was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rerank: Option<RerankReport>,
+    /// The request's `limit` was past the ceiling (1,000 rows) and was
+    /// served at it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub limit_clamped: bool,
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
@@ -694,7 +698,7 @@ impl Memory<'_> {
         {
             let hits = match (session, route.as_ref()) {
                 (Some(session), Some(route)) => {
-                    let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
+                    let limit = lane.search_candidate_limit(PPR_SEED_LIMIT)?;
                     // Seeds come from what the lane reads: a reader that
                     // reads base alone in the room seeds from base alone.
                     let raw = if lane.reads_room() {
@@ -712,7 +716,7 @@ impl Memory<'_> {
                     // admit every seed through the actor's read lane, and
                     // read the query's time words on the recall's clock.
                     let scored = if execution.deadline.is_some() {
-                        let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
+                        let limit = lane.search_candidate_limit(PPR_SEED_LIMIT)?;
                         lane.filter_scored_entities(self.vault.search_text(query, limit)?)?
                     } else {
                         lane.search_text_as_of(query, PPR_SEED_LIMIT, None, execution.as_of)?
@@ -982,6 +986,7 @@ impl Memory<'_> {
                 deep_pending,
                 temporal_hints,
                 rerank: None,
+                limit_clamped: false,
             },
             items,
             pack_version: MEMORY_PACK_VERSION,

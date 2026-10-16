@@ -11,11 +11,16 @@ pub(crate) use oneiron::sync::{
 
 // Re-export tag constants from shared transport (avoid redefinition).
 pub(crate) use oneiron::sync::transport::{
-    APP_TIER_PROTOCOL_VERSION_VERSION, CHUNK_FULL_WINDOW_PROTOCOL_VERSION, LEASE_STATUS_GRANTED,
-    LEASE_STATUS_REJECTED, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION,
-    PROTOCOL_VERSION, RESIDENCE_PROTOCOL_VERSION, TAG_EPHEMERAL, TAG_LEASE_REQUEST,
-    TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
-    decode_lease_request, decode_protocol_hello, encode_ephemeral, encode_lease_granted,
+    APP_TIER_PROTOCOL_VERSION_VERSION, LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED,
+    LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE,
+    TAG_VERSION_VECTOR, decode_lease_request, decode_protocol_hello, encode_ephemeral,
+    encode_lease_granted, installs_window_replacements, is_owner_window_version,
+    is_residence_version, takes_window_invalidations,
+};
+#[cfg(test)]
+pub(crate) use oneiron::sync::transport::{
+    CHUNK_FULL_WINDOW_PROTOCOL_VERSION, RESIDENCE_PROTOCOL_VERSION,
 };
 
 /// Sub-tags within WindowSync messages.
@@ -91,6 +96,14 @@ pub(crate) struct ResponseMeta {
     /// the best that were ready when it came due.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
+    /// True when the request's `limit` was past the ceiling (1,000 rows) and
+    /// was served at it.
+    #[serde(
+        rename = "limitClamped",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub limit_clamped: bool,
 }
 
 impl ResponseMeta {
@@ -102,6 +115,7 @@ impl ResponseMeta {
             degradation: None,
             confidence_adjustment: None,
             partial: false,
+            limit_clamped: false,
         }
     }
 
@@ -317,6 +331,28 @@ pub(crate) enum ProtocolError {
     /// replay after a restart.
     #[error("sync persistence error: {0}")]
     Persistence(String),
+    /// The peer is behind a window's history-free floor and holds part of the window, and its
+    /// protocol version cannot install the replacement it needs. Closed with
+    /// `close_codes::VERSION_MISMATCH`, never answered with history it cannot apply.
+    #[error("window replacement requires a newer protocol")]
+    ReplacementUnsupported,
+}
+
+impl ProtocolError {
+    /// The error's closed name, for a log line: never the text it carries.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::RpcVersionMismatch => "rpc_version_mismatch",
+            Self::RpcNoPrincipal => "rpc_no_principal",
+            Self::InvalidPayload(reason) => reason,
+            Self::UnknownTag(_) => "unknown_tag",
+            Self::FrameTooLarge { .. } => "frame_too_large",
+            Self::LoroImport(_) => "loro_import_failed",
+            Self::VvDecode(_) => "version_vector_decode_failed",
+            Self::Persistence(_) => "sync_persistence_failed",
+            Self::ReplacementUnsupported => "replacement_unsupported",
+        }
+    }
 }
 
 /// WebSocket close codes per ARCH-023 section 3.5.

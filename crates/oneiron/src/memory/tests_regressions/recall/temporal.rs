@@ -26,7 +26,7 @@ fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [(String, String)
 #[test]
 fn recall_default_effort_reads_last_week_from_the_query() {
     let (_dir, vault) = open_vault();
-    let facade = facade_for(&vault, put_person(&vault, 0x69));
+    let facade = facade_for(&vault, put_owner(&vault));
     // Recall returns each message as its turn (ARCH-0004).
     let [(older, _), (newer, _)] = witness_query_window_pair(&facade, crate::unix_seconds_now());
 
@@ -70,7 +70,7 @@ fn recall_default_effort_reads_last_week_from_the_query() {
 #[test]
 fn recall_with_a_host_window_ignores_the_query_range() {
     let (_dir, vault) = open_vault();
-    let facade = facade_for(&vault, put_person(&vault, 0x6a));
+    let facade = facade_for(&vault, put_owner(&vault));
     let now = crate::unix_seconds_now();
     let [(_, older), (_, newer)] = witness_query_window_pair(&facade, now);
 
@@ -106,7 +106,7 @@ fn recall_with_a_host_window_ignores_the_query_range() {
 #[test]
 fn recall_default_effort_ranks_the_newer_identical_message_first() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x61);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let now = crate::unix_seconds_now();
     let text = "I prefer a window seat when I fly.";
@@ -151,7 +151,7 @@ fn recall_default_effort_ranks_the_newer_identical_message_first() {
 #[test]
 fn recall_light_effort_ranks_the_newer_identical_message_first() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x61);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let now = crate::unix_seconds_now();
     let text = "I prefer a window seat when I fly.";
@@ -195,7 +195,7 @@ fn recall_light_effort_ranks_the_newer_identical_message_first() {
 #[test]
 fn recall_light_effort_ranks_a_salient_claim_above_an_identical_plain_one() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x67);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let mut ids = Vec::new();
     // Distinct subjects avoid claim supersession; their indexed claim text,

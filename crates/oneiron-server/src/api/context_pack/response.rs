@@ -137,6 +137,8 @@ pub(crate) enum CoreContextPackStateKind {
     Ok,
     MissingData,
     LowConfidence,
+    /// The reader's profile takes no optional memory for this task.
+    Skipped,
 }
 
 /// Stable context-pack empty-result reason.
@@ -147,6 +149,7 @@ pub(crate) enum CoreContextPackStateReason {
     NoData,
     AllActivated,
     BelowThreshold,
+    SkippedByProfile,
 }
 
 /// Score component that contributed to a context-pack result.
@@ -257,6 +260,9 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     empty: Option<Value>,
+    /// The request's `limit` was past 1,000 and was served at 1,000.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(super) limit_clamped: bool,
 }
 
 pub(crate) async fn run_context_pack_builder(
@@ -296,7 +302,13 @@ pub(crate) async fn run_context_pack_builder(
         tracing::error!(kind = ?error.kind(), "core context-pack failed");
         core_engine_error("core context-pack failed", error)
     })?;
-    let clamped_out = pack.clamped_out();
+    // The clamp's count names only rows the caller reads: a hidden row that
+    // matched the query must not show up as a number.
+    let clamped_out = pack.clamped_out_under(scoped_read).map_err(|error| {
+        pack.discard_telemetry();
+        tracing::error!(kind = ?error.kind(), "core context-pack clamp count failed");
+        core_engine_error("core context-pack scoped read failed", error)
+    })?;
     let mut narrowing = scoped_read
         .filter_context_pack_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
@@ -467,6 +479,7 @@ pub(crate) fn core_context_pack_response(
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
+        limit_clamped: false,
     }
 }
 
@@ -545,6 +558,7 @@ pub(crate) fn core_context_pack_state(
     CoreContextPackState {
         kind: match empty.reason {
             oneiron::EmptyReason::BelowThreshold => CoreContextPackStateKind::LowConfidence,
+            oneiron::EmptyReason::SkippedByProfile => CoreContextPackStateKind::Skipped,
             oneiron::EmptyReason::FilterMatchedNone
             | oneiron::EmptyReason::NoData
             | oneiron::EmptyReason::AllActivated => CoreContextPackStateKind::MissingData,
@@ -563,6 +577,7 @@ pub(crate) fn core_context_pack_state_reason(
         oneiron::EmptyReason::NoData => CoreContextPackStateReason::NoData,
         oneiron::EmptyReason::AllActivated => CoreContextPackStateReason::AllActivated,
         oneiron::EmptyReason::BelowThreshold => CoreContextPackStateReason::BelowThreshold,
+        oneiron::EmptyReason::SkippedByProfile => CoreContextPackStateReason::SkippedByProfile,
     }
 }
 

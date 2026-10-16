@@ -255,6 +255,12 @@ const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
         crate::workspace_roster::PROJECT_SHORT_ID_PREFIX,
         PROJECTS,
     ),
+    // Signed project history is live authority: a restore never rolls it back.
+    (
+        crate::workspace_roster::PROJECT_PACK,
+        crate::workspace_roster::PROJECT_REVISION_SHORT_ID_PREFIX,
+        LIVE,
+    ),
     (
         crate::campaign::CRM_PACK_ID,
         crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,
@@ -268,6 +274,13 @@ const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
 ];
 const ESIGN_CEREMONIES: Class = Class::Refuse {
     what: "e-sign ceremonies",
+    scope: Scope::ImageEntities,
+};
+/// A STOP's send hold before this replica projected it, keyed by the event:
+/// it leaves with an event made after the checkpoint, and a changed one for
+/// an event both vaults hold refuses.
+const PENDING_COMM_STOPS: Class = Class::Refuse {
+    what: "pending communication STOP",
     scope: Scope::ImageEntities,
 };
 const UNCLASSIFIED_ROWS: Class = refuse("rows of an undeclared family");

@@ -1532,14 +1532,7 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
     let mut staged = initial;
     staged.retained_manifest = Some(source());
     assert!(staged.validate().is_err());
-    let owner = test_id(0xB8);
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -1630,14 +1623,7 @@ fn failed_suite_retains_hold_revert_clears_candidate_and_revision_is_exact() -> 
     let a = drift_fixture_manifest("read", 1);
     let b = drift_fixture_manifest("write", 1);
     vault.stage_connector_manifest(&id, a.clone(), "R1", &Suite(true), 11)?;
-    let owner = test_id(0xC1);
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -1804,14 +1790,7 @@ fn strict_permission_narrow_and_tool_removal_qualify_without_reconsent() -> Resu
         tool("other", &["read"]),
     ])?;
     vault.stage_connector_manifest(&id, full.clone(), "R1", &suite, 11)?;
-    let owner = test_id(0xC4);
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -1899,14 +1878,7 @@ fn failed_or_malformed_revision_revert_keeps_the_qualified_hold() -> Result<()> 
         },
         11,
     )?;
-    let owner = test_id(0xC7);
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -2179,6 +2151,7 @@ mod foreign_owner_proof {
             1,
             b"owner",
         )?;
+        crate::test_util::bind_test_owner(vault, actor);
         vault.authenticate_owner(
             actor,
             &actor.to_hex(),
@@ -2207,7 +2180,7 @@ mod foreign_owner_proof {
             &serde_json::to_string(&rows)
                 .map_err(|_| Error::InvariantViolation("test slate encoding"))?,
         )?;
-        let actor = test_id(0xC1);
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let own = owner(&vault, actor)?;
         let (_other_tmp, _other, foreign) =
             crate::test_util::foreign_owner_proof(actor, &actor.to_hex());
@@ -2267,7 +2240,7 @@ mod foreign_owner_proof {
             .and_then(|key| key.pending_manifest)
             .map(|pending| pending.candidate_id)
             .ok_or(Error::InvariantViolation("a staged candidate"))?;
-        let actor = test_id(0xB8);
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let own = owner(&vault, actor)?;
         let (_other_tmp, _other, foreign) =
             crate::test_util::foreign_owner_proof(actor, &actor.to_hex());

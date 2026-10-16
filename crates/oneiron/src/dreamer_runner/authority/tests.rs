@@ -5,8 +5,9 @@ use crate::dreamer_runner::{
     EnqueueDreamerSkillOptimizeAttempt,
 };
 use crate::test_util::{embedding_test_config, open_test_vault_with};
+mod coach;
 #[test]
-fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<()> {
+fn micro_and_meso_share_actor_and_receipt_ledger() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let runner = DreamerRunnerStore::new(&vault);
     let mut attempts = Vec::new();
@@ -25,15 +26,6 @@ fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<
             })?,
         );
     }
-    attempts.push(
-        runner.enqueue_skill_optimize(EnqueueDreamerSkillOptimizeAttempt {
-            input: rmpv::Value::Nil,
-            parent_attempt: None,
-            dedupe_key: None,
-            run_id: None,
-            now: 10,
-        })?,
-    );
     let authority = vault.dreamer_authority()?;
     assert_eq!(authority.actor_class(), EdgeActorClass::System);
     assert_eq!(
@@ -62,7 +54,7 @@ fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<
         .iter()
         .filter(|r| r.content_kind == "dreamer_authority")
         .collect();
-    assert_eq!(authority_records.len(), 3);
+    assert_eq!(authority_records.len(), 2);
     assert!(authority_records.iter().all(|r| r.actor_ref.as_deref()
         == Some(&authority.entity_ref().to_hex())
         && r.actor_class == "system"));
@@ -174,7 +166,7 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
     crate::test_util::provision_engine_machines(&vault);
     let dreamer = vault.dreamer_authority()?;
     let agent = EntityId::now();
-    let owner = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let subject = EntityId::now();
     let evidence = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };

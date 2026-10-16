@@ -63,11 +63,20 @@ fn fixture() -> Result<(tempfile::TempDir, crate::Vault, ClaimBody, WriteEnvelop
         Value::from("sensitivity"),
         Value::from("public"),
     )]));
+    // A Dreamer write cites what was said, never the PERSON it is about.
+    let said = entity(0x51);
+    vault.put_entity(
+        &said,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"what was said",
+    )?;
     body.evidence = Some(Value::Map(vec![(
         Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY),
         crate::dreamer_consolidation::encode_consolidation_evidence(
             &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
-                refs: vec![subject],
+                refs: vec![said],
                 chain: Vec::new(),
                 source_meet: ClaimSource::Generated,
             },
@@ -111,6 +120,7 @@ fn a_structural_refusal_preserves_only_its_receipt_and_no_candidate_rows() -> Re
                 auto_checker: None,
                 defer_metrics_until_commit: true,
                 transition: None,
+                owner_authored: None,
             },
             &policy,
             GateWriteMode {
@@ -200,6 +210,7 @@ fn late_refusal_preserves_only_its_receipt() -> Result<()> {
                 auto_checker: None,
                 defer_metrics_until_commit: true,
                 transition: None,
+                owner_authored: None,
             },
             &policy,
             GateWriteMode {

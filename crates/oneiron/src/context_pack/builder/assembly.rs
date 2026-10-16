@@ -145,7 +145,7 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
-            clamped_out: run.clamped_out,
+            clamped: run.clamped,
             replay_config: run.replay_config,
         };
         lane.end_recall_plan()?;
@@ -201,12 +201,28 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
-            clamped_out: run.clamped_out,
+            clamped: run.clamped,
             replay_config: run.replay_config,
         })
     }
 
     pub(in crate::context_pack) fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
+        if self.skip_optional_recall {
+            return Ok(ContextPackRun {
+                vector_completed: false,
+                temporal_hints: Vec::new(),
+                cited_messages: std::collections::HashMap::new(),
+                pack: super::super::empty_pack::skipped_by_profile_pack(),
+                telemetry_run_id: None,
+                telemetry: match self.session {
+                    Some(session) => ContextPackTelemetry::Session(session),
+                    None => ContextPackTelemetry::Base(&self.vault.store),
+                },
+                total_in_scope: 0,
+                clamped: Vec::new(),
+                replay_config: None,
+            });
+        }
         let started = Instant::now();
         let retrieval_budget = self.retrieval_budget.unwrap_or_else(|| {
             ContextPackRetrievalBudget::from_limit(
@@ -272,9 +288,20 @@ impl<'a> ContextPackBuilder<'a> {
         let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
         let neighbor_pipeline =
             (self.edge_hop > 0 && selected_edge_budget > 0).then(|| pipeline.clone());
-        let pipeline_output = pipeline
-            .context_pack_budget(retrieval_budget)
-            .run_for_pack()?;
+        let mut pipeline = pipeline.context_pack_budget(retrieval_budget);
+        // The world share and the disclosure clamp hold while the rows are
+        // selected, so neither leaves the pack short of rows it could carry.
+        if matches!(self.world_scope, WorldScope::All) {
+            pipeline = pipeline.context_pack_world_share(self.non_base_world_fraction);
+        }
+        if let Some(ctx) = self
+            .disclosure
+            .as_ref()
+            .filter(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
+        {
+            pipeline = pipeline.disclosure_preselect(ctx.clone());
+        }
+        let pipeline_output = pipeline.run_for_pack()?;
         let telemetry_run_id = pipeline_output.telemetry_run_id;
         let result = (|| {
             let total_in_scope = pipeline_output.total_in_scope;
@@ -302,7 +329,7 @@ impl<'a> ContextPackBuilder<'a> {
             // reaches hydration, results, or stats.
             let clamp = self.disclosure.as_ref();
             let mut scored = scored;
-            let mut clamped_out: u64 = 0;
+            let mut clamped = pipeline_output.disclosure_clamped;
             if let Some(ctx) = clamp
                 && ctx.mode() != DisclosureMode::OwnerAlone
             {
@@ -317,7 +344,7 @@ impl<'a> ContextPackBuilder<'a> {
                     )? {
                         kept.push(entry);
                     } else {
-                        clamped_out = clamped_out.saturating_add(1);
+                        clamped.push(entry.id);
                     }
                 }
                 scored = kept;
@@ -389,8 +416,9 @@ impl<'a> ContextPackBuilder<'a> {
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
             // default `All` scope, group surviving claims by world — base section
-            // first, then one section per non-base world — and cap how much of the
-            // claim budget fiction may take. Flat (unchanged) for Base / World(id).
+            // first, then one section per non-base world. The pipeline already
+            // selected under the world share; the cap here only bites when
+            // hydration dropped a base claim. Flat (unchanged) for Base / World(id).
             if matches!(self.world_scope, WorldScope::All) {
                 partition_results_by_world(
                     &self.read,
@@ -624,7 +652,7 @@ impl<'a> ContextPackBuilder<'a> {
                 telemetry_run_id,
                 telemetry,
                 total_in_scope,
-                clamped_out,
+                clamped,
                 replay_config,
             })
         })();

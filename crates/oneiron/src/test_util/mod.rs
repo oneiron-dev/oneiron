@@ -152,6 +152,47 @@ pub(crate) fn withhold_dreamer_read(vault: &Vault) -> crate::Result<()> {
     put_policy_manifest_bytes(vault, id, &data)
 }
 
+/// Declares each prefix in `prefixes` normal (criticality and sensitivity) in
+/// the vault's default policy, as an owner's own rule would. A predicate no
+/// rule names takes the criticality floor, so a fixture that writes one through
+/// a gated door and expects a reader to act on it declares it here.
+pub(crate) fn declare_predicates_normal(vault: &Vault, prefixes: &[&str]) -> crate::Result<()> {
+    use rmpv::Value;
+    let id = crate::gate::default_policy_manifest_id()?;
+    // A legacy test vault stores no manifest and reads the shipped one.
+    let body = match vault.get(&id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("default policy map")
+    else {
+        unreachable!("default policy manifest is a map");
+    };
+    let normal = prefixes.iter().map(|prefix| {
+        Value::Map(vec![
+            (Value::from("prefix"), Value::from(*prefix)),
+            (
+                Value::from("axes"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+        ])
+    });
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+    {
+        Some((_, Value::Array(rules))) => rules.extend(normal),
+        _ => entries.push((Value::from("rules"), Value::Array(normal.collect()))),
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode policy");
+    put_policy_manifest_bytes(vault, id, &data)
+}
+
 /// Pin a test model manifest with a passing teacher-probe receipt, the way
 /// the bench publishes one; a bare `set_model_manifest` refuses a new teacher.
 pub(crate) fn pin_model_manifest(
@@ -334,12 +375,84 @@ pub(crate) fn embedded_owner_proof(vault: &Vault) -> crate::consent::Authenticat
         .expect("owner proof")
 }
 
-/// Binds `owner` as the rooted test vault's human owner, so owner verbs keep
-/// working after a fixture roots its vault.
+/// Roots the test vault under the test host, if nothing has, and binds
+/// `owner` as its human owner: owner verbs hold only for a bound owner
+/// (H149).
 pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
+    let issuer = test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
     vault
-        .bind_host_owner_for_test(&test_host_issuer(), owner)
+        .bind_host_owner_for_test(&issuer, owner)
         .expect("owner binding");
+}
+
+/// A proof this vault authenticated, with no credential, for a live PERSON
+/// who does not own it: what a native host can mint for any person it knows.
+/// An owner door refuses it; a person-tier door takes it for that person's
+/// own rows.
+pub(crate) fn non_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .expect("a live person");
+    vault
+        .authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("a non-owner person's proof")
+}
+
+/// A second live owner's proof on `vault`: an Owner-role member once the
+/// vault is shared under its embedded owner. It shares the vault, so a test
+/// calls it once per vault.
+pub(crate) fn co_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    use crate::federation::{FederationGrantRole, InitialSharedMember};
+    let owner = embedded_owner_proof(vault);
+    let co_owner = EntityId::now();
+    vault
+        .put_entity(
+            &co_owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"co-owner",
+        )
+        .expect("a live person");
+    vault
+        .initialize_shared_vault(
+            &owner,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner.actor(),
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: co_owner,
+                    role: Some(FederationGrantRole::Owner),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault");
+    vault
+        .authenticate_owner(
+            co_owner,
+            &co_owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("the co-owner's proof")
 }
 
 /// An owner proof another vault authenticated for `actor` under `principal`,

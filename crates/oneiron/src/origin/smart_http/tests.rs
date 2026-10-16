@@ -11,6 +11,16 @@ use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
 
 pub(super) fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>) -> EntityId {
+    fixture_intent_with_pointers(vault, root, updates, Vec::new())
+}
+
+/// [`fixture_intent`] for a push whose door framed `lfs_pointers`.
+pub(super) fn fixture_intent_with_pointers(
+    vault: &Vault,
+    root: &Path,
+    updates: Vec<RefUpdate>,
+    lfs_pointers: Vec<LfsPushedPointer>,
+) -> EntityId {
     let stamp =
         DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
     vault
@@ -19,7 +29,8 @@ pub(super) fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>
     let door = DoorWindowReport {
         verdict: DoorWindowVerdict::Clean,
         ref_updates: updates,
-        lfs_pointers: Vec::new(),
+        lfs_pointers,
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault
@@ -43,6 +54,7 @@ pub(super) fn fixture_attribution(
         verdict: DoorWindowVerdict::Clean,
         ref_updates: outcome.ref_updates.clone(),
         lfs_pointers: outcome.lfs_pointers.clone(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault
@@ -315,6 +327,16 @@ pub(super) fn served_repo(vault: &Vault) -> (tempfile::TempDir, PathBuf, GitOid,
 
 /// Serves one ref advertisement through the real `git http-backend`.
 pub(super) fn advertise(vault: &Arc<Vault>, service: &str) -> CapturingSink {
+    let (served, sink) = try_advertise(vault, service);
+    served.expect("serve the advertisement");
+    sink
+}
+
+/// [`advertise`], answering how the exchange ended beside what it sent.
+pub(super) fn try_advertise(
+    vault: &Arc<Vault>,
+    service: &str,
+) -> (Result<ServeReport>, CapturingSink) {
     let request = ServeRequest {
         method: "GET".to_owned(),
         path_info: "/demo.git/info/refs".to_owned(),
@@ -330,16 +352,15 @@ pub(super) fn advertise(vault: &Arc<Vault>, service: &str) -> CapturingSink {
     };
     let mut body = io::empty();
     let mut sink = CapturingSink::default();
-    serve(
+    let served = serve(
         vault,
         "demo",
         &request,
         DoorSeam::Noop,
         &mut body,
         &mut sink,
-    )
-    .expect("serve the advertisement");
-    sink
+    );
+    (served, sink)
 }
 
 /// The `(name, oid)` pairs one advertisement body carries.
@@ -503,6 +524,16 @@ fn serve_publication_test_connection(
     )
     .expect("serve stock client");
     if request.is_receive_pack() {
+        // A server tells the client that a ref the landing did not certify
+        // failed. This harness fails the whole exchange instead.
+        assert!(
+            report
+                .ref_results
+                .iter()
+                .all(|entry| entry.status == ReceivePackRefStatus::Published),
+            "a ref the landing did not certify: {:?}",
+            report.ref_results
+        );
         if request.query_string.contains("checkout-lease=") {
             let stamp = report.admission.as_ref().expect("lease admission");
             assert_eq!(stamp.method(), "door-credential+registered-principal");
@@ -524,21 +555,36 @@ fn serve_publication_test_connection(
             outcome.pack_stats.ref_update_count,
             outcome.ref_updates.len()
         );
-        let repo = outcome.pinned_repo_ref().expect("replay repo");
         let first = report.landing.as_ref().expect("certified push");
-        let replay = vault
-            .apply_receive_pack_update(&repo, outcome)
-            .expect("the actual served outcome is journal-backed");
-        assert!(replay.replayed);
-        assert_eq!(replay.receipt.record_key, first.receipt.record_key);
-        for field in 0..3 {
-            let mut tampered = outcome.clone();
-            match field {
-                0 => tampered.pack_stats.request_bytes += 1,
-                1 => tampered.pack_stats.response_bytes += 1,
-                _ => tampered.pack_stats.ref_update_count += 1,
+        // The outcome-only door replays an advance from its own durable
+        // publication. A deletion publishes nothing, and a landing that ran no
+        // new effect left nothing new for that door to replay.
+        let replayable = !first.replayed
+            && outcome
+                .ref_updates
+                .iter()
+                .all(|update| update.new_oid.is_some());
+        if replayable {
+            let repo = outcome.pinned_repo_ref().expect("replay repo");
+            let replay = vault
+                .apply_receive_pack_update(&repo, outcome)
+                .expect("the actual served outcome is journal-backed");
+            assert!(replay.replayed);
+            match (&replay.receipt, &first.receipt) {
+                (ReceivePackCertificate::Wire(replay), ReceivePackCertificate::Wire(first)) => {
+                    assert_eq!(replay.record_key, first.record_key);
+                }
+                other => panic!("a served advance lands through its wire record: {other:?}"),
             }
-            assert!(vault.apply_receive_pack_update(&repo, &tampered).is_err());
+            for field in 0..3 {
+                let mut tampered = outcome.clone();
+                match field {
+                    0 => tampered.pack_stats.request_bytes += 1,
+                    1 => tampered.pack_stats.response_bytes += 1,
+                    _ => tampered.pack_stats.ref_update_count += 1,
+                }
+                assert!(vault.apply_receive_pack_update(&repo, &tampered).is_err());
+            }
         }
     }
     let mut response = format!("HTTP/1.1 {} OK\r\n", captured.status);
@@ -555,4 +601,38 @@ fn serve_publication_test_connection(
         .write_all(response.as_bytes())
         .expect("response headers");
     stream.write_all(&captured.body).expect("response body");
+}
+
+/// A host's room for LFS reads that records the rows it is asked for and
+/// holds each until its answer drops; told to, it lets every wait run out.
+#[derive(Default)]
+pub(super) struct RecordingRoom {
+    asked: std::sync::Mutex<Vec<u64>>,
+    pub(super) held: Arc<std::sync::atomic::AtomicUsize>,
+    pub(super) waits_run_out: AtomicBool,
+}
+
+impl RecordingRoom {
+    pub(super) fn asked(&self) -> Vec<u64> {
+        self.asked.lock().expect("asked rows").clone()
+    }
+}
+
+struct RecordedHold(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for RecordedHold {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl crate::origin::lfs::LfsReadRoom for RecordingRoom {
+    fn hold(&self, row_bytes: u64) -> Option<Box<dyn std::any::Any + Send>> {
+        self.asked.lock().expect("asked rows").push(row_bytes);
+        if self.waits_run_out.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.held.fetch_add(1, Ordering::SeqCst);
+        Some(Box::new(RecordedHold(Arc::clone(&self.held))))
+    }
 }

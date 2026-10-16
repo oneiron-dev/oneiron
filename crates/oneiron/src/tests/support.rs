@@ -601,14 +601,31 @@ pub(super) fn run_raced_delete<F>(
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
 {
+    run_raced_delete_at(
+        vault,
+        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
+        id,
+        reason,
+        erase_scope,
+    )
+}
+
+/// [`run_raced_delete`], parked at `step` instead of the publish seam.
+pub(super) fn run_raced_delete_at<F>(
+    vault: &Vault,
+    step: crate::deletion::DeleteRendezvous,
+    id: &EntityId,
+    reason: DeleteReason,
+    erase_scope: F,
+) -> Result<DeleteEntityOutcome>
+where
+    F: FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+{
     let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
     let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
-    vault.test_hooks().install_delete_rendezvous(
-        crate::deletion::DeleteRendezvous::AfterTombstonePublish,
-        *id,
-        arrived_tx,
-        resume_rx,
-    );
+    vault
+        .test_hooks()
+        .install_delete_rendezvous(step, *id, arrived_tx, resume_rx);
     std::thread::scope(|scope| -> Result<DeleteEntityOutcome> {
         let deleter = scope.spawn(|| vault.delete_entity_with_reason(id, reason));
         arrived_rx

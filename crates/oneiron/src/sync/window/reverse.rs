@@ -108,6 +108,31 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             }
         }
     }
+    // Closure (decision 9): every held revision of a PROJECT row in this
+    // window travels with it, whatever month it was learned in, so a late
+    // joiner that materializes only this window still folds the whole
+    // signed history. Forged rows never travel, by either road.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut seen: HashSet<EntityId> = entities_in_range.iter().copied().collect();
+        let mut kept = Vec::with_capacity(entities_in_range.len());
+        let mut closure = Vec::new();
+        for id in &entities_in_range {
+            if crate::workspace_roster::forged_revision_in_txn(&vault.store, &rtxn, *id)? {
+                continue;
+            }
+            kept.push(*id);
+            for companion in
+                crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, *id)?
+            {
+                if seen.insert(companion) {
+                    closure.push(companion);
+                }
+            }
+        }
+        kept.extend(closure);
+        entities_in_range = kept;
+    }
     let device_only = if withhold_device_only {
         let rtxn = vault.store.env.read_txn()?;
         crate::settings::device_local_worlds_at(
@@ -128,6 +153,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
+    wrote_any |= remove_inadmissible_revision_carriers(vault, &entities_map, &edges_map)?;
 
     // Type-classify entity-keyed tombstones BEFORE any CRDT edge-key scan.
     // A hostile tombstone naming a locally available protected engine row
@@ -149,13 +175,14 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
-        if id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        if !crate::dreamer_runner::authority::is_base_agent_actor(&id)?
             && !crate::registry::is_delete_protected_engine_record(header.entity_type)
+            && !crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type)
         {
             continue;
         }
 
-        let rejection = if id == crate::dreamer_runner::authority::dreamer_actor_id()? {
+        let rejection = if crate::dreamer_runner::authority::is_base_agent_actor(&id)? {
             Error::Registry(RegistryError::DreamerActorImmutable)
         } else {
             Error::Registry(RegistryError::MaintenanceKindNotWritable(
@@ -173,11 +200,11 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         protected_tombstones.insert(id);
         let hex_id = id.to_hex();
         if !map_contains_binary(&entities_map, &hex_id)
-            || (id == crate::dreamer_runner::authority::dreamer_actor_id()?
+            || (crate::dreamer_runner::authority::is_base_agent_actor(&id)?
                 && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice()))
         {
             // A rejected peer overwrite is not a valid protected carrier.
-            // Restore the fixed Dreamer bytes, not merely a missing key.
+            // Restore the fixed base-agent bytes, not merely a missing key.
             map_insert_bytes(&entities_map, &hex_id, &raw)?;
             if let Some(revision) = source_revision {
                 mirror_sources.insert(id, revision);
@@ -290,6 +317,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             // `None`), so hoisting it past the short circuit is semantics-
             // preserving.
             let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw)
+                || held_revision_dominates_map_carrier(vault, &entities_map, &hex_id, &raw)
                 || crate::sync::receipt_ingest::local_receipt_dominates(
                     vault,
                     window_key,
@@ -297,7 +325,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
                     id,
                     &raw,
                 )?;
-            let fixed_actor_mismatch = *id == crate::dreamer_runner::authority::dreamer_actor_id()?
+            let fixed_actor_mismatch = crate::dreamer_runner::authority::is_base_agent_actor(id)?
                 && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice());
             if !map_contains_binary(&entities_map, &hex_id) || dominates || fixed_actor_mismatch {
                 // Pack rows mirror the canonical wire header/body (origin
@@ -460,6 +488,10 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
     }
 
+    // A carrier the window kept past its row's learned month still takes
+    // every revision learned since (Astra #1434 F2).
+    wrote_any |= super::project_history::carry_project_history(vault, doc)?;
+
     // Commit all bridge writes with origin tag
     if wrote_any {
         let origin = bridge::origin_for_mirrors(&mirror_sources)?;
@@ -502,8 +534,9 @@ pub(super) fn quarantine_outbound_protected_tombstones(
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(false);
     };
-    if *id != crate::dreamer_runner::authority::dreamer_actor_id()?
+    if !crate::dreamer_runner::authority::is_base_agent_actor(id)?
         && !crate::registry::is_delete_protected_engine_record(header.entity_type)
+        && !crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type)
     {
         return Ok(false);
     }
@@ -513,7 +546,7 @@ pub(super) fn quarantine_outbound_protected_tombstones(
         return Ok(false);
     }
 
-    let rejection = if *id == crate::dreamer_runner::authority::dreamer_actor_id()? {
+    let rejection = if crate::dreamer_runner::authority::is_base_agent_actor(id)? {
         Error::Registry(RegistryError::DreamerActorImmutable)
     } else {
         Error::Registry(RegistryError::MaintenanceKindNotWritable(
@@ -621,6 +654,72 @@ fn authority_row_dominates_map_carrier(
     }
     map_get_bytes(entities_map, hex_id)
         .is_some_and(|carrier| !crdt_carrier_is_admissible_authority_row(id, &carrier))
+}
+
+/// A held project revision replaces any carrier at its id that is not
+/// byte-identical to it (R2-F10): the id fixes the bytes, so another carrier
+/// there is a poisoned one no peer should replay.
+fn held_revision_dominates_map_carrier(
+    vault: &Vault,
+    entities_map: &LoroMap,
+    hex_id: &str,
+    local: &[u8],
+) -> bool {
+    EntityMetadataHeader::parse(local).is_some_and(|header| {
+        crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type)
+    }) && map_get_bytes(entities_map, hex_id).is_some_and(|carrier| carrier != local)
+}
+
+/// Removes, with their incident edges, the carriers that claim the revision
+/// kind at an id this vault marked forged, or at an id it does not hold when
+/// no peer's admission arm would take them: a body that is not canonical,
+/// does not derive its id, or names another vault.
+fn remove_inadmissible_revision_carriers(
+    vault: &Vault,
+    entities_map: &LoroMap,
+    edges_map: &LoroMap,
+) -> Result<bool> {
+    let Some(kind) = crate::workspace_roster::project_revision_type(&vault.store) else {
+        return Ok(false);
+    };
+    let mut carriers = Vec::new();
+    crate::sync::loro_support::map_for_each_bytes(entities_map, |key, blob| {
+        if EntityMetadataHeader::parse(blob).is_some_and(|header| header.entity_type == kind) {
+            carriers.push((key.to_owned(), blob.to_vec()));
+        }
+    });
+    if carriers.is_empty() {
+        return Ok(false);
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        &vault.store,
+        vault.privacy_posture(),
+        &rtxn,
+    )?;
+    let mut inadmissible = Vec::new();
+    let mut unheld = Vec::new();
+    for (key, blob) in carriers {
+        let Ok(id) = EntityId::from_hex(&key) else {
+            continue;
+        };
+        if vault.get_raw_in(&rtxn, &id)?.is_none() {
+            unheld.push((id, blob));
+        } else if crate::workspace_roster::forged_revision_in_txn(&vault.store, &rtxn, id)? {
+            inadmissible.push(id);
+        }
+    }
+    inadmissible.extend(crate::workspace_roster::inadmissible_revision_carriers(
+        &vault.store,
+        &rtxn,
+        &fold,
+        &unheld,
+    )?);
+    let mut removed = false;
+    for id in inadmissible {
+        removed |= remove_entity_crdt_carriers(entities_map, edges_map, &id)?;
+    }
+    Ok(removed)
 }
 
 /// The full envelope/body/key admissibility triple a CRDT carrier must clear

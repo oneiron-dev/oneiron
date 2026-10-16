@@ -20,8 +20,10 @@ use crate::error::ArtifactError;
 impl AgentDispatcher<'_> {
     /// Resolves one failure case onto its configured healer slot.
     ///
-    /// Both slots require an authentic ladder case for a durable failed parent.
+    /// Every slot requires an authentic ladder case for a durable failed parent.
     /// `Reserved` mutates no queue state and yields immediate surface-card data.
+    /// `Coach` yields the same data and, in the case check's transaction,
+    /// enqueues one Coach-stamped heal attempt per case.
     /// `AgentDef` also enforces the propose-only ceiling against the live row
     /// and revalidates the case in the enqueue transaction.
     ///
@@ -48,6 +50,23 @@ impl AgentDispatcher<'_> {
                     input.run_id.as_deref(),
                 )?;
                 Ok(HealerSlotOutcome::Reserved { case: input.case })
+            }
+            HealerSlot::Coach => {
+                let mut txn = self.vault.store.env.write_txn()?;
+                crate::failure_ladder::require_healer_case_in_txn(
+                    self.vault,
+                    &txn,
+                    &input.case,
+                    input.run_id.as_deref(),
+                )?;
+                let attempt = crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                    .enqueue_coach_heal_in_txn(&mut txn, &input.case, input.run_id, input.now)?;
+                txn.commit()?;
+                self.vault.store.notify_attempt_observers();
+                Ok(HealerSlotOutcome::Coach {
+                    case: input.case,
+                    attempt,
+                })
             }
             HealerSlot::AgentDef { agent_def_ref } => {
                 let healer_ref = EntityId::from_hex(&agent_def_ref).map_err(|_| {

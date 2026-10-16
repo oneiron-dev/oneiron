@@ -16,7 +16,7 @@ pub mod derivation;
 pub(crate) mod facet_read;
 pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use coreference::person_pair_in_txn;
+pub(crate) use coreference::share_consent_valid_at;
 mod grant;
 pub(crate) mod grant_policy;
 mod membership_gate;
@@ -32,7 +32,7 @@ pub(crate) use ruling_integrity::{
 mod pending_act;
 mod shared_creation;
 pub use pending_act::{
-    PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
+    ActExecution, PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
 };
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
@@ -78,6 +78,7 @@ pub use self::stale::{
     decode_world_stale_stamp, encode_world_stale_stamp, foreign_world_stale_stamp,
     world_stale_marker,
 };
+pub(crate) use self::stale::{StaleSweepWatch, note_authority_row};
 
 pub(crate) use self::grant::{
     FEDERATION_GRANT_FIELDS_FULL, FEDERATION_GRANT_FIELDS_MINIMAL,

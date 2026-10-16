@@ -87,6 +87,7 @@ impl Vault {
             let entry = decode_authority_log_entry_body(bytes)?;
             decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
         }
+        let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
@@ -124,7 +125,10 @@ impl Vault {
             .iter()
             .filter(|(hash, _)| resident.contains(*hash))
             .map(|(_, (_, entry))| entry);
-        for (hash, bytes, _) in super::import_order::import_order(stored, &resident, decoded) {
+        let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
+        for (hash, bytes, _) in
+            super::import_order::import_order(stored, &resident, own_roots, decoded)
+        {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
             ops.push(BatchOp::Put {
@@ -158,6 +162,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         txn.commit()?;
+        watch.finish()?;
         Ok(ids)
     }
 

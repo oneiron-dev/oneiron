@@ -93,6 +93,13 @@ pub struct ServeArgs {
     #[arg(long = "credentials-fd")]
     pub credentials_fd: Option<i32>,
 
+    /// This install's key directory, an absolute path outside the vault: where
+    /// the this-device-only keystore keeps the machine encryption seed. Managed
+    /// mode installs a keystore only from this flag; unmanaged serve reads it
+    /// as `[keystore] dir`.
+    #[arg(long = "keystore-dir")]
+    pub keystore_dir: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -100,6 +107,11 @@ pub struct ServeArgs {
     /// Port to bind to.
     #[arg(long)]
     pub port: Option<u16>,
+
+    /// Port, on the same host, of the listener that serves artifacts (`/a/`)
+    /// on an origin of their own. Defaults to any free port.
+    #[arg(long = "artifact-port")]
+    pub artifact_port: Option<u16>,
 
     /// Host issuer key material (never a bearer credential) and input for
     /// minted `v2` tokens. Rotating it invalidates all minted tokens.
@@ -186,7 +198,8 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_update_payload: Option<usize>,
 
-    /// Maximum distinct valid windows one connection may touch.
+    /// Window subscriptions one connection keeps before it forgets the least
+    /// recently requested; past it the row asks its question, never refuses.
     #[arg(long)]
     pub max_windows_per_connection: Option<usize>,
 
@@ -296,8 +309,10 @@ impl fmt::Debug for ServeArgs {
             .field("hypnos_socket", &self.hypnos_socket)
             .field("ready_fd", &self.ready_fd)
             .field("credentials_fd", &self.credentials_fd)
+            .field("keystore_dir", &self.keystore_dir)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field(
                 "insecure_allow_unauthenticated",

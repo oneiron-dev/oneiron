@@ -7838,6 +7838,7 @@ dependencies = [
  "flate2",
  "futures-core",
  "futures-util",
+ "getrandom 0.4.3",
  "gix",
  "half",
  "heed",
@@ -7858,6 +7859,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-docedit",
  "oneiron-guest",
+ "oneiron-keystore",
  "oneiron-model",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
@@ -7925,6 +7927,7 @@ dependencies = [
  "blake3",
  "ed25519-dalek 2.2.0",
  "oneiron-contracts",
+ "oneiron-crypto",
  "p256",
  "rmp-serde",
  "rmpv",
@@ -7983,6 +7986,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-browser"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "oneiron-container",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-code-check"
 version = "0.1.0"
 dependencies = [
@@ -7995,6 +8010,17 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "wasmtime",
+]
+
+[[package]]
+name = "oneiron-container"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-spawn",
+ "serde",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
@@ -8044,6 +8070,7 @@ dependencies = [
 name = "oneiron-docedit"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "crc32fast",
  "expat-sys",
  "flate2",
@@ -8129,6 +8156,18 @@ dependencies = [
  "base64 0.22.1",
  "oneiron",
  "serde_json",
+]
+
+[[package]]
+name = "oneiron-keystore"
+version = "0.1.0"
+dependencies = [
+ "core-foundation 0.10.1",
+ "security-framework",
+ "security-framework-sys",
+ "tempfile",
+ "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
@@ -8439,6 +8478,7 @@ dependencies = [
  "oneiron-broker",
  "oneiron-code-check",
  "oneiron-driver",
+ "oneiron-keystore",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
  "oneiron-remote",

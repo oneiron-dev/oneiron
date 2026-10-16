@@ -170,7 +170,9 @@ fn admit_word_with_source(
         )?;
     }
     let evidence = evidence_in(vault, txn, id, group)?;
-    if evidence.len() >= 4096 {
+    // A bearer of one recipient link is a stranger to this vault: its words
+    // stay bounded. An authenticated actor's never are (rule 5).
+    if token_digest.is_some() && evidence.len() >= super::LINK_WORDS_PER_ASK {
         return Err(Error::IndexOverflow("ask words"));
     }
     let order = evidence

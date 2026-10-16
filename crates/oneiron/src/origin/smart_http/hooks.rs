@@ -4,7 +4,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::paths::{DOOR_MAX_SCAN_BYTES, DOOR_PRE_RECEIVE_HOOK_NAME};
+use super::bounds::ScanBounds;
+use super::paths::{DOOR_BLOB_TOO_LARGE, DOOR_DISK_FLOOR, DOOR_PRE_RECEIVE_HOOK_NAME};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -22,7 +23,9 @@ use crate::error::Result;
 /// so binary content, NUL-carrying content and content whose lines begin with
 /// `+` all reach the door as the exact bytes the push would make durable. A
 /// blob the hook cannot size or read ends the push right here, under `set -e`,
-/// while the objects are still quarantined.
+/// while the objects are still quarantined. Each move's blobs follow a line
+/// naming the move, so the door holds each ref to the pointers its own move
+/// brings.
 ///
 /// The tip diff alone would miss what a push carries in between: a blob one
 /// commit adds and a later commit reverts or deletes leaves no trace in the
@@ -32,9 +35,13 @@ use crate::error::Result;
 /// scans the same way. The walk alone would still miss a blob the pack carries
 /// that no tip reaches: receive-pack moves the whole quarantine into the store
 /// once the hook admits, so every object in the quarantine is listed too, and
-/// one rev-list named no path for is labelled by its oid. Both streams together are capped at
-/// [`DOOR_MAX_SCAN_BYTES`], substituted for `@DOOR_MAX_SCAN_BYTES@` when the
-/// hook is written; a push past it is refused, never scanned in part.
+/// one rev-list named no path for is labelled by its oid.
+///
+/// No push is too large as a whole. Each blob is held to the scan's per-blob
+/// bound, and the framed bytes of both streams, headers included, to the free
+/// disk above its floor, read once when the hook starts ([`ScanBounds`],
+/// substituted when the hook is written). Past either the push is refused
+/// whole, never scanned in part, with a reason that names the bound's key.
 pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # Vetted door hook (ONE-1908). Repository-supplied hooks never run: every serve
 # invocation pins core.hooksPath in argv to this door-owned directory.
@@ -46,6 +53,8 @@ pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # The blob stream is length-framed: "blob <oid> <bytes> <path>\n" followed by
 # exactly <bytes> raw bytes. Framing rather than patch text is what makes the
 # extraction total -- there is no line shape a blob can carry that hides it.
+# Each move's records follow one "move <old> <new>\n" line naming it, so the
+# door knows which refs a blob reaches.
 #
 # The history stream frames every OTHER blob the new tips reach that no existing
 # ref already reaches, so a blob an intermediate commit adds and a later one
@@ -69,22 +78,56 @@ blobspart="$dir/pre-receive.blobs.part"
 history="$dir/pre-receive.history"
 historypart="$dir/pre-receive.history.part"
 entries="$dir/pre-receive.entries"
+pairs="$dir/pre-receive.pairs"
+tips="$dir/pre-receive.tips"
 objects="$dir/pre-receive.objects"
 typed="$dir/pre-receive.typed"
 listed="$dir/pre-receive.listed"
 seen="$dir/pre-receive.seen"
 verdict="$dir/pre-receive.verdict"
-# Both streams together carry at most this many blob bytes. Past it the push is
-# refused whole, never scanned in part.
-max=@DOOR_MAX_SCAN_BYTES@
-total=0
-tips=
-too_large() {
-	echo "oneiron door: this push carries more than $max blob bytes to scan; push its history in smaller parts" >&2
+# The door holds one blob whole while it scans it, so no blob may carry more
+# than this. The streams are written to this directory's disk, which keeps this
+# floor free: its free space is read once, here, and every framed byte, headers
+# included, is charged against what lies above the floor. Past either bound the
+# push is refused whole, never scanned in part.
+blobmax=@DOOR_SCAN_BLOB_BYTES@
+floor=@DOOR_SCAN_DISK_FLOOR_BYTES@
+blob_too_large() {
+	echo "oneiron door refused this push: @DOOR_BLOB_TOO_LARGE@" >&2
 	exit 1
 }
+disk_floor() {
+	echo "oneiron door refused this push: @DOOR_DISK_FLOOR@" >&2
+	exit 1
+}
+# A df that fails, or prints no row this can read, refuses the push. The
+# available column is the field before the capacity, since a filesystem or
+# mount name may itself hold spaces. df prints each of those columns as a
+# number, a negative one, or `-` when unknown, so the row's own columns always
+# match below. A name that matches too makes two places they could start, and
+# the push is refused, as it is when the space available is negative or unknown.
+space=$(df -Pk "$dir") || exit 1
+free=$(printf '%s\n' "$space" | LC_ALL=C awk 'NR == 2 {
+	for (i = 5; i <= NF; i++)
+		if ($i ~ /^(-?[0-9]+%|-)$/ && $(i - 1) ~ /^(-?[0-9]+|-)$/ && $(i - 2) ~ /^(-?[0-9]+|-)$/ && $(i - 3) ~ /^(-?[0-9]+|-)$/) {
+			found++
+			free = $(i - 1)
+		}
+	if (found == 1) print free
+}')
+case "$free" in
+	'' | *[!0-9]*) exit 1 ;;
+esac
+# Fifteen digits of KiB keep the product below the shell's integer range, and
+# the budget is held to 2^53, where awk's doubles still compare exactly.
+[ "${#free}" -le 15 ] || exit 1
+max=$((free * 1024 - floor))
+[ "$max" -ge 0 ] || disk_floor
+[ "$max" -le 9007199254740992 ] || max=9007199254740992
+total=0
 tab=$(printf '\t')
 : > "$part"
+: > "$pairs"
 : > "$blobspart"
 : > "$historypart"
 : > "$seen"
@@ -106,7 +149,13 @@ while read -r old new ref; do
 		*[!0]*) ;;
 		*) continue ;;
 	esac
-	tips="$tips $new"
+	printf '%s %s\n' "$old" "$new" >> "$pairs"
+done
+# Many refs can name one move: each distinct move is diffed and its blobs
+# framed once, so a push's cost follows what it makes durable, not how many
+# names it gives it.
+sort -u -o "$pairs" "$pairs"
+while read -r old new; do
 	case "$old" in
 		*[!0]*) base=$old ;;
 		*) base=$empty ;;
@@ -115,6 +164,9 @@ while read -r old new ref; do
 	# hook, and the left-hand side of a pipeline cannot do that in POSIX sh.
 	git --no-replace-objects diff-tree -r --raw --no-abbrev --no-commit-id \
 		--diff-filter=AMT "$base" "$new" > "$entries"
+	total=$((total + ${#old} + ${#new} + 7))
+	[ "$total" -le "$max" ] || disk_floor
+	printf 'move %s %s\n' "$old" "$new" >> "$blobspart"
 	# ":<srcmode> <dstmode> <srcoid> <dstoid> <status><tab><path>"
 	while IFS= read -r entry; do
 		meta=${entry%%"$tab"*}
@@ -132,16 +184,22 @@ while read -r old new ref; do
 			*) continue ;;
 		esac
 		size=$(git --no-replace-objects cat-file -s "$oid")
-		total=$((total + size))
-		[ "$total" -le "$max" ] || too_large
+		[ "$size" -le "$blobmax" ] || blob_too_large
+		# The record's header: its fixed fields and the path.
+		total=$((total + size + 128 + ${#path}))
+		[ "$total" -le "$max" ] || disk_floor
 		printf 'blob %s %s %s\n' "$oid" "$size" "$path" >> "$blobspart"
 		git --no-replace-objects cat-file blob "$oid" >> "$blobspart"
 		printf '%s\n' "$oid" >> "$seen"
 	done < "$entries"
-done
+done < "$pairs"
+# The tips go to rev-list on its stdin, never its argv, which a push of many
+# refs would outgrow.
+awk '{ print $2 }' "$pairs" > "$tips"
 : > "$objects"
-if [ -n "$tips" ]; then
-	git --no-replace-objects rev-list --objects $tips --not --all > "$objects"
+if [ -s "$tips" ]; then
+	git --no-replace-objects rev-list --objects --stdin --not --all \
+		< "$tips" > "$objects"
 fi
 # The pack can carry objects no tip reaches, and receive-pack migrates the whole
 # quarantine once this hook admits. So every object in it is listed as well,
@@ -164,24 +222,26 @@ if [ -s "$objects" ]; then
 	# cut at a newline or cat-file read as blank) is labelled by its oid.
 	# Any line that is not a typed object fails the hook.
 	status=0
-	LC_ALL=C awk -v total="$total" -v max="$max" '
+	LC_ALL=C awk -v total="$total" -v max="$max" -v blobmax="$blobmax" '
 		FILENAME == ARGV[1] { seen[$0] = 1; next }
 		NF < 3 || $1 !~ /^(blob|tree|commit|tag)$/ { exit 4 }
 		$1 != "blob" || ($2 in seen) { next }
 		{
 			seen[$2] = 1
-			total += $3
-			if (total > max) exit 3
+			if ($3 > blobmax) exit 5
 			path = $0
 			sub(/^[^ ]* [^ ]* [^ ]* /, "", path)
 			gsub(/[^ -~]/, "?", path)
 			if (path !~ /[^ ]/) path = $2
+			total += $3 + 128 + length(path)
+			if (total > max) exit 3
 			print $2 " " path
 		}
 	' "$seen" "$typed" > "$listed" || status=$?
 	case "$status" in
 		0) ;;
-		3) too_large ;;
+		3) disk_floor ;;
+		5) blob_too_large ;;
 		*) exit 1 ;;
 	esac
 	git --no-replace-objects cat-file \
@@ -189,7 +249,7 @@ if [ -s "$objects" ]; then
 		< "$listed" > "$historypart"
 fi
 printf 'end\n' >> "$part"
-rm -f "$entries" "$objects" "$typed" "$listed" "$seen"
+rm -f "$entries" "$pairs" "$tips" "$objects" "$typed" "$listed" "$seen"
 mv -f "$historypart" "$history"
 mv -f "$blobspart" "$blobs"
 mv -f "$part" "$req"
@@ -223,17 +283,22 @@ pub struct DoorHooksDir {
 impl DoorHooksDir {
     /// Materializes a fresh door-owned directory under `root`.
     pub fn materialize(root: &Path) -> Result<Self> {
-        Self::materialize_with_scan_cap(root, DOOR_MAX_SCAN_BYTES)
+        Self::materialize_with(root, ScanBounds::default())
     }
 
-    /// Materializes the directory with the hook's blob-byte cap set to
-    /// `max_scan_bytes`.
-    pub(super) fn materialize_with_scan_cap(root: &Path, max_scan_bytes: u64) -> Result<Self> {
+    /// Materializes the directory with the hook keeping `scan`'s bounds.
+    pub(super) fn materialize_with(root: &Path, scan: ScanBounds) -> Result<Self> {
         let path = root.join(EntityId::now().to_hex());
         fs::create_dir_all(&path)?;
         let hook = path.join(DOOR_PRE_RECEIVE_HOOK_NAME);
-        let script =
-            DOOR_PRE_RECEIVE_HOOK.replace("@DOOR_MAX_SCAN_BYTES@", &max_scan_bytes.to_string());
+        let script = DOOR_PRE_RECEIVE_HOOK
+            .replace("@DOOR_SCAN_BLOB_BYTES@", &scan.blob_bytes().to_string())
+            .replace(
+                "@DOOR_SCAN_DISK_FLOOR_BYTES@",
+                &scan.disk_floor_bytes().to_string(),
+            )
+            .replace("@DOOR_BLOB_TOO_LARGE@", DOOR_BLOB_TOO_LARGE)
+            .replace("@DOOR_DISK_FLOOR@", DOOR_DISK_FLOOR);
         fs::write(&hook, script.as_bytes())?;
         set_executable(&hook)?;
         Ok(Self {

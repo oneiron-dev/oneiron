@@ -57,7 +57,7 @@ formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = 
 formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.13), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -271,54 +271,68 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
   on another). `b65931ef` (lock-free repeated builtin loading) was picked and reverted
   (`08ae49a2`): no measured benefit, in a fresh process or over five recalculations in one.
   Still 2,967 of 2,967 and 811/811.
-- `953fbbb1..f01d8eff` (stage 2 wave 2, 2026-10-08), each landed at 2,967 of 2,967 and 811/811:
-  `3dc5603a` reads `[0]` as the workbook itself (`[0]Sheet1!A1` is Sheet1!A1, `[0]!Rate` the
-  workbook's own Rate) and `6aa7740c` intersects a linked range a function returns with a legacy
-  formula's cell (`ops/excel-links2-probe-20261008.md`); `7ca652b8` computes CELL("filename") and
-  CELL("address") from the folder and file name a host gives (`EvalConfig::workbook_directory`);
-  `a8dddb61` recalculates a workbook set to precision as displayed and `615a2ed2` shows a fraction
-  in TEXT as Excel does (`ops/excel-precision-probe-20261008.md`). This pin keeps the adapter's
-  fallbacks for those forms (`[0]` by the reference as written, since the fork no longer reads it as
-  a link), so their workbooks fall back as before. `492b432a` (lane parse,
-  `ops/excel-parse-probe-20261008.md`: 222 formulas typed into Excel and 31 file cells through the
-  corpus oracle; the fork before differed on 160): `#REF!`, the deleted reference Excel writes, is
-  an operand of `:` and ` ` (`Sheet1!#REF!:INDEX(Sheet1!#REF!,COUNTA(Sheet1!#REF!))` parses and is
-  `#REF!`; no other error literal is, as in Excel); the spill reference `A1#`, stored
-  `_xlfn.ANCHORARRAY(A1)`, is the range the formula at A1 fills (its spill or a legacy array's
-  extent, else the anchor alone; `#REF!` for a constant, an empty or spilled cell, several cells or
-  a closed linked workbook) wherever a reference goes, defined names and `INDIRECT("A1#")` included;
-  ERROR.TYPE gives `#SPILL!` 9 and `#CALC!` 14 and returns an engine-only error as itself; SEQUENCE
-  with no rows or columns is `#CALC!`; `EvalConfig::worker_stack_bytes` gives the evaluation
-  threads, and the xlsx writer's own, a larger stack (chained additions overflow the 2 MiB default
-  at about 100 terms in a debug build and 600 in release; on 64 MiB release evaluates more than
-  16,384, on 256 MiB debug 12,800). 186 Excel rows are fork tests (`excel_parse_probes.rs`), 31 more
-  the linked-workbook fixture `excel-values-parse.tsv`. Then the fixes from the lanes' reviews:
-  `f3fcbcde` gives `#REF!` for a VLOOKUP or HLOOKUP return cell past a closed linked table's saved
-  values on a sheet Excel could not refresh, `e6fe7360` follows Excel where precision as displayed
-  stores a value exactly halfway at 15 digits (toward zero), a scientific section with percent signs
-  and a subnormal value (0), `23207d03` (lane parse) evaluates a defined name or LAMBDA body as its
-  tree reads instead of planning every operand again, which cost time cubic in its length (a name of
-  400 chained terms took 13 s, a review's workbook of three chained names of 3,500 terms 45 minutes;
-  16 names of 16,384 terms now take 0.85 s in release), `468a333b` prints the sheet in CELL of a
-  reference computed at run time as the workbook spells it, `5f3cbabb` and `d890db6d` refuse a
-  circular reference, the number formats Excel will not open and a fraction denominator it reads
-  otherwise under precision as displayed, and two lane parse commits follow Excel where its review
-  looked (probes 4 to 8 of the record, 182 cases): `c6f1aee7` keeps the first 32,767 characters of a
-  longer `&` or CONCATENATE join without an error (the fork built the whole text, so 2,048 joins of
-  a 32,767-character cell took 58 s), gives `#CALC!` for CONCAT and TEXTJOIN past it and `#VALUE!`
-  for SUBSTITUTE, reads a text past 255 characters in ERROR.TYPE and TYPE as Excel does (3 and 64),
-  gives `#REF!` for INDIRECT text ending in `#` unless it names one cell or a name (R1C1 text spills
-  too), and refuses a circular reference that only a spill reference's anchor closes (`ROWS(A1#)+1`
-  in A1, 2 in Excel, where `SEQUENCE(ROWS(A1#)+1)` is circular); `f01d8eff` refuses a join whose cut
-  falls inside a character outside the Basic Multilingual Plane (Excel keeps half of it; IFERROR
-  caught the engine's error), counts CONCAT's and TEXTJOIN's limit in UTF-16 units, gives `#VALUE!`
-  for REPLACE past it and for a criterion past 255 characters in COUNTIF, SUMIF, AVERAGEIF and the
-  IFS functions.
+- `953fbbb1..23207d03` (stage 2 wave 2, 2026-10-08): nine commits from four lanes, each measured
+  against Excel for Windows 16.0.20430 (`ops/excel-<lane>-probe-20261008.md` in the calc workspace).
+  Linked workbooks (192 crafted cases over closed linked workbooks, 25 of them from the lane's
+  review; 175 agree and are fixture rows, 44 of which failed at `953fbbb1`): `3dc5603a` reads `[0]`
+  as the workbook itself, as Excel does in cell formulas and defined names: `[0]!Rate` is the
+  workbook's own `Rate` and `[0]Sheet1!A1` its `Sheet1!A1` (they were `#NAME?` and `#REF!`).
+  `6aa7740c` keeps on the values a closed linked range gives the reference they were read from, so a
+  linked range a function returns intersects a legacy formula's cell by the rows and columns it
+  spans in the linked sheet, as a written one does (`INDEX([1]S!A1:A5,SMALL({0,1},1))*2` in row 3 is
+  twice A3; IF and IFERROR hand on the intersected cell; an unsaved cell of a sheet Excel could not
+  refresh is `#REF!`); the fork took the top-left value. `f3fcbcde` has VLOOKUP and HLOOKUP read the
+  cell they return past a linked table's saved values from the link: `#REF!` on a sheet Excel could
+  not refresh (`VLOOKUP(1,[1]S!$1:$2,4,TRUE)` with nothing saved in D1), blank otherwise; the fork
+  returned a blank. Approximate VLOOKUP, HLOOKUP, MATCH and LOOKUP over open linked ranges bisect
+  the range as written past the saved cells in Excel, as the fork already did. Host information:
+  `7ca652b8` has CELL("filename") print the folder the workbook was opened from before `[file]sheet`
+  (`EvalConfig::workbook_directory`), CELL("address") of another sheet's cell name the file, and
+  registers INFO for what does not read the application. Precision as displayed: `a8dddb61` has the
+  cache writer recalculate a workbook saved with "Set precision as displayed" (`<calcPr
+  fullPrecision="0"/>`) as Excel does, each formula result stored as its cell's number format shows
+  it, refusing a format it cannot reproduce; `e6fe7360` takes an exact tie at the fifteenth
+  significant digit toward zero (100000000000001.5 is 100000000000001), keeps two more digits per
+  percent sign in a scientific section, stores a value below the smallest normal double as 0 and
+  refuses a scientific format scaled by a comma; `615a2ed2` shows TEXT's fractions as Excel's
+  continued-fraction convergents (`TEXT(13/17,"# ?/?")` is ` 3/4`, was ` 7/9`). Parsing: `492b432a`
+  reads `#REF!` as an operand of `:` and ` `, evaluates the spill reference `A1#`
+  (`_xlfn.ANCHORARRAY(A1)`) wherever a reference goes, gives ERROR.TYPE `#SPILL!` 9 and `#CALC!` 14,
+  makes SEQUENCE with no rows or columns `#CALC!`, and lets a host give evaluation threads a larger
+  stack (`EvalConfig::worker_stack_bytes`); `23207d03` evaluates a defined name or LAMBDA body as
+  its tree reads instead of planning every operand again (a name of n chained terms cost about n^3:
+  400 terms took 13 s; 16,384 now take 0.85 s in release). Still 2,967 of 2,967 and 811/811.
+- `23207d03..f01d8eff` (stage 2 wave 2 review fixes, 2026-10-08): five commits, each measured
+  against Excel for Windows 16.0.20430 first. `468a333b` has CELL resolve a reference computed at
+  run time before any info type and print the sheet as the workbook spells it (a sheet the workbook
+  lacks is `#REF!`, a name it does not define the name's `#NAME?`). Precision as displayed:
+  `5f3cbabb` refuses, after evaluating, a workbook with a live circular reference (Excel keeps the
+  saved value of `=A1` over itself and of every formula reading it; the engine calculated the
+  readers again), refuses a format Excel will not open a workbook with (`0.0@`, `@;0`, `[>1]@`,
+  `0;0;0;0`, `# ?/100000`, `0.0 ?/?`, `E+0`, `[Foo]0`, `[Red][Blue]0`, three conditions, a bare
+  `g`) and a fixed fraction denominator past 32768, and reads the last of two or three sections as
+  the text section when it holds `@` (`0;@` stores -2/3 as -1); `d890db6d` reads a denominator as
+  what is typed bare after the slash (`# ?/05` stores fifths, `# ?/0"5"` takes one digit: the
+  quoted 5 is text), refuses a placeholder beside a denominator's digits (`# ?/5?`) and a color
+  index that is not digits (`[Color+5]0`), and recalculates codes of 124 to 126 characters, which
+  Excel opens. Of the 424 workbooks Excel saved in the precision probes
+  (`ops/excel-precision-probe-20261008.md`, 532 cases) the fork refuses 26 and reproduces 10,287 of
+  the other 398's 10,394 formula cells; 102 of the 107 others are constants in date- or
+  time-formatted cells, which the dense Calamine ingest reads to whole seconds with or without the
+  option. Parsing: `c6f1aee7` has `&` and CONCATENATE keep the first 32,767 characters of a longer
+  join, reads INDIRECT text ending in `#`, and refuses a cycle closed only through a spill
+  reference's anchor; `f01d8eff` has the writer refuse a workbook whose join past 32,767 UTF-16
+  units cuts through a character outside the Basic Multilingual Plane (Excel keeps half of it, which
+  no Rust string holds, and IFERROR could catch the engine's `#N/IMPL!`:
+  `IFERROR(LEN(REPT("a",32766)&UNICHAR(128512)),42)` cached 42 where Excel has 32766), counts
+  CONCAT's and TEXTJOIN's limit in UTF-16 units, gives REPLACE past it `#VALUE!`, and makes a
+  criterion longer than 255 units `#VALUE!` in COUNTIF, SUMIF, AVERAGEIF and the IFS functions.
+  Still 2,967 of 2,967 and 811/811.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.13`.
 
 ## Licences and attribution
 

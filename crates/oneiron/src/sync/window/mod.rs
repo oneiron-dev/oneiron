@@ -25,6 +25,9 @@ mod admission;
 mod device_only;
 mod egress;
 mod forward;
+mod history_free;
+mod project_history;
+mod replacement;
 mod reverse;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
@@ -44,15 +47,18 @@ pub(in crate::sync) use self::device_only::{
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
 pub(in crate::sync) use self::egress::{
-    export_promoted_window_updates_since, export_scrubbed_window_snapshot,
-    withdrawn_delete_carriers,
+    export_scrubbed_window_snapshot, withdrawn_delete_carriers,
 };
 pub use self::egress::{
-    export_window_updates_since, history_free_window_required, replay_pending_mirrors,
-    require_history_free_window,
+    history_free_window_required, replay_pending_mirrors, require_history_free_window,
 };
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
+pub use self::history_free::{
+    WindowExport, export_promotion_snapshot, export_window_replacement, export_window_since,
+    export_window_updates_since, promotion_baseline, update_reaches_below_root,
+};
+pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
 pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
@@ -425,6 +431,8 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
     Ok(applied)
 }
 
+#[cfg(test)]
+mod history_free_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

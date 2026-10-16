@@ -1,4 +1,5 @@
-//! Scheduled curator and harness-evaluation facets on one gated Dreamer authority.
+//! Scheduled curator and harness-evaluation facets on one gated Dreamer
+//! authority, and the Coach's nightly retrieval tune on the same lane.
 mod curator;
 mod evaluation;
 mod proposals;
@@ -67,6 +68,37 @@ impl DreamerRunnerStore<'_> {
             now,
         )
     }
+    /// The Coach's nightly retrieval tune, co-committed with a Timer wake. The
+    /// lane is shared by several facets, so the key is namespaced (one dedupe
+    /// key must never name two job types) and hashed, so any wake key the
+    /// queue accepts still fits.
+    pub(crate) fn enqueue_coach_retrieval_tune_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            txn,
+            MAINTENANCE_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: super::COACH_RETRIEVAL_TUNE_FACET.into(),
+                input: Value::Nil,
+                parent_attempt,
+            },
+            wake_key.map(|key| {
+                format!(
+                    "{}:{}",
+                    super::COACH_RETRIEVAL_TUNE_FACET,
+                    blake3::hash(key.as_bytes()).to_hex()
+                )
+            }),
+            run_id,
+            now,
+        )
+    }
     pub fn admit_next_maintenance(
         &self,
         input: AdmitDreamerAttempt,
@@ -88,6 +120,14 @@ pub(crate) fn execute(
         }
         representation::REPRESENTATION_FACET => {
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        super::COACH_RETRIEVAL_TUNE_FACET => {
+            // ARCH-0037 #tune-retrieval: the update at sleep. Too few gated
+            // rewards is a quiet night, not a failed attempt.
+            let _ = ctx
+                .vault
+                .store
+                .tune_retrieval_blend_weights_when_ready(Default::default())?;
         }
         POLICY_WAKE_FACET => {
             let trigger: crate::dreamer_wake::WakePolicyTrigger =
@@ -121,13 +161,34 @@ pub mod digest;
 
 /// The owner proof still holds in this write: it was authenticated by THIS
 /// vault (a proof from another vault never acts here, whatever PERSON ids the
-/// two share), its credential is live, and its actor is a live, active PERSON.
+/// two share), its credential is live, and its actor is a live, active PERSON
+/// that owns this vault.
 pub(crate) fn validate_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &crate::consent::AuthenticatedOwner,
 ) -> Result<crate::EntityId> {
-    let actor = owner.revalidate_in_txn(vault, txn)?;
+    require_active_person_in_txn(vault, txn, owner.revalidate_in_txn(vault, txn)?)
+}
+
+/// [`validate_owner_in_txn`] on the person tier, for maintenance a person
+/// does on their own behalf: their own judge budget, a judge ask assigned to
+/// them, a proposal or a representation review addressed to them. The shared
+/// proactivity digest is no such door: it reads every pending proposal and
+/// moves the vault's one delivery state.
+pub(crate) fn validate_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &crate::consent::AuthenticatedOwner,
+) -> Result<crate::EntityId> {
+    require_active_person_in_txn(vault, txn, owner.revalidate_person_in_txn(vault, txn)?)
+}
+
+fn require_active_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: crate::EntityId,
+) -> Result<crate::EntityId> {
     let refused = || {
         Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
             "maintenance requires a live owner in this vault",

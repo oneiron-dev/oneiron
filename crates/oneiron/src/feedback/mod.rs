@@ -84,6 +84,7 @@ mod bundle;
 mod consent;
 mod dispatch;
 mod error;
+mod inbox;
 pub mod intake;
 
 pub use self::bundle::{
@@ -109,6 +110,7 @@ pub use self::dispatch::{
     export_feedback_bundle, feedback_dispatch_request, send_feedback,
 };
 pub use self::error::FeedbackError;
+pub use self::inbox::{FeedbackInboxNote, FeedbackInboxVia};
 
 #[cfg(test)]
 mod tests;

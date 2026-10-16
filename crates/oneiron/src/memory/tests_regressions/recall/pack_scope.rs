@@ -1,7 +1,7 @@
 #[test]
 fn recall_returns_versioned_pack_with_provenance() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x1D);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     facade
@@ -81,7 +81,7 @@ fn recall_returns_versioned_pack_with_provenance() {
 #[test]
 fn recall_scope_honesty_lists_excluded_worlds() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x23);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     // The subject is MINTED through the structural door carrying its text
@@ -185,7 +185,7 @@ fn unset_recall_reads_base_plus_the_active_world() {
     // Owner grants are critical writes; the legacy fixture lands them without
     // the confirm round trip this test is not about.
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
-    let actor = put_person(&vault, 0x2A);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let active = EntityId::from_bytes([0x2B; 16]).unwrap();
     let other = EntityId::from_bytes([0x2C; 16]).unwrap();
@@ -309,7 +309,7 @@ fn unset_recall_reads_base_plus_the_active_world() {
 #[test]
 fn recall_neighbours_stay_inside_the_asked_worlds() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x31);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let elsewhere = EntityId::from_bytes([0x32; 16]).unwrap();
     let mut input = claim_input(
@@ -404,7 +404,7 @@ fn recall_deep_requires_lease_and_marks_pending() {
 #[test]
 fn recall_and_query_verbs_respect_limits() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x28);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     // Seed limit + 3 matching docs (limit = 2), one turn each: recall

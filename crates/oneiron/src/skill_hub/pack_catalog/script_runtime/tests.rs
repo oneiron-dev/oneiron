@@ -131,7 +131,7 @@ fn setup_with_secret(
         &bytes,
     )?;
     let vault = Arc::new(vault);
-    let owner_id = entity(0xB1);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let agent = entity(0xB2);
     for id in [owner_id, agent] {
         vault.put_entity(
@@ -142,6 +142,7 @@ fn setup_with_secret(
             b"actor",
         )?;
     }
+    crate::test_util::bind_test_owner(&vault, owner_id);
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:script-owner",
@@ -462,7 +463,7 @@ fn host_code_switch_keeps_candidate_inert_and_fit_install_active() -> Result<()>
         off.subscribe_pack_wakes(
             "fixture.echo",
             &off.authenticate_owner(
-                entity(0xB1),
+                crate::vault::embedded_owner_actor_id()?,
                 "principal:script-owner",
                 true,
                 crate::store::GateDecisionId::now()
@@ -614,7 +615,7 @@ fn pack_wake_never_fans_out_to_another_agents_matching_subscription() -> Result<
         ConnectorKeyRecord::active("email", Some(other), vec![EffectorBudget::rate(1, 600)], 1),
     )?;
     let owner = vault.authenticate_owner(
-        entity(0xB1),
+        crate::vault::embedded_owner_actor_id()?,
         "principal:script-owner",
         true,
         crate::store::GateDecisionId::now(),
@@ -856,7 +857,7 @@ fn replaced_install_after_source_selection_refuses_old_program_and_wake() -> Res
     let replacement = PackSource::from_files(files)?;
     let id = vault.stage_pack_source(&replacement, TimeRange { start: 4, end: 4 }, 4)?;
     let owner = vault.authenticate_owner(
-        entity(0xB1),
+        crate::vault::embedded_owner_actor_id()?,
         "principal:script-owner",
         true,
         crate::store::GateDecisionId::now(),

@@ -3,20 +3,12 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
 use crate::consent::{ComposedEffect, EffectFacts};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
-use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::GateDecisionId;
 use crate::test_util::open_test_vault_with;
 
 fn consent_vault() -> Result<(tempfile::TempDir, Vault, EntityId, ReceiptQuery)> {
     let (dir, vault) = open_test_vault_with(VaultConfig::default());
-    let owner_id = EntityId::from_bytes([0x51; 16])?;
-    vault.put_entity(
-        &owner_id,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
     let effect =
@@ -90,6 +82,7 @@ fn a_prose_scope_label_reaches_no_stored_row() -> Result<()> {
 fn a_diagnostic_stored_before_the_ruling_reads_without_its_text() -> Result<()> {
     const TEXT: &str = "sentinel-world-text-0c5e: my sister's diagnosis";
     let (_dir, vault, owner, query) = consent_vault()?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let ids = vault.run_consent_denied_detector("scope.consent", query)?;
     let canonical = body(&vault, &ids[0])?;
     let stored = decode_diagnostic_event_body(&canonical)?;

@@ -59,15 +59,20 @@ pub(super) fn root_id(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<String> {
     Ok(super::support::hex_string(&root))
 }
 
+/// Whether `actor` owns this vault now and holds an active human binding
+/// under its root: the one actor whose review needs no named grant and whose
+/// grants delegate. A human binding alone is no ownership; a shared vault's
+/// Admin or Delegate can hold one.
 pub(super) fn is_root_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Result<bool> {
     verify_live_actor(vault, txn, WriteActor::new(actor, EdgeActorClass::Human))?;
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     if fold.vault_root_is_conflicted() || fold.vault_id.is_none() {
         return Ok(false);
     }
-    Ok(crate::authority::actor_binding_is_active(
-        &fold, &actor, "human",
-    ))
+    Ok(
+        crate::authority::actor_binding_is_active(&fold, &actor, "human")
+            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?,
+    )
 }
 
 pub(super) fn verify_owner(
@@ -274,8 +279,9 @@ pub(super) mod entity_serde {
 }
 
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
-/// This is never used by auto-upsert. Standalone unrooted vaults keep their
-/// existing human-owner posture; a declared/conflicted root is fail-closed.
+/// This is never used by auto-upsert. Only the vault owner overrides: the
+/// embedded owner on an unrooted vault, the bound owner on a rooted one; a
+/// conflicted root is fail-closed.
 pub(crate) fn explicit_claim_override_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -298,11 +304,8 @@ pub(crate) fn explicit_claim_override_in_txn(
             "memory.claim.retract",
         );
     }
-    let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    if fold.vault_root_is_conflicted()
-        || (fold.vault_id.is_some()
-            && !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human"))
-    {
+    // The owner check every owner verb takes, rooted or not (H149).
+    if super::support::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_err() {
         return Err(authority_denied(
             "explicit override requires active owner authority",
         ));

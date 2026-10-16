@@ -1,12 +1,20 @@
 //! Counterparty contact lookup and party-channel index keys and helpers.
 
 use super::codec::{decode_counterparty_contact_body, normalize_counterparty};
-use super::types::CounterpartyContactRecord;
+use super::types::{
+    CounterpartyContactRecord, PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+    PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+};
 use crate::channel_identity::decode_channel_identity_body;
+use crate::claim::{ClaimBody, ClaimSubject};
+use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::registry::{
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use sha2::Digest;
@@ -143,24 +151,27 @@ pub(super) fn put_counterparty_contact_party_channel_index(
     Ok(())
 }
 
-/// Removes `contact_ref` from the canonical de-duplicated set for this pair,
-/// deleting the entry entirely when nothing is left in it.
-pub(super) fn remove_counterparty_contact_party_channel_index(
+/// Removes `contact_ref` from every pair that lists it. A contact's own row
+/// cannot name the pair its leg was filed under (see the caller).
+pub(super) fn remove_counterparty_contact_from_every_party_channel(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    party_ref: &str,
-    channel_class: &str,
     contact_ref: EntityId,
 ) -> Result<()> {
-    let digest = party_channel_digest(party_ref, channel_class)?;
-    let Some(ContactRefs(mut refs)) = PARTY_CHANNEL_INDEX.get(store, &*wtxn, &digest)? else {
-        return Ok(());
-    };
-    refs.retain(|id| *id != contact_ref);
-    if refs.is_empty() {
-        PARTY_CHANNEL_INDEX.delete(store, wtxn, &digest)?;
-    } else {
-        PARTY_CHANNEL_INDEX.put(store, wtxn, &digest, &ContactRefs(refs))?;
+    let mut listed = Vec::new();
+    for item in PARTY_CHANNEL_INDEX.iter_from(store, &*wtxn, &[])? {
+        let (digest, ContactRefs(refs)) = item?;
+        if refs.contains(&contact_ref) {
+            listed.push((digest, refs));
+        }
+    }
+    for (digest, mut refs) in listed {
+        refs.retain(|id| *id != contact_ref);
+        if refs.is_empty() {
+            PARTY_CHANNEL_INDEX.delete(store, wtxn, &digest)?;
+        } else {
+            PARTY_CHANNEL_INDEX.put(store, wtxn, &digest, &ContactRefs(refs))?;
+        }
     }
     Ok(())
 }
@@ -175,7 +186,15 @@ pub(super) fn counterparty_contact_channel_class(
     txn: &heed::RoTxn<'_>,
     record: &CounterpartyContactRecord,
 ) -> Result<Option<String>> {
-    let Some(raw) = store.port_entity_record(txn, &record.identity_ref)? else {
+    identity_channel_class(store, txn, &record.identity_ref)
+}
+
+fn identity_channel_class(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: &EntityId,
+) -> Result<Option<String>> {
+    let Some(raw) = store.port_entity_record(txn, identity_ref)? else {
         return Ok(None);
     };
 
@@ -258,6 +277,109 @@ pub(crate) fn counterparty_contacts_by_party_full_scan(
         }
     }
     Ok(records)
+}
+
+/// Whether the `counterparty_contact.*` claims name a contact of `party_ref`
+/// on `channel_class`, or on a class its identity does not resolve to: UNKNOWN
+/// matches every class, as above.
+///
+/// Read from the claims, the contact's truth, and not from the type-132 rows:
+/// a supported cache drop removes a row and both its index legs, and a row
+/// reader would lose a contact a party-wide opt-out still covers (F06 R2-F5).
+/// Every lifecycle counts, so the read holds more, never less. It walks every
+/// `counterparty_contact.counterparty` posting, under the scan-check door.
+pub(crate) fn party_has_contact_on_class_in_claims_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+) -> Result<bool> {
+    const PAGE: usize = 256;
+    let party_ref = party_ref.trim();
+    let channel_class = normalize_channel_class(channel_class);
+    let mut count = ScanCount::start(store, txn, EngineScan::PartyContactClaims, &[])?;
+    let mut after = None;
+    let found = 'pages: loop {
+        let page = crate::claim::claim_ids_for_predicate_page_in_txn(
+            store,
+            txn,
+            PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+            after,
+            PAGE,
+        )?;
+        count.rows(page.len());
+        for claim_id in &page {
+            let Some(body) = claim_body_in_txn(store, txn, claim_id)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY
+                || body.value.as_str() != Some(party_ref)
+            {
+                continue;
+            }
+            let ClaimSubject::Entity(contact_id) = body.subject else {
+                continue;
+            };
+            if contact_claims_match_class(store, txn, &contact_id, &channel_class)? {
+                break 'pages true;
+            }
+        }
+        if page.len() < PAGE {
+            break false;
+        }
+        after = page.last().copied();
+    };
+    count.defer(store);
+    Ok(found)
+}
+
+/// Whether one of the contact's `identity_ref` claims names an identity on
+/// `channel_class` or on no resolvable class. A contact with no such claim is
+/// UNKNOWN too.
+fn contact_claims_match_class(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+    channel_class: &str,
+) -> Result<bool> {
+    let mut any_identity = false;
+    for entry in store.port_edges(
+        txn,
+        contact_id,
+        EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+    )? {
+        let Some(body) = claim_body_in_txn(store, txn, &entry?.target)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF {
+            continue;
+        }
+        any_identity = true;
+        let class = match body.value.as_str().map(EntityId::from_hex) {
+            Some(Ok(identity_ref)) => identity_channel_class(store, txn, &identity_ref)?,
+            _ => None,
+        };
+        if class.is_none_or(|class| class == channel_class) {
+            return Ok(true);
+        }
+    }
+    Ok(!any_identity)
+}
+
+fn claim_body_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<ClaimBody>> {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
+        return Ok(None);
+    };
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    crate::claim::decode_claim_body(&raw.body, true).map(Some)
 }
 
 /// Reads one contact record inside a caller-owned transaction.

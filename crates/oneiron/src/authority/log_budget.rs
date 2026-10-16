@@ -1,46 +1,64 @@
-//! Pinned bounds on authority-fold work, and the store-door checks that keep
-//! a stored log inside them (H72).
+//! The authority log's fold bounds, and the store-door checks that keep a
+//! stored log inside them (H72).
 //!
 //! The fold indexes every row's whole ancestry and probes each handoff by
 //! folding its line again, so its work grows with the square of the log and
 //! with the number of handoffs. Every door, local or replicated, holds a row
 //! no owner, admin or install key signed: the fold applies none. The owner's
 //! work, any row a slip issuer signs or cosigns, never meets a bound (the
-//! owner's rate law, rule 5): the fold's own bounds stay its limit, and the
-//! log's headroom check warns the owner at half of what one fold holds. The slip issuer's
-//! slip ops count toward no bound at all: every sign-in mints one, so a busy
-//! owner's log gains thousands a year. Any other key stores up to the
-//! `authority_log_signer_bound` policy row; past it, its rows wait, never
-//! refused, a typed check asks the owner, and raising the row lands them on
-//! the next drain. A key's first revocation of a device or binding the fold
-//! holds live always lands. A fold handed more than its own bounds fails
-//! closed: it holds no root and reads as a conflicted one, which every
-//! authority gate refuses.
+//! owner's rate law, rule 5): the fold reads every row, and the log's counted
+//! rows, handoffs and ancestor pairs each raise one typed headroom check at
+//! their policy rows. The slip issuer's slip ops count toward no check:
+//! every sign-in mints one, so a busy owner's log gains thousands a year.
+//! Any other key stores up to the `authority_log_signer_bound` policy row;
+//! past it, its rows wait, never refused, a typed check asks the owner, and
+//! raising the row lands them on the next drain. An owner anchor this
+//! install does not pin is a stranger, since a root needs nothing but a
+//! fresh key: every stranger's row shares that one row (world privacy P6b,
+//! r23). A key's first revocation of a device or binding the fold holds live
+//! always lands. The fold refuses only a log whose projected peak passes the
+//! `authority_log_fold_memory_floor` row: it holds no root and reads as a
+//! conflicted one, which every authority gate refuses, and its typed issue
+//! names the floor.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use super::log_structure::{
+    AuthorityStructure, LocalRoots, authority_structure, authority_structure_under,
+    self_signed_root, signed_by,
+};
 use super::*;
 use crate::store::Store;
 
-/// The fold's unit of bounds, and the default of the
-/// `authority_log_signer_bound` policy row: the rows a key no slip issuer
-/// vouches for stores before the rest wait.
+/// The default of the `authority_log_signer_bound` policy row: the rows a
+/// key no slip issuer vouches for stores before the rest wait.
 pub const MAX_AUTHORITY_ROWS_PER_SIGNER: usize = 2048;
-/// Most handoffs (`ReRoot` rows) one fold holds. The fold probes each one by
-/// folding its line again; a vault re-roots once per host move.
-pub const MAX_AUTHORITY_FOLD_HANDOFFS: usize = 32;
-/// Most counted rows one fold reads.
-pub const MAX_AUTHORITY_FOLD_ENTRIES: usize = 4 * MAX_AUTHORITY_ROWS_PER_SIGNER;
+
+/// What one fold holds at its peak, per row and per ancestor pair, measured
+/// on the fleet (10-16) and rounded up: at most 11.6 KB a row with no
+/// ancestors, and 252 to 626 bytes a pair (a confirm chain, then one agent
+/// enrolled and bound per row). A row's state holds what its ancestors
+/// added, so the pairs carry the states as well as the ancestry index.
+const FOLD_BYTES_PER_ROW: u64 = 16 * 1024;
+const FOLD_BYTES_PER_ANCESTOR_PAIR: u64 = 640;
 
 #[cfg(test)]
 thread_local! {
     static ROWS_PER_SIGNER_FOR_TEST: std::cell::Cell<Option<usize>> =
         const { std::cell::Cell::new(None) };
+    static FOLD_MEMORY_FLOOR_FOR_TEST: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+    static PHYSICAL_MEMORY_FOR_TEST: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
 }
 
-/// Runs `body` with every bound scaled to `rows` per signer on this thread,
-/// so a test crosses them in a few rows.
+/// The least the memory floor's default reaches, however small the machine.
+const FOLD_MEMORY_FLOOR_MIN_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Runs `body` with the signer bound and the row and pair headroom rows
+/// scaled to `rows` per signer on this thread, so a test crosses them in a
+/// few rows.
 #[cfg(test)]
 pub(crate) fn with_rows_per_signer_for_test<T>(rows: usize, body: impl FnOnce() -> T) -> T {
     ROWS_PER_SIGNER_FOR_TEST.with(|bound| bound.set(Some(rows)));
@@ -49,12 +67,24 @@ pub(crate) fn with_rows_per_signer_for_test<T>(rows: usize, body: impl FnOnce() 
     result
 }
 
-fn rows_per_signer() -> usize {
-    #[cfg(test)]
-    if let Some(rows) = ROWS_PER_SIGNER_FOR_TEST.with(std::cell::Cell::get) {
-        return rows;
-    }
-    MAX_AUTHORITY_ROWS_PER_SIGNER
+/// Runs `body` with every fold on this thread under a memory floor of
+/// `bytes`, the policy row's or the default's.
+#[cfg(test)]
+pub(crate) fn with_fold_memory_floor_for_test<T>(bytes: u64, body: impl FnOnce() -> T) -> T {
+    FOLD_MEMORY_FLOOR_FOR_TEST.with(|floor| floor.set(Some(bytes)));
+    let result = body();
+    FOLD_MEMORY_FLOOR_FOR_TEST.with(|floor| floor.set(None));
+    result
+}
+
+/// Runs `body` on this thread as on a machine with `bytes` of physical
+/// memory.
+#[cfg(test)]
+pub(crate) fn with_physical_memory_for_test<T>(bytes: u64, body: impl FnOnce() -> T) -> T {
+    PHYSICAL_MEMORY_FOR_TEST.with(|memory| memory.set(Some(bytes)));
+    let result = body();
+    PHYSICAL_MEMORY_FOR_TEST.with(|memory| memory.set(None));
+    result
 }
 
 /// The rows a signer stores before the rest wait, unless a slip issuer
@@ -68,44 +98,93 @@ fn signer_bound(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<us
     Ok(usize::try_from(bound).unwrap_or(usize::MAX))
 }
 
-/// The counted rows and slip-issuer handoffs at which the log warns of its
-/// fold's headroom: the policy rows, or a test's scaled bound for rows.
-fn headroom(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<(usize, usize)> {
+/// The counted rows, slip-issuer handoffs and counted ancestor pairs at
+/// which the log raises its headroom checks: the policy rows, or a test's
+/// scaled bound for rows and pairs.
+fn headroom(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<(u64, u64, u64)> {
     let policy = authority_observation_policy_in_txn(store, txn)?;
-    let handoffs = usize::try_from(policy.log_headroom_handoffs).unwrap_or(usize::MAX);
     #[cfg(test)]
     if let Some(rows) = ROWS_PER_SIGNER_FOR_TEST.with(std::cell::Cell::get) {
-        return Ok((rows, handoffs));
+        let rows = rows as u64;
+        return Ok((rows, policy.log_headroom_handoffs, 2 * rows * rows));
     }
-    let rows = usize::try_from(policy.log_headroom_rows).unwrap_or(usize::MAX);
-    Ok((rows, handoffs))
+    Ok((
+        policy.log_headroom_rows,
+        policy.log_headroom_handoffs,
+        policy.log_headroom_ancestor_pairs,
+    ))
 }
 
-fn fold_entries_bound() -> usize {
-    4 * rows_per_signer()
+/// The bytes a fold may project to hold at its peak: the policy row, else a
+/// quarter of this machine's physical memory between 1 GiB and
+/// [`DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES`] (the cap when the
+/// platform does not say), or a test's floor.
+pub(super) fn fold_memory_floor(policy: Option<&AuthorityObservationPolicy>) -> u64 {
+    #[cfg(test)]
+    if let Some(bytes) = FOLD_MEMORY_FLOOR_FOR_TEST.with(std::cell::Cell::get) {
+        return bytes;
+    }
+    policy
+        .and_then(|policy| policy.log_fold_memory_floor_bytes)
+        .unwrap_or_else(|| {
+            physical_memory_bytes().map_or(DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES, |bytes| {
+                (bytes / 4).clamp(
+                    FOLD_MEMORY_FLOOR_MIN_BYTES,
+                    DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
+                )
+            })
+        })
 }
 
-/// Most counted ancestor pairs one fold indexes: two full signers in one
-/// chain.
-pub(super) fn ancestor_edges_bound() -> usize {
-    2 * rows_per_signer() * rows_per_signer()
+/// This machine's physical memory, when the platform says.
+fn physical_memory_bytes() -> Option<u64> {
+    #[cfg(test)]
+    if let Some(bytes) = PHYSICAL_MEMORY_FOR_TEST.with(std::cell::Cell::get) {
+        return Some(bytes);
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: `sysconf` reads a configuration value and touches no memory
+        // of ours.
+        let (pages, page) = unsafe {
+            (
+                libc::sysconf(libc::_SC_PHYS_PAGES),
+                libc::sysconf(libc::_SC_PAGESIZE),
+            )
+        };
+        let pages = u64::try_from(pages).ok().filter(|pages| *pages > 0)?;
+        let page = u64::try_from(page).ok().filter(|page| *page > 0)?;
+        Some(pages.saturating_mul(page))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// What a fold of `rows` rows indexing `pairs` ancestor pairs holds at its
+/// peak.
+pub(super) fn fold_projected_bytes(rows: usize, pairs: u64) -> u64 {
+    (rows as u64)
+        .saturating_mul(FOLD_BYTES_PER_ROW)
+        .saturating_add(pairs.saturating_mul(FOLD_BYTES_PER_ANCESTOR_PAIR))
 }
 
 impl AuthorityFold {
-    /// True when the fold refused its log for exceeding a bound. Such a fold
+    /// True when the fold refused its log at its memory floor. Such a fold
     /// also reads as [`Self::vault_root_is_conflicted`], so every authority
     /// gate refuses it.
     #[must_use]
     pub fn authority_log_past_bound(&self) -> bool {
-        self.authority_log_bound_signer().is_some()
+        self.authority_log_memory_floor().is_some()
     }
 
-    /// The signer whose rows took the log past a fold bound, when the fold
-    /// refused it.
+    /// The memory floor, in bytes, that the fold's projected peak passed,
+    /// when the fold refused its log there.
     #[must_use]
-    pub fn authority_log_bound_signer(&self) -> Option<&AuthorityKey> {
+    pub fn authority_log_memory_floor(&self) -> Option<u64> {
         self.issues.iter().find_map(|issue| match issue {
-            AuthorityFoldIssue::FoldBudgetExceeded { signer } => Some(signer),
+            AuthorityFoldIssue::FoldMemoryFloor { floor_bytes } => Some(*floor_bytes),
             _ => None,
         })
     }
@@ -126,12 +205,12 @@ pub(crate) fn authority_signer_label(key: &AuthorityKey) -> String {
     format!("{suite}:{hex}")
 }
 
-/// The fold of a log past the bounds: no root, no roster, one typed issue
-/// naming the signer that took it there.
-pub(super) fn over_budget_fold(signer: AuthorityKey) -> AuthorityFold {
+/// The fold of a log past its memory floor: no root, no roster, one typed
+/// issue naming the floor.
+pub(super) fn memory_floor_fold(floor_bytes: u64) -> AuthorityFold {
     let mut fold = fold_authority_log(&[]);
     fold.issues
-        .push(AuthorityFoldIssue::FoldBudgetExceeded { signer });
+        .push(AuthorityFoldIssue::FoldMemoryFloor { floor_bytes });
     fold
 }
 
@@ -144,245 +223,6 @@ fn is_slip_op(op: &AuthorityOp) -> bool {
 
 fn is_handoff(entry: &AuthorityLogEntry) -> bool {
     matches!(entry.op, AuthorityOp::ReRoot { .. })
-}
-
-pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
-    match op {
-        AuthorityOp::EnrollDevice { device }
-        | AuthorityOp::RotateKey {
-            new_device: device, ..
-        }
-        | AuthorityOp::ReRoot { new_device: device } => Some(device),
-        _ => None,
-    }
-}
-
-/// The log's consent structure, read from its signed rows alone, so the
-/// fold's bounds and the store doors judge a row the same way.
-#[derive(Debug, Default)]
-pub(crate) struct AuthorityStructure {
-    /// The verified genesis rows. A log with more than one, even from one
-    /// key, has no admitters: the fold reads each as its own vault root.
-    roots: Vec<AuthorityLogEntry>,
-    /// The keys whose signature vouches for a row: the genesis key, and
-    /// each owner or admin key named by a signed re-root, rotation or
-    /// enrollment that an admitter signed or cosigned, the fold's own
-    /// consent rule.
-    admitters: BTreeSet<AuthorityKey>,
-    /// The slip issuers: the admitters that hold the owner role.
-    pub(super) issuers: BTreeSet<AuthorityKey>,
-    /// Each machine and the install keys a slip issuer's revisions of it
-    /// named. Such a key signs that machine's world edits.
-    machine_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
-}
-
-fn signed_by(entry: &AuthorityLogEntry, keys: &BTreeSet<AuthorityKey>) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .any(|signature| keys.contains(&signature.public_key))
-}
-
-pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
-    device.roles & (ROLE_OWNER | ROLE_ADMIN) != 0
-}
-
-/// Every key the fold holds as a live owner is a slip issuer. Nothing
-/// leaves the set, so a revocation the fold refuses never drops the
-/// issuer, and slip rows a door stored uncounted never come to count
-/// against the fold's bounds. An owner key leaves the host-rooted roster
-/// only by a handoff, and a key a handoff retired signs nothing new at the
-/// replicated door. A machine, agent or peer key, a stranger, and every
-/// signer of a log without exactly one genesis row count as any other
-/// signer.
-pub(super) fn authority_structure<'a>(
-    entries: impl Iterator<Item = &'a AuthorityLogEntry>,
-) -> AuthorityStructure {
-    let mut builder: StructureBuilder<'a> = StructureBuilder::default();
-    for entry in entries {
-        builder.push(entry);
-    }
-    builder.settle();
-    builder.structure
-}
-
-/// [`authority_structure`] grown a row at a time, as an import stages its
-/// rows: the same structure for the same rows, in any order. A row that
-/// waits for a grant is filed under each key that could give it, so a
-/// settle visits only the rows its new grants wake.
-#[derive(Debug, Default)]
-pub(super) struct StructureBuilder<'a> {
-    pub(super) structure: AuthorityStructure,
-    root_roles: u16,
-    /// Admissions and machine revisions pushed since the last settle.
-    fresh: Vec<&'a AuthorityLogEntry>,
-    /// Owner and admin admissions no admitter has signed yet, under each
-    /// key that signed them.
-    admissions: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
-    /// Machine revisions whose primary signer is no slip issuer yet, under
-    /// that signer.
-    profiles: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
-    /// The grants [`Self::settle`] made since the caller last took them.
-    pub(super) grown: Vec<Grant>,
-}
-
-/// What [`StructureBuilder::settle`] granted a key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Grant {
-    Admitter(AuthorityKey),
-    Issuer(AuthorityKey),
-    InstallKey(crate::EntityId, AuthorityKey),
-}
-
-impl<'a> StructureBuilder<'a> {
-    /// Adds `entry` unsettled.
-    pub(super) fn push(&mut self, entry: &'a AuthorityLogEntry) {
-        match &entry.op {
-            AuthorityOp::Genesis { device, .. } => {
-                if device.key == *entry.signer_key()
-                    && is_consent_device(device)
-                    && !self.structure.roots.contains(entry)
-                    && verify_entry_signatures(entry).is_ok()
-                {
-                    self.structure.roots.push(entry.clone());
-                    self.root_roles |= device.roles;
-                }
-            }
-            AuthorityOp::MachineProfile(_) => self.fresh.push(entry),
-            op => {
-                if admits_device(op).is_some_and(is_consent_device) {
-                    self.fresh.push(entry);
-                }
-            }
-        }
-    }
-
-    /// Admits what the rows pushed so far admit. A log with more than one
-    /// root admits nothing.
-    pub(super) fn settle(&mut self) {
-        let Some(root) = self
-            .structure
-            .roots
-            .first()
-            .filter(|_| self.structure.roots.len() == 1)
-            .map(|genesis| genesis.signer_key().clone())
-        else {
-            self.structure.admitters.clear();
-            self.structure.issuers.clear();
-            self.structure.machine_keys.clear();
-            return;
-        };
-        let (mut admitted, mut issued) = (Vec::new(), Vec::new());
-        if self.root_roles & ROLE_OWNER != 0 && self.structure.issuers.insert(root.clone()) {
-            issued.push(root.clone());
-        }
-        if self.structure.admitters.insert(root.clone()) {
-            admitted.push(root);
-        }
-        for entry in std::mem::take(&mut self.fresh) {
-            if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
-                self.file_profile(entry);
-            } else if signed_by(entry, &self.structure.admitters) {
-                self.admit(entry, &mut admitted, &mut issued);
-            } else {
-                for signature in std::iter::once(&entry.signer).chain(&entry.cosigns) {
-                    self.admissions
-                        .entry(signature.public_key.clone())
-                        .or_default()
-                        .push(entry);
-                }
-            }
-        }
-        loop {
-            if let Some(key) = admitted.pop() {
-                for entry in self.admissions.remove(&key).unwrap_or_default() {
-                    self.admit(entry, &mut admitted, &mut issued);
-                }
-                self.grown.push(Grant::Admitter(key));
-            } else if let Some(key) = issued.pop() {
-                for entry in self.profiles.remove(&key).unwrap_or_default() {
-                    self.file_profile(entry);
-                }
-                self.grown.push(Grant::Issuer(key));
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Admits the key an admission an admitter signed names.
-    fn admit(
-        &mut self,
-        entry: &AuthorityLogEntry,
-        admitted: &mut Vec<AuthorityKey>,
-        issued: &mut Vec<AuthorityKey>,
-    ) {
-        let Some(device) = admits_device(&entry.op) else {
-            return;
-        };
-        if verify_entry_signatures(entry).is_err() {
-            return;
-        }
-        if device.roles & ROLE_OWNER != 0 && self.structure.issuers.insert(device.key.clone()) {
-            issued.push(device.key.clone());
-        }
-        if self.structure.admitters.insert(device.key.clone()) {
-            admitted.push(device.key.clone());
-        }
-    }
-
-    /// Takes a machine revision's install key when a slip issuer signed it,
-    /// or files it under its signer.
-    fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
-        let signer = entry.signer_key();
-        if !self.structure.issuers.contains(signer) {
-            self.profiles.entry(signer.clone()).or_default().push(entry);
-            return;
-        }
-        if let AuthorityOp::MachineProfile(profile) = &entry.op
-            && verify_entry_signatures(entry).is_ok()
-        {
-            let key = AuthorityKey::Ed25519(profile.machine_key);
-            if self
-                .structure
-                .machine_keys
-                .insert((profile.machine, key.clone()))
-            {
-                self.grown.push(Grant::InstallKey(profile.machine, key));
-            }
-        }
-    }
-}
-
-impl AuthorityStructure {
-    /// Whether a key that may vouch for `entry` signed or cosigned it: an
-    /// admitter, or, for a world edit, the install key of the machine it
-    /// names, as its primary signer. A genesis vouches for itself only in a
-    /// log that holds none, or as the one it holds: any other, even from the
-    /// root key with a new nonce, would fork the root. The caller verifies
-    /// the signatures.
-    pub(super) fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
-        match &entry.op {
-            AuthorityOp::Genesis { device, .. } => {
-                device.key == *entry.signer_key()
-                    && is_consent_device(device)
-                    && self.roots.iter().all(|root| root == entry)
-            }
-            AuthorityOp::WorldPrivacy(edit) => self
-                .machine_keys
-                .contains(&(edit.machine, entry.signer_key().clone())),
-            _ => signed_by(entry, &self.admitters),
-        }
-    }
-
-    /// Whether `key` signs rows the fold may come to admit: an admitter, or
-    /// an install key, though the local fold may not hold it yet.
-    fn stands(&self, key: &AuthorityKey) -> bool {
-        self.admitters.contains(key)
-            || self
-                .machine_keys
-                .iter()
-                .any(|(_, machine_key)| machine_key == key)
-    }
 }
 
 /// The slip issuers of `entries`: see [`authority_structure`].
@@ -403,29 +243,6 @@ pub(super) fn uncounted_rows(
         .collect()
 }
 
-/// Refuses, before any work, a log with more counted rows or handoffs than
-/// one fold may read, naming the signer with the most of them.
-pub(super) fn refuse_over_budget(entries: &[AuthorityLogEntry]) -> Option<AuthorityFold> {
-    let issuers = authority_structure(entries.iter()).issuers;
-    let mut counted = BTreeMap::<&AuthorityKey, usize>::new();
-    let mut handoffs = BTreeMap::<&AuthorityKey, usize>::new();
-    for entry in entries {
-        if !(is_slip_op(&entry.op) && issuers.contains(entry.signer_key())) {
-            *counted.entry(entry.signer_key()).or_default() += 1;
-        }
-        if is_handoff(entry) {
-            *handoffs.entry(entry.signer_key()).or_default() += 1;
-        }
-    }
-    let past = |by_signer: &BTreeMap<&AuthorityKey, usize>, bound| {
-        (by_signer.values().sum::<usize>() > bound)
-            .then(|| by_signer.iter().max_by_key(|(_, rows)| **rows))
-            .flatten()
-            .map(|(key, _)| over_budget_fold((*key).clone()))
-    };
-    past(&counted, fold_entries_bound()).or_else(|| past(&handoffs, MAX_AUTHORITY_FOLD_HANDOFFS))
-}
-
 /// What the store doors read of the stored log: its consent structure, and
 /// each signer's stored rows. Built once per authority generation.
 #[derive(Debug)]
@@ -439,6 +256,9 @@ pub(crate) struct AuthorityDoorView {
     counted: usize,
     /// The stored handoffs a slip issuer signed.
     issuer_handoffs: usize,
+    /// The stored rows that vouch only as a stranger's: anchors this
+    /// install does not take as its own ([`AuthorityStructure::is_stranger`]).
+    strangers: usize,
 }
 
 #[cfg(test)]
@@ -475,11 +295,12 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
         for (_, body) in authority_log_rows_in_txn(store, txn)? {
             entries.push(decode_authority_log_entry_body(&body)?);
         }
-        let structure = authority_structure(entries.iter());
+        let structure = authority_structure_under(&entries, LocalRoots::read_in_txn(store, txn)?);
         let mut rows = BTreeMap::<AuthorityKey, usize>::new();
         let mut revocations = BTreeSet::new();
-        let (mut counted, mut issuer_handoffs) = (0, 0);
+        let (mut counted, mut issuer_handoffs, mut strangers) = (0, 0, 0);
         for entry in &entries {
+            strangers += usize::from(structure.vouches_for(entry) && structure.is_stranger(entry));
             *rows.entry(entry.signer_key().clone()).or_default() += 1;
             if let Some(revoked) = Revoked::of(&entry.op) {
                 revocations.insert((entry.signer_key().clone(), revoked));
@@ -494,15 +315,17 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
             revocations,
             counted,
             issuer_handoffs,
+            strangers,
         })
     })
 }
 
 /// Whether `entry`'s signer has standing to store a replicated row: a key
 /// some valid row admitted (live, revoked or retired), a machine's install
-/// key, or a key the stored log's structure admits though the fold does
-/// not hold it yet, such as an owner key a pre-handoff rotation named. A
-/// key none of these name signs no valid row, so its rows wait for the
+/// key, a valid root's owner anchor, the anchor of the root record it is,
+/// or a key the stored log's structure admits though the fold does not
+/// hold it yet, such as an owner key a pre-handoff rotation named. A key
+/// none of these name signs no valid row, so its rows wait for the
 /// enrollment instead of being stored.
 pub(crate) fn signer_has_standing(
     store: &Store,
@@ -513,10 +336,10 @@ pub(crate) fn signer_has_standing(
     let signer = entry.signer_key();
     if fold.roster.contains_key(signer)
         || fold.retired_keys.contains(signer)
-        || fold
-            .machines
-            .values()
-            .any(|machine| AuthorityKey::Ed25519(machine.profile.machine_key) == *signer)
+        || matches!(signer, AuthorityKey::Ed25519(key)
+            if fold.machines.values().any(|machine| machine.names_key(key))
+                || fold.root_anchors().contains_key(key))
+        || self_signed_root(entry).is_some()
     {
         return Ok(true);
     }
@@ -561,8 +384,9 @@ impl Revoked {
 pub(crate) enum AuthorityDoor {
     Lands,
     /// The row waits: its signer, which no slip issuer vouched for here, is
-    /// at its bound, or it is a handoff no slip issuer signed, which the
-    /// fold never applies. A replica retries it on every drain.
+    /// at its bound, or it is a stranger's row past the bound all strangers'
+    /// rows share, or it is a handoff no slip issuer signed, which the fold
+    /// never applies. A replica retries it on every drain.
     AtBound,
     /// No key that may vouch for the row signed it. The fold applies no row
     /// without an owner's or admin's consent, and no world edit but its
@@ -579,7 +403,10 @@ pub(crate) enum AuthorityDoor {
 /// revocation of a device or actor binding the fold holds live; the rest
 /// wait (rule 5: never refused). So such a key stores at most its bound and
 /// one row per live thing it revokes, even when the fold refuses them all.
-/// The door reads the stored log's structure as the fold's bounds do.
+/// A stranger's row, which an anchor this install does not take as its own
+/// vouches for, lands only while every such stored row together is under
+/// that row, so fresh anchors never add a bound each. The door reads the
+/// stored log's structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -596,6 +423,17 @@ pub(crate) fn authority_door(
     let view = door_view(store, txn)?;
     if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
         return Ok(AuthorityDoor::Unowned);
+    }
+    // A self-signed root needs nothing but a fresh key, so an anchor this
+    // install does not take as its own is a stranger: its rows, and its
+    // machines', share one bound instead of one each (Astra #1422e F1; the
+    // Engine, r23). Its own anchors' rows never meet it.
+    if view.structure.is_stranger(entry) {
+        return Ok(if view.strangers < signer_bound(store, txn)? {
+            AuthorityDoor::Lands
+        } else {
+            AuthorityDoor::AtBound
+        });
     }
     let issuers = &view.structure.issuers;
     let signer = entry.signer_key();
@@ -628,12 +466,16 @@ pub(crate) fn authority_door(
 /// stored log: evidence for the owner, never a refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityLogCheck {
-    /// [`Self::SIGNER_BOUND`] or [`Self::FOLD_HEADROOM`].
+    /// [`Self::SIGNER_BOUND`], [`Self::UNPINNED_ROOTS`] or
+    /// [`Self::FOLD_HEADROOM`].
     pub kind: &'static str,
+    /// For a headroom check, what reached its row: [`Self::ROWS`],
+    /// [`Self::HANDOFFS`] or [`Self::ANCESTOR_PAIRS`].
+    pub scope: Option<&'static str>,
     /// The signer at its bound, for a signer-bound check.
     pub signer: Option<String>,
-    /// The signer's stored rows, or the log's counted rows or slip-issuer
-    /// handoffs.
+    /// The signer's stored rows, the strangers' rows, or the log's counted
+    /// rows, slip-issuer handoffs or counted ancestor pairs.
     pub count: u64,
     /// The policy row `count` reached.
     pub threshold: u64,
@@ -644,18 +486,29 @@ impl AuthorityLogCheck {
     /// `authority_log_signer_bound` row: its further rows wait until the
     /// owner raises the row, and then land on the next drain.
     pub const SIGNER_BOUND: &'static str = "authority_log_signer_bound";
-    /// The log's counted rows, or its slip issuers' handoffs, reached their
-    /// `authority_log_fold_headroom` policy row: by default half of what one
-    /// fold holds (a one-chain log's 4,096 counted rows under the
-    /// ancestor-pair bound, and 32 handoffs). The owner's work is never
-    /// held, so past those bounds the fold fails closed.
+    /// The rows of anchors this install does not pin reached the
+    /// `authority_log_signer_bound` row they share: their root records, their
+    /// marks, and their machines' world rows. Further ones wait until this
+    /// install pins their root or the owner raises the row, and then land on
+    /// the next drain.
+    pub const UNPINNED_ROOTS: &'static str = "authority_log_unpinned_roots";
+    /// The log's counted rows, its slip issuers' handoffs, or its counted
+    /// ancestor pairs reached their `authority_log_fold_headroom` policy row.
+    /// The fold still reads them all; past the
+    /// `authority_log_fold_memory_floor` row it refuses the log.
     pub const FOLD_HEADROOM: &'static str = "authority_log_fold_headroom";
+    /// The scope of a headroom check on counted rows.
+    pub const ROWS: &'static str = "rows";
+    /// The scope of a headroom check on slip issuers' handoffs.
+    pub const HANDOFFS: &'static str = "handoffs";
+    /// The scope of a headroom check on counted ancestor pairs.
+    pub const ANCESTOR_PAIRS: &'static str = "ancestor_pairs";
 }
 
 impl crate::Vault {
     /// The open checks on the stored authority log: each key no slip issuer
-    /// vouches for that reached its bound, and the log's headroom once it
-    /// reaches its policy rows.
+    /// vouches for that reached its bound, the strangers' shared bound, and
+    /// one per headroom scope that reached its policy row.
     pub fn authority_log_checks(&self) -> crate::error::Result<Vec<AuthorityLogCheck>> {
         let txn = self.store.env.read_txn()?;
         let view = door_view(&self.store, &txn)?;
@@ -666,19 +519,41 @@ impl crate::Vault {
             .filter(|(signer, rows)| **rows >= bound && !view.structure.issuers.contains(*signer))
             .map(|(signer, rows)| AuthorityLogCheck {
                 kind: AuthorityLogCheck::SIGNER_BOUND,
+                scope: None,
                 signer: Some(authority_signer_label(signer)),
                 count: *rows as u64,
                 threshold: bound as u64,
             })
             .collect();
-        let (rows_at, handoffs_at) = headroom(&self.store, &txn)?;
-        for (count, at) in [(view.counted, rows_at), (view.issuer_handoffs, handoffs_at)] {
+        if view.strangers >= bound {
+            checks.push(AuthorityLogCheck {
+                kind: AuthorityLogCheck::UNPINNED_ROOTS,
+                scope: None,
+                signer: None,
+                count: view.strangers as u64,
+                threshold: bound as u64,
+            });
+        }
+        let (rows_at, handoffs_at, pairs_at) = headroom(&self.store, &txn)?;
+        let pairs = self
+            .authority_view_readonly_in_txn(&txn)?
+            .counted_ancestor_pairs;
+        for (scope, count, at) in [
+            (AuthorityLogCheck::ROWS, view.counted as u64, rows_at),
+            (
+                AuthorityLogCheck::HANDOFFS,
+                view.issuer_handoffs as u64,
+                handoffs_at,
+            ),
+            (AuthorityLogCheck::ANCESTOR_PAIRS, pairs, pairs_at),
+        ] {
             if count >= at {
                 checks.push(AuthorityLogCheck {
                     kind: AuthorityLogCheck::FOLD_HEADROOM,
+                    scope: Some(scope),
                     signer: None,
-                    count: count as u64,
-                    threshold: at as u64,
+                    count,
+                    threshold: at,
                 });
             }
         }

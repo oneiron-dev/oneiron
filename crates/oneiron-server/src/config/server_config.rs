@@ -7,7 +7,8 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
-use super::feedback::FeedbackConfig;
+use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
+use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
@@ -25,10 +26,11 @@ use crate::usage::UsageMode;
 /// - `max_frame_size` — ENFORCED on the WebSocket frame size.
 /// - `max_messages_per_sec` — retained for configuration compatibility only.
 ///   RC42 counters ask typed questions and never refuse calls for rate.
-/// - `max_windows_per_connection` — ENFORCED as a generous per-connection
-///   distinct-window touch cap. The default is intentionally high enough for
-///   legitimate historical-window tombstone sync; it stops fabricated-key
-///   floods, not real history.
+/// - `max_windows_per_connection` — a row set far above fleet scale on what
+///   one socket keeps per window and per document. Past it a v13 socket
+///   forgets its least recently requested window subscription (the window's
+///   next change reaches the peer as `WINDOW_INVALIDATE`) and the row asks
+///   its OF-520 question once; no socket is refused for the count.
 /// - `max_ephemeral_payload_bytes` / `max_ephemeral_snapshot_bytes` —
 ///   ENFORCED before ephemeral hub mutation and before late-join snapshot
 ///   send. Oversized late-join snapshots are skipped, not connection-fatal.
@@ -70,7 +72,9 @@ pub struct SyncServerConfig {
     pub max_frame_size: usize,
     /// Maximum CRDT update payload in bytes (enforced on WindowSync UPDATE).
     pub max_update_payload: usize,
-    /// Maximum distinct valid windows one connection may touch.
+    /// Window subscriptions one v13 connection keeps before it forgets the least recently
+    /// requested, and the count past which a connection's windows or documents ask the row's
+    /// question. Never a refusal.
     pub max_windows_per_connection: usize,
     /// Maximum inbound protocol messages per connection per second.
     pub max_messages_per_sec: u32,
@@ -90,6 +94,9 @@ pub struct SyncServerConfig {
     pub max_bulk_decompressed: usize,
     /// The bounds on work a remote caller can start: git and LFS transfers.
     pub limits: LimitsConfig,
+    /// `[feedback.inbox]`: whether this server keeps the keyless open inbox,
+    /// and its flood cap.
+    pub feedback_inbox: FeedbackInboxConfig,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -112,7 +119,7 @@ impl Default for SyncServerConfig {
             lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
-            max_windows_per_connection: 4096,
+            max_windows_per_connection: 65_536,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
             max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
@@ -121,6 +128,7 @@ impl Default for SyncServerConfig {
             max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             limits: LimitsConfig::default(),
+            feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
         }
     }
@@ -193,6 +201,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("limits", &self.limits)
+            .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
             .finish()
     }
@@ -208,6 +217,9 @@ pub struct ServeConfig {
     pub vault_path: PathBuf,
     pub host: String,
     pub port: u16,
+    /// The artifact-only listener's port on `host`; `0` takes any free one,
+    /// which `/api/health` advertises as `artifact_port`.
+    pub artifact_port: u16,
     pub auth_secret: Option<String>,
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
@@ -252,6 +264,8 @@ pub struct ServeConfig {
     pub feedback: FeedbackConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
+    /// The `[keystore]` section: this install's this-device-only key slots.
+    pub keystore: KeystoreConfig,
     /// The `[limits]` section: the bounds on work a remote caller can start.
     pub limits: LimitsConfig,
     /// The `[import]` section: the queue a running `serve` imports session
@@ -280,6 +294,7 @@ impl Default for ServeConfig {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
             host: "0.0.0.0".to_owned(),
             port: 9090,
+            artifact_port: 0,
             auth_secret: server.auth_secret,
             oauth_issuer: server.oauth_issuer,
             oauth_jwks_uri: server.oauth_jwks_uri,
@@ -313,6 +328,7 @@ impl Default for ServeConfig {
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
             recall: RecallConfig::default(),
+            keystore: KeystoreConfig::default(),
             limits: LimitsConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
@@ -332,6 +348,7 @@ impl fmt::Debug for ServeConfig {
             .field("vault_path", &self.vault_path)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
@@ -374,6 +391,7 @@ impl fmt::Debug for ServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("keystore", &self.keystore)
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
@@ -412,6 +430,7 @@ impl ServeConfig {
             max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
             limits: self.limits.clone(),
+            feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
@@ -430,6 +449,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
             deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {

@@ -544,7 +544,7 @@ fn witness_append_rejects_a_persisted_message_order_collision() {
 #[test]
 fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x72);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let conversation_id = EntityId::from_bytes([0x73; 16]).expect("conv id");
     let turn_id = EntityId::from_bytes([0x74; 16]).expect("turn id");

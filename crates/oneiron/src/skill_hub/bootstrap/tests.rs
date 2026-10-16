@@ -298,14 +298,7 @@ fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Res
 }
 
 fn restore_owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
-    let actor = EntityId::now();
-    vault.put_entity(
-        &actor,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"restore owner",
-    )?;
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     vault.authenticate_owner(
         actor,
         "principal:skill-restore",

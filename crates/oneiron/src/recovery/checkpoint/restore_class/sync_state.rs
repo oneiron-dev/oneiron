@@ -58,7 +58,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_DEVICE_SK, LIVE),
     (&t::IDENTITY_MACHINE_ID, LIVE),
     (&t::IDENTITY_MACHINE_SK, LIVE),
+    (&t::IDENTITY_PINNED_ROOT, LIVE),
     (&t::DELETION_WINDOW_LABEL, CONTENT),
+    (&t::DELETION_PENDING_SWEEP_REFS, CONTENT),
     (&t::SYNC_M_U_SEQ_E, CONTENT),
     (&t::SYNC_M_U_SEQ_W, CONTENT),
     (&t::MANAGED_CANARY_MARKER, LIVE),
@@ -102,6 +104,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_IMPORT_CONTENT, CONTENT),
     (&t::VAULT_IMPORT_RECEIPT, CONTENT),
     (&t::VAULT_IMPORT_STAMPS, CONTENT),
+    (&t::WIRE_LIMIT_QUESTION, CONTENT),
     (&t::RC42_WIRE_QUESTION, CONTENT),
     (&t::RC42_WIRE_RECEIPT, CONTENT),
 ];

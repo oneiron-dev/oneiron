@@ -1113,7 +1113,9 @@ fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Resu
     )?;
     let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
     let expected = reader.search_text(needle, 10, None)?;
-    assert_eq!(expected.receipt.suppressed_count, 1);
+    // B7 (F21b): the hidden claim is outside the reader's grant, so no
+    // page counts it.
+    assert_eq!(expected.receipt.suppressed_count, 0);
     let full = resolver(&reader, 4096).grep(needle, "/claims", true, None)?;
     assert_eq!(full.read_receipt(), Some(&expected.receipt));
     let text = std::str::from_utf8(full.bytes()).unwrap();

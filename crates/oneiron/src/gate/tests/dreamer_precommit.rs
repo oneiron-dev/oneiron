@@ -56,7 +56,15 @@ pub(super) fn precommit_body(value: Value, evidence: Option<Value>) -> ClaimBody
 }
 
 pub(super) fn seed_precommit_evidence_entity(vault: &crate::Vault, id: &EntityId) -> Result<()> {
-    vault.put_entity(id, ENTITY_TYPE_PERSON, test_time(1), 1, b"evidence ref")
+    vault.put_entity(id, ENTITY_TYPE_TURN, test_time(1), 1, b"evidence ref")
+}
+
+/// Evidence citing one fresh TURN: a Dreamer write cites what was said, never
+/// the PERSON it is about.
+pub(super) fn said_evidence(vault: &crate::Vault) -> Result<Value> {
+    let turn = EntityId::now();
+    seed_precommit_evidence_entity(vault, &turn)?;
+    Ok(precommit_evidence(vec![turn]))
 }
 
 fn attempt_precommit_write(
@@ -197,6 +205,98 @@ fn invalid_dreamer_write_rejected_precommit_evidence_floor() -> Result<()> {
         stored_claim_body(&vault, &claim_id)?.approval,
         ClaimApprovalStatus::Auto
     );
+    Ok(())
+}
+
+/// Security pack 2, F14 H153 (narrowed, Engine ruling 2026-10-15): the batch
+/// door serves every Dreamer writer, so it refuses only what is no evidence. A
+/// PERSON or a SESSION names who spoke or where, not anything said, and a CLAIM
+/// still awaiting its owner's critical confirmation is not yet the owner's: a
+/// write citing only one of them is denied. The rows the production writers
+/// cite each still count: the extraction pass's TURN, the edit-distance
+/// miner's ASSET record, a commitment wake's settled CLAIM, and a code
+/// review's CODE_ARTIFACT.
+#[test]
+fn dreamer_evidence_is_what_was_said_never_who_or_where() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    // Raw rows: the floor reads only that a row of this type is live.
+    let live = |seed: u8, entity_type: u8| -> Result<EntityId> {
+        let id = test_id(seed);
+        put_raw_entity_row(&vault, &id, entity_type, b"a cited row")?;
+        Ok(id)
+    };
+    let claim = |seed: u8, confirm_open: bool| -> Result<EntityId> {
+        let id = test_id(seed);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.approval = ClaimApprovalStatus::Auto;
+        put_claim_body(&vault, &id, &body)?;
+        if confirm_open {
+            let pending = critical_confirm_pending(id, seed, 1);
+            vault.with_write_txn(|wtxn| {
+                vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+            })?;
+        }
+        Ok(id)
+    };
+    // Each write is about its own subject, so none replaces another's head.
+    let write = |seed: u8, cited: EntityId| -> (EntityId, Result<()>) {
+        let claim_id = test_id(seed);
+        let mut body = precommit_body(
+            Value::from("Ada Lovelace"),
+            Some(precommit_evidence(vec![cited])),
+        );
+        body.subject = ClaimSubject::Entity(test_id(seed.wrapping_add(0x10)));
+        (claim_id, attempt_precommit_write(&vault, &claim_id, &body))
+    };
+
+    let refused = [
+        ("a PERSON", live(0x55, ENTITY_TYPE_PERSON)?),
+        (
+            "a SESSION",
+            live(0x56, crate::registry::ENTITY_TYPE_SESSION)?,
+        ),
+        ("a CLAIM awaiting its critical confirm", claim(0x57, true)?),
+    ];
+    let mut landed = Vec::new();
+    for (seed, (what, cited)) in (0x60_u8..).zip(refused) {
+        let (claim_id, result) = write(seed, cited);
+        if vault.get_raw(&claim_id)?.is_some() {
+            landed.push(what);
+            continue;
+        }
+        assert_precommit_denied(
+            &vault,
+            result.expect_err("a row that says nothing is no evidence"),
+            &claim_id,
+            "gate.deny.dreamer_precommit.no_evidence",
+        )?;
+    }
+    assert!(
+        landed.is_empty(),
+        "FAILBEFORE H153 batch door: a Dreamer claim landed citing only {landed:?}"
+    );
+
+    let admitted = [
+        ("the extraction pass's TURN", live(0x58, ENTITY_TYPE_TURN)?),
+        (
+            "the edit-distance miner's ASSET record",
+            live(0x59, crate::registry::ENTITY_TYPE_ASSET)?,
+        ),
+        ("a commitment wake's settled CLAIM", claim(0x5A, false)?),
+        (
+            "a code review's CODE_ARTIFACT",
+            live(0x5B, crate::registry::ENTITY_TYPE_CODE_ARTIFACT)?,
+        ),
+    ];
+    for (seed, (what, cited)) in (0x80_u8..).zip(admitted) {
+        let (claim_id, result) = write(seed, cited);
+        result.unwrap_or_else(|error| panic!("{what} is evidence: {error:?}"));
+        assert_eq!(
+            stored_claim_body(&vault, &claim_id)?.approval,
+            ClaimApprovalStatus::Auto,
+            "{what}"
+        );
+    }
     Ok(())
 }
 
@@ -1104,7 +1204,7 @@ fn valid_tool_output_dreamer_write_pends_without_joining_a_run_group() -> Result
     // so the two meets differ on exactly one axis here too.
     let (candidate, envelope) =
         dreamer_write_parts_with_source(&vault, &body, ClaimSource::ToolOutput)?;
-    vault.put_claim_candidate_without_lexical_query_reconcile(
+    vault.put_claim_candidate_with_landing(
         &claim_id,
         candidate,
         &envelope,

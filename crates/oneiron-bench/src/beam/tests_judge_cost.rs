@@ -31,7 +31,7 @@ pub(crate) mod tests {
 
         assert!(deterministic["scoring"]["overallScore"].as_f64().is_some());
 
-        for competitor_id in ["backbone-solo", "agentic-adapter", "chat-adapter"] {
+        for competitor_id in ["agentic-adapter", "chat-adapter"] {
             let typed_competitor = report.cases[0]
                 .competitors
                 .iter()
@@ -59,5 +59,38 @@ pub(crate) mod tests {
                 assert!(ability["passed"].is_null());
             }
         }
+    }
+
+    // ZERO-RETRIEVAL = A (owner, 2026-10-16): the no-memory baseline is a real
+    // row in the fixture harness, not a not-ready placeholder.
+    #[test]
+    fn backbone_solo_is_ready_with_an_empty_pack_and_scores_zero_coverage() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let case = &report.cases[0];
+        let arm = case
+            .arms
+            .iter()
+            .find(|arm| arm.arm == ArmKind::BackboneSolo)
+            .expect("backbone-solo arm report");
+        let ArmOutcome::Completed { context_pack } = &arm.outcome else {
+            panic!("backbone-solo must complete in the fixture harness");
+        };
+        assert_eq!(context_pack.result_count, 0);
+        assert_eq!(context_pack.serialized_tokens, 0);
+        assert_eq!(context_pack.query_cost.output_tokens, 0);
+        let solo = case
+            .competitors
+            .iter()
+            .find(|competitor| competitor.competitor_id == "backbone-solo")
+            .expect("backbone-solo competitor");
+        let coverage = solo
+            .scoring
+            .abilities
+            .iter()
+            .find(|ability| ability.ability == AbilityKind::RetrievalCoverage)
+            .expect("retrieval coverage");
+        assert!(case.expected_min_results > 0);
+        assert_eq!(coverage.score, Some(0.0));
+        assert!(solo.scoring.overall_score.is_some());
     }
 }
