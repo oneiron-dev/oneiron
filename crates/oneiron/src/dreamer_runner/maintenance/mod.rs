@@ -11,6 +11,7 @@ pub(crate) mod optimize;
 pub use optimize::CoachSkillOptimizer;
 mod proposals;
 pub mod representation;
+mod retrieval_policy;
 pub mod stewardship;
 #[cfg(test)]
 mod tests;
@@ -136,12 +137,7 @@ pub(crate) fn execute(
             stewardship::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            // ARCH-0037 #tune-retrieval: the update at sleep. Too few gated
-            // rewards is a quiet night, not a failed attempt.
-            let _ = ctx
-                .vault
-                .store
-                .tune_retrieval_blend_weights_when_ready(Default::default())?;
+            retrieval_policy::run(ctx.vault)?;
         }
         honesty::HONESTY_AUDIT_FACET => {
             let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;

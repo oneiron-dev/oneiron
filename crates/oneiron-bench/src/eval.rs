@@ -7,8 +7,8 @@
 //!   it persisted for live scoring to read.
 //!
 //! Both subcommands are explicit CLI invocations: no timer, no cadence and no
-//! automatic trigger drives them. A row without explicit gate, turn, surfaced
-//! memory and cost inputs plus `evaluator`/`source` provenance is refused.
+//! automatic trigger drives them. A row without explicit contributing run ids,
+//! gate, turn and cost inputs plus `evaluator`/`source` provenance is refused.
 //! Neither the gate approval nor the confirmed-fact hit is fabricated here.
 //!
 //! Both subcommands operate on an already-existing vault and share one
@@ -37,7 +37,7 @@ use oneiron::store::RetrievalBlendTuningConfig;
 use oneiron::{Vault, VaultConfig};
 use serde::{Deserialize, Serialize};
 
-const EVAL_OUTCOME_INGEST_CONTRACT_VERSION: &str = "oneiron.eval_outcome_ingest.v2";
+const EVAL_OUTCOME_INGEST_CONTRACT_VERSION: &str = "oneiron.eval_outcome_ingest.v3";
 const EVAL_OUTCOME_INGEST_RECORD_TYPE: &str = "eval_outcome_ingest";
 /// "No value" token for nullable vault-open fields: an embedding
 /// model id must be `org/name@revision`, and a fast-lane prefix is an integer.
@@ -367,9 +367,9 @@ impl VaultOpenArgsBuilder {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EndOutcomeRow {
-    run_id: String,
+    #[serde(rename = "retrievalRunIds")]
+    retrieval_run_ids: Vec<String>,
     turn_id: String,
-    activated_memory_id: String,
     gate_score: f32,
     confirmed_fact_hit: bool,
     latency_scale_us: u64,
@@ -663,8 +663,9 @@ fn print_help() {
          subcommands:\n\
            outcome-ingest <VAULT CONFIG> --rewards <PATH>|- [--key <KEY>]\n\
              Applies judged terminal outcomes to finalized retrieval runs,\n\
-             one JSON object per line, in file order. A row requires run_id,\n\
-             turn_id and activated_memory_id (32 hex chars each), gate_score\n\
+             one JSON object per line, in file order. A row requires\n\
+             retrievalRunIds (an explicit array of contributing 32-hex run ids),\n\
+             turn_id (32 hex chars), gate_score\n\
              (0,1], confirmed_fact_hit (bool), latency_scale_us (positive),\n\
              cost_weight (non-negative), and metadata.evaluator and .source.\n\
              The optional key overrides --key. No gate is inferred. Ingest\n\

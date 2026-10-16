@@ -36,7 +36,7 @@ pub(super) fn delete(
     }
     Ok(())
 }
-fn read(
+pub(super) fn read(
     target: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &[u8; 16],

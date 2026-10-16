@@ -59,7 +59,7 @@ fn apply_end_outcome_line(
 }
 
 /// Vets evaluator provenance and decodes typed attribution without inventing
-/// an approval from a legacy scalar. The engine checks the run/turn/memory link.
+/// an approval from a scalar. The engine checks every named run's turn.
 fn outcome_from_row(
     row: &EndOutcomeRow,
     default_key: Option<&str>,
@@ -68,10 +68,13 @@ fn outcome_from_row(
     require_provenance(&row.metadata, METADATA_SOURCE_KEY)?;
     let key = resolve_outcome_key(row.key.as_deref(), default_key)?;
     Ok(RetrievalEndOutcome {
-        run_id: parse_run_id(&row.run_id)?,
+        retrieval_run_ids: row
+            .retrieval_run_ids
+            .iter()
+            .map(|id| parse_run_id(id))
+            .collect::<Result<Vec<_>, _>>()?,
         key,
         turn_id: parse_id_bytes(&row.turn_id, "turn_id")?,
-        activated_memory_id: parse_id_bytes(&row.activated_memory_id, "activated_memory_id")?,
         gate_score: row.gate_score,
         confirmed_fact_hit: row.confirmed_fact_hit,
         latency_scale_us: row.latency_scale_us,
