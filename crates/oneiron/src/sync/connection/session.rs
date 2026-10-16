@@ -37,8 +37,7 @@ pub(super) type WsSink = SplitSink<WsStream, Message>;
 
 pub(super) type WsSource = SplitStream<WsStream>;
 
-type WsStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type WsStream = crate::sync::carrier::SyncSocket;
 
 /// Read-budget for one server-frame pump: how long to wait for the first
 /// frame, how long a quiet gap ends the pump, and a frame cap.

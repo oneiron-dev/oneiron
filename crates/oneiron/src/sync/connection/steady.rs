@@ -20,9 +20,7 @@ impl SyncConnection {
     /// Steady-state event loop: multiplexes WS reads, local updates, and debounce.
     pub(super) async fn steady_state(
         &self,
-        ws_stream: tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
+        ws_stream: crate::sync::carrier::SyncSocket,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         local_rx: &mut mpsc::UnboundedReceiver<LocalUpdate>,

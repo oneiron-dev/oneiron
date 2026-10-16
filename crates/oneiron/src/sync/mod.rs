@@ -30,6 +30,7 @@
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
+pub mod carrier;
 pub mod chunks;
 pub mod client;
 pub mod connection;
@@ -63,6 +64,7 @@ pub mod types;
 pub mod window;
 pub(crate) mod window_rows;
 
+pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
     ResidenceSearch, SearchSource, SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode,
