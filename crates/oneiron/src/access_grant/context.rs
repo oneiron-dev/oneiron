@@ -66,9 +66,13 @@ impl<'v> AccessContext<'v> {
             Ok(crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live())
         };
         for kind in [ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM] {
-            for row in vault.store.type_index.prefix_iter(txn, &[kind])? {
-                let (key, _) = row?;
-                let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                &vault.store,
+                txn,
+                kind,
+                None,
+            )? {
+                let id = row?;
                 let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                     .ok_or(Error::CorruptedIndex("access context row"))?;
                 let header = EntityMetadataHeader::parse(&raw)

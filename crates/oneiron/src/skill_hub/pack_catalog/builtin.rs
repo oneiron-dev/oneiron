@@ -82,11 +82,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         let source_id = source.entity_id()?;
         let deletion =
             crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &txn, &source_id)?;
-        if vault
-            .store
-            .entities
-            .get(&txn, source_id.as_bytes())?
-            .is_some()
+        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source_id)?.is_some()
             || deletion.deleted
             || deletion.stale
         {
