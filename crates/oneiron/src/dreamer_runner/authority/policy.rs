@@ -36,8 +36,9 @@ pub fn base_agent_for_facet(facet: &str) -> BaseAgent {
 pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
     use super::super::{
         COACH_HEAL_ATTEMPT_KIND, COACH_RETRIEVAL_TUNE_FACET, DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE,
-        DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-        DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, maintenance::coach,
+        DREAMER_NOTE_REVIEW_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
+        DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+        DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, maintenance::coach,
     };
     match job_type {
         "micro" | "meso" | "macro" => Some("dreamer.consolidation"),
@@ -50,6 +51,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE => {
             Some("dreamer.consolidation")
         }
+        // The review promotes beliefs on the consolidation executor, so it
+        // runs as the consolidation facet that executor is built for.
+        DREAMER_NOTE_REVIEW_ATTEMPT_KIND => Some("dreamer.consolidation"),
         DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND => Some(DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
         DREAMER_VAULT_CLEANUP_ATTEMPT_KIND => Some(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND),
         DREAMER_WEAVE_RECIPE_ATTEMPT_KIND => Some(DREAMER_WEAVE_RECIPE_ATTEMPT_KIND),
