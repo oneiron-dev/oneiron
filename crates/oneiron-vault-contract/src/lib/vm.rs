@@ -31,6 +31,9 @@ pub const VM_HTTP_PORT: u32 = 1025;
 pub const VM_CTL_PORT: u32 = 1026;
 /// Guest to host: wake-ledger pushes, one JSON line per connection.
 pub const VM_LEDGER_PORT: u32 = 1027;
+/// Host to guest: the vault's artifact origin, when the supervisor gave the
+/// vault one (`--artifact-http-socket`).
+pub const VM_ARTIFACT_PORT: u32 = 1028;
 /// One boot-channel frame, newline included.
 pub const MAX_VM_FRAME: usize = 1024;
 
