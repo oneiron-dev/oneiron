@@ -59347,7 +59347,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AgentTier",
@@ -59383,8 +59383,20 @@
      "surface": {
       "enum": 8,
       "fn": 3,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostRelayArgs"
+     ],
+     "path": "src/cli/deployment_args.rs",
+     "purpose": "Host-only deployment commands; neither opens a local vault",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -59468,7 +59480,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 12,
       "re-export": 11,
       "struct": 1
@@ -59726,7 +59738,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -60750,8 +60762,8 @@
      "path": "src/lib.rs",
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
-      "fn": 2,
-      "mod": 18,
+      "fn": 3,
+      "mod": 19,
       "re-export": 1
      }
     },
@@ -61138,7 +61150,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -61193,6 +61205,20 @@
      "purpose": "HTTP and WebSocket forwarding on a preview-only origin",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RelayConfig"
+     ],
+     "path": "src/managed/relay.rs",
+     "purpose": "A relay room has no engine, vault key, Loro document or inference worker",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -61260,6 +61286,16 @@
       "enum": 1,
       "fn": 13,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_schedule.rs",
+     "purpose": "The standalone VM host's acknowledged wake ledger",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -62896,6 +62932,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeploymentPosition",
+      "EndpointDescriptor"
+     ],
+     "path": "src/web_client.rs",
+     "purpose": "Endpoint discovery and browser access for an external shared web client",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -63264,9 +63316,9 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "cli": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "—"
     },
@@ -63369,7 +63421,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 17,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63473,6 +63525,13 @@
      "layout": "dir",
      "purpose": "Host-side, per-config-directory wake delivery (OF-385)"
     },
+    "web_client": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Endpoint discovery and browser access for an external shared web client"
+    },
     "wire_telemetry": {
      "files": 2,
      "impl_vault": false,
@@ -63481,9 +63540,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 20,
+   "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 424,
+   "source_files": 428,
    "test_files": 182
   },
   "oneiron-spawn": {
