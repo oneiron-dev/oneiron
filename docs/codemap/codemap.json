@@ -13526,7 +13526,7 @@
      "path": "src/context_pack/source_ranking.rs",
      "purpose": "PACK data for provenance-aware claim ordering",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
