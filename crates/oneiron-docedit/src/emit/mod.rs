@@ -16,7 +16,7 @@
 mod check;
 mod slide;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::deck::{DeckError, RetainedNode, TemplateView};
 use crate::design_plan::{
