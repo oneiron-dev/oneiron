@@ -38,6 +38,7 @@ use super::highway_accept::{
     HostFence, Lane, host_fence_in, lane_of, require_assignee, require_live_standard,
 };
 use super::highway_block::{BlockContinuation, BlockPurpose, selected_task_ask_option};
+use super::runner_done::RunnerDoneAnswer;
 use super::highway_types::{
     AttemptHandle, TaskCallReceipt, TaskHandle, TaskLifecycleRecord, TaskOutcome, TaskPhase,
     TaskReport, TaskReportBody, TaskVia,
@@ -117,6 +118,8 @@ enum Escalation {
 pub(super) struct ReportTxn<'a, 't> {
     txn: Option<&'a mut heed::RwTxn<'t>>,
     refused: Vec<String>,
+    /// The runner's own answer to "Done means met?", asked before its write.
+    judged: Option<RunnerDoneAnswer>,
 }
 
 impl ReportTxn<'_, '_> {
@@ -125,16 +128,22 @@ impl ReportTxn<'_, '_> {
         Self {
             txn: None,
             refused: Vec::new(),
+            judged: None,
         }
     }
 }
 
 impl<'a, 't> ReportTxn<'a, 't> {
-    /// A runner's report, inside the write transaction it holds.
-    pub(super) const fn runner(txn: &'a mut heed::RwTxn<'t>) -> Self {
+    /// A runner's report, inside the write transaction it holds, with the
+    /// Done answer it brought.
+    pub(super) const fn runner(
+        txn: &'a mut heed::RwTxn<'t>,
+        judged: Option<RunnerDoneAnswer>,
+    ) -> Self {
         Self {
             txn: Some(txn),
             refused: Vec::new(),
+            judged,
         }
     }
 }
@@ -146,6 +155,33 @@ fn handle_entity(handle: &TaskHandle) -> EntityId {
         TaskHandle::Attempt(attempt) => attempt.task_ref,
         TaskHandle::Ask { group_ref } => *group_ref,
     }
+}
+
+/// What "Done means met?" is asked over: the TASK, its result, the brief's
+/// settled inputs and each criterion's evidence, and the criteria as text.
+pub(super) fn done_question_inputs(
+    task_ref: EntityId,
+    result_ref: EntityId,
+    brief: &StoredBrief,
+) -> (Vec<EntityId>, serde_json::Value) {
+    let success = &brief.brief.success;
+    let mut evidence = vec![task_ref, result_ref];
+    evidence.extend(brief.brief.settled.iter().copied());
+    evidence.extend(
+        success
+            .yes_if_all
+            .iter()
+            .chain(&success.no_if_any)
+            .filter_map(|criterion| criterion.evidence_ref),
+    );
+    let state = serde_json::json!({
+        "objective": brief.brief.objective,
+        "question": success.question,
+        "yes_if_all": success.yes_if_all.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+        "no_if_any": success.no_if_any.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+        "result_ref": result_ref.to_hex(),
+    });
+    (evidence, state)
 }
 
 fn blocked_on(body: &TaskVerbBody) -> Vec<EntityId> {
@@ -369,6 +405,7 @@ impl Memory<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         via: &TaskVia,
         report: TaskReport,
+        judged: Option<RunnerDoneAnswer>,
     ) -> MemoryResult<TaskCallReceipt> {
         let key = qualified_key(via, &report.report_key, "report key")?;
         let task_ref = report.task_ref;
@@ -387,7 +424,7 @@ impl Memory<'_> {
             now,
         );
         self.report_work(
-            &mut ReportTxn::runner(wtxn),
+            &mut ReportTxn::runner(wtxn, judged),
             via,
             task_ref,
             &key,
@@ -1458,36 +1495,27 @@ impl Memory<'_> {
         let Some(brief) = current.brief.as_ref() else {
             return Ok(DoneVerdict::Met);
         };
-        let success = &brief.brief.success;
-        let mut evidence = vec![task_ref, result_ref];
-        evidence.extend(brief.brief.settled.iter().copied());
-        evidence.extend(
-            success
-                .yes_if_all
-                .iter()
-                .chain(&success.no_if_any)
-                .filter_map(|criterion| criterion.evidence_ref),
-        );
-        let state = serde_json::json!({
-            "objective": brief.brief.objective,
-            "question": success.question,
-            "yes_if_all": success.yes_if_all.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
-            "no_if_any": success.no_if_any.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
-            "result_ref": result_ref.to_hex(),
-        });
+        let (evidence, state) = done_question_inputs(task_ref, result_ref, brief);
         let principal = self
             .report_read(rt, |txn| {
                 Ok(self.vault().task_authority_state_in(txn, task_ref)?)
             })?
             .map_or(self.actor(), |state| state.owner_ref);
-        match ask(
-            decisions,
-            TaskQuestion::DoneMet,
-            principal,
-            &evidence,
-            &state,
-            brief.brief.escalation.reversibility,
-        ) {
+        // A runner's answer, given for exactly this report, stands for the
+        // question it cannot ask inside its write.
+        let judged = rt
+            .judged
+            .and_then(|judged| judged.for_report(task_ref, result_ref, brief, principal));
+        match judged.unwrap_or_else(|| {
+            ask(
+                decisions,
+                TaskQuestion::DoneMet,
+                principal,
+                &evidence,
+                &state,
+                brief.brief.escalation.reversibility,
+            )
+        }) {
             PortAnswer::Yes => Ok(DoneVerdict::Met),
             PortAnswer::No => Ok(DoneVerdict::Unmet),
             PortAnswer::AskUp => {

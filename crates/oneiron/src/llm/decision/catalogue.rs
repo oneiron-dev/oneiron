@@ -296,6 +296,14 @@ may open. Meet each done-means criterion and keep to every constraint. Name cont
 the handles you were given; never invent a fact, a source or a handle. When the task cannot \
 be done from what you were given, say plainly what is missing instead of guessing.";
 
+/// One task-highway surface question ([`crate::task_verb::TaskDecisions`]): take this
+/// proposal, does Done mean met, ask up now? Keyed by which.
+pub const TASK_SURFACE: QuestionFamily = QuestionFamily {
+    name: "task_verb.surface",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -328,4 +336,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     PROJECT_PROPOSAL,
     CLAIM_REPLAY,
     TASK_REALIZE,
+    TASK_SURFACE,
 ];

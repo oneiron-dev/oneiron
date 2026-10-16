@@ -20,6 +20,7 @@
 //! enqueued around it — and is still bounded live by the envelope/gate
 //! lattice.
 
+mod agent_run;
 mod attenuation;
 mod codec;
 mod context;
@@ -137,6 +138,7 @@ use crate::failure_ladder::HealerCase;
 #[cfg(test)]
 use rmpv::Value;
 
+pub use agent_run::AgentRun;
 pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
 
 #[cfg(test)]

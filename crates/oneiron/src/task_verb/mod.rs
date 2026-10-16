@@ -42,6 +42,7 @@ mod highway_accept;
 mod highway_block;
 mod highway_post;
 mod highway_report;
+mod runner_done;
 pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
@@ -117,6 +118,7 @@ pub use brief::{
     StoredBrief, TypeRef, brief_digest,
 };
 pub use decision_port::TaskDecisions;
+pub use runner_done::{RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question};
 pub(crate) use highway_post::settle_task_proposal_in_txn;
 pub use highway_types::{
     AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
