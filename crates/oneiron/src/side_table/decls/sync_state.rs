@@ -38,11 +38,11 @@ side_tables! {
     /// Cached minted host-root capability-slip token ("v2.slip."+hex(JSON)) for one host signing key.
     /// Key: `:` + hex.
     AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
+    /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
+    AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
     /// Cached minted host-held project.write slip token ("v2.slip."+hex(JSON)) the owner's project
     /// signer uses, for one host signing key. Key: hex64.
     AUTHORITY_OWNER_PROJECT_SLIP_CACHE: SyncState b"authority:owner-project-slip:v1:" Raw;
-    /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
-    AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
     /// The facet a paired credential's writes are born in, as the owner named it on the link
     /// (raw id). Key: hex64 (the slip id).
     AUTHORITY_PAIRING_WRITE_FACET: SyncState b"authority:pairing-write-facet:v1:" Raw;
@@ -181,6 +181,9 @@ side_tables! {
     /// Crash-safe monotonic counter allocating the next u:w: sequence number for one window. Key:
     /// yyyy-mm.
     SYNC_M_U_SEQ_W: SyncState b"m:u_seq:w:" Raw;
+    /// Host config row: the node account-key verdict lease in seconds (u64 big-endian). Absent
+    /// means the 60-second default. Key: ().
+    MANAGED_ACCOUNT_KEY_LEASE: SyncState b"managed:account-key-lease:v1" Raw;
     /// Marker row admitting a vault as a synthetic canary, the only substitute managed-mode accepts
     /// for the real-tenant isolation preconditions. Key: ().
     MANAGED_CANARY_MARKER: SyncState b"managed:canary:v1" Raw;

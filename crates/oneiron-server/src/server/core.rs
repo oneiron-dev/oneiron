@@ -83,6 +83,10 @@ pub struct SyncServer {
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    /// Node-side account API key verifier (OF-448), installed by a host
+    /// that supplies the control-plane checker. `None`: account keys are
+    /// never admitted.
+    pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
@@ -343,6 +347,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            account_keys: None,
             mcp_registry,
             mcp_code_host: None,
             browser_guest: None,
@@ -417,6 +422,18 @@ impl SyncServer {
             runs,
             Arc::clone(self.wire_telemetry.limit_questions()),
         )));
+        self
+    }
+
+    /// Installs the node-side account API key verifier a host built
+    /// around its control-plane checker (OF-448). Without one, no account
+    /// key is ever admitted.
+    #[must_use]
+    pub fn with_account_keys(
+        mut self,
+        keys: Option<Arc<crate::managed::key_sync::AccountKeys>>,
+    ) -> Self {
+        self.account_keys = keys;
         self
     }
 

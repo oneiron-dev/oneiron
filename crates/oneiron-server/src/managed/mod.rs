@@ -33,6 +33,7 @@ mod args;
 mod ctl_shed_tests;
 mod host;
 mod isolation;
+pub mod key_sync;
 mod ledger;
 mod listener;
 mod peer;
@@ -49,6 +50,10 @@ mod vm_host;
 pub use self::vm_host::{SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun, run_vault_vm};
 
 pub use self::args::{ManagedArgs, ManagedError, NO_FD};
+pub use self::key_sync::{
+    KeyInvalidation, KeyInvalidationAck, KeyInvalidationKind, account_keys,
+    account_keys_from_vault_config, apply_key_invalidation, verdict_lease_from_vault,
+};
 pub use self::ledger::{LEDGER_REV_KEY, WakeLedger};
 pub use self::listener::{
     BoundServeListener, HYPNOS_LISTEN_FD, ManagedCtl, ServeListener, adopt_listen_fd, signal_ready,
