@@ -29,6 +29,10 @@ mod healer_repair;
 pub(crate) use healer_context::validate as validate_healer_case;
 mod kill;
 mod launch;
+mod leader_starter;
+pub use leader_starter::{
+    LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner,
+};
 mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod resident;

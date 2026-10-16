@@ -92,6 +92,22 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
+        self.dispatch_with_task_context(input, spawn, None)
+    }
+
+    /// Shared admission for plain spawns and a leader realizing an existing
+    /// promise. Only the latter may attach a TASK backlink; neither mints one.
+    pub(super) fn dispatch_with_task_context(
+        &self,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+        leader_task: Option<EntityId>,
+    ) -> Result<AgentDispatchOutcome> {
+        if leader_task.is_some() && matches!(input.target, AgentDispatchTarget::Workflow(_)) {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a project leader is an agent, not a workflow",
+            )));
+        }
         if matches!(input.target, AgentDispatchTarget::Workflow(_)) {
             return self.dispatch_workflow(input, spawn);
         }
@@ -104,6 +120,9 @@ impl<'a> AgentDispatcher<'a> {
             ..spawn
         };
         if let Some(existing) = self.existing_dispatch_for_retry(&input, &spawn)? {
+            if let Some(task) = leader_task {
+                Self::require_leader_task_binding(&existing, task)?;
+            }
             return Ok(existing);
         }
         // Zero rejects HERE, before the descriptor is resolved, before any fork
@@ -129,7 +148,13 @@ impl<'a> AgentDispatcher<'a> {
         )?;
 
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let outcome = self.dispatch_in_txn(&mut wtxn, None, input, spawn)?;
+        if let Some(task) = leader_task {
+            self.validate_leader_task_in_txn(&wtxn, task, &input, &spawn)?;
+        }
+        let outcome = self.dispatch_in_txn(&mut wtxn, leader_task, input, spawn)?;
+        if let Some(task) = leader_task {
+            Self::require_leader_task_binding(&outcome, task)?;
+        }
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(outcome)
