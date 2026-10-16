@@ -94,6 +94,9 @@ side_tables! {
     CUSTOMIZATION_EVENT_SEQUENCE: VaultMeta b"settings:customization:v1:event_sequence" Raw;
     /// Persisted four-layer (accent/type/mode/world) client customization profile. Key: ().
     CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named;
+    /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
+    /// auto). Value: the mode's ASCII name. Key: ().
+    DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
     DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson;
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
