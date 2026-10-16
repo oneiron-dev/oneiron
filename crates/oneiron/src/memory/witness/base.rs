@@ -538,11 +538,24 @@ impl Memory<'_> {
         // RT-03 (ONE-1685): a witnessed turn bumps the open session's
         // activity clock — atomically with the turn write, so a crash
         // cannot record the turn without the bump.
-        let bumped_session = crate::session_lifecycle::bump_open_session_activity_in_txn(
-            &self.vault.store,
-            wtxn,
-            plan.learned_at,
-        )?;
+        let session_key = match self.session_key {
+            Some(key) => Some(key),
+            None => crate::identity::read_machine_id_in_txn(self.vault, wtxn)?.map(|machine| {
+                crate::session_lifecycle::SessionKey {
+                    actor: self.actor,
+                    machine,
+                }
+            }),
+        };
+        let bumped_session = match session_key {
+            Some(key) => crate::session_lifecycle::bump_open_session_activity_in_txn(
+                &self.vault.store,
+                wtxn,
+                key,
+                plan.learned_at,
+            )?,
+            None => None,
+        };
         // DREAM-008 (ONE-1250): the TURN → SESSION membership fact, in THIS
         // transaction for the same reason the bump is — a crash cannot record
         // a turn without its sitting, so the compaction handoff door can prove

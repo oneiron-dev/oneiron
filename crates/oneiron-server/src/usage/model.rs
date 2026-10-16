@@ -151,6 +151,40 @@ impl UsageCostInput {
         Ok(money)
     }
 }
+/// Attribution for one admitted physical call, supplied by the serving host.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageRun {
+    pub instance: String,
+    pub run: String,
+    pub revision: u32,
+    pub lease: String,
+    pub offer: String,
+    pub route: String,
+    pub catalog_revision: Option<String>,
+    #[schema(value_type = String)]
+    pub payer: oneiron::llm::run_admission::Payer,
+    pub reserved_units: u64,
+    pub settled_units: u64,
+    pub unit: String,
+    pub usage_reported: bool,
+    pub service_quantity: Option<u64>,
+    pub allocation: Option<UsageAllocation>,
+    pub settlement_refused: bool,
+}
+
+/// The allocation held at admission, not whichever generation is live later.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageAllocation {
+    pub id: String,
+    pub generation: u64,
+    pub reserved_units: u64,
+    pub settled_units: u64,
+    pub unit: String,
+    pub settlement_refused: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageEvent {
@@ -173,22 +207,32 @@ pub struct UsageEvent {
     pub service: Option<String>,
     #[serde(default)]
     pub token_counts: UsageTokenCounts,
-    pub cost_rates: UsageCostRates,
+    /// Absent when only quantities are known, including custom-key endpoints.
+    #[serde(default)]
+    pub cost_rates: Option<UsageCostRates>,
     #[serde(default)]
     pub service_amount: u64,
+    #[serde(default)]
+    pub run: Option<UsageRun>,
 }
 impl UsageEvent {
     pub fn resolved_source(&self, configured: UsageMode) -> UsageMode {
         self.source.unwrap_or(configured)
     }
-    pub fn cost_input(&self) -> UsageCostInput {
-        UsageCostInput {
+    pub fn cost_input(&self) -> Option<UsageCostInput> {
+        self.cost_rates.as_ref().map(|rates| UsageCostInput {
             token_counts: self.token_counts.clone(),
-            cost_rates: self.cost_rates.clone(),
+            cost_rates: rates.clone(),
             service_amount: self.service_amount,
-        }
+        })
     }
     pub(super) fn validate(&self) -> Result<(), UsageError> {
+        if self.cost_rates.is_none() && self.service_amount != 0 {
+            return Err(UsageError::InvalidField {
+                field: "serviceAmount",
+                message: "requires a currency and price-table snapshot in costRates",
+            });
+        }
         validate_dimension("owner", &self.owner, MAX_DIMENSION_LEN)?;
         validate_dimension("vaultId", &self.vault_id, MAX_DIMENSION_LEN)?;
         validate_dimension(
@@ -217,7 +261,7 @@ pub struct UsageRecordResult {
     pub recorded: bool,
     pub replayed: bool,
     pub source: UsageMode,
-    pub cost: Money,
+    pub cost: Option<Money>,
     pub vault_rollup: Option<UsageRollup>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -241,7 +285,11 @@ impl UsageRollup {
             services: BTreeMap::new(),
         }
     }
-    pub(super) fn add_event(&mut self, event: &UsageEvent, cost: &Money) -> Result<(), UsageError> {
+    pub(super) fn add_event(
+        &mut self,
+        event: &UsageEvent,
+        cost: Option<&Money>,
+    ) -> Result<(), UsageError> {
         self.counters.add(&event.token_counts, cost)?;
         for (map, key) in [
             (&mut self.agents, &event.agent_id),
@@ -269,7 +317,7 @@ pub struct UsageCounter {
     pub amounts_by_currency: BTreeMap<String, u64>,
 }
 impl UsageCounter {
-    fn add(&mut self, t: &UsageTokenCounts, cost: &Money) -> Result<(), UsageError> {
+    fn add(&mut self, t: &UsageTokenCounts, cost: Option<&Money>) -> Result<(), UsageError> {
         for (dest, value) in [
             (&mut self.event_count, 1),
             (&mut self.input_tokens, t.input_tokens),
@@ -279,13 +327,15 @@ impl UsageCounter {
         ] {
             *dest = dest.checked_add(value).ok_or(UsageError::Overflow)?;
         }
-        let amount = self
-            .amounts_by_currency
-            .entry(cost.currency.clone())
-            .or_default();
-        *amount = amount
-            .checked_add(cost.amount)
-            .ok_or(UsageError::Overflow)?;
+        if let Some(cost) = cost {
+            let amount = self
+                .amounts_by_currency
+                .entry(cost.currency.clone())
+                .or_default();
+            *amount = amount
+                .checked_add(cost.amount)
+                .ok_or(UsageError::Overflow)?;
+        }
         Ok(())
     }
 }

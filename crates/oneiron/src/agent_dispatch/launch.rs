@@ -195,7 +195,25 @@ impl AgentDispatcher<'_> {
         target: &AgentDispatchTarget,
         now: u64,
     ) -> Result<LaunchAdmission> {
-        let tree = match (parent, spend) {
+        let tree = self.caller_tree_in_txn(txn, parent, spend)?;
+        let unit = tree
+            .as_ref()
+            .map_or_else(LeaseUnit::tokens, |scope| scope.unit.clone());
+        let nodes = self.launch_nodes_in_txn(txn, target, &unit)?;
+        self.admit_nodes_in_txn(txn, tree, budget, nodes, unit, now)
+    }
+
+    /// The effective scope a caller spends under: its parent attempt's, or
+    /// the open root scope a root names. `None`: unmetered by any lease tree.
+    /// Shared by every launch and fan-out statement, so each reads the
+    /// caller's cap once, the same way.
+    pub(super) fn caller_tree_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: Option<AttemptId>,
+        spend: Option<&SpawnSpend>,
+    ) -> Result<Option<SpendScope>> {
+        Ok(match (parent, spend) {
             (Some(_), Some(_)) => {
                 return Err(invalid(
                     "a child spends under its parent's scope; only a root names one",
@@ -224,12 +242,7 @@ impl AgentDispatcher<'_> {
                 Some(root)
             }
             (None, None) => None,
-        };
-        let unit = tree
-            .as_ref()
-            .map_or_else(LeaseUnit::tokens, |scope| scope.unit.clone());
-        let nodes = self.launch_nodes_in_txn(txn, target, &unit)?;
-        self.admit_nodes_in_txn(txn, tree, budget, nodes, unit, now)
+        })
     }
 
     /// One workflow leaf's launch under its wrapper's scope, at its release.
@@ -259,7 +272,7 @@ impl AgentDispatcher<'_> {
         self.admit_nodes_in_txn(txn, tree, None, vec![node], unit, now)
     }
 
-    fn launch_nodes_in_txn(
+    pub(super) fn launch_nodes_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         target: &AgentDispatchTarget,
@@ -299,94 +312,22 @@ impl AgentDispatcher<'_> {
         unit: LeaseUnit,
         now: u64,
     ) -> Result<LaunchAdmission> {
-        if budget == Some(0) {
-            return Err(invalid("a spawn budget is more than zero units"));
-        }
         let expected = ExpectedSpend::sum(nodes.iter().map(|node| node.expected));
         let agent_count = u64::try_from(nodes.len()).unwrap_or(u64::MAX);
-        // (cap view, reservation, units reserved, parent scope, most it may spend)
-        let (cap, reserve, reserved_units, parent_scope, spendable) = match (tree, budget) {
-            (None, None) => (None, LaunchReserve::Unmetered, 0, None, None),
-            (None, Some(cap_units)) => (
-                Some(SpendCapView {
-                    scope: None,
-                    unit: unit.clone(),
-                    cap_units,
-                    available_units: cap_units,
-                    hard: true,
-                }),
-                LaunchReserve::Pinned {
-                    unit: unit.clone(),
-                    cap_units,
-                },
-                cap_units,
-                None,
-                Some(cap_units),
-            ),
-            (Some(host), budget) => {
-                let available = self.available_from_in_txn(txn, &host)?;
-                let binding = self.binding_cap_in_txn(txn, &host)?;
-                let parent = host.scope.clone();
-                match budget {
-                    Some(cap_units) => (
-                        Some(SpendCapView {
-                            scope: Some(binding.scope),
-                            unit: unit.clone(),
-                            cap_units,
-                            available_units: available,
-                            hard: true,
-                        }),
-                        LaunchReserve::Child {
-                            parent: parent.clone(),
-                            ask: ChildSpend::Carve { cap_units },
-                        },
-                        cap_units,
-                        Some(parent),
-                        Some(cap_units.min(available)),
-                    ),
-                    None => (
-                        Some(SpendCapView {
-                            scope: Some(binding.scope),
-                            unit: unit.clone(),
-                            cap_units: binding.cap_units,
-                            available_units: available,
-                            hard: false,
-                        }),
-                        LaunchReserve::Child {
-                            parent: parent.clone(),
-                            ask: ChildSpend::Hold {
-                                expected_units: expected.units,
-                            },
-                        },
-                        expected.units.min(available),
-                        Some(parent),
-                        Some(available),
-                    ),
-                }
-            }
-        };
-        let carve_short = cap.as_ref().filter(|view| {
-            view.hard && view.scope.is_some() && view.cap_units > view.available_units
-        });
-        let over_available = spendable.is_some_and(|most| expected.units > most);
-        let more_would_buy = match (carve_short, spendable) {
-            (Some(view), _) => Some(format!(
-                "the {} {} budget exceeds the {} available under the cap, so this launch would be refused; {} more would let it start",
-                view.cap_units,
-                unit.as_str(),
-                view.available_units,
-                view.cap_units - view.available_units,
-            )),
-            (None, Some(most)) if over_available => Some(format!(
-                "{} more {} would cover the expected {} for {} agent(s); {} can be spent now",
-                expected.units - most,
-                unit.as_str(),
-                expected.units,
-                agent_count,
-                most,
-            )),
-            _ => None,
-        };
+        let terms = self.spend_terms_in_txn(txn, tree, budget, expected.units, &unit)?;
+        let (over_available, more_would_buy) = terms.shortfall(
+            expected.units,
+            &unit,
+            "launch",
+            &format!("{agent_count} agent(s)"),
+        );
+        let SpendTerms {
+            cap,
+            reserve,
+            reserved_units,
+            parent_scope,
+            ..
+        } = terms;
         let statement = LaunchStatement {
             agent_count,
             expected,
@@ -411,5 +352,129 @@ impl AgentDispatcher<'_> {
             statement,
             reserve,
         })
+    }
+
+    /// The cap a caller's work runs under and what it would reserve, for an
+    /// expected spend of `expected_units`, read once from the caller's tree.
+    pub(super) fn spend_terms_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        tree: Option<SpendScope>,
+        budget: Option<u64>,
+        expected_units: u64,
+        unit: &LeaseUnit,
+    ) -> Result<SpendTerms> {
+        if budget == Some(0) {
+            return Err(invalid("a spawn budget is more than zero units"));
+        }
+        Ok(match (tree, budget) {
+            (None, None) => SpendTerms {
+                cap: None,
+                reserve: LaunchReserve::Unmetered,
+                reserved_units: 0,
+                parent_scope: None,
+                spendable: None,
+            },
+            (None, Some(cap_units)) => SpendTerms {
+                cap: Some(SpendCapView {
+                    scope: None,
+                    unit: unit.clone(),
+                    cap_units,
+                    available_units: cap_units,
+                    hard: true,
+                }),
+                reserve: LaunchReserve::Pinned {
+                    unit: unit.clone(),
+                    cap_units,
+                },
+                reserved_units: cap_units,
+                parent_scope: None,
+                spendable: Some(cap_units),
+            },
+            (Some(host), budget) => {
+                let available = self.available_from_in_txn(txn, &host)?;
+                let binding = self.binding_cap_in_txn(txn, &host)?;
+                let parent = host.scope.clone();
+                match budget {
+                    Some(cap_units) => SpendTerms {
+                        cap: Some(SpendCapView {
+                            scope: Some(binding.scope),
+                            unit: unit.clone(),
+                            cap_units,
+                            available_units: available,
+                            hard: true,
+                        }),
+                        reserve: LaunchReserve::Child {
+                            parent: parent.clone(),
+                            ask: ChildSpend::Carve { cap_units },
+                        },
+                        reserved_units: cap_units,
+                        parent_scope: Some(parent),
+                        spendable: Some(cap_units.min(available)),
+                    },
+                    None => SpendTerms {
+                        cap: Some(SpendCapView {
+                            scope: Some(binding.scope),
+                            unit: unit.clone(),
+                            cap_units: binding.cap_units,
+                            available_units: available,
+                            hard: false,
+                        }),
+                        reserve: LaunchReserve::Child {
+                            parent: parent.clone(),
+                            ask: ChildSpend::Hold { expected_units },
+                        },
+                        reserved_units: expected_units.min(available),
+                        parent_scope: Some(parent),
+                        spendable: Some(available),
+                    },
+                }
+            }
+        })
+    }
+}
+
+/// A caller's cap view and the reservation a launch would make under it.
+pub(super) struct SpendTerms {
+    pub(super) cap: Option<SpendCapView>,
+    reserve: LaunchReserve,
+    reserved_units: u64,
+    parent_scope: Option<SpendScopeId>,
+    /// The most the work may spend now; `None` when unmetered.
+    spendable: Option<u64>,
+}
+
+impl SpendTerms {
+    /// Whether `expected_units` exceeds what may be spent now, and one line
+    /// on what more budget would buy. Stated, never refused.
+    pub(super) fn shortfall(
+        &self,
+        expected_units: u64,
+        unit: &LeaseUnit,
+        what: &str,
+        items: &str,
+    ) -> (bool, Option<String>) {
+        let carve_short = self.cap.as_ref().filter(|view| {
+            view.hard && view.scope.is_some() && view.cap_units > view.available_units
+        });
+        let over_available = self.spendable.is_some_and(|most| expected_units > most);
+        let more_would_buy = match (carve_short, self.spendable) {
+            (Some(view), _) => Some(format!(
+                "the {} {} budget exceeds the {} available under the cap, so this {what} would be refused; {} more would let it start",
+                view.cap_units,
+                unit.as_str(),
+                view.available_units,
+                view.cap_units - view.available_units,
+            )),
+            (None, Some(most)) if over_available => Some(format!(
+                "{} more {} would cover the expected {} for {items}; {} can be spent now",
+                expected_units - most,
+                unit.as_str(),
+                expected_units,
+                most,
+            )),
+            _ => None,
+        };
+        (over_available, more_would_buy)
     }
 }

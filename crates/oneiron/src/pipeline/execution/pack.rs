@@ -17,7 +17,7 @@ use crate::query_expansion::{
 use crate::retrieval_quality::{RetrievalDiagnostics, classify_retrieval_quality};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
 use crate::temporal::{TemporalHintReport, temporal_hints_from_query};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 impl PipelineBuilder<'_> {
@@ -216,7 +216,7 @@ impl PipelineBuilder<'_> {
         // fork hash. An implicit wall clock stays unhashed, as pinned.
         let explicit_time_dependent_now = self.temporal_now;
 
-        let attempt = self.run_retrieval_txn_attempt(
+        let (attempt, mut policy_trace) = self.run_retrieval_policy_attempts(
             occurred_range,
             &bm25_config,
             rerank_query.as_deref(),
@@ -227,9 +227,15 @@ impl PipelineBuilder<'_> {
             HydeAttemptOverrides {
                 widen_channel_limits: false,
                 extra_text_queries: &[],
-                skip_ret01_abstain: self.hyde.is_some(),
+                skip_ret01_abstain: self.hyde.is_some() || self.retrieval_policy.is_some(),
             },
         )?;
+        if policy_trace.is_some() {
+            telemetry_signals = attempt.diagnostics.attempted.clone();
+            if hyde_expansion.is_some() && !telemetry_signals.contains(&RetrievalSignal::Hyde) {
+                telemetry_signals.push(RetrievalSignal::Hyde);
+            }
+        }
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
@@ -272,6 +278,7 @@ impl PipelineBuilder<'_> {
         let mut total_in_scope = attempt.total_in_scope;
         let mut empty_reason = attempt.empty_reason;
         let mut signal_components = attempt.signal_components;
+        let mut media_evidence = attempt.media_evidence;
         let mut blend_components = attempt.blend_components;
         let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
@@ -314,6 +321,7 @@ impl PipelineBuilder<'_> {
             let mut second_insufficient = false;
             if matches!(verdict, EvidenceVerdict::Insufficient { .. })
                 && options.retry_once
+                && policy_trace.is_none()
                 && !self.deadline_reached()
             {
                 // Replace every retrieval artifact with the widened fresh transaction.
@@ -348,6 +356,7 @@ impl PipelineBuilder<'_> {
                 total_in_scope = retry.total_in_scope;
                 empty_reason = retry.empty_reason;
                 signal_components = retry.signal_components;
+                media_evidence = retry.media_evidence;
                 blend_components = retry.blend_components;
                 access_factors = retry.access_factors;
                 rerank_merged_components = retry.rerank_merged_components;
@@ -370,11 +379,13 @@ impl PipelineBuilder<'_> {
                 );
             }
             let abstain = second_insufficient
-                || (matches!(verdict, EvidenceVerdict::Insufficient { .. }) && !options.retry_once)
+                || (matches!(verdict, EvidenceVerdict::Insufficient { .. })
+                    && (!options.retry_once || policy_trace.is_some()))
                 || (self.context_pack_budget.is_some()
                     && self.post_assessment_evidence_abstains(
                         &scores,
                         &signal_components,
+                        &media_evidence,
                         hyde_expansion.is_some(),
                     )?);
             if abstain {
@@ -383,6 +394,46 @@ impl PipelineBuilder<'_> {
                 pending_vectors.clear();
                 retrieval_trace = None;
                 empty_reason = Some(EmptyReason::BelowThreshold);
+            }
+        }
+
+        // The FSM may inspect weak candidates to decide whether another read
+        // is useful. The existing evidence wall still judges the final pack.
+        if let Some(policy) = policy_trace.as_mut() {
+            let below_floor = self.context_pack_budget.is_some()
+                && self.post_assessment_evidence_abstains(
+                    &scores,
+                    &signal_components,
+                    &media_evidence,
+                    hyde_expansion.is_some(),
+                )?;
+            if below_floor || scores.is_empty() {
+                scores.clear();
+                cited_messages.clear();
+                capabilities.clear();
+                pending_vectors.clear();
+                retrieval_trace = None;
+                empty_reason = Some(EmptyReason::BelowThreshold);
+                if let Some(decision) = policy.decisions.last_mut() {
+                    decision.action =
+                        super::super::retrieval_policy::RetrievalPolicyAction::Abstain;
+                    decision.tier = super::super::retrieval_policy::RetrievalPolicyTier::Seed;
+                }
+            }
+            if let Some(inputs) = replay_inputs.as_mut() {
+                inputs.config["retrieval_policy"] = serde_json::to_value(&*policy)
+                    .map_err(|_| Error::InvariantViolation("retrieval policy replay encode"))?;
+            }
+            if let Some(trace) = retrieval_trace.as_mut() {
+                use sha2::{Digest, Sha256};
+                let mut hash = Sha256::new();
+                hash.update(b"oneiron.retrieval_trace.policy.v1");
+                hash.update(trace.fork_hash);
+                hash.update(
+                    rmp_serde::to_vec_named(&*policy)
+                        .map_err(|_| Error::InvariantViolation("retrieval policy trace encode"))?,
+                );
+                trace.fork_hash = hash.finalize().into();
             }
         }
 
@@ -455,6 +506,7 @@ impl PipelineBuilder<'_> {
             .with_trace(retrieval_trace)
             .with_quality(&retrieval_quality);
             let mut run_record = run_record;
+            run_record.policy_trace = policy_trace;
             run_record.replay_inputs = replay_inputs;
             // ONE-1728 K10: a retrieval issued inside a room registers through the
             // room's door, which writes under the route the run captured — into
@@ -661,6 +713,7 @@ impl PipelineBuilder<'_> {
         &self,
         scores: &[ScoredEntity],
         signal_components: &HashMap<EntityId, Vec<crate::store::RetrievalScoreComponent>>,
+        media_evidence: &HashSet<EntityId>,
         hyde_expanded: bool,
     ) -> Result<bool> {
         let floors = self.no_match_floors();
@@ -673,6 +726,7 @@ impl PipelineBuilder<'_> {
         context_pack_evidence_abstains(
             scores,
             signal_components,
+            media_evidence,
             self.text_search.as_ref().map(|(query, _)| query.as_str()),
             self.vector_search.is_some() || hyde_expanded,
             space,

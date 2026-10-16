@@ -198,13 +198,8 @@ pub fn check_dimensions(dimensions: usize) -> Result<(), MemoryError> {
 }
 
 /// Rejects raw blob content over the 32 MiB ceiling.
-///
-/// Crate-internal, not exported: no shipped verb carries a blob yet, so a
-/// public name here would be a promise with no caller behind it. The ceiling
-/// itself ([`MAX_BLOB_CONTENT_BYTES`]) stays public because it is the number
-/// both bindings document.
-#[allow(dead_code)]
-fn check_blob_bytes(len: usize) -> Result<(), MemoryError> {
+/// Shared by embedded and remote artifact appends before engine dispatch.
+pub fn check_blob_bytes(len: usize) -> Result<(), MemoryError> {
     if len > MAX_BLOB_CONTENT_BYTES {
         return Err(MemoryError::bad_request_with(
             format!("blob content exceeds the {MAX_BLOB_CONTENT_BYTES}-byte ceiling"),

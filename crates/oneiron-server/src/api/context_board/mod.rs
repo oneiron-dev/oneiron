@@ -434,10 +434,11 @@ pub(crate) async fn context_board_hydrate(
             changes: Some(&changed_line),
         },
         oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: standing.as_ref().map_or(
-                crate::mcp::MCP_BOARD_BUDGET_TOK,
-                |prefix| prefix.other_context_tokens,
-            ),
+            harness_default_tok: standing
+                .as_ref()
+                .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
+                    prefix.other_context_tokens
+                }),
             caller_limit_tok: req.board_budget_tok,
             explicit_override_tok: None,
         },
@@ -600,9 +601,7 @@ pub(crate) async fn context_board_hydrate(
 }
 
 /// The capability hits a pack carried.
-fn hits_of(
-    pack: Option<&CoreContextPackResponse>,
-) -> impl Iterator<Item = oneiron::EntityId> + '_ {
+fn hits_of(pack: Option<&CoreContextPackResponse>) -> impl Iterator<Item = oneiron::EntityId> + '_ {
     pack.into_iter()
         .flat_map(|pack| &pack.capabilities)
         .map(|hit| hit.id)

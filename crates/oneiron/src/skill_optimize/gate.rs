@@ -173,7 +173,8 @@ pub use ledger::{
 };
 pub use live::{measure_skill_edit_goal_axes, skill_edit_goal_axis_report, skill_goal_axis_plan};
 pub use measurement::{
-    AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
+    AuditPair, BlindPreference, HonestyReplayObservation, JudgeMeasurements, PreferredResponse,
+    WorldAxisScore,
 };
 pub use project_goal::{
     ProjectGoalRevisionProposal, TradeoffRole, project_goal_revision_proposals,
