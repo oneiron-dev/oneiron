@@ -65,7 +65,7 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 
 // PromotionCandidate is DEFINED by its producer (dreamer_consolidation,
@@ -619,21 +619,28 @@ fn verify_landed(
     Ok(body.approval)
 }
 
-/// True when the evidence ref may corroborate: TURN and other non-claim
-/// entities pass; a type-0 CLAIM must pass `claim_evidence_admissible`
-/// (GATE-11 — Generated-origin claims contribute zero); an unresolvable
-/// ref is dropped fail-closed.
+/// True when the evidence ref may corroborate: a PERSON or a SESSION names
+/// who spoke or where, not anything said, so it never does; a type-0 CLAIM
+/// must pass `claim_evidence_admissible` (GATE-11 — Generated-origin claims
+/// contribute zero) and have no owner confirmation outstanding; a TURN and
+/// every other source row pass; an unresolvable ref is dropped fail-closed.
 fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
-    let Some(entity_type) = vault.get_entity_type(entry)? else {
-        return Ok(false);
-    };
-    if entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(true);
+    match vault.get_entity_type(entry)? {
+        None | Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_SESSION) => Ok(false),
+        Some(ENTITY_TYPE_CLAIM) => {
+            if !vault
+                .get_claim(entry)?
+                .is_some_and(|body| claim_evidence_admissible(&body))
+            {
+                return Ok(false);
+            }
+            vault.claim_consolidation_eligible(
+                entry,
+                crate::gate::ConsolidationReader::PromotionEvidence,
+            )
+        }
+        Some(_) => Ok(true),
     }
-    let Some(body) = vault.get_claim(entry)? else {
-        return Ok(false);
-    };
-    Ok(claim_evidence_admissible(&body))
 }
 
 /// Appends the engine-owned `evidence_taint` scope entry, preserving the
@@ -726,3 +733,8 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn evidence_ref_admissible_for_test(vault: &Vault, entry: &EntityId) -> Result<bool> {
+    evidence_ref_admissible(vault, entry)
+}

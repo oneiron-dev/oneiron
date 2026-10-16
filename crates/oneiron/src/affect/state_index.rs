@@ -106,6 +106,12 @@ impl Vault {
                     )
                     || body.valid_from.is_some_and(|start| start > at)
                     || body.valid_to.is_some_and(|end| end <= at)
+                    || !crate::gate::claim_consolidation_eligible_in_txn(
+                        &self.store,
+                        txn,
+                        id,
+                        crate::gate::ConsolidationReader::StateIndexSignal,
+                    )?
                 {
                     return Err(Error::InvalidClaimBody("state index signal does not apply"));
                 }

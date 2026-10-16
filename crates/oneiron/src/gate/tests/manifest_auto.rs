@@ -54,7 +54,7 @@ fn system_dreamer_auto_write_still_requires_a_signed_manifest() -> Result<()> {
 
     let claim_id = test_id(0xCA);
     let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
-    body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
+    body.evidence = Some(said_evidence(&vault)?);
     let (candidate, dummy_envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -128,7 +128,7 @@ fn a_forged_signature_in_an_untrusted_pack_grants_the_dreamer_nothing() -> Resul
 
     let write = |claim_id: EntityId| -> Result<()> {
         let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
-        body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
+        body.evidence = Some(said_evidence(&vault)?);
         let (candidate, dummy_envelope) = dreamer_claim_candidate_write_parts(
             &vault,
             &body,
@@ -184,7 +184,7 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
 
     let claim_id = test_id(0xC7);
     let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
-    body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
+    body.evidence = Some(said_evidence(&vault)?);
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,

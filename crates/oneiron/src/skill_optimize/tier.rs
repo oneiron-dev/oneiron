@@ -115,6 +115,12 @@ fn hub_vouches_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>, skill: &EntityId) -
         };
         if body.predicate == PREDICATE_SKILL_HUB_PROVENANCE
             && body.lifecycle == ClaimLifecycleStatus::Active
+            && crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                rtxn,
+                &id,
+                crate::gate::ConsolidationReader::SkillOptimizeHubVouch,
+            )?
         {
             return Ok(true);
         }

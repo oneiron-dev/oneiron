@@ -696,6 +696,12 @@ pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<O
             || body.source != Some(ClaimSource::Observed)
             || body.approval != ClaimApprovalStatus::Auto
             || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
+            || !crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                &rtxn,
+                &id,
+                crate::gate::ConsolidationReader::EditCost,
+            )?
         {
             continue;
         }

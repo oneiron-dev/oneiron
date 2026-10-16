@@ -244,6 +244,7 @@ fn put_in_own_txn(
                 refinement_admission: None,
                 transition: None,
                 posture: crate::HostingPrivacyPosture::default(),
+                owner_authored: None,
             },
         },
     )
@@ -625,6 +626,7 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
                             auto_checker: None,
                             defer_metrics_until_commit: true,
                             transition: None,
+                            owner_authored: None,
                         },
                         policy,
                         crate::gate::GateWriteMode {

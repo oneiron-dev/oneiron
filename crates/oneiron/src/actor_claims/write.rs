@@ -366,6 +366,12 @@ pub fn skill_fit_for(vault: &Vault, actor: &EntityId, skill: &EntityId) -> Resul
         // look like estimates of two different pairs.
         if skill_fit_scope_skill(body.scope.as_ref()) != Some(*skill)
             || !crate::claim::has_live_support_in_txn(&vault.store, &rtxn, &body)?
+            || !crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                &rtxn,
+                &id,
+                crate::gate::ConsolidationReader::ActorSkillFit,
+            )?
         {
             continue;
         }

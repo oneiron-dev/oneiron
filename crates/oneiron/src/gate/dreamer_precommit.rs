@@ -126,8 +126,8 @@ fn malformed_shape(input: &DreamerPrecommitInput<'_>) -> bool {
         || non_utf8_value
 }
 
-/// Check 3. At least one `candidate_evidence` ref must resolve to an
-/// existing, non-erased entity.
+/// Check 3. At least one `candidate_evidence` ref must resolve to live
+/// evidence, as the door's resolver judges it.
 fn evidence_floor_satisfied(
     input: &DreamerPrecommitInput<'_>,
     resolves: &dyn Fn(&EntityId) -> Result<bool>,

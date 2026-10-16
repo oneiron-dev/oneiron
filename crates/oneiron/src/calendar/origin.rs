@@ -155,7 +155,10 @@ pub(crate) fn live_origin(
             continue;
         };
         let body = crate::claim::decode_claim_body(bytes, true)?;
-        if body.predicate == PREDICATE_CALENDAR_ORIGIN && claim_surfaceable(&body) {
+        if body.predicate == PREDICATE_CALENDAR_ORIGIN
+            && claim_surfaceable(&body)
+            && crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &id)?
+        {
             let origin = body
                 .value
                 .as_str()

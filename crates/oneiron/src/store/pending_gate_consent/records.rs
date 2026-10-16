@@ -24,7 +24,7 @@ pub(in crate::store) const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
 
 const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
 
-pub(super) const CRITICAL_CONFIRM_INVALIDATION_VERSION: u8 = 0;
+pub(super) const OWNER_ANSWER_OBLIGATION_VERSION: u8 = 0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingGateConsentRecord {
@@ -61,11 +61,30 @@ pub struct PendingGateConsentGroup {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct CriticalConfirmInvalidationRecord {
+pub(crate) struct OwnerAnswerObligationRecord {
     pub(super) version: u8,
     pub(super) claim_id: [u8; 16],
-    pub(super) invalidated_decision_id: GateDecisionId,
-    pub(super) replacement_body_hash: [u8; 32],
+    /// The decision whose critical confirm opened the obligation. The field
+    /// keeps the name of the invalidation row this record grew from, so a
+    /// vault's earlier rows read as open obligations.
+    #[serde(rename = "invalidated_decision_id")]
+    pub(crate) opened_by: GateDecisionId,
+    /// The hash of the content binding of the item the owner answers now
+    /// ([`super::owner_answer_item_hash`]). An earlier invalidation row holds
+    /// a body hash that names no item, so the first door to meet it shows the
+    /// owner a fresh one.
+    #[serde(rename = "replacement_body_hash")]
+    pub(crate) item: [u8; 32],
+    /// Whether a peer revision that lands over this claim lands demoted: set
+    /// when a peer overwrote a confirm this device attached, cleared by a
+    /// fresh local one. An earlier invalidation row has no field and reads
+    /// as set.
+    #[serde(default = "peer_revisions_demoted_by_default")]
+    pub(crate) demotes_peer_revisions: bool,
+}
+
+const fn peer_revisions_demoted_by_default() -> bool {
+    true
 }
 
 pub(super) fn encode_pending_gate_consent(record: &PendingGateConsentRecord) -> Result<Vec<u8>> {
@@ -103,20 +122,18 @@ pub(super) fn decode_pending_gate_consent_index_state(
     Ok(state)
 }
 
-pub(super) fn encode_critical_confirm_invalidation(
-    record: &CriticalConfirmInvalidationRecord,
+pub(super) fn encode_owner_answer_obligation(
+    record: &OwnerAnswerObligationRecord,
 ) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
-        .map_err(|_| Error::InvariantViolation("critical confirm invalidation encode failed"))
+        .map_err(|_| Error::InvariantViolation("owner answer obligation encode failed"))
 }
 
-pub(super) fn decode_critical_confirm_invalidation(
-    raw: &[u8],
-) -> Result<CriticalConfirmInvalidationRecord> {
-    let record: CriticalConfirmInvalidationRecord = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("critical confirm invalidation"))?;
-    if record.version != CRITICAL_CONFIRM_INVALIDATION_VERSION || record.claim_id == [0; 16] {
-        return Err(Error::CorruptedIndex("critical confirm invalidation"));
+pub(super) fn decode_owner_answer_obligation(raw: &[u8]) -> Result<OwnerAnswerObligationRecord> {
+    let record: OwnerAnswerObligationRecord =
+        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("owner answer obligation"))?;
+    if record.version != OWNER_ANSWER_OBLIGATION_VERSION || record.claim_id == [0; 16] {
+        return Err(Error::CorruptedIndex("owner answer obligation"));
     }
     Ok(record)
 }

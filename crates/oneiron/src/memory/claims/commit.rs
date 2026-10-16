@@ -231,6 +231,7 @@ impl Memory<'_> {
                     }
                     self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
                     let closure_envelope = envelope.clone();
+                    let owner_authored = self.owner_authored_write_in_txn(content.read())?;
                     content.apply_claim_ops(
                         vec![BatchOp::ClaimCandidate {
                             id,
@@ -241,7 +242,7 @@ impl Memory<'_> {
                             internal_lexical_query_hint: false,
                         }],
                         self.vault.text_index_trusted.load(Ordering::Acquire),
-                        ApplyOpsGateMode::new(true, true),
+                        ApplyOpsGateMode::new(true, true).with_owner_authored(owner_authored),
                     )?;
                     if let Some(old_id) = prior {
                         content.update_claim(old_id, |txn| {

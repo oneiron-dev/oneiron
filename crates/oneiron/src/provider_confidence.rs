@@ -378,6 +378,15 @@ pub(crate) fn effective_confidence_in_txn(
     let body = vault
         .get_claim_in_txn(&*wtxn, claim_ref)?
         .ok_or(Error::EntityNotFound)?;
+    // A claim still awaiting its owner's answer has no confidence to score.
+    if !crate::gate::claim_consolidation_eligible_in_txn(
+        &vault.store,
+        wtxn,
+        claim_ref,
+        crate::gate::ConsolidationReader::ProviderConfidence,
+    )? {
+        return Err(Error::EntityNotFound);
+    }
     let provider = provider_from_claim_body(&body)?;
     let prior = prior_memo
         .resolve(provider, || {
@@ -385,6 +394,12 @@ pub(crate) fn effective_confidence_in_txn(
         })?
         .unwrap_or(1.0);
     Ok(body.confidence * prior)
+}
+
+/// The prior [`effective_confidence`] multiplies `provider`'s claims by.
+#[cfg(test)]
+pub(crate) fn provider_prior_for_test(vault: &Vault, provider: &str) -> Result<Option<f32>> {
+    vault.with_write_txn(|wtxn| active_provider_prior_in_txn(vault, wtxn, provider))
 }
 
 /// Reads the claim's stored confidence without applying or writing a provider prior.

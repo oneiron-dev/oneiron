@@ -66,6 +66,12 @@ pub(crate) fn default_facet_in(store: &Store, txn: &heed::RoTxn<'_>) -> Result<E
         if body.predicate != PREDICATE_VAULT_DEFAULT_FACET
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.stale
+            || !crate::gate::claim_consolidation_eligible_in_txn(
+                store,
+                txn,
+                &claim,
+                crate::gate::ConsolidationReader::DefaultFacet,
+            )?
         {
             continue;
         }

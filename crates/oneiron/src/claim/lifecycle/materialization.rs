@@ -33,6 +33,7 @@ impl Vault {
                 auto_checker: Some(checker),
                 defer_metrics_until_commit: true,
                 transition: Some(&transition),
+                owner_authored: None,
             },
             &policy,
             crate::gate::GateWriteMode {

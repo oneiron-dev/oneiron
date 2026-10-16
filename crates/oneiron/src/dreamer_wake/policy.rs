@@ -337,7 +337,15 @@ fn count_new(vault: &Vault, txn: &heed::RoTxn<'_>, state: &mut WakeState) -> Res
                         && !crate::claim::is_reserved_predicate(&body.predicate)
                         && body
                             .source
-                            .is_some_and(|source| source != ClaimSource::Generated),
+                            .is_some_and(|source| source != ClaimSource::Generated)
+                        // A claim awaiting its owner's critical confirm seeds
+                        // no Dreamer pass.
+                        && crate::gate::claim_consolidation_eligible_in_txn(
+                            &vault.store,
+                            txn,
+                            &id,
+                            crate::gate::ConsolidationReader::WakeCount,
+                        )?,
                     false,
                     row.learned_at,
                 )
@@ -697,6 +705,18 @@ impl Vault {
                 attempt: Some(attempt),
             })
         })
+    }
+}
+
+#[cfg(test)]
+impl Vault {
+    /// The explicit records a wake would count now, without moving its state,
+    /// for the consolidation reader table.
+    pub(crate) fn wake_pending_records_for_test(&self) -> Result<Vec<String>> {
+        let txn = self.store.env.read_txn()?;
+        let mut state = state_in_txn(self, &txn)?;
+        count_new(self, &txn, &mut state)?;
+        Ok(state.pending_records.into_keys().collect())
     }
 }
 

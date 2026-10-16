@@ -225,12 +225,71 @@ impl AuthenticatedOwner {
         self.revalidate_in_txn(vault, txn)
     }
 
+    /// Revalidates this proof as the vault's owner in the writing
+    /// transaction and names the write it authors as the owner's own.
+    ///
+    /// Owner-authored writes carry their own confirmation: a critical claim
+    /// this write lands attaches no confirm. A bound credential must be the
+    /// owner's own unattenuated, undelegated slip (a logged child mint is a
+    /// delegation even when it keeps the owner's scope). A proof that no
+    /// longer holds refuses the write rather than downgrading it.
+    pub(crate) fn owner_authored_write_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<OwnerAuthoredWrite> {
+        if self.credential.as_ref().is_some_and(|credential| {
+            !credential.is_full_vault_owner_grade() || credential.claims().parent_id.is_some()
+        }) {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "owner credential is narrowed or delegated",
+            )));
+        }
+        self.revalidate_as_vault_owner_in_txn(vault, txn)?;
+        Ok(OwnerAuthoredWrite { actor: self.actor })
+    }
+
+    /// This proof as an owner-tier answer to a claim's owner-answer
+    /// obligation, revalidated in the answering transaction: the vault
+    /// owner's own unattenuated, undelegated credential. A narrowed or
+    /// delegated credential, or a person who no longer owns the vault,
+    /// answers nothing (`None`), and the door acts as it did before.
+    pub(crate) fn owner_answer_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<OwnerAuthoredWrite>> {
+        match self.owner_authored_write_in_txn(vault, txn) {
+            Ok(write) => Ok(Some(write)),
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,
             principal_ref: self.principal_ref.clone(),
             decision_id: self.decision_id,
         }
+    }
+}
+
+/// A claim write the vault's authenticated owner made in person, revalidated
+/// in the transaction that writes it.
+///
+/// Only [`AuthenticatedOwner::owner_authored_write_in_txn`] builds one, and
+/// it is neither `Clone` nor stored: the writing door takes it by value into
+/// that transaction's gate mode, so no later write can inherit it.
+#[derive(Debug)]
+pub(crate) struct OwnerAuthoredWrite {
+    actor: EntityId,
+}
+
+impl OwnerAuthoredWrite {
+    /// The owner who authored the write.
+    pub(crate) const fn actor(&self) -> EntityId {
+        self.actor
     }
 }
 

@@ -26,6 +26,10 @@ pub(crate) struct ApplyOpsGateMode {
     /// snapshot before the write transaction opened; consumed per id in op
     /// order.
     pub(super) nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
+    /// The vault owner's in-person authorship of this batch's claim
+    /// candidates, revalidated in the transaction that applies them. Raw puts
+    /// never read it.
+    pub(super) owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
 }
 
 impl ApplyOpsGateMode {
@@ -43,7 +47,18 @@ impl ApplyOpsGateMode {
             birth_mask: None,
             pre_analyzed_text: HashMap::new(),
             nsw_plans: HashMap::new(),
+            owner_authored: None,
         }
+    }
+
+    /// Marks this batch's claim candidates as the vault owner's own: a
+    /// critical one carries its own confirmation and attaches none.
+    pub(crate) fn with_owner_authored(
+        mut self,
+        owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
+    ) -> Self {
+        self.owner_authored = owner_authored;
+        self
     }
 
     pub(crate) fn with_refinement_admission(

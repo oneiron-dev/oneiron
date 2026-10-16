@@ -129,4 +129,4 @@ fn value_of<T: Serialize>(value: &T) -> Result<Value> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

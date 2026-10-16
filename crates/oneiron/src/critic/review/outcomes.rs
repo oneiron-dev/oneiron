@@ -83,7 +83,17 @@ pub fn record_review_outcome(
                     Err(invalid_critic_config("outcome already recorded"))
                 };
             }
-            if body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active {
+            // A calibration still awaiting its owner's answer trains nothing
+            // and is left as it is.
+            if body.predicate == predicate
+                && body.lifecycle == ClaimLifecycleStatus::Active
+                && crate::gate::claim_consolidation_eligible_in_txn(
+                    &vault.store,
+                    txn,
+                    &id,
+                    crate::gate::ConsolidationReader::CriticOutcome,
+                )?
+            {
                 reliability = reliability_from_body(&body, &artifact.lens_id, &artifact.domain)?;
                 old.push(id);
             }

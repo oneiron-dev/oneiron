@@ -287,6 +287,70 @@ pub(crate) fn resolved_machine_history(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<ClaimTransitionProjection> {
+    let (projection, carriers) = machine_history(store, txn, fold, target)?;
+    // A carrier awaiting its owner's answer leaves the history incomplete, as
+    // one that has not arrived does: no approval projects from it yet.
+    for id in carriers {
+        if !crate::gate::claim_consolidation_eligible_in_txn(
+            store,
+            txn,
+            &id,
+            crate::gate::ConsolidationReader::MachineHistory,
+        )? {
+            return Err(missing());
+        }
+    }
+    Ok(projection)
+}
+
+/// The history a restrictive transition stages on: every carrier, held or
+/// not, so a revoke, demotion or narrowing lands while a carrier awaits its
+/// owner's answer. Only restrictive staging reads it.
+pub(crate) fn machine_history_for_restriction(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+) -> Result<ClaimTransitionProjection> {
+    machine_history(store, txn, fold, target).map(|(projection, _)| projection)
+}
+
+/// Whether a local write of `incoming` to `target` is a restriction staged on
+/// a held history: the whole history projects it, and it keeps the live row's
+/// approval or rejects it, so no approval projects from a held carrier.
+pub(crate) fn restricts_held_machine_history(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+    incoming: &ClaimBody,
+) -> Result<bool> {
+    let projection = match machine_history_for_restriction(store, txn, fold, target) {
+        Ok(projection) => projection,
+        Err(Error::Claim(
+            ClaimError::MachineClaimHistoryIncomplete | ClaimError::InvalidMachineClaimProof,
+        )) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let Some(raw) = store.entities.get(txn, target.as_bytes())? else {
+        return Ok(false);
+    };
+    let live =
+        super::decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(bad)?, true)?;
+    Ok(project_machine_claim(&projection) == *incoming
+        && (incoming.approval == live.approval
+            || incoming.approval == super::ClaimApprovalStatus::Rejected))
+}
+
+/// The verified, folded history of `target`, and the ids of every carrier it
+/// was folded from: the birth, the present pin, each handoff in its chain
+/// and each transition.
+fn machine_history(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    target: EntityId,
+) -> Result<(ClaimTransitionProjection, Vec<EntityId>)> {
     let rows = machine_history_rows(store, txn, target)?;
     let packet = trusted_machine_handoff(store, txn, target)?;
     if fold.vault_id != Some(rows.birth.vault_id)
@@ -312,6 +376,17 @@ pub(crate) fn resolved_machine_history(
         return Err(missing());
     }
     let handoff_chain = verified_handoff_chain(store, txn, &packet, fold)?;
+    let mut hashes = vec![rows.birth.digest, packet.content_hash().map_err(|_| bad())?];
+    hashes.extend(packet.transitions.iter().map(|event| event.hash));
+    for handoff in &handoff_chain {
+        hashes.push(handoff.content_hash().map_err(|_| bad())?);
+    }
+    let carriers = hashes
+        .iter()
+        .map(|hash| {
+            EntityId::from_bytes(hash[..16].try_into().map_err(|_| bad())?).map_err(|_| bad())
+        })
+        .collect::<Result<Vec<_>>>()?;
     let event_tips: Vec<_> = packet
         .heads
         .iter()
@@ -391,6 +466,7 @@ pub(crate) fn resolved_machine_history(
         }
         TransitionFoldError::Rollback => Error::InvalidClaimBody("machine history event rollback"),
     })
+    .map(|projection| (projection, carriers))
 }
 
 /// Pin a challenge-bound host packet before receiving any claim bytes.

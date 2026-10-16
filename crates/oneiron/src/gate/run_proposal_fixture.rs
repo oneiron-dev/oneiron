@@ -88,8 +88,17 @@ impl Vault {
                 self.put_entity(&id, ENTITY_TYPE_PERSON, at, 1, body)?;
             }
         }
+        // A Dreamer write cites what was said, never the PERSON it is about.
+        let said = EntityId::now();
+        self.put_entity(
+            &said,
+            crate::registry::ENTITY_TYPE_TURN,
+            at,
+            1,
+            b"what was said",
+        )?;
         let evidence = encode_consolidation_evidence(&ConsolidationEvidenceEnvelope {
-            refs: vec![subject],
+            refs: vec![said],
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,
         });

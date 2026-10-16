@@ -14,7 +14,9 @@ use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
 use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
-use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+};
 use crate::run_tree::{GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundleAction};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
@@ -35,6 +37,7 @@ mod repair_tests;
 
 mod actor_fork;
 mod auto_checker;
+mod auto_checker_closure;
 mod carry_forward;
 #[cfg(feature = "sync")]
 mod carry_forward_sync;
@@ -42,7 +45,9 @@ mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;
+mod consolidation_readers;
 mod credential_lifetimes;
+mod critical_confirm_holds;
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
@@ -57,6 +62,7 @@ mod manifest_authenticity;
 mod manifest_auto;
 mod policy_inputs;
 mod posture_override;
+mod replicated_critical_confirm;
 mod scoped_policy_values;
 mod scoped_read;
 mod special_doors;
@@ -77,7 +83,7 @@ use critical_confirm_lifecycle::{
 };
 use dreamer_precommit::{
     PRECOMMIT_EVIDENCE_REFS_KEY, PRECOMMIT_RUN_ID, precommit_body, precommit_evidence,
-    seed_precommit_evidence_entity,
+    said_evidence, seed_precommit_evidence_entity,
 };
 use effect_policy::{coalescing_effect_record, coalescing_ledger_in_txn};
 use special_doors::gate_rejection_parts;

@@ -212,16 +212,32 @@ impl Vault {
         id: &EntityId,
         source: &HubRef,
     ) -> Result<bool> {
-        for (_, claim, _) in
+        for (claim_id, claim, _) in
             self.active_claims_for_predicate_in_txn(txn, id, super::PREDICATE_SKILL_HUB_PROVENANCE)?
         {
             if let Some(value) = super::support::map_value(&claim.value, "hubRef")
                 && HubRef::from_value(value)? == *source
+                && crate::gate::claim_consolidation_eligible_in_txn(
+                    &self.store,
+                    txn,
+                    &claim_id,
+                    crate::gate::ConsolidationReader::HubDefaultPresence,
+                )?
             {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hub_default_source_present_for_test(
+        &self,
+        entity: &EntityId,
+        source: &HubRef,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.default_skill_present_for_entity_in_txn(&txn, entity, source)
     }
 
     /// Explicitly re-imports missing or locally retired shipped bootstrap

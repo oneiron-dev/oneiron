@@ -303,8 +303,27 @@ pub(crate) fn actor_subject_anchor_in_txn(
     actor_ref: &EntityId,
     at: u64,
 ) -> Result<Option<ActorSubjectAnchor>> {
-    let Some(value) = single_subject_value(vault, txn, actor_ref, PREDICATE_ACTOR_SUBJECT_REF, at)?
-    else {
+    // An anchor awaiting its owner's answer names no subject yet; the eligible
+    // heads must still agree.
+    let mut value: Option<Value> = None;
+    for (id, body) in active_bodies_in_txn(vault, txn, actor_ref, PREDICATE_ACTOR_SUBJECT_REF, at)?
+    {
+        if !crate::gate::claim_consolidation_eligible_in_txn(
+            &vault.store,
+            txn,
+            &id,
+            crate::gate::ConsolidationReader::ActorSubjectAnchor,
+        )? {
+            continue;
+        }
+        if value.as_ref().is_some_and(|prior| *prior != body.value) {
+            return Err(Error::InvalidClaimBody(
+                "subject model has conflicting active heads",
+            ));
+        }
+        value = Some(body.value);
+    }
+    let Some(value) = value else {
         return Ok(None);
     };
     let stored = value

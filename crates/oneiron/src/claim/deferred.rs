@@ -16,6 +16,13 @@ pub(super) enum DeferredAction {
     Weaken(f32),
     Stale,
 }
+impl DeferredAction {
+    /// A decay or the stale mark only restricts the claim it rewrites, so it
+    /// settles on a held machine history; every other action waits for it.
+    fn demotes_in_place(&self) -> bool {
+        matches!(self, Self::Decay(_) | Self::Stale)
+    }
+}
 #[derive(Serialize, Deserialize)]
 pub(super) struct DeferredClaim {
     pub(super) action: DeferredAction,
@@ -33,6 +40,16 @@ pub(super) fn body_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     body.approval = ClaimApprovalStatus::Proposed;
     Ok(*blake3::hash(&encode_claim_body(&body)?).as_bytes())
 }
+/// Whether a destructive action is parked on `id`, behind the confirm its tray
+/// row shows.
+pub(crate) fn claim_has_deferred_action_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(DEFERRED.get(store, txn, id)?.is_some())
+}
+
 pub(super) fn load(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -117,6 +134,14 @@ impl Vault {
     ) -> Result<bool> {
         Ok(load(self, txn, id)?
             .is_some_and(|row| matches!(row.action, DeferredAction::Supersede { .. })))
+    }
+    /// A parked decay or stale mark: a restriction written in place.
+    pub(crate) fn deferred_claim_is_in_place_demotion_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(load(self, txn, id)?.is_some_and(|row| row.action.demotes_in_place()))
     }
     pub(crate) fn cancel_deferred_claim_in_txn(
         &self,
@@ -352,9 +377,12 @@ impl Vault {
         let Some(proposal) = load(self, txn, id)? else {
             return Ok(None);
         };
-        let body = self
-            .get_claim_in_txn(txn, id)?
-            .ok_or(Error::EntityNotFound)?;
+        let body = if proposal.action.demotes_in_place() {
+            self.claim_for_restriction_in_txn(txn, id)?
+        } else {
+            self.get_claim_in_txn(txn, id)?
+        }
+        .ok_or(Error::EntityNotFound)?;
         if proposal.body_hash != body_hash(&body)?
             || proposal.frontier
                 != crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?

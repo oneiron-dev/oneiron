@@ -180,6 +180,8 @@ pub(in crate::batch) struct PutContext<'a> {
     pub(in crate::batch) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
     /// The vault's hosting privacy posture, which bounds a project put.
     pub(in crate::batch) posture: crate::HostingPrivacyPosture,
+    /// The vault owner's in-person authorship of a claim candidate's put.
+    pub(in crate::batch) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
 }
 
 /// One claim candidate through `apply_claim_candidate`: the candidate and its
@@ -196,4 +198,5 @@ pub(in crate::batch) struct ClaimCandidateRequest<'a> {
     pub(in crate::batch) consent: ConsentHandling,
     pub(in crate::batch) indexing: TextIndexing,
     pub(in crate::batch) write_policy: Option<&'a crate::gate::PolicyManifestResolution>,
+    pub(in crate::batch) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
 }

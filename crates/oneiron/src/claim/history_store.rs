@@ -206,6 +206,12 @@ pub(crate) fn validate_machine_history_put(
                     crate::error::ClaimError::InvalidMachineClaimProof,
                 ));
             }
+            // A restriction staged while a carrier awaits its owner's answer.
+            Err(Error::Claim(crate::error::ClaimError::MachineClaimHistoryIncomplete))
+                if !replicated
+                    && super::history_projection::restricts_held_machine_history(
+                        store, txn, &fold, *id, incoming,
+                    )? => {}
             Err(Error::Claim(crate::error::ClaimError::MachineClaimHistoryIncomplete))
                 if replicated && pending_pin_names_signed_birth(store, txn, id, incoming)? => {}
             Err(Error::Claim(crate::error::ClaimError::MachineClaimHistoryIncomplete)) => {

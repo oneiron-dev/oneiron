@@ -284,7 +284,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let mut count = 0;
             for &document in documents {
-                let state = state_in(self, txn, document)?;
+                let state = super::ledger::restrictive_state_in(self, txn, document)?;
                 if let Some(recipient) = state.expiry_target(now) {
                     let state = append(
                         self,

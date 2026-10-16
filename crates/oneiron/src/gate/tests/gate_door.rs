@@ -189,7 +189,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
     let id = test_id(0xA7);
     let mut proposed = source_trust_claim(ClaimSource::Generated);
     proposed.approval = ClaimApprovalStatus::Proposed;
-    proposed.evidence = Some(precommit_evidence(vec![test_id(0xA8)]));
+    proposed.evidence = Some(said_evidence(&vault)?);
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(&vault, &proposed, test_id(0xA8), "run-a")?;
     vault

@@ -155,7 +155,6 @@ pub(super) fn apply_ops_with_origin(
     let mut ops = ReplayOps { ops, replay };
     let hub_admission = gate_mode.hub_admission.take();
     let refinement_admission = gate_mode.refinement_admission.take();
-
     let birth_mask = gate_mode.birth_mask;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -354,6 +353,7 @@ pub(super) fn apply_ops_with_origin(
                             refinement_admission: refinement_admission.as_ref(),
                             transition: transition.as_ref(),
                             posture: config.privacy.posture,
+                            owner_authored: None,
                         },
                     },
                 )?;
@@ -534,6 +534,7 @@ pub(super) fn apply_ops_with_origin(
                         consent: put_options.consent,
                         indexing: put_options.indexing,
                         write_policy: write_policy.as_ref(),
+                        owner_authored: gate_mode.owner_authored.as_ref(),
                     },
                 )?;
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;

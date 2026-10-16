@@ -8,7 +8,7 @@ use crate::dreamer_runner::{
 };
 use crate::edge::EdgeActorClass;
 use crate::receipt::ReceiptQuery;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::store::{GateDecisionId, PendingGateConsentRecord};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
@@ -62,9 +62,12 @@ fn write_dreamer_proposal(
     vault.put_entity(&actor, ENTITY_TYPE_PERSON, time(1), 1, b"dreamer actor")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time(1), 1, b"subject")?;
     let envelope = dreamer_envelope(actor, run_id);
+    // A Dreamer write cites what was said, never the PERSON it is about.
+    let said = EntityId::now();
+    vault.put_entity(&said, ENTITY_TYPE_TURN, time(1), 1, b"what was said")?;
     let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
         &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
-            refs: vec![subject],
+            refs: vec![said],
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,
         },
@@ -279,9 +282,11 @@ fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> R
         &[REASON_CEILING],
     )?;
 
+    let said = EntityId::now();
+    vault.put_entity(&said, ENTITY_TYPE_TURN, time(1), 1, b"what was said")?;
     let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
         &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
-            refs: vec![subject],
+            refs: vec![said],
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,
         },

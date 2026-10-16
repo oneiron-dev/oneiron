@@ -16,9 +16,18 @@ fn proposal(
 ) -> Result<EntityId> {
     let id = EntityId::now();
     let envelope = miner_envelope(run, &[0; 32])?;
+    // A Dreamer write cites what was said, never the PERSON it is about.
+    let said = EntityId::now();
+    vault.put_entity(
+        &said,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::temporal::TimeRange { start: at, end: at },
+        at,
+        b"what was said",
+    )?;
     let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
         &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
-            refs: vec![subject],
+            refs: vec![said],
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,
         },

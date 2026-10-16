@@ -372,62 +372,90 @@ impl Vault {
                 value: claim.value,
             });
         }
-        // Follow the import-batch Gate door: Proposed preflight, then the
-        // approved transition under the stored, source-revision-bound bulk act.
-        // Pending rows are transient in this writer txn and never reach a tray.
-        for approval in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Approved] {
-            let mut builder = self.batch_in();
-            for claim in &claims {
-                let admission = super::ImportedEvidenceAdmission::proposed(
-                    super::DOCS_EXPORT_SOURCE_ID,
-                    claim.id,
-                    super::ImportedEvidenceEntityResolution::subject(asset),
-                    actor,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-                .with_approval(approval);
-                let (candidate, envelope) = super::admission::imported_candidate(
-                    &claim.predicate,
-                    super::admission::json_to_msgpack_value(&claim.value),
-                    &claim.source_record_id,
-                    &admission,
-                )?;
-                let v = rmpv::Value::from;
-                let rmpv::Value::Map(mut evidence) = super::admission::imported_evidence_value(
-                    super::DOCS_EXPORT_SOURCE_ID,
-                    &claim.source_record_id,
-                ) else {
-                    unreachable!("imported evidence is a map")
-                };
-                evidence.push((
-                    v("derivation"),
-                    rmpv::Value::Map(vec![
-                        (v("source_ref"), rmpv::Value::from(claim.chunk.to_hex())),
-                        (v("source_hash"), v(claim.segment_hash.as_str())),
-                        (v("producer"), v(extractor.binding())),
-                        (v("source"), v("imported")),
-                        (v("derived_kind"), v("ner_claim")),
-                        (v("approval_digest"), v(approval_digest.as_str())),
-                    ]),
-                ));
-                builder = builder.claim_candidate(
-                    &claim.id,
-                    candidate
-                        .with_scope(rmpv::Value::Map(vec![(
-                            v("scopeProjectId"),
-                            rmpv::Value::Binary(project_id.as_bytes().to_vec()),
-                        )]))
-                        .with_evidence(rmpv::Value::Map(evidence)),
-                    &envelope,
+        // Follow the import-batch Gate door, Proposed first. The stored bulk act
+        // approved reading this source revision and deriving from it; it never
+        // saw what the extractor would say, so it approves no derived claim.
+        // A claim the Gate pends waits in the owner's tray for its own review.
+        // One the Gate admits with no tray row is written again as `Auto`
+        // through the same Gate only when the policy trusts its source for
+        // `Auto`; otherwise it stays `Proposed`.
+        let mut writes = Vec::new();
+        for claim in &claims {
+            let admission = super::ImportedEvidenceAdmission::proposed(
+                super::DOCS_EXPORT_SOURCE_ID,
+                claim.id,
+                super::ImportedEvidenceEntityResolution::subject(asset),
+                actor,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            );
+            let (candidate, envelope) = super::admission::imported_candidate(
+                &claim.predicate,
+                super::admission::json_to_msgpack_value(&claim.value),
+                &claim.source_record_id,
+                &admission,
+            )?;
+            let v = rmpv::Value::from;
+            let rmpv::Value::Map(mut evidence) = super::admission::imported_evidence_value(
+                super::DOCS_EXPORT_SOURCE_ID,
+                &claim.source_record_id,
+            ) else {
+                unreachable!("imported evidence is a map")
+            };
+            evidence.push((
+                v("derivation"),
+                rmpv::Value::Map(vec![
+                    (v("source_ref"), rmpv::Value::from(claim.chunk.to_hex())),
+                    (v("source_hash"), v(claim.segment_hash.as_str())),
+                    (v("producer"), v(extractor.binding())),
+                    (v("source"), v("imported")),
+                    (v("derived_kind"), v("ner_claim")),
+                    (v("approval_digest"), v(approval_digest.as_str())),
+                ]),
+            ));
+            let candidate = candidate
+                .with_scope(rmpv::Value::Map(vec![(
+                    v("scopeProjectId"),
+                    rmpv::Value::Binary(project_id.as_bytes().to_vec()),
+                )]))
+                .with_evidence(rmpv::Value::Map(evidence));
+            writes.push((claim.id, candidate, envelope, admission));
+        }
+        let mut builder = self.batch_in();
+        for (id, candidate, envelope, admission) in &writes {
+            builder = builder.claim_candidate(
+                id,
+                candidate.clone(),
+                envelope,
+                admission.occurred,
+                admission.learned_at,
+            );
+        }
+        builder.apply(&mut txn)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        let mut admitted = self.batch_in();
+        let mut any_admitted = false;
+        for (id, candidate, envelope, admission) in &writes {
+            if self.store.pending_gate_consent_in_txn(&txn, id)?.is_none()
+                && self.get_claim_in_txn(&txn, id)?.is_some_and(|landed| {
+                    crate::gate::claim_source_trust_admits_auto(&landed, envelope, &policy)
+                })
+            {
+                any_admitted = true;
+                admitted = admitted.claim_candidate(
+                    id,
+                    candidate.clone(),
+                    &envelope.clone().with_approval(ClaimApprovalStatus::Auto),
                     admission.occurred,
                     admission.learned_at,
                 );
             }
-            builder.apply(&mut txn)?;
+        }
+        if any_admitted {
+            admitted.apply(&mut txn)?;
         }
         for claim in &claims {
             crate::ports::record_derived_edge_in_txn(
@@ -439,8 +467,6 @@ impl Vault {
             // The dependency index is one hop, not recursive. Bind the root
             // asset too, so deleting it invalidates the derived claim directly.
             crate::ports::record_derived_edge_in_txn(&self.store, &mut txn, &claim.id, &asset)?;
-            self.store
-                .delete_pending_gate_consent_in_txn(&mut txn, &claim.id)?;
             receipt.claim_refs.push(claim.id.to_hex());
         }
         DEEP_RECEIPTS.put(&self.store, &mut txn, &HexId(asset), &receipt)?;
