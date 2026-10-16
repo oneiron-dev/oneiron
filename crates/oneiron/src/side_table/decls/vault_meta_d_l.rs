@@ -18,6 +18,15 @@ side_tables! {
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
+    /// OF-490: one read of an agent's diary: reader, stated reason, entries and Grants (the agent
+    /// sees it). Key: id16 (agent) + id16 (read).
+    DIARY_READ_LOG: VaultMeta b"diary:read_log:v1:" Named;
+    /// OF-490: a reader's reason waiting on, or answered by, the agent's Y/N review. Key: id16
+    /// (agent) + id16 (request).
+    DIARY_READ_REQUEST: VaultMeta b"diary:read_request:v1:" Named;
+    /// OF-490: an agent reviews each read of its diary before it is read (on for Eiri; absent
+    /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
+    DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw;
     /// Enforcement-truth per-counterparty-contact disclosure scope row (rmpv-encoded), dual-written
     /// with an owner-visible claim. Key: id16.
     DISCLOSURE_SCOPE: VaultMeta b"disclosure.scope.v1:" Raw;
@@ -145,6 +154,18 @@ side_tables! {
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
     /// id16.
     DREAMER_REPRESENTATION_PROPOSAL: VaultMeta b"dreamer:representation:v1:proposal:" LegacyJson;
+    /// OF-490: the resident one dreaming attempt runs as, its own stamp, and the Gate receipt that
+    /// admitted it. Key: id16 (attempt).
+    DREAMER_RESIDENT_ATTEMPT: VaultMeta b"dreamer:resident:attempt:v1:" Named;
+    /// OF-490: the diary entry one resident dreaming attempt landed, so a replay writes none.
+    /// Key: id16 (attempt).
+    DREAMER_RESIDENT_LANDED: VaultMeta b"dreamer:resident:landed:v1:" Named;
+    /// OF-490: a sealed scratchpad a resident's dreaming already read. Value: one byte. Key:
+    /// id16 (resident) + id16 (pad).
+    DREAMER_RESIDENT_PADS: VaultMeta b"dreamer:resident:pads:v1:" Raw;
+    /// OF-490: what a resident's dreaming has read so far: newest receipt and INBOX times, last
+    /// dreaming, entries written. Key: id16 (resident).
+    DREAMER_RESIDENT_PROGRESS: VaultMeta b"dreamer:resident:progress:v1:" Named;
     /// Parent/child attempt-tree edge row (parent_attempt, created_at) keyed by attempt id. Key:
     /// id16.
     DREAMER_RUN_TREE: VaultMeta b"dreamer:run_tree:" Raw;
@@ -265,6 +286,9 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// An organ call held until one of the owner's nodes can run it (OF-575 MESH): the call's
+    /// bytes, why it waits, and its tries. Key: id16 + hash32 (blake3 of the run ref).
+    EDIT_SETTLE_ORGAN_WAIT: VaultMeta b"edit_settle:organ_wait:v1:" Named;
     /// A proposal retained beside its artifact until Keep or Discard: an edit proposal or a native
     /// organ output. Key: id16 + hash32 (blake3 of the proposal ref).
     EDIT_SETTLE_PENDING_PROPOSAL: VaultMeta b"edit_settle:pending:v1:" Named;

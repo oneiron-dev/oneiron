@@ -298,6 +298,7 @@ export type NeighborHit = {
 }
 export type ExportOptions = {
   format?: string | null
+  include_secrets?: boolean | null
 }
 export type ExportReceipt = {
   at: number
@@ -305,10 +306,12 @@ export type ExportReceipt = {
   bytes: number
   digest: string
   by: string
+  diary_reads: (unknown)[]
 }
 export type MemoryExport = {
   format: string
-  rendered: string
+  archive: (number)[]
+  digest: string
 }
 export type WitnessMessage = {
   id?: string | null
