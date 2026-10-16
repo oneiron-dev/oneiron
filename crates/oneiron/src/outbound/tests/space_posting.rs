@@ -44,14 +44,7 @@ fn owner_presentation_is_frozen_gated_space_local_and_revocable_on_recovery()
         entity(0xD0),
         &policy_manifest(&actor_ref.to_hex(), "email", &["send"]),
     )?;
-    let owner_id = entity(0x51);
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::temporal::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = Rc::new(vault.authenticate_owner(
         owner_id,
         &owner_id.to_hex(),
