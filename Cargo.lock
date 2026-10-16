@@ -8495,6 +8495,7 @@ dependencies = [
  "oneiron-linear",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
+ "oneiron-llm-systemone",
  "oneiron-mesh-transport",
  "oneiron-remote",
  "oneiron-spawn",

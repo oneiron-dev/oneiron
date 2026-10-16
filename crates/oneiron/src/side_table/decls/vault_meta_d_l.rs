@@ -2,6 +2,9 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// One typed-decision ask the ladder queued for the vault owner role, and its answer once
+    /// given. Key: u64be(sequence).
+    DECISION_ASK: VaultMeta b"decision:ask:v1:" Named;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;

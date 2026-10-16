@@ -125,6 +125,11 @@ pub(super) async fn bind(
         Some(shadow) => provider.with_code_check(shadow),
         None => provider,
     };
+    // A manifest-backed run picks its seat through the host's decision ladder.
+    let provider = match server.seat_router(models) {
+        Some((decisions, facet)) => provider.with_model_seat_router(decisions, facet),
+        None => provider,
+    };
     let runs = crate::mcp::CodeRunLimits {
         total: models.code_mode.max_runs,
         wait: server.config.limits.queue_wait(),
