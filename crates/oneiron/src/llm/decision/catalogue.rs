@@ -108,6 +108,14 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// How should this parked contradiction settle (keep one member, hold both, dismiss or
+/// escalate)? Keyed by the contested predicates.
+pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_settle",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -119,4 +127,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    CONFLICT_SETTLE,
 ];
