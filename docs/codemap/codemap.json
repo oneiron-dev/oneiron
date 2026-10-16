@@ -9581,7 +9581,7 @@
      "purpose": "—",
      "surface": {
       "const": 7,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 17,
       "struct": 10
      }
@@ -9641,7 +9641,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 9,
       "struct": 1
      }
@@ -9653,7 +9653,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -10282,7 +10282,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ComponentBudget",
@@ -17811,7 +17811,7 @@
      "path": "src/engine_executor/repl.rs",
      "purpose": "Durable REPL loop: run(), persistence helpers, and LLM request building",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -17822,7 +17822,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -26368,7 +26368,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 10,
       "struct": 2
      }
@@ -33461,7 +33461,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -41680,6 +41680,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/code_mode_result_memory.rs",
+     "purpose": "B++ (OF-190) acceptance: a code-mode run whose history holds one result larger than the 256 MiB fallback…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -43617,7 +43625,7 @@
    "over_bar": 51,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2616,
-   "test_files": 901
+   "test_files": 902
   },
   "oneiron-android": {
    "files": [
