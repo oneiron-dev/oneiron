@@ -203,8 +203,27 @@ impl ExecutorLegibility<'_> {
     }
 }
 
+/// Where one frame of a step's streamed result goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsCodeModeStream<'a> {
+    /// `console.log` lines: the observation of a step that does not finish.
+    Console,
+    /// The `finish` answer. `start` marks its first frame: a later finish
+    /// starts the answer over.
+    Finish { start: bool },
+    /// The step's `/mnt/outputs` file at this path, appended to.
+    File(&'a str),
+}
+
 /// Host import bridge exposed to a JS runtime component.
 pub trait JsCodeModeHost {
+    /// Takes one frame of the step's streamed result into the host's own
+    /// body store, as it is written. A host with no store answers `false`,
+    /// and the runtime keeps the frame for the step's outcome instead.
+    fn write_output(&mut self, _stream: JsCodeModeStream<'_>, _frame: &[u8]) -> Result<bool> {
+        Ok(false)
+    }
+
     /// Resolves only a reserved recoverable-output virtual path. Other hosts
     /// deny by default; the linked sandbox.fs.read_file bridge routes normal
     /// file reads to its existing adapter.
@@ -257,6 +276,9 @@ impl JsCodeModeOutput {
     }
 }
 
+/// A step's outcome. A runtime whose host took the streamed result
+/// ([`JsCodeModeHost::write_output`]) leaves `observation` and `outputs`
+/// empty; the host holds the bodies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsCodeModeStepOutcome {
     pub done: bool,

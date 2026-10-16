@@ -7,6 +7,9 @@ use super::{
 use crate::side_table::{self as t, SideTableDecl};
 
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
+    (&t::DECK_CREATION, CONTENT),
+    (&t::DECK_DESIGN_SPEC, CONTENT),
+    (&t::DECK_OUTLINE_KEEP, CONTENT),
     (&t::DELETION_ROW_FENCE_BACKFILLED, CONTENT),
     (&t::DERIVATION_OWNER, LIVE),
     (&t::DISCLOSURE_SCOPE, DISCLOSURE_SCOPES),
@@ -111,6 +114,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::EXPRESSION_ARCHIVE_BINDING, CONTENT),
     (&t::FAILURE_SIGNALS_CODE_FIX, LIVE),
     (&t::FEDERATION_ACTOR_CONTENT_INFLIGHT, CONTENT),
+    (&t::FEDERATION_PEER_CONFIDENCE, CONTENT),
     (&t::FEEDBACK_INBOX, CONTENT),
     (&t::FEEDBACK_QUEUE, CONTENT),
     (&t::FEEDBACK_RECEIVED_DIGEST, CONTENT),
