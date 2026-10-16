@@ -233,7 +233,7 @@ impl Vault {
     /// existing `Attached` edge, conversation → notification. It moves no
     /// HEAD, adds no TURN and grants no read. A conversation that is not a
     /// live CONVERSATION gets no edge.
-    pub(crate) fn link_notification_in_txn(
+    pub(crate) fn attach_notification_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         conversation: EntityId,
@@ -313,7 +313,7 @@ impl Vault {
             && kind == NotificationKind::JobCompleted
             && let Some(conversation) = origin
         {
-            self.link_notification_in_txn(txn, conversation, id)?;
+            self.attach_notification_in_txn(txn, conversation, id)?;
         }
         Ok(Some(id))
     }
