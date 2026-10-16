@@ -29,9 +29,9 @@ fn reply_with_cache(
     test_wire::reply(&answer.queued(0))
 }
 
-#[tokio::test]
-async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item() {
-    let (_dir, server) = production_tests::server();
+/// A window holding two PERSON rows, `[item, other]`, whose bodies carry an unsynced canary, and
+/// the actor's credential and encoded selector under a member grant on it.
+async fn granted_window(server: &SyncServer) -> (CoreAuth, WindowKey, String, [EntityId; 2]) {
     let actor = EntityId::from_hex(production_tests::ACTOR).unwrap();
     let item = EntityId::now();
     let other = EntityId::now();
@@ -73,7 +73,14 @@ async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item
     let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
     let encoded =
         base64::engine::general_purpose::STANDARD.encode(encode_sync_selector(&selector).unwrap());
-    let auth = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
+    let auth = crate::test_credentials::authenticate(server, &production_tests::token("human"));
+    (auth, window, encoded, [item, other])
+}
+
+#[tokio::test]
+async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item() {
+    let (_dir, server) = production_tests::server();
+    let (auth, window, encoded, [item, other]) = granted_window(&server).await;
     let index = reply(
         &server,
         &auth,
@@ -126,6 +133,34 @@ async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item
         }),
     );
     assert!(denied.get("error").is_some());
+}
+
+/// Bug repro (rule 5, found beside Bugbot's on #1483): a touch whose document export waited past
+/// the live-document row to its deadline was answered a 500 "item document unavailable", after
+/// waiting on the runtime worker. Done-means: it is answered the typed WAITED_OUT.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_touch_past_the_live_document_row_is_waited_out() {
+    let (_dir, server) = production_tests::server_with_limits(crate::config::LimitsConfig {
+        live_documents: 1,
+        queue_wait_timeout_ms: 200,
+        ..crate::config::LimitsConfig::default()
+    });
+    let (auth, window, encoded, [item, other]) = granted_window(&server).await;
+    // Another opener holds the vault's one live document past the wait.
+    let _held = server
+        .reassert_manager
+        .documents()
+        .open_for(other, b"another opener")
+        .unwrap();
+    let touch = reply(
+        &server,
+        &auth,
+        "residence.touch",
+        json!({
+            "window": window.as_str(), "selector": encoded, "entityId": item.to_hex()
+        }),
+    );
+    assert_eq!(touch["error"]["code"], "WAITED_OUT", "{touch}");
 }
 
 #[tokio::test]

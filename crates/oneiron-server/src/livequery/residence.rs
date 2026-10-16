@@ -413,16 +413,24 @@ fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, 
     )
     .map_err(|_| AppError::internal_server_error("item unavailable"))?
     .ok_or_else(|| AppError::not_found("item", None))?;
-    let document = server
-        .reassert_manager
-        .export_document_in_window(
+    // The export opens the document: past the live-document row it waits its
+    // turn off the runtime worker (rule 5).
+    let document = crate::server::blocking(|| {
+        server.reassert_manager.export_document_in_window(
             id,
             &window,
             crate::handler::selector_grant_scope(),
             &selector,
             &loro::VersionVector::new().encode(),
         )
-        .map_err(|_| AppError::internal_server_error("item document unavailable"))?;
+    })
+    .map_err(|error| {
+        if error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut {
+            AppError::waited_out()
+        } else {
+            AppError::internal_server_error("item document unavailable")
+        }
+    })?;
     Ok((
         json!({
             "window": window.as_str(),
