@@ -246,6 +246,10 @@ impl<'a> DreamerWakeDriver<'a> {
         // ordinary Dreamer maintenance over the synced TASK fact, before any
         // attempt is admitted and outside the budget/lease loop entirely.
         crate::llm::resume_peer_result_steps(self.vault, input.now.saturating_mul(1_000))?;
+        // A consent answer, budget grant or person's response already sent
+        // (here, or by a peer through sync) resumes its parked attempt as
+        // the same try, admissible in this very pass.
+        crate::llm::resume_signalled_steps(self.vault, input.now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, input.now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
 

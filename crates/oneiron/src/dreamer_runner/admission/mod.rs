@@ -129,6 +129,9 @@ impl DreamerRunnerStore<'_> {
             HOME_NODE.delete(&self.vault.store, &mut wtxn, &())?;
         }
         wtxn.commit()?;
+        // The deadline lane re-reads at once: a node that gained the home
+        // arms its queued Macro work, and one that lost it stops arming.
+        self.vault.store.notify_proactivity_changes();
         Ok(designation)
     }
 

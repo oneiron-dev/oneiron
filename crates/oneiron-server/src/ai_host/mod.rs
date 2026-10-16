@@ -34,6 +34,7 @@ mod policy;
 mod status;
 mod step;
 mod step_failure;
+mod sync_wake;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -338,6 +339,8 @@ pub struct AiHost {
     dreamer: Option<DreamerHost>,
     workflows: Option<WorkflowPump>,
     sieve: Option<SieveDrain>,
+    /// A peer's sync apply wakes the running Dreamer.
+    sync_wake: Option<sync_wake::SyncWake>,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -351,13 +354,20 @@ impl AiHost {
     /// serve, and hands the server its handle (and the raw `/v1/llm` routes
     /// their router, and MCP `execute_code` its executor).
     pub async fn attach(server: SyncServer, models: Option<&ModelsConfig>) -> (SyncServer, Self) {
-        let host = Self::start_receipted(
+        let mut host = Self::start_receipted(
             Arc::clone(server.vault()),
             models,
             server.host_root_provisioned(),
             server.run_receipts(),
         )
         .await;
+        if host.handle.hints.is_some() {
+            host.sync_wake = Some(sync_wake::SyncWake::spawn(
+                host.handle.clone(),
+                Arc::clone(server.vault()),
+                &server.reassert_manager,
+            ));
+        }
         let server = server.with_ai(host.handle.clone());
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
@@ -390,6 +400,7 @@ impl AiHost {
             dreamer: None,
             workflows: None,
             sieve: None,
+            sync_wake: None,
         };
         let Some(models) = models else {
             return host;
@@ -430,6 +441,9 @@ impl AiHost {
     /// Lets running chat turns end, then stops both workers and the sieve's
     /// backlog drain cooperatively and waits for them.
     pub async fn shutdown(mut self) {
+        if let Some(wake) = self.sync_wake.take() {
+            wake.stop();
+        }
         let sieve = self.sieve.take();
         if let Some(drain) = &sieve {
             drain.stop.store(true, Ordering::Release);
@@ -466,6 +480,9 @@ impl AiHost {
 impl Drop for AiHost {
     fn drop(&mut self) {
         self.handle.turns.stop_now();
+        if let Some(wake) = &self.sync_wake {
+            wake.stop();
+        }
         if let Some(pump) = &self.workflows {
             pump.signal_stop();
         }

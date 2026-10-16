@@ -21,10 +21,11 @@ use super::constants::{
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
-    DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunTreeRecord, EnqueueDreamerAttempt,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    EnqueueDreamerSkillOptimizeAttempt, EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt,
-    FailDreamerAttemptOutcome, ParkDreamerAttempt,
+    DreamerAttemptStatus, DreamerConsolidationScope, DreamerParkedAttemptRecord,
+    DreamerRunTreeRecord, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, EnqueueDreamerSkillOptimizeAttempt,
+    EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt, FailDreamerAttemptOutcome,
+    ParkDreamerAttempt,
 };
 use crate::error::MaintenanceError;
 
@@ -139,10 +140,16 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         input: EnqueueDreamerConsolidationAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let macro_scope = input.scope == DreamerConsolidationScope::Macro;
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_consolidation_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
+        if macro_scope {
+            // A hint drives only Micro; Macro work arms through the deadline
+            // lane, which re-reads on this watch.
+            self.vault.store.notify_proactivity_changes();
+        }
         Ok(outcome)
     }
 
@@ -285,7 +292,7 @@ impl<'a> DreamerRunnerStore<'a> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.vault.with_write_txn_grouped(|wtxn| {
+        let outcome = self.vault.with_write_txn_grouped(|wtxn| {
             crate::dreamer_wake::request_wake_in_txn(
                 self,
                 wtxn,
@@ -295,7 +302,10 @@ impl<'a> DreamerRunnerStore<'a> {
                 run_id,
                 now,
             )
-        })
+        })?;
+        // Timer work admits at Macro scope, which only the deadline lane drives.
+        self.vault.store.notify_proactivity_changes();
+        Ok(outcome)
     }
 
     /// Enqueues an ARCH-0073 vault-cleanup attempt (ONE-1931).
@@ -633,15 +643,17 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(record)
     }
 
-    /// Clears a parked-attempt row so the attempt becomes admissible again through
-    /// the normal admission path (ONE-1288).
+    /// Clears a parked-attempt row and queues the attempt again as the same
+    /// try, so the normal admission path takes it (ONE-1288) and its step
+    /// memo, keyed by its id, still holds.
     ///
     /// Returns the attempt status when a parked row was cleared. An attempt with NO
     /// parked row is an idempotent no-op: `Ok(None)`, nothing mutated
     /// (pinned). A row parked by a DIFFERENT owner than `park_owner` is a
-    /// fail-closed error, nothing deleted. `now` is accepted for symmetry
-    /// with the other transition inputs; the queue row is not touched —
-    /// re-admission re-leases it.
+    /// fail-closed error, nothing deleted. A park is not a running lease:
+    /// whoever holds the row's lease stopped at the park, so the lease is
+    /// released whoever it names. `now` is accepted for symmetry with the
+    /// other transition inputs.
     pub fn resume_parked(
         &self,
         attempt_id: AttemptId,
@@ -652,6 +664,10 @@ impl<'a> DreamerRunnerStore<'a> {
         let resumed = self.resume_parked_in_txn(&mut wtxn, attempt_id, park_owner, now)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
+        if resumed.is_some() {
+            // The deadline lane arms the queued try at once.
+            self.vault.store.notify_proactivity_changes();
+        }
         Ok(resumed)
     }
 
@@ -677,6 +693,13 @@ impl<'a> DreamerRunnerStore<'a> {
             .status(attempt_id)?
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
+        if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {
+            // Callers pass their own clock (the trap layer's counts
+            // milliseconds); the queue row keeps the vault's seconds.
+            let at = self.vault.store.clock.now_recorded_at();
+            self.attempts
+                .release_lease_in_txn(wtxn, attempt_id, lease_owner, at)?;
+        }
         Ok(Some(status))
     }
 
