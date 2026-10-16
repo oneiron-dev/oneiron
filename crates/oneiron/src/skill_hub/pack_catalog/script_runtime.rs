@@ -1,11 +1,8 @@
 //! Foreign pack scripts run only through the existing propose-only code-mode VM.
-#[cfg(any(test, feature = "microvm-firecracker"))]
 use serde::Deserialize;
-#[cfg(any(test, feature = "microvm-firecracker"))]
 use std::{collections::BTreeMap, fs, io::Read};
 use std::{collections::BTreeSet, sync::Arc};
 
-#[cfg(any(test, feature = "microvm-firecracker"))]
 use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::{
@@ -21,7 +18,6 @@ use crate::{
     outbound::OutboundIntent,
     surface_event::SurfaceEventAdmission,
 };
-#[cfg(any(test, feature = "microvm-firecracker"))]
 use crate::{
     code_sandbox::SandboxCredentialHandle,
     code_sandbox::microvm::{
@@ -57,12 +53,14 @@ pub struct PackScriptRun<'a> {
 /// not sends: the ordinary outbound effect dispatcher still gates each verb.
 #[derive(Debug)]
 pub struct PackScriptOutcome {
+    pub run_id: EntityId,
     pub inbound: Vec<SurfaceEventAdmission>,
     pub verbs: Vec<OutboundIntent>,
     pub wakes: Vec<ConnectorWakeDecision>,
+    pub session_manifest: Option<oneiron_container::SessionManifest>,
+    pub sandbox_receipt: Option<String>,
 }
 
-#[cfg(any(test, feature = "microvm-firecracker"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScriptOutput {
@@ -73,7 +71,6 @@ pub(crate) struct ScriptOutput {
     #[serde(default)]
     pub(crate) events: Vec<ConnectorEvent>,
 }
-#[cfg(any(test, feature = "microvm-firecracker"))]
 impl ScriptOutput {
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
         let output: Self = serde_json::from_slice(bytes)
@@ -84,7 +81,6 @@ impl ScriptOutput {
         Ok(output)
     }
 }
-#[cfg(any(test, feature = "microvm-firecracker"))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScriptVerb {
@@ -147,18 +143,18 @@ impl Vault {
         request: PackScriptRun<'_>,
         transport: Arc<dyn CredentialReadTransport>,
     ) -> Result<PackScriptOutcome> {
-        #[cfg(feature = "microvm-firecracker")]
-        {
-            let backend = crate::code_sandbox::firecracker::FirecrackerBackend::detect()
-                .ok_or_else(|| invalid("configured code-mode microVM unavailable"))?
-                .with_read_transport(transport);
-            self.run_script_pack_in_vm(request, Box::new(backend))
-        }
-        #[cfg(not(feature = "microvm-firecracker"))]
-        {
-            let _ = (self, request, transport);
-            Err(invalid("foreign code-mode microVM not built"))
-        }
+        let run_id = EntityId::now();
+        let mut backend =
+            crate::code_sandbox::microvm::select_backend_for_tier(SandboxGuestTier::Foreign)?
+                .ok_or_else(|| invalid("foreign tier selected no isolation"))?;
+        backend.set_read_transport(transport);
+        backend.set_egress(Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
+            Arc::clone(self),
+            run_id,
+            crate::code_sandbox::egress::EgressConfig::from_env()
+                .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?,
+        )));
+        self.run_script_pack_in_vm(request, backend, run_id)
     }
 
     pub(crate) fn installed_script_pack(
@@ -189,22 +185,22 @@ impl Vault {
         Ok((source, path, receipt))
     }
 
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     fn run_script_pack_in_vm(
         self: &Arc<Self>,
         request: PackScriptRun<'_>,
         backend: Box<dyn MicroVmBackend>,
+        run_id: EntityId,
     ) -> Result<PackScriptOutcome> {
         let selected = self.installed_script_pack(request.name)?;
-        self.run_selected_script_pack_in_vm(request, backend, selected)
+        self.run_selected_script_pack_in_vm(request, backend, selected, run_id)
     }
 
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     fn run_selected_script_pack_in_vm(
         self: &Arc<Self>,
         request: PackScriptRun<'_>,
         backend: Box<dyn MicroVmBackend>,
         (source, _path, receipt): (PackSource, String, PackInstallReceipt),
+        run_id: EntityId,
     ) -> Result<PackScriptOutcome> {
         let PackScriptRun {
             name,
@@ -214,7 +210,9 @@ impl Vault {
             budget,
             now,
         } = request;
-        if backend.name() != "firecracker" || receipt.pack_name != name {
+        if !matches!(backend.name(), "firecracker" | "landlock-container")
+            || receipt.pack_name != name
+        {
             return Err(invalid(
                 "foreign pack requires isolating code-mode backend and installed source",
             ));
@@ -292,7 +290,13 @@ impl Vault {
             allowlist,
         )?;
         let guest = image.clone().with_source(injected);
-        let exit = adapter.run(&guest, budget)?;
+        let result = adapter.run(&guest, budget);
+        let session_manifest = adapter.session_manifest();
+        let sandbox_receipt = session_manifest
+            .as_ref()
+            .map(|manifest| self.append_sandbox_manifest_receipt(run_id, manifest))
+            .transpose()?;
+        let exit = result?;
         if exit.status != 0 {
             return Err(invalid("pack script failed in sandbox"));
         }
@@ -389,9 +393,12 @@ impl Vault {
             Ok(())
         })?;
         Ok(PackScriptOutcome {
+            run_id,
             inbound,
             verbs,
             wakes,
+            session_manifest,
+            sandbox_receipt,
         })
     }
 }
@@ -492,12 +499,10 @@ fn validate_grant_in_txn(
 
 /// Resolves an opaque handle only if its exact connector key and custody
 /// binding are still live at the egress boundary (not only before VM boot).
-#[cfg(any(test, feature = "microvm-firecracker"))]
 struct PackCredentialResolver {
     vault: Arc<Vault>,
     grants: BTreeMap<String, (EntityId, String, String, CredentialDestination, EntityId)>,
 }
-#[cfg(any(test, feature = "microvm-firecracker"))]
 impl CredentialResolver for PackCredentialResolver {
     fn resolve_for(
         &self,
