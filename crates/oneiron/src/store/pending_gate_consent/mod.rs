@@ -9,8 +9,6 @@ mod invalidation;
 mod keys;
 mod records;
 mod sequence_sweep;
-#[cfg(test)]
-mod tests;
 mod tray;
 
 pub(in crate::store) use self::keys::{

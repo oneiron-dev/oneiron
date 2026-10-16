@@ -68,11 +68,13 @@ pub enum EngineScan {
     MachineRows,
     /// The access grants a companion persona list walks.
     AccessGrantRows,
+    /// The pending gate-consent tray a consent list walks.
+    PendingGateConsentRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -86,6 +88,7 @@ impl EngineScan {
         Self::ScopedEdgeRows,
         Self::MachineRows,
         Self::AccessGrantRows,
+        Self::PendingGateConsentRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -113,6 +116,7 @@ impl EngineScan {
             Self::ScopedEdgeRows => "scoped_edge_rows",
             Self::MachineRows => "machine_rows",
             Self::AccessGrantRows => "access_grant_rows",
+            Self::PendingGateConsentRows => "pending_gate_consent_rows",
         }
     }
 
@@ -131,6 +135,7 @@ impl EngineScan {
             Self::ScopedEdgeRows => 22,
             Self::MachineRows => 23,
             Self::AccessGrantRows => 24,
+            Self::PendingGateConsentRows => 25,
         }]
     }
 }
