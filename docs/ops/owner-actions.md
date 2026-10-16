@@ -296,6 +296,25 @@ Routes: `GET /v1/owner/secret-scan` and `POST /v1/owner/secret-scan` with `{"mod
 way. Each change is receipted with its revision, the owner who made it and the previous
 setting. Only a live owner of the vault can switch it.
 
+## Hand a served repository's origin to another host
+
+A repository this vault serves at `/git/<repo>` has no origin authority until you set one. With
+none, this vault takes its pushes. Setting one names the epoch, the residence (`local-vault` or
+`cloud-vault`), the writer host and whether this copy is a read-only mirror:
+
+```sh
+oneiron api raw GET '/v1/owner/origin-authority?repo=demo'   # the row, and this host's machine id
+oneiron api raw POST /v1/owner/origin-authority \
+  --data '{"repo": "demo", "expected_epoch": null, "residence": "local-vault"}'
+```
+
+`writer` defaults to this host's machine id; name another host's to hand it the repository.
+`expected_epoch` is the epoch you read (`null` before the first cutover), and a cutover whose epoch
+moved since is refused. One is also refused while the repository has a push or publication
+in flight; retry once it drains. After the cutover, a push here runs under this host's lease when
+it is the writer. Otherwise the push gets 403 naming the epoch: at a mirror (`"mirror": true`),
+or when another host writes the repository. Reads still serve. Only a live owner can cut over.
+
 ## Approve an import in one act
 
 To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
@@ -494,13 +513,23 @@ endpoint = "https://…"        # ONEIRON_FEEDBACK_ENDPOINT; HTTPS, or HTTP on l
 The destination's token, if any, comes from `ONEIRON_FEEDBACK_TOKEN`. `POST
 /v1/owner/feedback/preview` with `{"category": "bug"}` (or `papercut`, `confusion`,
 `feature-wish`) returns the bundle exactly as it would leave, its `digest`, the `approval` that
-names this bundle going to this destination on your approval, and `previewed_at`. `POST
-/v1/owner/feedback/send` with the same body plus those three fields sends that bundle once to
+names this bundle going to this destination on your approval, and `previewed_at`.
+
+To send a suggested fix with the report, add `"proposal": {"problem": "…", "fix": "…"}` to
+the body. Both are non-blank text up to 4096 bytes, shown in the preview exactly as they
+leave. A proposal goes out under the encoding token `oneiron.feedback.bundle.v2` (the six v1
+keys, then `proposal`); the preview returns that token as `encoding`, and every destination
+receives it in the `X-Oneiron-Bundle-Encoding` header (GitHub issues also carry it on the
+body's first line). A bundle without a proposal stays `oneiron.feedback.bundle.v1`, byte for
+byte. Changing either string after the preview is a different bundle and is refused (409).
+
+`POST /v1/owner/feedback/send` with the same body plus those three fields sends that bundle once to
 that destination: repeating the request is the same send, a changed destination or bundle, or
 another owner's preview, is refused (409), and a preview older than an hour is refused. Two
 owners sending the same bundle are two sends. The send is an ordinary outbound effect: until the vault's policy grants
 `external:send` on the feedback channel to you, it is held (`"outcome": "held"`) and nothing
-leaves. A bundle carries no vault text. A written note is refused until the engine redacts notes
+leaves. A bundle carries no vault text the engine attached; proposal text is yours, and it leaves only
+on your send of exactly that preview. A written note is refused until the engine redacts notes
 in the vault (OF-420).
 
 A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
@@ -546,6 +575,31 @@ the query with its error. A map names a move between two versions, so a source c
 same version applies none, and no rewrite lands on a predicate the update drops.
 `GET /v1/owner/pack-drift` lists what the ladder did, query by query;
 a paused query shows its error on the query itself.
+
+## The model catalog
+
+The model catalog comes from the first-party hub as the knowledge pack `oneiron.models`
+(`packs/model-catalog` in oneiron-hub). Installing it puts its models in the vault's model
+registry. From then on `/v1/llm/generate` and `/v1/llm/stream` admit a call that names one of
+them. A model in `[models]` needs no catalog row.
+
+- `GET /v1/owner/model-catalog` shows the catalog ref's sync policy and pin, the last revision
+  fetched (`latest_seen`), the last one installed (`latest_trusted`), and the installed pack's
+  receipt.
+- `PUT /v1/owner/model-catalog` with `{"sync_policy": "...", "pin": "..."}` moves the policy.
+  `pinned-commit` takes a full commit id. `pinned-ref` takes a tag, and each sync follows the
+  tag to the commit it names then. `content-hash-frozen` takes one content hash. A sync whose
+  bytes hash otherwise fails, and an installed catalog with another hash stops counting.
+  Nothing is fetched until the next sync. Until you set a policy, the ref is pinned to the
+  engine's released hub commit.
+- `POST /v1/owner/model-catalog/sync` fetches the pack at that policy, scans the bytes, and
+  installs them as a knowledge-only pack: nothing runs and nothing is granted. The reply's
+  `outcome` is `installed`, `candidate` or `blocked` (with its `reason`). On install, a model
+  the previous pack shipped and nobody edited takes the new row and keeps its scores. A row the
+  host edited stays as it is.
+
+A catalog's authority is its content hash and that hash's scan evidence. The commit only says
+where the bytes come from.
 
 ## Calling the owner routes
 

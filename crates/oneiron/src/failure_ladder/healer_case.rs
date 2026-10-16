@@ -26,6 +26,16 @@ pub(super) fn record_in_txn(
     Ok(())
 }
 
+/// The durable case by its ref, for a reader that checks the failed attempt
+/// in its own snapshot (the code-fix export doors).
+pub(crate) fn get_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    case_ref: &str,
+) -> Result<Option<HealerCase>> {
+    CASE.get(&vault.store, txn, &case_ref.to_owned())
+}
+
 /// Authentication runs before either enqueue or oversight activity, including
 /// dedupe replays. A public case DTO is context, never its own authority.
 pub(crate) fn require_in_txn(

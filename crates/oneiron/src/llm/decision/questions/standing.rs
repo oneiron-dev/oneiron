@@ -374,6 +374,7 @@ pub fn backfill_standing_answer(
                     cost_per_thousand: None,
                     paired: input.paired,
                     person: Vec::new(),
+                    time: None,
                 },
                 human_ask: None,
             },

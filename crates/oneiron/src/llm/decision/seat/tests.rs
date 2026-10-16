@@ -23,7 +23,12 @@ impl DecisionSeat for Stub {
             version: "1.13.0".into(),
         }
     }
-    fn ask<'a>(&'a self, _request: SeatRequest, lease: &'a BudgetLease) -> SeatFuture<'a> {
+    fn ask<'a>(
+        &'a self,
+        _request: SeatRequest,
+        lease: &'a BudgetLease,
+        _time_left: std::time::Duration,
+    ) -> SeatFuture<'a> {
         Box::pin(async move {
             self.leases.lock().unwrap().push(lease.id().to_owned());
             self.answers.lock().unwrap().remove(0)
@@ -84,6 +89,8 @@ fn decide(stub: &Stub, req: SeatRequest, guard: &BudgetGuard) -> LlmResult<Typed
         vec![],
         dial(),
         guard,
+        Reversibility::ReversibleRead,
+        &crate::retrieval_depth::RetrievalDeadline::after(std::time::Duration::from_secs(3600)),
     ))
 }
 #[test]

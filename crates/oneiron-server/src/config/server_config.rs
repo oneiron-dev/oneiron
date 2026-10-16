@@ -61,6 +61,12 @@ pub struct SyncServerConfig {
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
     /// fail-closed: no cross-origin browser access is granted.
     pub allowed_origins: Vec<String>,
+    /// Domains whose subdomains name vaults on the artifact listener
+    /// (`<vault>.<domain>/<artifact>/…`). Empty: local `/a/` serving only.
+    pub artifact_domains: Vec<String>,
+    /// The subdomain label this server's vault answers to under every
+    /// artifact domain. `None`: every vault subdomain answers as unknown.
+    pub artifact_vault_name: Option<String>,
     /// Reverse proxies whose `X-Forwarded-For` the server believes when it
     /// keys a request by client address. Empty: every caller is keyed by its
     /// own connection, whatever headers it sends.
@@ -117,6 +123,8 @@ impl Default for SyncServerConfig {
             oauth_resource_indicator: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
+            artifact_domains: Vec::new(),
+            artifact_vault_name: None,
             trusted_proxies: Vec::new(),
             lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
@@ -181,6 +189,8 @@ impl fmt::Debug for SyncServerConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("artifact_domains", &self.artifact_domains)
+            .field("artifact_vault_name", &self.artifact_vault_name)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("max_frame_size", &self.max_frame_size)
@@ -228,6 +238,8 @@ pub struct ServeConfig {
     pub oauth_resource_indicator: Option<String>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
+    pub artifact_domains: Vec<String>,
+    pub artifact_vault_name: Option<String>,
     pub trusted_proxies: Vec<TrustedProxy>,
     pub lease_vault_id: u64,
     pub dimensions: usize,
@@ -306,6 +318,8 @@ impl Default for ServeConfig {
             oauth_resource_indicator: server.oauth_resource_indicator,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
+            artifact_domains: server.artifact_domains,
+            artifact_vault_name: server.artifact_vault_name,
             trusted_proxies: server.trusted_proxies,
             lease_vault_id: server.lease_vault_id,
             dimensions: vault.dimensions,
@@ -358,6 +372,8 @@ impl fmt::Debug for ServeConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("artifact_domains", &self.artifact_domains)
+            .field("artifact_vault_name", &self.artifact_vault_name)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
@@ -424,6 +440,8 @@ impl ServeConfig {
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
+            artifact_domains: self.artifact_domains.clone(),
+            artifact_vault_name: self.artifact_vault_name.clone(),
             trusted_proxies: self.trusted_proxies.clone(),
             lease_vault_id: self.lease_vault_id,
             max_frame_size: self.max_frame_size,

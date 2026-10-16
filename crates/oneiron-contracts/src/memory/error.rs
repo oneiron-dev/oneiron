@@ -75,6 +75,12 @@ pub const MEMORY_CODE_OWNER_BINDING_REQUIRED: &str = "OWNER_BINDING_REQUIRED";
 /// `INVALID_STATE` mapping.
 pub const MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER: &str = "VAULT_LOCKED_SINGLE_WRITER";
 
+/// An SDK call named a verb under the wrong root (`tools.`, `connectors.`, a
+/// shared verb under `self.memory`, ...). The call is refused before any
+/// effect and never corrected and run: the caller issues a fresh call to the
+/// `replacement` the error carries (EIRI-ARCH-0002 §The contract).
+pub const MEMORY_CODE_WRONG_ROOT: &str = "WRONG_ROOT";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.
@@ -125,6 +131,21 @@ pub struct MemoryError {
     /// errors that did not refuse an act under a scoped manifest row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_denial: Option<Box<MemoryPolicyDenial>>,
+    /// The correction a `WRONG_ROOT` refusal carries. Flattened, so the wire
+    /// shape is `{code, attempted, replacement, schemaRef, ...}`; boxed for
+    /// the same reason `gate_denial` is.
+    #[serde(flatten)]
+    pub wrong_root: Option<Box<MemoryWrongRoot>>,
+}
+
+/// A wrong-root refusal's correction: the name the caller wrote, the
+/// canonical name to call instead, and where that verb's schema lives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryWrongRoot {
+    pub attempted: String,
+    pub replacement: String,
+    #[serde(rename = "schemaRef")]
+    pub schema_ref: String,
 }
 
 /// The stable Gate rejection strings behind a [`MemoryError`] whose engine
@@ -166,7 +187,30 @@ impl MemoryError {
             gate_denial: None,
             read_receipt: None,
             policy_denial: None,
+            wrong_root: None,
         }
+    }
+
+    /// The `WRONG_ROOT` refusal for `attempted`, naming its canonical
+    /// `replacement` and that verb's `schema_ref`.
+    #[must_use]
+    pub fn wrong_root(
+        attempted: impl Into<String>,
+        replacement: impl Into<String>,
+        schema_ref: impl Into<String>,
+    ) -> Self {
+        let (attempted, replacement) = (attempted.into(), replacement.into());
+        let mut error = Self::new(
+            MEMORY_CODE_WRONG_ROOT,
+            format!("`{attempted}` is not an SDK verb; the verb is `{replacement}`"),
+            &["Call the replacement verb; a wrong root is never run."],
+        );
+        error.wrong_root = Some(Box::new(MemoryWrongRoot {
+            attempted,
+            replacement,
+            schema_ref: schema_ref.into(),
+        }));
+        error
     }
 
     /// The same refusal carrying the receipt of the read that produced it.
