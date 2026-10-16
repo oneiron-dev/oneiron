@@ -27,6 +27,7 @@ pub enum AgentVerb {
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
+    VaultArtifactsReviewSlides,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -127,6 +128,7 @@ impl AgentVerb {
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
+        Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -230,6 +232,7 @@ impl AgentVerb {
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
+            Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -329,6 +332,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -436,6 +440,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -575,6 +580,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -658,6 +664,7 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -738,6 +745,7 @@ impl AgentVerb {
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -839,6 +847,7 @@ impl AgentVerb {
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],

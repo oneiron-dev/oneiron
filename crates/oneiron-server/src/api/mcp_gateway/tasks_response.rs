@@ -594,6 +594,7 @@ fn mcp_agent_verb_input(
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.review_slides" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.propose_deck" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.propose_output" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.keep" => a.spec.clone().ok_or_else(invalid),
@@ -853,6 +854,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.proposals" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.review_slides" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.propose_deck" => {
@@ -1478,6 +1482,19 @@ async fn execute_agent_verb_listing(
             let output = oneiron::task_verb::sdk::vault_artifacts_proposals(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.review_slides" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.artifacts.review_slides", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::blob_artifact::SlideReviewSubmit =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_artifacts_review_slides(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.artifacts.propose_deck" => {

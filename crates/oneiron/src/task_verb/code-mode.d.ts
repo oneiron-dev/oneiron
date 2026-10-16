@@ -73,6 +73,7 @@ declare const vault: {
     propose_output(input: { artifact_ref: string; content_base64: string; made_by?: unknown; media_type: string; name: string; report?: unknown; run_ref: string }): Promise<unknown>;
     put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
     read(input: { artifact_ref: string; version: number }): Promise<unknown>;
+    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image: string; target: unknown }[] }): Promise<unknown>;
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
   };

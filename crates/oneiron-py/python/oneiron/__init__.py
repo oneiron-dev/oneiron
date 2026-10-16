@@ -407,6 +407,9 @@ class Oneiron:
         def proposals(self, request: dict[str, Any]) -> list[dict[str, Any]]:
             """The proposals waiting beside one artifact for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_proposals(json.dumps(request, allow_nan=False))))
+        def review_slides(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_review_slides(json.dumps(request, allow_nan=False))))
         def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
             """Runs one native deck transaction over the head and holds the proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))

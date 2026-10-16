@@ -121,6 +121,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.review_slides",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::SlideReviewSubmit,
+                >(),
+            ),
+            (
                 "vault.artifacts.propose_deck",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::DeckProposeRequest,
@@ -681,6 +687,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.review_slides" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.propose_deck" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1229,6 +1242,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.proposals" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
+        "vault.artifacts.review_slides" => {
+            let _input: crate::blob_artifact::SlideReviewSubmit = decode(value.clone())?;
+        }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
         }
@@ -1498,6 +1514,9 @@ pub fn invoke(
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
+        "vault.artifacts.review_slides" => {
+            encode(vault_artifacts_review_slides(memory, decode(value)?)?)
+        }
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -1851,6 +1870,12 @@ pub fn vault_artifacts_proposals(
     input: crate::blob_artifact::ArtifactRefRequest,
 ) -> MemoryResult<Vec<crate::edit_settle::PendingProposalView>> {
     memory.artifacts_proposals(&input)
+}
+pub fn vault_artifacts_review_slides(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::SlideReviewSubmit,
+) -> MemoryResult<crate::blob_artifact::SlideReviewOutcome> {
+    memory.artifacts_review_slides(&input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,

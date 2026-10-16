@@ -207,6 +207,8 @@ export class Oneiron {
       born_from: (request: BornFromRequest): BornFromView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBornFrom(keyedJson(request))) as BornFromView; return result }),
       /** The proposals waiting beside one artifact for Keep or Discard. */
       proposals: (request: ArtifactRefRequest): PendingProposalView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposals(keyedJson(request))) as PendingProposalView[]; return result.map(item => item) }),
+      /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
+      review_slides: (request: SlideReviewSubmit): SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as SlideReviewOutcome; return result }),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
