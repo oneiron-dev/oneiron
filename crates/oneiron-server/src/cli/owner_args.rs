@@ -1,6 +1,7 @@
 //! Flags for the owner's own commands: doctor, backup, maintain, restore,
 //! window recovery, export, the secret scan switch, registering and rotating a
-//! secret, importing history, import consent and agent-run consent.
+//! secret, importing history, import consent, agent-run consent and legal
+//! holds.
 //!
 //! Every command that opens the vault reads the same config as `serve`
 //! (`--config`, `--vault-path`, `ONEIRON_*`) and needs the vault stopped: the
@@ -444,6 +445,76 @@ pub enum HandoffAlarmsCommand {
 pub struct HandoffAlarmAckArgs {
     /// The alarm's retired key, `suite:hex`, as `list` names it.
     pub signer: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum LegalHoldsCommand {
+    /// Every hold you may see: your own, and each legal order you may be
+    /// told of.
+    List(Box<ServeOnlyArgs>),
+    /// The hold log, oldest first: ids, times and reason codes.
+    Log(Box<ServeOnlyArgs>),
+    /// Place a hold. Deletes of what it names then fail for agents, timers,
+    /// members and you alike; every other verb keeps working.
+    Place(Box<LegalHoldPlaceArgs>),
+    /// Add records or partitions to one of your standing holds.
+    Widen(Box<LegalHoldWidenArgs>),
+    /// "Lift the hold and erase?": lift your holds on these records and
+    /// erase them. Prints the confirm's prompt, and acts only with `--yes`.
+    LiftAndErase(Box<LegalHoldLiftArgs>),
+}
+
+/// What a hold names.
+#[derive(Args, Clone, Debug)]
+pub struct LegalHoldTargetArgs {
+    /// A record to hold, 32 hex. Repeat for more.
+    #[arg(long = "record", value_name = "HEX")]
+    pub records: Vec<String>,
+
+    /// A claim's gate-decision key partition to hold, 32 hex, or `none` for
+    /// the claim-free partition. Repeat for more.
+    #[arg(long = "gate-partition", value_name = "HEX|none")]
+    pub gate_partitions: Vec<String>,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct LegalHoldPlaceArgs {
+    #[command(flatten)]
+    pub targets: LegalHoldTargetArgs,
+
+    /// An opaque matter reference, never free text: 1 to 128 of
+    /// A-Z a-z 0-9 . _ : - /.
+    #[arg(long)]
+    pub matter_ref: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct LegalHoldWidenArgs {
+    /// The hold, 32 hex, as `list` names it.
+    pub hold_id: String,
+
+    #[command(flatten)]
+    pub targets: LegalHoldTargetArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct LegalHoldLiftArgs {
+    /// The records to lift and erase, 32 hex each.
+    #[arg(required = true, value_name = "RECORD")]
+    pub records: Vec<String>,
+
+    /// You have read the prompt and confirm it.
+    #[arg(long)]
+    pub yes: bool,
 
     #[command(flatten)]
     pub serve: ServeArgs,

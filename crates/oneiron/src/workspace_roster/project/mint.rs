@@ -339,6 +339,17 @@ impl Vault {
             )
             .apply(txn)?;
         self.require_owner_head_in_txn(txn, id, &project)?;
+        // A house mind the roster seats joins the new home room through the
+        // three consents, filed by the owner who tapped (OF-417).
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        crate::workspace_roster::workplace_join::file_house_joins_in_txn(
+            self,
+            txn,
+            EntityId::from_hex(&project.home_room)?,
+            &project.roster,
+            crate::WriteActor::new(actor, EdgeActorClass::Human),
+            now,
+        )?;
         self.grant_project_tap_in_txn(txn, owner, intent, leader, id, tap_key, digest)
     }
 

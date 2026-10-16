@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 
 const SLACK_POST_MESSAGE: &str = "https://slack.com/api/chat.postMessage";
 /// The built-in Slack pack connection whose checked credential posts.
-const SLACK_PACK: &str = "slack";
+const SLACK_PACK: &str = "oneiron.slack";
 const SLACK_CONNECTION: &str = "slack-app";
 const MAX_REPLY_BYTES: u64 = 64 * 1024;
 /// Slack refuses a message longer than this many characters.
