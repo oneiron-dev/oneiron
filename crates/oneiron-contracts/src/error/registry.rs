@@ -137,9 +137,10 @@ pub enum RegistryError {
         existing: u8,
         attempted: u8,
     },
-    /// The one vault Dreamer principal is a fixed system entity. No ordinary
-    /// local or replicated operation may replace or erase it.
-    #[error("vault Dreamer actor is immutable")]
+    /// The vault's two base-agent principals, the Dreamer and the Coach, are
+    /// fixed system entities. No ordinary local or replicated operation may
+    /// replace or erase either. The variant keeps its wire name.
+    #[error("vault base-agent actor is immutable")]
     DreamerActorImmutable,
     /// Tree operation would create a cycle.
     #[error("cycle detected in tree hierarchy")]

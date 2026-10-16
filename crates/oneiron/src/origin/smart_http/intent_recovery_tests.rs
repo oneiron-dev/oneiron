@@ -48,6 +48,7 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         verdict: DoorWindowVerdict::Clean,
         ref_updates: updates,
         lfs_pointers: Vec::new(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault

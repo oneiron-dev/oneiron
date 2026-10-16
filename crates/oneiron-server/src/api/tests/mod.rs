@@ -16,6 +16,7 @@ mod auth_idempotency;
 mod machine_identity;
 mod off_record_rooms;
 mod org_admin;
+mod owner_authored_writes;
 mod owner_healer;
 mod owner_routes;
 mod owner_secrets;
@@ -39,6 +40,7 @@ mod core_memory_conversations;
 mod credential_reads;
 mod device_local_reads;
 mod facet_read;
+mod feedback_inbox;
 mod mcp_booking_publication;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_admission;

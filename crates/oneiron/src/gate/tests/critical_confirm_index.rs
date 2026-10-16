@@ -142,8 +142,7 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
 
 #[cfg(feature = "sync")]
 #[test]
-fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_replays() -> Result<()>
-{
+fn ordinary_review_of_a_held_claim_yields_to_a_fresh_item_on_a_changed_replay() -> Result<()> {
     use crate::sync::bridge::Materializer;
     use crate::sync::loro_support::map_insert_bytes;
     use crate::sync::schema::create_window_doc;
@@ -179,11 +178,10 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
     // `evidence` is still THAT write's envelope stamp — a map carrying no
     // `candidate_evidence` key at all. Re-signing it as Dreamer-authored puts
     // it under the GATE-12 evidence floor, which every Dreamer candidate must
-    // clear on its own, so cite a real consolidation envelope naming the actor
-    // entity `dreamer_claim_candidate_write_parts` seeds just below. The
-    // semantic hash asserted further down is unchanged by this: the claim
+    // clear on its own, so cite a real consolidation envelope naming a TURN.
+    // The semantic hash asserted further down is unchanged by this: the claim
     // inbox hash normalizes `evidence` and `source` away before hashing.
-    ordinary_body.evidence = Some(precommit_evidence(vec![dreamer_actor]));
+    ordinary_body.evidence = Some(said_evidence(&vault)?);
     let run_id = "dreamer-c3-index-run";
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(&vault, &ordinary_body, dreamer_actor, run_id)?;
@@ -238,12 +236,29 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
             &replacement_data,
         )
         .commit()?;
+    // The claim's first critical confirm was never answered, so its
+    // owner-answer obligation is still open. The peer revision outdates the
+    // ordinary review, and the owner is shown a fresh item bound to the
+    // revision now stored; the run's review indexes drop with the review.
+    let reopened = vault
+        .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+        .expect("the owner's item for the current revision");
+    assert_ne!(reopened.decision_id, ordinary.decision_id);
     assert_eq!(
-        vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
-        Some(ordinary.clone()),
-        "direct replay leaves the real ordinary primary/index state untouched"
+        reopened.reason_codes,
+        vec![crate::gate::confirm::GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED.to_owned()]
     );
-    assert_indexes(&ordinary)?;
+    assert!(
+        vault
+            .store
+            .pending_gate_consents_for_run(run_id)?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
 
     let window_key = WindowKey::new("2026-05");
     let doc = create_window_doc("peer", &window_key);
@@ -256,10 +271,9 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
     assert_eq!(
         vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
-        Some(ordinary.clone()),
-        "forward rematerialization also preserves ordinary Pending and indexes"
+        Some(reopened),
+        "forward rematerialization of the same revision leaves the owner's item"
     );
-    assert_indexes(&ordinary)?;
     assert_eq!(
         vault.get_claim(&claim)?.expect("tombstoned claim").approval,
         ClaimApprovalStatus::Proposed
@@ -370,7 +384,15 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
             .approval,
         ClaimApprovalStatus::Proposed,
     );
-    assert!(!has_pending_gate_consent(&vault, &claim)?);
+    // The overwrite outdates the confirm without its owner's answer: the
+    // owner is shown a fresh item for the peer's revision.
+    let reopened = vault
+        .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+        .expect("the owner's item for the peer's revision");
+    assert_eq!(
+        reopened.reason_codes,
+        vec![crate::gate::confirm::GATE_REASON_PENDING_CRITICAL_CONFIRM_REOPENED.to_owned()]
+    );
 
     let fresh = put_critical_auto_claim(&vault, claim)?;
     let fresh_binding = critical_write_confirm_binding(&fresh)?;
@@ -822,6 +844,13 @@ fn critical_confirm_alias_orphan_mismatch_and_ordinary_replacement_are_removed()
         .expect("ordinary consent remains");
     assert_eq!(remaining.claim_id, ordinary.claim_id);
     assert_eq!(remaining.decision_id, ordinary.decision_id);
+    // The ordinary review replaced an unsettled critical confirm: the
+    // claim's owner-answer obligation holds it, not the review.
     assert_eq!(remaining.reason_codes, ordinary.reason_codes);
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
     Ok(())
 }

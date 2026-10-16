@@ -39,7 +39,22 @@ impl Memory<'_> {
         reason: SafeDeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<DeleteReceipt> {
-        self.safe_delete_checked_in_phase(entity_ref, reason, check, false)
+        self.safe_delete_checked_in_phase(entity_ref, reason, check, false, None)
+    }
+
+    /// As [`Self::safe_delete_checked`], making `claim` in the delete's
+    /// linearizing write.
+    pub(super) fn safe_delete_claimed(
+        &self,
+        entity_ref: &str,
+        reason: SafeDeleteReason,
+        check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+        claim: Option<crate::deletion::DeletionClaim<'_>>,
+    ) -> MemoryResult<DeleteReceipt> {
+        if claim.is_some() && reason != SafeDeleteReason::UserHardDelete {
+            return Err(Error::InvariantViolation("a claimed delete is a user hard delete").into());
+        }
+        self.safe_delete_checked_in_phase(entity_ref, reason, check, false, claim)
     }
 
     /// A confirmed impact preview is valid only while the original body is
@@ -51,7 +66,7 @@ impl Memory<'_> {
         reason: SafeDeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<DeleteReceipt> {
-        self.safe_delete_checked_in_phase(entity_ref, reason, check, true)
+        self.safe_delete_checked_in_phase(entity_ref, reason, check, true, None)
     }
 
     fn safe_delete_checked_in_phase(
@@ -60,6 +75,7 @@ impl Memory<'_> {
         reason: SafeDeleteReason,
         check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
         stop_check_after_soft_scrub: bool,
+        claim: Option<crate::deletion::DeletionClaim<'_>>,
     ) -> MemoryResult<DeleteReceipt> {
         let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
@@ -85,7 +101,8 @@ impl Memory<'_> {
             crate::deletion::GatedDeletion::with_pre_scrub_check(gate, &reverify, &recheck)
         } else {
             crate::deletion::GatedDeletion::new(gate, &both)
-        };
+        }
+        .with_claim(claim);
         let outcome = self
             .vault
             .delete_entity_with_reason_gated(&id, reason.delete_reason(), gated)

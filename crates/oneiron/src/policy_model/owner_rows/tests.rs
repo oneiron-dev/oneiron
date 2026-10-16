@@ -488,3 +488,45 @@ fn a_delegate_lands_a_policy_row_only_under_a_live_grant_naming_it() -> TestResu
     assert!(failures.is_empty(), "{failures:#?}");
     Ok(())
 }
+
+/// A shared vault's second owner whose PERSON was deleted still holds its
+/// Owner grant: the owner check refuses it rather than reading it as a
+/// stranger, and a member who never owned stays an ordinary caller.
+#[test]
+fn a_deleted_shared_owner_is_refused_not_read_as_a_stranger() -> TestResult {
+    let (_dir, vault, owner) = open()?;
+    let other = person(&vault, 0x38)?;
+    let member = person(&vault, 0x39)?;
+    vault.initialize_shared_vault(
+        &owner,
+        42,
+        None,
+        &[
+            InitialSharedMember {
+                member_ref: owner.actor(),
+                role: Some(FederationGrantRole::Owner),
+            },
+            InitialSharedMember {
+                member_ref: other.actor(),
+                role: Some(FederationGrantRole::Owner),
+            },
+            InitialSharedMember {
+                member_ref: member.actor(),
+                role: Some(FederationGrantRole::Member),
+            },
+        ],
+        10,
+    )?;
+    let recorded =
+        |id: EntityId| vault.authenticate_recorded_owner(id, &id.to_hex(), GateDecisionId::now());
+    assert!(recorded(other.actor())?.is_some());
+    assert!(recorded(member.actor())?.is_none());
+
+    vault.delete_entity(&other.actor())?;
+    assert!(
+        recorded(other.actor()).is_err(),
+        "FAILBEFORE R6 shared owner: a deleted owner read as a stranger"
+    );
+    assert!(recorded(member.actor())?.is_none());
+    Ok(())
+}

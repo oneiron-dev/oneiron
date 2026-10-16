@@ -168,6 +168,15 @@ impl Store {
             {
                 return Ok(false);
             }
+            // A claim still awaiting its owner's answer connects no community.
+            if !crate::gate::claim_consolidation_eligible_in_txn(
+                self,
+                txn,
+                id,
+                crate::gate::ConsolidationReader::PprCommunity,
+            )? {
+                return Ok(false);
+            }
         }
         Ok(true)
     }

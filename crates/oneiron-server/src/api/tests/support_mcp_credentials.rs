@@ -153,8 +153,8 @@ pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
 /// one live binding, so `actor` is the vault's only bound actor.
 pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, class: &str) {
     use oneiron::authority::{
-        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-        HostSlipIssuer, actor_binding_is_active, authority_entry_hash, authority_transcript,
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthoritySignature, HostSlipIssuer,
+        actor_binding_is_active, authority_entry_hash, authority_transcript,
     };
     use std::collections::BTreeSet;
 
@@ -164,6 +164,9 @@ pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, cla
     let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
     assert_eq!(signing.verifying_key().to_bytes(), issuer.binding_key());
     let fold = server.vault.authority_fold().unwrap();
+    let Some(op) = crate::test_credentials::binding_op(&fold, &host_key, actor, class) else {
+        return;
+    };
     let mut heads: BTreeSet<_> = fold.valid_entries.clone();
     let mut seq = 0;
     for row in server
@@ -188,12 +191,7 @@ pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, cla
         vault_id: fold.vault_id,
         seq,
         parent_hashes: heads.into_iter().collect(),
-        op: AuthorityOp::BindActor {
-            authority_key: host_key.clone(),
-            actor_ref: actor,
-            actor_class: class.into(),
-            epoch: 1,
-        },
+        op,
         signer: AuthoritySignature {
             suite: host_key.suite(),
             public_key: host_key,

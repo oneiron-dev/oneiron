@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::{SkillContentHash, SkillRecord, decode_skill_record};
@@ -80,14 +81,27 @@ fn provenance_trust_class(
     // vouches for says only "a scanner looked at some bytes" — there is no
     // trust relationship behind it to be optimistic about — and a hub alias
     // over bytes nobody scanned is what `UnvettedImport` NAMES.
-    let vetted = hub_vouches_for_content(vault, rtxn, skill, content_hash)?
-        && crate::skill_hub::skill_scan_verdicts_for_content_hash_in_store(
+    // A half awaiting its owner's answer vouches for nothing yet.
+    let mut vetted = false;
+    if hub_vouches_for_content(vault, rtxn, skill, content_hash)? {
+        for (id, body) in crate::skill_hub::skill_scan_verdict_heads_for_content_hash_in_store(
             &vault.store,
             rtxn,
             content_hash,
-        )?
-        .iter()
-        .any(scan_verdict_cleared_the_bytes);
+        )? {
+            if scan_verdict_cleared_the_bytes(&body)
+                && claim_consolidation_eligible_in_txn(
+                    &vault.store,
+                    rtxn,
+                    &id,
+                    ConsolidationReader::SkillScanPrior,
+                )?
+            {
+                vetted = true;
+                break;
+            }
+        }
+    }
     Ok(if vetted {
         ProvenanceTrustClass::VettedImport
     } else {
@@ -127,8 +141,15 @@ fn hub_vouches_for_content(
     content_hash: SkillContentHash,
 ) -> Result<bool> {
     let hash_hex = content_hash.to_hex();
-    for (_, body, _) in active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_HUB_PROVENANCE)? {
-        if map_str(&body.value, HUB_PROVENANCE_CONTENT_HASH_KEY) == Some(hash_hex.as_str()) {
+    for (id, body, _) in active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_HUB_PROVENANCE)? {
+        if map_str(&body.value, HUB_PROVENANCE_CONTENT_HASH_KEY) == Some(hash_hex.as_str())
+            && claim_consolidation_eligible_in_txn(
+                &vault.store,
+                rtxn,
+                &id,
+                ConsolidationReader::SkillHubPrior,
+            )?
+        {
             return Ok(true);
         }
     }

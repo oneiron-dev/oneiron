@@ -1,5 +1,6 @@
-//! SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Dreamer
-//! maintenance job that keeps skill instructions honest over time.
+//! SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's
+//! job on the Dreamer's runner that keeps skill instructions honest over time.
+//! It keeps its `dreamer.skill_optimize` kind token; its stamp names the Coach.
 //!
 //! ```text
 //! Dreamer wake ─▶ skill_optimize attempt
@@ -142,6 +143,8 @@ mod selection;
 mod tier;
 
 pub use self::ask_band::{AskBandLabel, AskBandPolicy};
+#[cfg(test)]
+pub(crate) use self::brief::optimize_brief_bound_at;
 pub use self::brief::{
     RejectedSkillEdit, RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME,
     SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft,

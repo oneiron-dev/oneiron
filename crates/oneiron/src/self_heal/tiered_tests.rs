@@ -193,7 +193,16 @@ fn session_judge_requires_one_telemetry_episode() -> Result<()> {
 
 #[test]
 fn reviewed_recurrence_mints_t2_and_closed_form_t1() -> Result<()> {
-    let (_d, v) = vault();
+    use crate::failure_signals::{
+        AgentKind, AgentSurface, FailureClassV1, FailureSignalInput, FailureTaxonomy,
+        VersionedComponent,
+    };
+    let dir = tempfile::tempdir()?;
+    let mut config = crate::VaultConfig::device();
+    config.embedding_model = Some("test/tiered@v1".into());
+    config.dimensions = 4;
+    config.failure_signals.export_opt_in = true;
+    let v = Vault::open_owned(dir.path(), config)?;
     let o = owner(&v);
     let p = policy(2);
     let yes1 = run(&v, 31, true);
@@ -222,12 +231,27 @@ fn reviewed_recurrence_mints_t2_and_closed_form_t1() -> Result<()> {
     let t2 = v.mint_t2(p)?.unwrap();
     assert_eq!(t2.positive_events.len(), 2);
     let new_runs = [run(&v, 34, false), run(&v, 35, false)];
-    assert_eq!(
-        v.classify_minted_t2(&t2, &decisions(&LabeledGrade), &new_runs)?
-            .unwrap()
-            .tier,
-        ProposedTier::PromptClassifier
-    );
+    let minted = v
+        .classify_minted_t2(&t2, &decisions(&LabeledGrade), &new_runs)?
+        .unwrap();
+    assert_eq!(minted.tier, ProposedTier::PromptClassifier);
+    // ONE-2689#7: the distilled producer registers its evidence, so its
+    // finding can be counted for export.
+    v.record_failure_signal(
+        &v.tier1_observation(minted.event_id)?
+            .expect("minted classification witness"),
+        FailureSignalInput {
+            taxonomy: FailureTaxonomy::V1(FailureClassV1::MemoryMiss),
+            agent_surface: AgentSurface::Chat,
+            agent_kind: AgentKind::Custom,
+            agent: VersionedComponent {
+                name: "custom".into(),
+                version: "v1".into(),
+            },
+            agent_ref: None,
+        },
+    )?;
+    assert_eq!(v.export_tier1_failure_counts()?.len(), 1);
     let t1 = v
         .graduate_t1(&t2, ClosedFormPredicate::RetrievalMiss)?
         .unwrap();
