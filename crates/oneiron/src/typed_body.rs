@@ -57,8 +57,15 @@ pub struct TypedBodyHead {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum TypedForkState {
     Open,
-    Merged { by: EntityId, at: u64, head: Vec<u8> },
-    Discarded { by: EntityId, at: u64 },
+    Merged {
+        by: EntityId,
+        at: u64,
+        head: Vec<u8>,
+    },
+    Discarded {
+        by: EntityId,
+        at: u64,
+    },
 }
 
 /// Work on a body away from its head: opened at a head frontier, written only
@@ -103,7 +110,9 @@ pub(crate) fn birth_typed_body_in_txn<T>(
 ) -> Result<(T, TypedBodyCommit)> {
     let schema = writer.schema;
     if schema.is_empty() || schema.len() > 64 || !schema.bytes().all(|b| b.is_ascii_graphic()) {
-        return Err(invalid("a typed body schema is 1 to 64 visible ASCII bytes"));
+        return Err(invalid(
+            "a typed body schema is 1 to 64 visible ASCII bytes",
+        ));
     }
     require_live(&vault.store, txn, entity)?;
     if HEADS.contains(&vault.store, txn, entity)? {
@@ -295,7 +304,9 @@ pub(crate) fn merge_typed_body_fork_in_txn(
         .get(&vault.store, txn, entity)?
         .ok_or(Error::EntityNotFound)?;
     if head.frontier != expected_head {
-        return Err(invalid("the body moved since the review; read the fork again"));
+        return Err(invalid(
+            "the body moved since the review; read the fork again",
+        ));
     }
     let live = load(DOCS.get(&vault.store, txn, entity)?, Some(&head.frontier))?;
     let proposal = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
@@ -384,10 +395,7 @@ impl Vault {
     /// Every commit's receipt on the head's history, oldest first. A commit
     /// whose receipt is missing, malformed or not honored for its peer is
     /// `None`, so a fold of the list fails closed.
-    pub fn typed_body_receipts(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Vec<Option<TextCommitReceipt>>> {
+    pub fn typed_body_receipts(&self, entity: &EntityId) -> Result<Vec<Option<TextCommitReceipt>>> {
         let doc = {
             let txn = self.store.env.read_txn()?;
             require_live(&self.store, &txn, entity)?;
@@ -535,7 +543,9 @@ fn commit_as<T>(
 ) -> Result<(T, TextCommitReceipt)> {
     let TypedBodyWriter { actor, made_by, .. } = writer;
     if !made_by_names(actor, made_by) {
-        return Err(invalid("the MadeBy envelope does not name this actor's process"));
+        return Err(invalid(
+            "the MadeBy envelope does not name this actor's process",
+        ));
     }
     validate_actor(vault, txn, actor)?;
     let at = i64::try_from(made_by.at).map_err(|_| invalid("typed body commit time"))?;
@@ -675,8 +685,8 @@ fn head_in_txn(
 
 fn load(bytes: Option<Vec<u8>>, frontier: Option<&[u8]>) -> Result<LoroDoc> {
     let bytes = bytes.ok_or(Error::CorruptedIndex("typed body document missing"))?;
-    let doc = LoroDoc::from_snapshot(&bytes)
-        .map_err(|_| Error::CorruptedIndex("typed body document"))?;
+    let doc =
+        LoroDoc::from_snapshot(&bytes).map_err(|_| Error::CorruptedIndex("typed body document"))?;
     if frontier.is_some_and(|frontier| doc.oplog_frontiers().encode() != frontier) {
         return Err(Error::CorruptedIndex("typed body frontier"));
     }
