@@ -4,7 +4,7 @@ use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 #[test]
 fn subscriptions_roundtrip_revoke_and_wake_only_matching_non_depleted_keys() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x71);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let agent_a = entity(0x72);
     let agent_b = entity(0x73);
     for id in [owner_id, agent_a, agent_b] {
@@ -115,7 +115,7 @@ fn subscriptions_roundtrip_revoke_and_wake_only_matching_non_depleted_keys() -> 
 #[test]
 fn corrupt_subscription_claim_fails_closed() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x61);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let actor = entity(0x62);
     let key_id = entity(0x63);
     for id in [owner_id, actor] {
@@ -222,7 +222,7 @@ mod foreign_owner_proof {
     #[test]
     fn a_foreign_owner_proof_subscribes_no_agent() -> Result<()> {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
-        let owner_id = entity(0x71);
+        let owner_id = vault.ensure_embedded_owner_actor().unwrap();
         let agent = entity(0x72);
         for id in [owner_id, agent] {
             vault.put_entity(

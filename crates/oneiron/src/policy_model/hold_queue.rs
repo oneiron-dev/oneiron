@@ -144,8 +144,8 @@ impl Vault {
             return Err(Error::InvalidConfig("not a policy hold reference".into()));
         }
         let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self, &txn)?;
-        let principal_ref = owner.principal_ref_in_txn(self, &txn)?;
+        let actor = owner.revalidate_person_in_txn(self, &txn)?;
+        let principal_ref = owner.person_principal_ref_in_txn(self, &txn)?;
         let mut item = HOLD_QUEUE
             .get(&self.store, &txn, &hold_key(reference))?
             .ok_or(Error::CorruptedIndex("missing policy hold"))?;
@@ -202,7 +202,7 @@ impl Vault {
         limit: usize,
     ) -> Result<usize> {
         self.with_write_txn_grouped(|txn| {
-            let principal_ref = owner.principal_ref_in_txn(self, txn)?;
+            let principal_ref = owner.person_principal_ref_in_txn(self, txn)?;
             let frontier =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
             let mut keys = Vec::new();

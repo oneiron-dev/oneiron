@@ -462,3 +462,41 @@ fn deletion_is_refused_at_enqueue_without_creating_a_batch_or_worktree() {
             .is_empty()
     );
 }
+
+#[test]
+fn no_count_of_batches_ends_a_repository_queue() {
+    // Rule 5: the batch sequence only salts batch ids. Past the 100,000 the
+    // queue once refused at, and past the u64 ceiling, a batch is still
+    // admitted, staged and landed.
+    let fixture = Fixture::new();
+    let queue = fixture.queue();
+    for (sequence, name) in [(100_000, "a"), (u64::MAX, "b")] {
+        let mut state = queue.queue().unwrap();
+        state.sequence = sequence;
+        queue.save(&state, &[]).unwrap();
+        let batch = queue
+            .enqueue(vec![fixture.proposal(name, b"landed\n")])
+            .unwrap();
+        ready(&queue, &batch);
+        let landed = queue.land(&batch.id, &mut fixture.host(None)).unwrap();
+        assert_eq!(landed.state, BatchState::HeadAdvanced);
+        finish(&queue, &batch);
+        assert_eq!(fixture.read(name), b"landed\n");
+    }
+    assert_eq!(queue.queue().unwrap().sequence, 0);
+
+    // A sequence that rolled round onto a kept batch's skips it: one id
+    // names one batch.
+    let kept = queue
+        .enqueue(vec![fixture.proposal("c", b"kept\n")])
+        .unwrap();
+    let mut state = queue.queue().unwrap();
+    state.sequence = 0;
+    queue.save(&state, &[]).unwrap();
+    let next = queue
+        .enqueue(vec![fixture.proposal("c", b"kept\n")])
+        .unwrap();
+    assert_ne!(next.id, kept.id);
+    assert_eq!(queue.batch(&kept.id).unwrap(), kept);
+    assert_eq!(queue.queue().unwrap().sequence, 2);
+}

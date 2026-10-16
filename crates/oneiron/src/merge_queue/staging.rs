@@ -17,14 +17,21 @@ impl MergeQueue<'_> {
         self.require_current(&queue)?;
         self.require_clean(self.repo.repo_root())?;
         validate_proposals(&proposals, &queue.pointers.green)?;
-        if queue.sequence == 100_000 {
-            return Err(invalid("merge queue row limit reached"));
-        }
-        queue.sequence += 1;
-        let encoded =
-            rmp_serde::to_vec_named(&(self.repo.identity().as_hex(), queue.sequence, &proposals))
-                .map_err(|_| invalid("merge batch identity encoding failed"))?;
-        let id = blake3::hash(&encoded).to_hex().to_string();
+        // The sequence only salts the batch id, so it rolls over rather than
+        // ending the queue (rule 5), past any id a kept batch holds.
+        let id = loop {
+            queue.sequence = queue.sequence.wrapping_add(1);
+            let encoded = rmp_serde::to_vec_named(&(
+                self.repo.identity().as_hex(),
+                queue.sequence,
+                &proposals,
+            ))
+            .map_err(|_| invalid("merge batch identity encoding failed"))?;
+            let id = blake3::hash(&encoded).to_hex().to_string();
+            if !self.batch_exists(&id)? {
+                break id;
+            }
+        };
         let changed = proposals
             .iter()
             .flat_map(|p| p.files.iter().map(|f| f.path.as_str()));
