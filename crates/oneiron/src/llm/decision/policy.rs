@@ -54,9 +54,28 @@ pub struct DecisionBandPolicy {
     rows: BTreeMap<(EntityId, u32, Reversibility), LearnedBand>,
     person: Option<PersonThreshold>,
     think: Option<ThinkThreshold>,
+    questions_per_call: Option<usize>,
 }
 
+/// The questions-per-call row's value until the vault sets one.
+pub const DEFAULT_QUESTIONS_PER_CALL: usize = 16;
+
 impl DecisionBandPolicy {
+    /// The questions-per-call row (Rule 5): a pack larger than it goes as several requests
+    /// in turn under the same clock. A decision is never refused for count.
+    pub fn set_questions_per_call(&mut self, count: usize) -> Result<()> {
+        if count == 0 {
+            return Err(invalid("invalid questions per call"));
+        }
+        self.questions_per_call = Some(count);
+        Ok(())
+    }
+
+    pub fn questions_per_call(&self) -> usize {
+        self.questions_per_call
+            .unwrap_or(DEFAULT_QUESTIONS_PER_CALL)
+    }
+
     pub fn set_person_threshold(&mut self, threshold: f64, version: u32) -> Result<()> {
         if !(threshold > 0.0 && threshold <= 1.0) || version == 0 {
             return Err(invalid("invalid person threshold"));
