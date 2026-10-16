@@ -156,14 +156,17 @@ fn texts(request: &LlmRequest) -> impl Iterator<Item = &str> {
         })
 }
 
+/// One scripted model turn: the program it writes, given the request.
+type Reply = Box<dyn FnOnce(&LlmRequest) -> String + Send>;
+
 /// The model's side. It keeps no request: a retained prompt would hold memory
 /// the plateau must not count.
 struct Model {
-    replies: Mutex<VecDeque<Box<dyn FnOnce(&LlmRequest) -> String + Send>>>,
+    replies: Mutex<VecDeque<Reply>>,
 }
 
 impl Model {
-    fn new(replies: Vec<Box<dyn FnOnce(&LlmRequest) -> String + Send>>) -> Self {
+    fn new(replies: Vec<Reply>) -> Self {
         Self {
             replies: Mutex::new(replies.into()),
         }
@@ -289,9 +292,7 @@ fn a_result_past_the_session_share_and_thousands_of_small_ones_keep_memory_flat(
 
     // Step 0 stores the big body; the steps after it each store fifty small
     // results. Every past observation shows as a stub, never a full view.
-    let next_step = || -> Box<dyn FnOnce(&LlmRequest) -> String + Send> {
-        Box::new(|_: &LlmRequest| "console.log('next');".to_owned())
-    };
+    let next_step = || -> Reply { Box::new(|_: &LlmRequest| "console.log('next');".to_owned()) };
     let producer_model = Model::new((0..=SMALL_STEPS).map(|_| next_step()).collect());
     let mut producer = Producer;
     let mut executor =
