@@ -490,6 +490,9 @@ impl DreamerRunnerStore<'_> {
             apply_milestone_claim_in_txn(self.vault, wtxn, &attempt, milestone)?;
         }
 
+        // OF-220: the TASK this try realizes is taken on the task highway.
+        crate::task_verb::highway_runner::accept_leased_task_in_txn(self.vault, wtxn, &attempt)?;
+
         let status = decode_dreamer_attempt_status(attempt)?;
 
         Ok(DreamerKindAdmissionResult {
