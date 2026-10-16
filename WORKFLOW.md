@@ -62,13 +62,32 @@ logs, GitHub checks, and resolved review threads are the evidence that wins.
 
 ## 3. Verification Gate
 
-Run the full gate from the PR worktree after the final change. Repeat until all
-commands pass on the final branch tip.
+Owner ruling, 2026-09-26: a PR gate tests only what the change touched, and the
+full gate runs on `main`.
 
-`scripts/verify.sh` is the single source of truth for the scripted gate. Use
-`scripts/verify.sh --list` to see the exact commands without running them;
-`--help` is also build-free. Scoped iteration commands are in `AGENTS.md` and
-are not substitutes for this gate.
+**PR gate (scoped).** Run it from the PR worktree after the final change, and
+repeat until every command passes on the final branch tip.
+`scripts/ci/ci_scope.py --base "$(git merge-base origin/main HEAD)" --head HEAD`
+prints the change's scope (`full`, `packages`, `dependents`, `oneiron`,
+`modules`, `it`). Export each key as `SCOPE_<KEY>` and run:
+
+- `cargo fmt --check` and the generator checks;
+- `scripts/ci/run_scoped.sh clippy`, `test` and `featureless`;
+- strict rustdoc for the touched packages;
+- the sync lane for the touched `oneiron` modules, with its integration tests
+  when `it=true`.
+
+A change to a build file, the toolchain or CI makes the scope full, and a full
+scope runs the full gate below.
+
+**Full gate (`main`).** It runs on `main` after PRs merge, at most once an hour
+and only when something new landed (`AGENTS.md`, *CI truth*). A red `main` gate
+gets a fix PR. On a branch, run it only when the scope is full or a manager asks
+for it.
+
+`scripts/verify.sh` is the single source of truth for the scripted full gate.
+Use `scripts/verify.sh --list` to see the exact commands without running them;
+`--help` is also build-free.
 
 The nine scripted stages are code-map pin, fmt, workspace clippy, featureless
 clippy, server-production clippy, strict rustdoc, full workspace nextest,
@@ -118,9 +137,8 @@ Keep gate logs with the exact command, worktree revision, host, and environment
 choices. Discovery output is not gate evidence: only an executing full script
 can print `VERIFY-OK`, and the additional sync policy command needs its own log.
 
-For docs-only or comment-only PRs, still run formatting and no-op checks, then
-run the full cargo gate when practical. If a manager explicitly scopes the gate
-down, record the exact exception in the PR and Linear summary.
+For docs-only or comment-only PRs, `ci_scope.py` finds no package to build: run
+formatting and the generator checks, and record the scope in the PR.
 
 ## 4. Review Policy
 
@@ -153,9 +171,9 @@ Owner ruling, 2026-10-07. Each PR gets one bot review, not one per push.
    changes (auth, consent, restore, deletion, crypto, owner data), add Astra as
    a second review.
 3. Open the PR as a **draft**, with `## Summary` and `## Test plan`. CI is
-   paused repo-wide (`CI_PAUSED`), so the full gate in section 3, run locally
-   or through the fleet, is the gate.
-4. When the full gate is green on the branch tip and Sol's findings are
+   paused repo-wide (`CI_PAUSED`), so the scoped PR gate in section 3, run
+   locally or through the fleet, is the gate.
+4. When the PR gate is green on the branch tip and Sol's findings are
    resolved, mark the PR ready **once**. CodeRabbit reviews automatically when a
    PR is marked ready; it skips drafts and does not re-review every push.
 5. Tag `@greptileai` only on high-risk PRs (about 50 a month on the free plan).
@@ -191,8 +209,8 @@ rtk proxy git merge-tree --write-tree origin/main HEAD
 
 The merge gate is:
 
-- The full gate (section 3) is green on the final branch tip. GitHub CI is
-  paused repo-wide (`CI_PAUSED`).
+- The scoped PR gate (section 3) is green on the final branch tip; a full scope
+  means the full gate. GitHub CI is paused repo-wide (`CI_PAUSED`).
 - GitHub cloud-reviewer bot threads have no unresolved blocking coding
   comments.
 - Required `/fusion`, if any, has been triaged.
