@@ -3382,7 +3382,7 @@
      "surface": {
       "crate-vis": 9,
       "enum": 5,
-      "fn": 13,
+      "fn": 15,
       "re-export": 2,
       "struct": 15
      }
@@ -17173,9 +17173,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 8,
-      "crate-vis": 4,
-      "fn": 5,
+      "const": 14,
+      "crate-vis": 7,
+      "fn": 7,
       "trait": 1
      }
     },
@@ -17200,6 +17200,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DigestOffer",
       "DigestProposal",
       "ProactivityCadence",
       "ProactivityDigest",
@@ -17211,10 +17212,10 @@
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 1,
       "fn": 13,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -24426,7 +24427,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -60449,7 +60450,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/proactivity_routes.rs",
