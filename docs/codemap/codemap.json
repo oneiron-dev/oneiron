@@ -4684,9 +4684,27 @@
      "purpose": "One public signing executor: turn, access, viewed, terminal, then action",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeldSigning",
+      "HeldSigningAnswer",
+      "HeldSigningState"
+     ],
+     "path": "src/blob_artifact/esign/escalation.rs",
+     "purpose": "The sign act the dial does not open goes up to the vault owner role (ARCH-0064 D6, ARCH-0064a, ARCH-0076…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -4746,7 +4764,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -4849,7 +4867,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -25876,7 +25894,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 31,
+      "const": 32,
       "fn": 1,
       "struct": 1
      }
@@ -47870,7 +47888,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49258,7 +49276,7 @@
    },
    "over_bar": 100,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2970,
+   "source_files": 2971,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60226,7 +60244,7 @@
      "path": "src/api/esign.rs",
      "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60237,6 +60255,16 @@
      "purpose": "Router-owned admission for public, capability-free editor computation",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/hold_worker.rs",
+     "purpose": "The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks the vault…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60756,7 +60784,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -66009,7 +66037,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 245,
+     "files": 246,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66298,7 +66326,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 462,
+   "source_files": 463,
    "test_files": 182
   },
   "oneiron-spawn": {
