@@ -181,7 +181,7 @@ pub(super) fn admission_short_circuit(
             Ok(Some(benign_response(request)))
         }
         BookingHttpDisposition::PromptCorrection { body } => Err(prompt_correction_error(&body)),
-        BookingHttpDisposition::RetryAfter { seconds } => {
+        BookingHttpDisposition::RetryAfter { seconds, .. } => {
             let state = format!("booking_retry_after_{seconds}s");
             Err(ApiError::new(
                 format!("booking admission is rate limited; retry after {seconds} seconds"),

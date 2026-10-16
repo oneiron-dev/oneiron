@@ -129,9 +129,6 @@ pub struct SyncServer {
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// Where the owner's feedback goes; `None` until configured.
     pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
-    /// Turns for authenticated booking requests past one of the owner's minute
-    /// windows, one credential after another.
-    pub(crate) booking_turns: crate::admission::Admission<String>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -255,7 +252,6 @@ impl SyncServer {
                 Arc::clone(wire_telemetry.limit_questions()),
                 &vault,
             ),
-            booking_turns: crate::admission::Admission::exclusive(config.limits.queue_wait()),
             wire_telemetry,
             vault,
             root_doc,

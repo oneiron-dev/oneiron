@@ -126,16 +126,21 @@ pub(crate) struct BookingTransportContext {
     pub(crate) source_ip: IpAddr,
     pub(crate) authenticated_actor_ref: Option<EntityId>,
     /// The verified credential an authenticated request came under; `None`
-    /// for an anonymous visitor. Past a window it waits on this key's turn.
+    /// for an anonymous visitor. It keys its own budget, and past a window it
+    /// waits for it to open.
     pub(crate) credential: Option<String>,
     pub(crate) transport: BookingTransport,
 }
 
 impl BookingTransportContext {
-    /// The actor key mixed into admission. An authenticated actor keys its own
-    /// budget; an owner-bearer HTTP caller keys on the source address alone.
+    /// The actor key mixed into admission. An authenticated actor, or else
+    /// the credential an authenticated request came under, keys its own
+    /// budget; an anonymous visitor keys on the source address alone.
     fn actor_key(&self) -> Option<String> {
-        self.authenticated_actor_ref.as_ref().map(EntityId::to_hex)
+        self.authenticated_actor_ref
+            .as_ref()
+            .map(EntityId::to_hex)
+            .or_else(|| self.credential.clone())
     }
 }
 

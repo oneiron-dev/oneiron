@@ -167,6 +167,25 @@ async fn an_authenticated_caller_past_each_booking_window_waits_and_is_served() 
     assert!(asked(&fixture), "each window's crossing asks");
 }
 
+/// Two credentials behind one address keep windows of their own: one past its
+/// window takes nothing from the other, which is served at once.
+#[tokio::test(start_paused = true)]
+async fn credentials_behind_one_address_keep_their_own_windows() {
+    let fixture = fixture_on_the_runtime_clock();
+    install(
+        &fixture,
+        BookingAntiAbuseRule::SlotListRate {
+            per_minute_per_ip: per_minute(1),
+            cache_ttl_secs: std::num::NonZeroU64::new(30).expect("TTL"),
+        },
+    );
+    let start = tokio::time::Instant::now();
+    served(owner(&fixture, "agent-a", "availability", listing(0)).await).await;
+    served(owner(&fixture, "agent-b", "availability", listing(1)).await).await;
+    assert_eq!(start.elapsed(), std::time::Duration::ZERO, "neither waited");
+    assert!(!asked(&fixture), "no window was crossed");
+}
+
 /// Rule five at the booking windows row: `callers` listings on one
 /// credential, past a window of half as many a minute, all complete and the
 /// row asks. It runs on a paused runtime of its own.
