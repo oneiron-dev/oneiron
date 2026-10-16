@@ -231,13 +231,21 @@ pub(super) fn id_of(raw: &[u8]) -> Result<EntityId> {
 
 fn bounded_ref(value: &str) -> Result<()> {
     if value.trim().is_empty() || value.len() > MAX_REF_BYTES {
-        return Err(invalid("an eval source reference must be nonempty and bounded"));
+        return Err(invalid(
+            "an eval source reference must be nonempty and bounded",
+        ));
     }
     Ok(())
 }
 
 fn root_key(seat: &EvalSeat, root: &str) -> Result<Vec<u8>> {
-    Ok([ROOT_PREFIX, seat.token()?.as_bytes(), b"\0", root.as_bytes()].concat())
+    Ok([
+        ROOT_PREFIX,
+        seat.token()?.as_bytes(),
+        b"\0",
+        root.as_bytes(),
+    ]
+    .concat())
 }
 
 pub(super) fn family_in_txn(
@@ -266,11 +274,16 @@ pub(super) fn case_in_txn(
         .transpose()
 }
 
-pub(super) fn put_case_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, case: &EvalCase) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(txn, &[CASE_PREFIX, case.id.as_bytes()].concat(), &encode(case)?)?;
+pub(super) fn put_case_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    case: &EvalCase,
+) -> Result<()> {
+    vault.store.vault_meta.put(
+        txn,
+        &[CASE_PREFIX, case.id.as_bytes()].concat(),
+        &encode(case)?,
+    )?;
     Ok(())
 }
 
@@ -317,7 +330,9 @@ impl Vault {
                 }
             }
             if known.len() > 1 {
-                return Err(invalid("these roots already belong to different eval families"));
+                return Err(invalid(
+                    "these roots already belong to different eval families",
+                ));
             }
             let mut family = match known.first() {
                 Some(id) => family_in_txn(self, txn, id)?.ok_or(Error::CorruptedIndex(LABEL))?,
@@ -379,7 +394,9 @@ impl Vault {
             || draft.receipts.len() > MAX_ROOTS
             || draft.parents.len() > MAX_PARENTS
         {
-            return Err(invalid("an eval case names 1..=256 receipts or 1..=64 parents"));
+            return Err(invalid(
+                "an eval case names 1..=256 receipts or 1..=64 parents",
+            ));
         }
         for receipt in &draft.receipts {
             bounded_ref(receipt)?;
@@ -392,7 +409,9 @@ impl Vault {
                 .draw_probability
                 .is_some_and(|p| !p.is_finite() || p <= 0.0 || p > 1.0)
         {
-            return Err(invalid("an eval case stratum or draw probability is invalid"));
+            return Err(invalid(
+                "an eval case stratum or draw probability is invalid",
+            ));
         }
         self.with_write_txn_grouped(|txn| {
             let mut families = BTreeSet::new();
@@ -457,7 +476,9 @@ impl Vault {
     /// A sealed-confirmation purpose, unreadable rows, or storage errors.
     pub fn eval_cases(&self, seat: &EvalSeat, purpose: FamilyPurpose) -> Result<Vec<EvalCase>> {
         if purpose == FamilyPurpose::SealedConfirmation {
-            return Err(invalid("sealed eval cases are served only through their cohort"));
+            return Err(invalid(
+                "sealed eval cases are served only through their cohort",
+            ));
         }
         let txn = self.store.env.read_txn()?;
         let retired = cohort::retired_families_in_txn(self, &txn, seat)?;
@@ -466,7 +487,8 @@ impl Vault {
             if &case.seat != seat {
                 continue;
             }
-            let family = family_in_txn(self, &txn, &case.family)?.ok_or(Error::CorruptedIndex(LABEL))?;
+            let family =
+                family_in_txn(self, &txn, &case.family)?.ok_or(Error::CorruptedIndex(LABEL))?;
             let effective = if retired.contains(&family.id) {
                 FamilyPurpose::Development
             } else {
@@ -503,11 +525,15 @@ pub(super) fn append_label_in_txn(
         || !label.weight.is_finite()
         || !(0.0..=1.0).contains(&label.weight)
     {
-        return Err(invalid("an eval label needs a bounded value and a 0..=1 weight"));
+        return Err(invalid(
+            "an eval label needs a bounded value and a 0..=1 weight",
+        ));
     }
     let mut row = case_in_txn(vault, txn, case)?.ok_or(Error::EntityNotFound)?;
     if row.labels.iter().any(|existing| {
-        existing.kind == label.kind && existing.reference == label.reference && !label.reference.is_empty()
+        existing.kind == label.kind
+            && existing.reference == label.reference
+            && !label.reference.is_empty()
     }) {
         return Ok(row);
     }

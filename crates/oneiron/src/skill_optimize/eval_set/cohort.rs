@@ -106,7 +106,11 @@ fn membership_digest(cases: &[EntityId]) -> String {
     bytes_to_hex_lower(&hash.finalize())
 }
 
-fn cohorts_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, seat: &EvalSeat) -> Result<Vec<EvalCohort>> {
+fn cohorts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seat: &EvalSeat,
+) -> Result<Vec<EvalCohort>> {
     Ok(rows_in_txn::<EvalCohort>(vault, txn, COHORT_PREFIX)?
         .into_iter()
         .filter(|cohort| &cohort.seat == seat)
@@ -153,7 +157,9 @@ impl Vault {
         at: u64,
     ) -> Result<EvalCohort> {
         if from >= until || until > at {
-            return Err(invalid("an eval cohort is cut from a past, nonempty window"));
+            return Err(invalid(
+                "an eval cohort is cut from a past, nonempty window",
+            ));
         }
         if rubric_revision.trim().is_empty() || rubric_revision.len() > MAX_REF_BYTES {
             return Err(invalid("an eval cohort names a bounded rubric revision"));
@@ -163,8 +169,10 @@ impl Vault {
             if reference && existing.iter().any(|cohort| cohort.reference) {
                 return Err(invalid("a seat keeps one fixed reference cohort"));
             }
-            let held: BTreeSet<EntityId> =
-                existing.iter().flat_map(|cohort| cohort.families.iter().copied()).collect();
+            let held: BTreeSet<EntityId> = existing
+                .iter()
+                .flat_map(|cohort| cohort.families.iter().copied())
+                .collect();
             let mut by_family: std::collections::BTreeMap<EntityId, Vec<EvalCase>> =
                 std::collections::BTreeMap::new();
             for case in rows_in_txn::<EvalCase>(self, txn, CASE_PREFIX)? {
@@ -179,7 +187,11 @@ impl Vault {
                     .ok_or(Error::CorruptedIndex("eval case without its family"))?
                     .purpose
                     == FamilyPurpose::SealedConfirmation;
-                if sealed && rows.iter().all(|case| (from..until).contains(&case.source_at)) {
+                if sealed
+                    && rows
+                        .iter()
+                        .all(|case| (from..until).contains(&case.source_at))
+                {
                     families.insert(family);
                     cases.extend(rows.into_iter().map(|case| case.id));
                 }

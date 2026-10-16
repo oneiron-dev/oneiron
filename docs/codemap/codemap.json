@@ -5398,7 +5398,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/booking/emergency_reschedule/state.rs",
@@ -5577,7 +5577,7 @@
      "path": "src/booking/lifecycle/confirmation_state.rs",
      "purpose": "The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -6478,7 +6478,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarInviteAdmission",
@@ -6488,7 +6488,7 @@
      "purpose": "UID-once/SEQUENCE admission and outbound passport state moves",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -6519,7 +6519,7 @@
      "path": "src/calendar/invite/mime.rs",
      "purpose": "iMIP MIME rendering and blob reads",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -6531,7 +6531,7 @@
      "path": "src/calendar/invite/mod.rs",
      "purpose": "Outbound iMIP invite adapter (CAL-04, ONE-1786)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -6546,10 +6546,20 @@
      "purpose": "Frozen five-field invite payload contract and its decoder",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/invite/publication.rs",
+     "purpose": "Calendar admission at the outbound publication writer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -6658,7 +6668,7 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7
      }
@@ -28059,7 +28069,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -28390,7 +28400,7 @@
      "path": "src/outbound_chokepoint/admission.rs",
      "purpose": "New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -43566,7 +43576,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44856,7 +44866,7 @@
    },
    "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2691,
+   "source_files": 2692,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59478,7 +59488,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/housekeeping.rs",

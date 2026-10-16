@@ -80,7 +80,10 @@ pub fn prune_thin_items(vault: &Vault, before: u64) -> Result<usize> {
                 continue;
             }
             for family in ["ri:b:", "ri:d:", TOUCH_PREFIX] {
-                vault.store.sync_state.delete(txn, &format!("{family}{id}"))?;
+                vault
+                    .store
+                    .sync_state
+                    .delete(txn, &format!("{family}{id}"))?;
             }
             vault.store.sync_state.delete(txn, &key)?;
             pruned += 1;

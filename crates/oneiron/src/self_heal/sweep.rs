@@ -48,7 +48,11 @@ impl Vault {
                 limit: MAX_EVENTS_PER_RUN,
                 ..ReceiptQuery::default()
             };
-            diagnostics.extend(self.run_receipt_tripwires(TIER1_SWEEP_SCOPE, query.clone(), end)?);
+            diagnostics.extend(self.run_receipt_tripwires(
+                TIER1_SWEEP_SCOPE,
+                query.clone(),
+                end,
+            )?);
             diagnostics.extend(self.run_consent_denied_detector(TIER1_SWEEP_SCOPE, query)?);
             end = end.saturating_sub(window);
         }

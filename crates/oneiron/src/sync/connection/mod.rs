@@ -163,9 +163,8 @@ impl SyncConnection {
                 SyncResidenceMode::All => {
                     // A cached id refuses local writes until promoted; the
                     // full windows supersede every read cache.
-                    change.pruned_items =
-                        crate::sync::residence::prune_thin_items(vault, u64::MAX)
-                            .map_err(storage)?;
+                    change.pruned_items = crate::sync::residence::prune_thin_items(vault, u64::MAX)
+                        .map_err(storage)?;
                 }
                 SyncResidenceMode::Opened => {
                     let mut config = self.client_config();
@@ -173,8 +172,8 @@ impl SyncConnection {
                     let (mut client, _events) =
                         crate::sync::SyncClient::new(Arc::clone(&self.manager), config)
                             .map_err(storage)?;
-                    for window in
-                        crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
+                    for window in crate::sync::residence::discover_local_window_keys(vault)
+                        .map_err(storage)?
                     {
                         if client.retain_window(&window).await? {
                             change.retained.push(window);

@@ -109,7 +109,10 @@ fn matching_rule(
         })
 }
 
-fn learning_full(preferences: Option<&SkillTradeoffPreferences>, limits: SkillTradeoffLimits) -> bool {
+fn learning_full(
+    preferences: Option<&SkillTradeoffPreferences>,
+    limits: SkillTradeoffLimits,
+) -> bool {
     let learned = preferences.map_or(0, |preferences| preferences.learned.len());
     limits
         .max_learned_rules
@@ -554,7 +557,9 @@ pub(super) fn plan(
         vault,
         &txn,
         definition.project.as_ref(),
-        preferences.as_ref().map(|preferences| preferences.responsible),
+        preferences
+            .as_ref()
+            .map(|preferences| preferences.responsible),
     )?;
     drop(txn);
     let project = definition
@@ -791,7 +796,9 @@ pub fn settle_skill_tradeoff_ask(
         {
             return Err(invalid("tradeoff goal changed before the pick"));
         }
-        let holder = previous.as_ref().map_or(actor, |previous| previous.responsible);
+        let holder = previous
+            .as_ref()
+            .map_or(actor, |previous| previous.responsible);
         if learning_full(
             previous.as_ref(),
             skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?,
