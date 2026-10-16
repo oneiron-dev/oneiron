@@ -1,4 +1,4 @@
-//! Browser verbs for code mode (`self.memory.browser.*`), and the CDP driver
+//! Browser verbs for code mode (`self.browser.*`), and the CDP driver
 //! behind them (feature `driver`).
 //!
 //! A program reads the page as an outline of rows. Each row has a stable

@@ -25,6 +25,9 @@ pub enum RetrievalSignal {
     Hyde,
     /// HyDE retry subquery channel, retained only in retrieval traces.
     HydeRetry,
+    /// One declared media embedding space's channel (OF-370): its own
+    /// ranked list, never compared raw with another space's scores.
+    MediaVector,
 }
 
 impl RetrievalSignal {
@@ -42,7 +45,8 @@ impl RetrievalSignal {
             | Self::Ppr
             | Self::Rerank
             | Self::Hyde
-            | Self::HydeRetry => None,
+            | Self::HydeRetry
+            | Self::MediaVector => None,
         }
     }
 }
