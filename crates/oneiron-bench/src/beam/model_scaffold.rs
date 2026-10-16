@@ -32,7 +32,10 @@ pub(super) struct AnswererArm {
 pub(super) struct Effort {
     pub name: String,
     pub token_budget: usize,
+    /// Agentic retrieval steps; the trajectory arm takes as many own steps.
     pub retrieval_steps: usize,
+    /// Fixed-total-token rows: query tokens one question may spend.
+    pub total_token_allowance: u64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +46,7 @@ pub(super) struct ModelRunPlan {
     pub judge: JudgeConfig,
     pub answer_prompt: String,
     pub routing_prompt: AnswerPromptPin,
+    pub trajectory_prompt: AnswerPromptPin,
     pub answerers: Vec<AnswererArm>,
     pub efforts: Vec<Effort>,
     pub amortized_question_count: usize,
@@ -66,6 +70,11 @@ pub(super) struct ModelRow {
     pub effort: String,
     pub answerer: ModelId,
     pub answer: String,
+    pub task_family: String,
+    /// The context was cut to the effort's budget.
+    pub context_truncated: bool,
+    /// A reader call stopped at the pinned output cap.
+    pub output_truncated: bool,
     pub scoring: ScoreReport,
     pub query_cost: CostComponentReport,
     pub judge_overhead: CostComponentReport,
@@ -77,7 +86,10 @@ pub(super) struct AblationUnavailable {
     ablation: &'static str,
     reason: &'static str,
 }
+mod context;
 mod offline;
+mod paired;
+use context::{bounded_context, chat_history};
 use offline::{OfflineStages, elapsed_cost, offline_provider_cost, offline_totals};
 
 #[derive(Debug, Serialize)]
@@ -99,6 +111,9 @@ pub(super) struct MeasuredReport {
     pub points: Vec<AccuracyCostPoint>,
     pub chat_cost_accuracy_points: Vec<AccuracyCostPoint>,
     pub agency_lift: BTreeMap<String, f64>,
+    pub paired: Vec<paired::PairedRow>,
+    pub picks: Vec<paired::ReaderPick>,
+    pub efforts: Vec<Effort>,
     pub offline_stages: OfflineStages,
     pub offline_stages_amortized: OfflineStages,
     pub offline_total: CostComponentReport,
@@ -112,18 +127,19 @@ pub(super) struct MeasuredReport {
     pub ablation_judge_cost_usd: f64,
     pub answer_prompt: String,
     pub routing_prompt: AnswerPromptPin,
+    pub trajectory_prompt: AnswerPromptPin,
     pub judge: JudgeConfig,
     pub chroma_card_id: Option<String>,
 }
 impl ModelRunPlan {
     pub(super) fn validate(&self) -> BeamResult<()> {
         self.judge.validate(&self.answer_prompt)?;
-        if self.routing_prompt.content.trim().is_empty()
-            || !self
-                .routing_prompt
-                .matches_exact_text(&self.routing_prompt.content)
-        {
-            return Err(refusal("exact routing prompt content and hash required"));
+        for pin in [&self.routing_prompt, &self.trajectory_prompt] {
+            if pin.content.trim().is_empty() || !pin.matches_exact_text(&pin.content) {
+                return Err(refusal(
+                    "exact routing and trajectory prompt content and hash required",
+                ));
+            }
         }
         if self.efforts.is_empty() || self.amortized_question_count == 0 || self.temporal_now == 0 {
             return Err(refusal("efforts and fixed dataset denominator required"));
@@ -135,6 +151,7 @@ impl ModelRunPlan {
                 || effort.token_budget == 0
                 || effort.retrieval_steps == 0
                 || effort.retrieval_steps > 32
+                || effort.total_token_allowance == 0
             {
                 return Err(refusal("invalid or duplicate effort"));
             }
@@ -149,15 +166,16 @@ impl ModelRunPlan {
             ArmKind::Deterministic,
             ArmKind::Agentic,
             ArmKind::BackboneSolo,
+            ArmKind::TrajectoryOnly,
             ArmKind::Chat,
         ] {
             if find(kind).len() != 1 {
                 return Err(refusal(
-                    "each memory run requires deterministic, agentic, backbone_solo and separate chat pins",
+                    "each memory run requires deterministic, agentic, backbone_solo, trajectory_only and separate chat pins",
                 ));
             }
         }
-        if self.answerers.len() != 4 + usize::from(self.chroma.is_some())
+        if self.answerers.len() != 5 + usize::from(self.chroma.is_some())
             || find(ArmKind::VanillaRag).len() != usize::from(self.chroma.is_some())
         {
             return Err(refusal(
@@ -165,14 +183,18 @@ impl ModelRunPlan {
             ));
         }
         let det = find(ArmKind::Deterministic)[0];
-        for kind in [ArmKind::Agentic, ArmKind::BackboneSolo]
-            .into_iter()
-            .chain(self.chroma.as_ref().map(|_| ArmKind::VanillaRag))
+        for kind in [
+            ArmKind::Agentic,
+            ArmKind::BackboneSolo,
+            ArmKind::TrajectoryOnly,
+        ]
+        .into_iter()
+        .chain(self.chroma.as_ref().map(|_| ArmKind::VanillaRag))
         {
             let other = find(kind)[0];
             if serde_json::to_value(&det.model)? != serde_json::to_value(&other.model)? {
                 return Err(refusal(
-                    "retrieval arms and backbone-solo must share identical answerer pins and parameters",
+                    "retrieval arms, backbone-solo and trajectory-only must share identical answerer pins and parameters",
                 ));
             }
         }
@@ -251,10 +273,10 @@ fn answer(
     prompt: &str,
     question: &str,
     context: &str,
-) -> BeamResult<(String, CostComponentReport)> {
+) -> BeamResult<(String, CostComponentReport, bool)> {
     // This shape has no arm label, gold, ability, or judge feedback field.
     let input = serde_json::to_string(&serde_json::json!({"question":question,"context":context}))?;
-    session.invoke(pin, CallPurpose::AnswerGen, prompt, &input)
+    session.invoke_capped(pin, CallPurpose::AnswerGen, prompt, &input)
 }
 pub(super) fn run_with_session(
     plan: &ModelRunPlan,
@@ -406,6 +428,7 @@ pub(super) fn run_with_session(
                     };
                     let started = Instant::now();
                     let mut costs = Vec::new();
+                    let (mut context_truncated, mut output_truncated) = (false, false);
                     let context = match arm.arm {
                         ArmKind::Deterministic => {
                             let pack = if leg == Some("ablation-2:access-factor-neutral") {
@@ -424,6 +447,7 @@ pub(super) fn run_with_session(
                             } else {
                                 measured_pack(&vault, &request_case, plan.temporal_now)?
                             };
+                            context_truncated = pack_cut(&pack);
                             String::from_utf8(pack.serialized)
                                 .map_err(|_| refusal("invalid pack text"))?
                         }
@@ -439,11 +463,10 @@ pub(super) fn run_with_session(
                                 )?;
                                 costs.push(cost);
                                 request_case.query = query;
-                                context = String::from_utf8(
-                                    measured_pack(&vault, &request_case, plan.temporal_now)?
-                                        .serialized,
-                                )
-                                .map_err(|_| refusal("invalid pack text"))?;
+                                let pack = measured_pack(&vault, &request_case, plan.temporal_now)?;
+                                context_truncated = pack_cut(&pack);
+                                context = String::from_utf8(pack.serialized)
+                                    .map_err(|_| refusal("invalid pack text"))?;
                             }
                             context
                         }
@@ -457,11 +480,25 @@ pub(super) fn run_with_session(
                                     .ok_or_else(|| refusal("Chroma query vector missing"))?,
                             )?,
                         ArmKind::BackboneSolo => String::new(),
+                        ArmKind::TrajectoryOnly => {
+                            let trace = context::own_trace(
+                                session,
+                                &arm.model,
+                                &plan.trajectory_prompt.content,
+                                &case.query,
+                                effort,
+                                &mut costs,
+                            )?;
+                            (context_truncated, output_truncated) = (trace.cut, trace.capped);
+                            trace.text
+                        }
                         ArmKind::Chat => chat_history(&record.corpus, path, effort.token_budget)?,
                         _ => return Err(refusal("arm not supported by shared model scaffold")),
                     };
-                    let context = bounded_context(&context, request_case.token_budget);
-                    let (answer_text, cost) = answer(
+                    let bounded = bounded_context(&context, request_case.token_budget);
+                    context_truncated |= bounded.len() < context.len();
+                    let context = bounded;
+                    let (answer_text, cost, capped) = answer(
                         session,
                         &arm.model,
                         &plan.answer_prompt,
@@ -469,6 +506,7 @@ pub(super) fn run_with_session(
                         &context,
                     )?;
                     costs.push(cost);
+                    output_truncated |= capped;
                     let mut query_cost = sum_costs(&costs)?;
                     query_cost.elapsed_us =
                         started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
@@ -514,6 +552,9 @@ pub(super) fn run_with_session(
                         effort: effort.name.clone(),
                         answerer: arm.model.model_id.clone(),
                         answer: answer_text,
+                        task_family: ability.clone(),
+                        context_truncated,
+                        output_truncated,
                         // These are alternative answers under one question label,
                         // not independent factual nuggets. Bill every alias vote.
                         scoring: FixedBeamScorer.score_nuggets(&[NuggetJudgment {
@@ -600,6 +641,8 @@ pub(super) fn run_with_session(
             .expect("validated plan includes an agentic arm for every effort");
         lift.insert(effort.name.clone(), agency_lift(det, agent)?);
     }
+    let paired = paired::paired_rows(&rows, &plan.answerers, &plan.efforts)?;
+    let picks = paired::picks(&paired, &plan.efforts);
     let query_total = rows.iter().map(|r| r.query_cost.cost_usd).sum();
     let judge_total = rows.iter().map(|r| r.judge_overhead.cost_usd).sum();
     let ablation_query_cost_usd = ablation_rows
@@ -652,6 +695,9 @@ pub(super) fn run_with_session(
         rows,
         chroma_card_id: plan.chroma.as_ref().map(|c| c.card_id.clone()),
         agency_lift: lift,
+        paired,
+        picks,
+        efforts: plan.efforts.clone(),
         offline_stages: stages,
         offline_stages_amortized: stages_amortized,
         offline_total: offline.clone(),
@@ -665,52 +711,9 @@ pub(super) fn run_with_session(
         judge_overhead_usd: judge_total,
         answer_prompt: plan.answer_prompt.clone(),
         routing_prompt: plan.routing_prompt.clone(),
+        trajectory_prompt: plan.trajectory_prompt.clone(),
         judge: plan.judge.clone(),
     })
-}
-fn chat_history(
-    corpus: &[super::report_model::ContractCorpusRecord],
-    path: &Path,
-    budget: usize,
-) -> BeamResult<String> {
-    let mut ordered = corpus
-        .iter()
-        .map(|item| {
-            // load_dataset already validates timestamps with their source line.
-            super::corpus_clock::occurred_at(item, path, 0).map(|at| (at, item))
-        })
-        .collect::<BeamResult<Vec<_>>>()?;
-    ordered.sort_by_key(|(at, _)| *at);
-    let mut history = String::new();
-    for (_, item) in ordered.into_iter().rev() {
-        let text = format!("{}\n{history}", item.text);
-        if oneiron::count_context_pack_tokens(&text) > budget {
-            break;
-        }
-        history = text;
-    }
-    Ok(history)
-}
-
-fn bounded_context(text: &str, budget: usize) -> String {
-    if oneiron::count_context_pack_tokens(text) <= budget {
-        return text.to_owned();
-    }
-    let boundaries: Vec<usize> = text
-        .char_indices()
-        .map(|(i, _)| i)
-        .chain(std::iter::once(text.len()))
-        .collect();
-    let (mut lo, mut hi) = (0, boundaries.len() - 1);
-    while lo < hi {
-        let mid = lo + (hi - lo).div_ceil(2);
-        if oneiron::count_context_pack_tokens(&text[..boundaries[mid]]) <= budget {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    text[..boundaries[lo]].to_owned()
 }
 fn refusal(reason: &str) -> BeamError {
     BeamError::Comparability {
@@ -723,6 +726,11 @@ mod tests;
 fn model_params_hash(pin: &ModelPin) -> BeamResult<String> {
     use sha2::{Digest, Sha256};
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(pin)?)))
+}
+
+/// The pack dropped or cut items to fit its budget.
+fn pack_cut(pack: &super::arms::BudgetedContextPack) -> bool {
+    pack.serialized_stats.items_truncated.count + pack.serialized_stats.items_dropped.count > 0
 }
 
 fn measured_pack(

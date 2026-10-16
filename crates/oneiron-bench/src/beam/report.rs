@@ -99,6 +99,51 @@ pub(super) fn context_pack_report(
         budgeted_text_by_entity_id,
     }
 }
+/// The pack a no-memory arm hands its reader: nothing, at zero memory tokens.
+pub(super) fn no_memory_context_report(case: &FixtureCase) -> ContextPackReport {
+    let tokenizer_id = oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned();
+    ContextPackReport {
+        token_budget: case.token_budget,
+        limit: case.limit,
+        serialized_format: pack_format_label(BEAM_CONTEXT_PACK_FORMAT).to_owned(),
+        serialized_bytes: 0,
+        serialized_tokens: 0,
+        tokenizer_id: tokenizer_id.clone(),
+        query_cost: CostComponentReport {
+            token_source: TokenAccountingSource::TokenizerCount,
+            tokenizer_id: Some(tokenizer_id.clone()),
+            input_tokens: 0,
+            output_tokens: 0,
+            target_tokens: 0,
+            elapsed_us: 0,
+            cost_usd: 0.0,
+        },
+        result_count: 0,
+        neighbor_count: 0,
+        results: Vec::new(),
+        neighbors: Vec::new(),
+        stats: PackStatsReport {
+            candidates_considered: 0,
+            signals_used: Vec::new(),
+            query_time_us: 0,
+            entities_hydrated: 0,
+            neighbors_hydrated: 0,
+            cosine_ghosts_dampened: 0,
+            claims_suppressed: 0,
+            tokenizer_id,
+            total_tokens: 0,
+            section_tokens: Vec::new(),
+            item_tokens: Vec::new(),
+            items_truncated: 0,
+            items_truncated_reasons: Vec::new(),
+            items_dropped: 0,
+            items_dropped_reasons: Vec::new(),
+        },
+        empty: None,
+        temporal_result_ids: BTreeSet::new(),
+        budgeted_text_by_entity_id: BTreeMap::new(),
+    }
+}
 pub(super) fn cost_breakdown(case: &FixtureCase, arm: &ArmReport) -> CostBreakdownReport {
     let query = match &arm.outcome {
         ArmOutcome::Completed { context_pack } => context_pack.query_cost.clone(),

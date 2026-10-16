@@ -96,6 +96,16 @@
       "cheap_chat": false
     },
     {
+      "arm": "trajectory_only",
+      "model": {
+        "model_id": "openai/gpt-4.1@2025-04-14",
+        "provider_model": "gpt-4.1-2025-04-14",
+        "max_tokens": 256,
+        "temperature": 0.0
+      },
+      "cheap_chat": false
+    },
+    {
       "arm": "chat",
       "model": {
         "model_id": "openai/gpt-4.1-nano@2025-04-14",
@@ -110,12 +120,14 @@
     {
       "name": "light",
       "token_budget": 1024,
-      "retrieval_steps": 1
+      "retrieval_steps": 1,
+      "total_token_allowance": 4096
     },
     {
       "name": "medium",
       "token_budget": 2048,
-      "retrieval_steps": 2
+      "retrieval_steps": 2,
+      "total_token_allowance": 8192
     }
   ],
   "amortized_question_count": 1,
@@ -127,5 +139,9 @@
   "routing_prompt": {
     "content": "Return one search query for the unanswered question. Do not answer it.",
     "sha256": "0e67f57cbf1958ff84035155290cbc31ae6540e6c8ce40b2d30c7e7b18c33a8a"
+  },
+  "trajectory_prompt": {
+    "content": "Write your next working step on the question, building on your own earlier steps in trace. Do not give the final answer.",
+    "sha256": "980ffeddf3df21efad6b96ef041b075552d664bab8ec3a474652ef33e5221c1f"
   }
 }

@@ -706,9 +706,11 @@ pub(super) fn contract_output_arm(record: &RunContractRecord, arm: ArmKind) -> C
             id: VANILLA_RAG_CONTRACT_ARM_ID.to_owned(),
             kind: VANILLA_RAG_CONTRACT_ARM_KIND.to_owned(),
         },
-        ArmKind::PprVadSweep | ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => {
-            record.arm.clone()
-        }
+        ArmKind::PprVadSweep
+        | ArmKind::BackboneSolo
+        | ArmKind::TrajectoryOnly
+        | ArmKind::Agentic
+        | ArmKind::Chat => record.arm.clone(),
     }
 }
 pub(super) fn contract_pack_config(arm: ArmKind, case: &FixtureCase) -> Option<ContractPackConfig> {
@@ -728,6 +730,7 @@ pub(super) fn contract_pack_config(arm: ArmKind, case: &FixtureCase) -> Option<C
         ArmKind::Deterministic
         | ArmKind::PprVadSweep
         | ArmKind::BackboneSolo
+        | ArmKind::TrajectoryOnly
         | ArmKind::Agentic
         | ArmKind::Chat => None,
     }

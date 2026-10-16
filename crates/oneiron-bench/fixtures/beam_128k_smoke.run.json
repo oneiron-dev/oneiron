@@ -115,7 +115,7 @@
         "judge": {
           "judgeId": "beam-fixture-judge",
           "version": "v1",
-          "notes": "Backbone-solo row is represented but intentionally not ready in the fixture harness."
+          "notes": "Backbone-solo hands the reader an empty context and never opens the vault."
         },
         "comparator": {
           "comparatorId": "beam-fixed-comparator",
@@ -123,8 +123,8 @@
           "baselineCompetitorId": "deterministic-context-pack"
         },
         "tokenAccounting": {
-          "source": "not_applicable",
-          "notes": "Backbone-solo adapter is not implemented in the fixture harness."
+          "source": "tokenizer_count",
+          "notes": "The empty pack carries zero memory tokens."
         },
         "axes": {
           "tier": {
