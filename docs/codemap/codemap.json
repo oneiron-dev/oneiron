@@ -5150,7 +5150,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -13072,9 +13072,9 @@
      "purpose": "Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the…",
      "surface": {
       "const": 8,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 3,
-      "fn": 14,
+      "fn": 16,
       "struct": 3
      }
     },
@@ -13270,7 +13270,7 @@
      "path": "src/consent/widen.rs",
      "purpose": "Propose-only authority widening",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -14402,6 +14402,16 @@
       "crate-vis": 4,
       "mod": 1,
       "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/once_disclosure.rs",
+     "purpose": "Approve-once delivery (OF-365): the owner's `once` answer to a contact-disclosure offer discloses that…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -15966,7 +15976,7 @@
      "purpose": "The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all…",
      "surface": {
       "crate-vis": 2,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 1
      }
@@ -16058,7 +16068,7 @@
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
       "crate-vis": 11,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -21829,13 +21839,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 13
      }
     },
     {
@@ -25251,9 +25261,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "LinkedText",
+      "ProseSpan",
+      "RecordLinks",
+      "RecordLinksRequest",
       "RecordRef",
       "RecordRefPreview",
       "ResolveRecordRefRequest"
@@ -25261,9 +25275,10 @@
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 3,
-      "fn": 2,
-      "struct": 3
+      "const": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -34179,9 +34194,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/receipt/reference_refusal.rs",
-     "purpose": "Reference-refusal receipts (OF-063): a write was refused because a record ref it named does not resolve for…",
+     "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -43556,11 +43571,11 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 153
+      "fn": 158
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AiAnswer",
@@ -43581,15 +43596,21 @@
       "PackFileInput",
       "PackPutOutcome",
       "PackPutReceipt",
-      "PackPutRequest"
+      "PackPutRequest",
+      "PackSetupAnswerRequest",
+      "PackSetupCardActionInput",
+      "PackSetupReceipt",
+      "PackSetupRequest",
+      "PackSetupStoreSecret",
+      "PackSetupVerifyRequest"
      ],
      "path": "src/task_verb/sdk_host.rs",
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "enum": 5,
-      "fn": 8,
-      "struct": 14
+      "fn": 16,
+      "struct": 20
      }
     },
     {
@@ -45111,9 +45132,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "BankBound",
       "BankVoiceBinding",
       "MediaAsrAdapter",
       "MediaTtsAdapter",
@@ -45129,8 +45151,8 @@
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
       "const": 2,
-      "enum": 3,
-      "fn": 10,
+      "enum": 4,
+      "fn": 11,
       "struct": 6,
       "trait": 1
      }
@@ -45433,7 +45455,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "mod": 1,
       "re-export": 1,
       "struct": 6,
@@ -45530,7 +45552,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 6
      }
     },
@@ -48168,8 +48190,8 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 22,
-     "impl_vault": false,
+     "files": 23,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out"
@@ -49220,7 +49242,7 @@
     "voice_cascade": {
      "files": 31,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
@@ -49274,9 +49296,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 100,
+   "over_bar": 102,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2971,
+   "source_files": 2972,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56862,7 +56884,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 131
+      "fn": 136
      }
     },
     {
@@ -57875,7 +57897,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 132
+      "fn": 137
      }
     },
     {
@@ -59500,7 +59522,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/blob_artifacts.rs",
@@ -59998,7 +60020,7 @@
      "path": "src/api/context_pack/interlocutor.rs",
      "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -60324,7 +60346,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 22
      }
     },
     {
@@ -62208,6 +62230,7 @@
      "path": "src/commands/init.rs",
      "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
      "surface": {
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -62660,7 +62683,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -64401,7 +64424,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -64438,7 +64461,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 11,
+      "fn": 12,
       "struct": 3
      }
     },
@@ -64634,6 +64657,16 @@
      "purpose": "The voice cascade's routes on the media seats (OF-410)",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/voxcpm2_speech.rs",
+     "purpose": "The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -66205,7 +66238,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66324,9 +66357,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 23,
+   "over_bar": 24,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 463,
+   "source_files": 464,
    "test_files": 182
   },
   "oneiron-spawn": {

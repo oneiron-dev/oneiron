@@ -96,10 +96,6 @@ pub use claims::{
     PendingWrite, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
-pub use people_verbs::{
-    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
-    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
-};
 pub use diary_read::{
     DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
     DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
@@ -128,9 +124,16 @@ pub use oneiron_contracts::memory::{
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
 };
+pub use people_verbs::{
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
+};
 // OF-063: a write that names a record its writer cannot resolve is refused
 // with this code; hover and open resolve a typed record ref through the lens.
-pub use crate::lens::{RecordRef, RecordRefPreview, ResolveRecordRefRequest};
+pub use crate::lens::{
+    LinkedText, ProseSpan, RecordLinks, RecordLinksRequest, RecordRef, RecordRefPreview,
+    ResolveRecordRefRequest,
+};
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,

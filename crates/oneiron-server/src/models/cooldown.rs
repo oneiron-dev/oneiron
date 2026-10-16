@@ -440,7 +440,8 @@ impl OfferCooldowns {
             strikes,
             "a provider recovered stably; the work its outage stopped resumes"
         );
-        self.recovered.send_modify(|count| *count = count.wrapping_add(1));
+        self.recovered
+            .send_modify(|count| *count = count.wrapping_add(1));
     }
 
     /// Hears each stable recovery of an offer whose provider was down.
