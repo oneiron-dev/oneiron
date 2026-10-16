@@ -3,7 +3,7 @@
 use super::GeneratedUiNode;
 use crate::lens::atom::{FiniteF64, LensAtom, LensNode, LensText};
 use crate::lens::self_ui::{SelfUiAction, SelfUiValue};
-use crate::lens::validate::validate_lens_collection_len;
+use crate::lens::validate::{MAX_LENS_TOKEN_BYTES, validate_lens_collection_len};
 use crate::lens::wire_ids::{
     LensAtomId, LensRenderId, SelfUiActionId, SelfUiOptionValue, SelfUiStateKey,
 };
@@ -11,11 +11,16 @@ use crate::lens::wire_limits::{deserialize_limited_vec, serialize_tagged};
 use crate::{Error, Result};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt;
 
 /// JSON-Pointer prefix that addresses the flattened `$state` snapshot. State keys
 /// are lens tokens (ASCII alnum, `.`, `_`, `-`), so no pointer escaping is possible
 /// and a `/values/` wrapper segment can never appear.
 const GENERATED_UI_STATE_POINTER_PREFIX: &str = "/$state/";
+
+/// The longest pointer the state key grammar admits: the prefix plus one lens token.
+const MAX_STATE_PATCH_PATH_BYTES: usize =
+    GENERATED_UI_STATE_POINTER_PREFIX.len() + MAX_LENS_TOKEN_BYTES;
 
 /// Ruled interaction tiers (ONEIRON-ARCH-0048 G2). Deterministic and model tiers
 /// yield triggers only; execution stays behind the host-stamped write chokepoints.
@@ -222,16 +227,54 @@ impl<'de> Deserialize<'de> for GeneratedUiStateSnapshot {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratedUiStatePatch {
     Add {
+        #[serde(deserialize_with = "deserialize_state_patch_path")]
         path: String,
         value: SelfUiStateValue,
     },
     Replace {
+        #[serde(deserialize_with = "deserialize_state_patch_path")]
         path: String,
         value: SelfUiStateValue,
     },
     Remove {
+        #[serde(deserialize_with = "deserialize_state_patch_path")]
         path: String,
     },
+}
+
+/// Refuses a patch path longer than any pointer the key grammar admits while it is
+/// decoded, so the event stops at that patch instead of reading every later one.
+/// The grammar itself is still checked where the patch is applied.
+fn deserialize_state_patch_path<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StatePatchPathVisitor;
+
+    impl de::Visitor<'_> for StatePatchPathVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "a {GENERATED_UI_STATE_POINTER_PREFIX}<key> pointer of at most {MAX_STATE_PATCH_PATH_BYTES} bytes"
+            )
+        }
+
+        fn visit_str<E>(self, path: &str) -> std::result::Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if path.len() > MAX_STATE_PATCH_PATH_BYTES {
+                return Err(E::custom(format!(
+                    "generated-ui state patch path must be at most {MAX_STATE_PATCH_PATH_BYTES} bytes"
+                )));
+            }
+            Ok(path.to_owned())
+        }
+    }
+
+    deserializer.deserialize_str(StatePatchPathVisitor)
 }
 
 impl GeneratedUiStatePatch {

@@ -7,12 +7,8 @@ use serde::{Deserialize, Deserializer, Serialize, de, de::DeserializeSeed};
 use super::{LensAtom, LensText};
 use crate::lens::generated_ui::SelfUiBinding;
 use crate::lens::validate::validate_lens_tree;
-use crate::lens::wire_ids::{
-    LensAtomId, LensHandleRef, MAX_LENS_COLLECTION_ITEMS, MAX_LENS_TREE_DEPTH,
-};
-use crate::lens::wire_limits::{
-    LimitedVecSeed, max_lens_collection_items_error, reject_lens_sequence_hint,
-};
+use crate::lens::wire_ids::{LensAtomId, LensHandleRef, MAX_LENS_TREE_DEPTH};
+use crate::lens::wire_limits::{LimitedVecSeed, next_bounded_lens_entries, with_lens_tree_budget};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LensNode {
@@ -214,18 +210,26 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
             )));
         }
 
-        deserializer.deserialize_struct(
-            "LensNode",
-            &[
-                "id",
-                "atom",
-                "fallbackText",
-                "bindings",
-                "$bind",
-                "children",
-            ],
-            LensNodeVisitor { depth: self.depth },
-        )
+        let decode = || {
+            deserializer.deserialize_struct(
+                "LensNode",
+                &[
+                    "id",
+                    "atom",
+                    "fallbackText",
+                    "bindings",
+                    "$bind",
+                    "children",
+                ],
+                LensNodeVisitor { depth: self.depth },
+            )
+        };
+        // The root opens the tree's shared entry budget; descendants charge it.
+        if self.depth == 1 {
+            with_lens_tree_budget(decode)
+        } else {
+            decode()
+        }
     }
 }
 
@@ -257,20 +261,12 @@ impl<'de> de::Visitor<'de> for LensChildrenVisitor {
         formatter.write_str("bounded lens node children")
     }
 
-    fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+    fn visit_seq<A>(self, seq: A) -> std::result::Result<Self::Value, A::Error>
     where
         A: de::SeqAccess<'de>,
     {
-        reject_lens_sequence_hint(seq.size_hint())?;
-        let mut values = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(16));
-        while let Some(value) = seq.next_element_seed(LensNodeSeed {
+        next_bounded_lens_entries(seq, || LensNodeSeed {
             depth: self.child_depth,
-        })? {
-            if values.len() >= MAX_LENS_COLLECTION_ITEMS {
-                return Err(max_lens_collection_items_error());
-            }
-            values.push(value);
-        }
-        Ok(values)
+        })
     }
 }

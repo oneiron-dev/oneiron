@@ -154,6 +154,14 @@ impl GeneratedUiRender {
                                 .to_string(),
                         ));
                     }
+                    // Refuse the first element past the declared count, before it is
+                    // validated or copied, rather than after the whole stream.
+                    if nodes.len() >= start.node_count {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_element count must match card_start node count"
+                                .to_string(),
+                        ));
+                    }
                     validate_generated_ui_protocol_version(element.protocol_version)?;
                     if element.card_id != start.card_id {
                         return Err(Error::InvalidConfig(

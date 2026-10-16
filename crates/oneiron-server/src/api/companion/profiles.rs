@@ -23,8 +23,13 @@ use axum::extract::rejection::QueryRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::ErrorKind;
+use oneiron::psych_profile::MAX_PSYCH_PROFILE_SOURCE_REVISIONS;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::de;
+use std::collections::HashSet;
+use std::fmt;
 use std::sync::Arc;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
@@ -150,8 +155,69 @@ pub(crate) struct CompanionProfileNextAction {
 }))]
 pub(crate) struct CompanionProfileRefreshRequest {
     /// Currently selected source revisions for the next profile refresh.
-    #[serde(rename = "sourceRevisionIds", alias = "source_revision_ids")]
+    #[serde(
+        rename = "sourceRevisionIds",
+        alias = "source_revision_ids",
+        default,
+        deserialize_with = "deserialize_bounded_source_revision_ids"
+    )]
     source_revision_ids: Option<Vec<String>>,
+}
+
+/// Reads the body's id list but stops at the first entry past
+/// [`MAX_PSYCH_PROFILE_SOURCE_REVISIONS`], before it is copied.
+fn deserialize_bounded_source_revision_ids<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BoundedIds;
+
+    impl<'de> de::Visitor<'de> for BoundedIds {
+        type Value = Option<Vec<String>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_PSYCH_PROFILE_SOURCE_REVISIONS} source revision ids"
+            )
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_seq(self)
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut ids = Vec::new();
+            while ids.len() < MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
+                match seq.next_element::<String>()? {
+                    Some(id) => ids.push(id),
+                    None => return Ok(Some(ids)),
+                }
+            }
+            if seq.next_element::<de::IgnoredAny>()?.is_some() {
+                return Err(de::Error::invalid_length(ids.len() + 1, &self));
+            }
+            Ok(Some(ids))
+        }
+    }
+
+    deserializer.deserialize_option(BoundedIds)
 }
 
 /// Companion profile access response.
@@ -503,17 +569,31 @@ where
     T: AsRef<str>,
 {
     let mut ids = Vec::new();
-    for value in values {
+    let mut seen = HashSet::new();
+    // Every submitted entry counts, empty or repeated, so the work stays bounded.
+    for (submitted, value) in values.into_iter().enumerate() {
+        if submitted >= MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
+            return Err(too_many_source_revision_ids());
+        }
         let value = value.as_ref().trim();
         if value.is_empty() {
             continue;
         }
         let id = parse_entity_id_param(value, "sourceRevisionIds")?;
-        if !ids.contains(&id) {
+        if seen.insert(id) {
             ids.push(id);
         }
     }
     Ok(ids)
+}
+
+fn too_many_source_revision_ids() -> ApiError {
+    ApiError::bad_request(
+        format!(
+            "sourceRevisionIds must contain at most {MAX_PSYCH_PROFILE_SOURCE_REVISIONS} entries"
+        ),
+        Some("sourceRevisionIds"),
+    )
 }
 
 pub(crate) fn entity_ids_hex(ids: &[oneiron::EntityId]) -> Vec<String> {

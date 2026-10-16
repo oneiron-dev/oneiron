@@ -21,8 +21,9 @@ pub use self::mirror::{
     rank_psych_mirror_sources_with_weights,
 };
 pub use self::record::{
-    PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
-    PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
+    MAX_PSYCH_PROFILE_SOURCE_REVISIONS, PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION,
+    PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileStaleReason,
+    PsychProfileState,
 };
 
 pub(crate) use self::codec::validate_psych_profile_body_bytes;
