@@ -117,6 +117,8 @@ mod memory;
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
 pub(crate) mod memory_reason;
+// OF-445: the OpenAI-compatible memory-injection proxy.
+mod openai_proxy;
 mod openapi;
 mod openapi_registry;
 // OF-559/OF-202/OF-211/OF-296: the owner's own actions — backups, the secret
@@ -403,6 +405,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
         .nest("/v1/llm", self::llm::routes())
+        .merge(self::openai_proxy::routes())
         .nest("/v1/ai", self::ai::routes())
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
