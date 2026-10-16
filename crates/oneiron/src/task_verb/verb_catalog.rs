@@ -18,6 +18,7 @@ pub enum AgentVerb {
     VaultRecall,
     VaultExport,
     VaultReceipts,
+    VaultImagesView,
     VaultReceiptsGet,
     VaultKvGet,
     VaultKvPut,
@@ -120,6 +121,7 @@ impl AgentVerb {
         Self::VaultRecall,
         Self::VaultExport,
         Self::VaultReceipts,
+        Self::VaultImagesView,
         Self::VaultReceiptsGet,
         Self::VaultKvGet,
         Self::VaultKvPut,
@@ -225,6 +227,7 @@ impl AgentVerb {
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
             Self::VaultReceipts => "vault.receipts",
+            Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
             Self::VaultKvGet => "vault.kv.get",
             Self::VaultKvPut => "vault.kv.put",
@@ -326,6 +329,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -435,6 +439,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -576,6 +581,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
@@ -742,6 +748,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
@@ -845,6 +852,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],

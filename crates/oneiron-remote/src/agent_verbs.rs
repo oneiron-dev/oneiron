@@ -83,6 +83,9 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.images.view" => {
+                    remote_agent_verb_output::<oneiron::memory::PulledImage>(client, verb, &input)
+                }
                 "vault.receipts.get" => remote_agent_verb_output::<
                     Option<oneiron::receipt::CallReceipt>,
                 >(client, verb, &input),
@@ -570,6 +573,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts", value)
+    }
+    /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.
+    pub fn vault_images_view(
+        &self,
+        input: &oneiron::memory::ImageViewRequest,
+    ) -> Result<oneiron::memory::PulledImage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.images.view", value)
     }
     pub fn vault_receipts_get(
         &self,
