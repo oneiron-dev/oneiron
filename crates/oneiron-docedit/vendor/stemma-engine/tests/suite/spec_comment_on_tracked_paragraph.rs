@@ -102,6 +102,7 @@ fn create_step(block_id: NodeId, expect: &str, body: &str) -> EditStep {
     EditStep::CommentCreate {
         block_id,
         expect: expect.to_string(),
+        occurrence: None,
         semantic_hash: None,
         body: body.to_string(),
         author: Some("Reviewer".to_string()),

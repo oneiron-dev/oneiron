@@ -177,6 +177,7 @@ fn create_and_reply_chain_adds_two_entries() {
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
             expect: "clause".to_string(),
+            occurrence: None,
             semantic_hash: None,
             body: "A brand-new comment.".to_string(),
             author: Some("Author".to_string()),

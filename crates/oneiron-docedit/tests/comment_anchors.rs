@@ -2,29 +2,41 @@
 //! 2026-10-16; the cases come from tdoc's anchor tests): a comment authored on
 //! a one-character, a CJK or a cross-run selection encloses exactly that text
 //! in the saved `word/document.xml`, read back with an XML parser rather than
-//! through the engine, and a quote that does not pin one place is refused
-//! rather than anchored somewhere.
+//! through the engine; a quote the paragraph no longer holds is refused; and a
+//! repeated quote anchors its first copy unless `occurrence` names another,
+//! with the step reporting how many copies matched and which one it took.
 
 use std::io::{Read, Write};
 
-use oneiron_docedit::{DoceditError, Document, revise};
+use oneiron_docedit::{ArchiveLimits, DoceditError, Document, EditNote, revise, revise_with_notes};
+use stemma::runtime::ErrorCode;
 
 const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 /// A minimal DOCX whose body holds `paragraphs`, each a list of
 /// `(text, bold)` runs.
 fn docx(paragraphs: &[&[(&str, bool)]]) -> Vec<u8> {
-    let mut body = String::new();
-    for runs in paragraphs {
-        body.push_str("<w:p>");
-        for (text, bold) in *runs {
-            let props = if *bold { "<w:rPr><w:b/></w:rPr>" } else { "" };
-            body.push_str(&format!(
-                r#"<w:r>{props}<w:t xml:space="preserve">{text}</w:t></w:r>"#
-            ));
-        }
-        body.push_str("</w:p>");
-    }
+    let paragraphs: Vec<String> = paragraphs
+        .iter()
+        .map(|runs| {
+            runs.iter()
+                .map(|(text, bold)| {
+                    let props = if *bold { "<w:rPr><w:b/></w:rPr>" } else { "" };
+                    format!(r#"<w:r>{props}<w:t xml:space="preserve">{text}</w:t></w:r>"#)
+                })
+                .collect()
+        })
+        .collect();
+    let paragraphs: Vec<&str> = paragraphs.iter().map(String::as_str).collect();
+    docx_xml(&paragraphs)
+}
+
+/// A minimal DOCX whose body holds one `<w:p>` per entry of raw paragraph XML.
+fn docx_xml(paragraphs: &[&str]) -> Vec<u8> {
+    let body: String = paragraphs
+        .iter()
+        .map(|p| format!("<w:p>{p}</w:p>"))
+        .collect();
     let document = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="{W}"><w:body>{body}<w:sectPr/></w:body></w:document>"#
     );
@@ -68,6 +80,36 @@ fn comment(input: &[u8], quotes: &[(usize, &str)]) -> Result<Vec<u8>, DoceditErr
         .collect();
     let transaction = serde_json::json!({ "ops": ops, "revision": { "author": "Reviewer" } });
     revise(input, &transaction.to_string())
+}
+
+/// Authors one comment on `quote` in the first paragraph, naming its 1-based
+/// `occurrence` when given; returns the output and the notes the step reported.
+fn comment_copy(
+    input: &[u8],
+    quote: &str,
+    occurrence: Option<usize>,
+) -> Result<(Vec<u8>, Vec<EditNote>), DoceditError> {
+    let blocks = Document::parse(input).expect("input parses").read().blocks;
+    let mut op = serde_json::json!({ "op": "comment_create", "target": blocks[0].id,
+        "expect": quote, "body": "Check this." });
+    if let Some(occurrence) = occurrence {
+        op["occurrence"] = occurrence.into();
+    }
+    let transaction = serde_json::json!({ "ops": [op], "revision": { "author": "Reviewer" } });
+    revise_with_notes(input, &transaction.to_string(), ArchiveLimits::DEFAULT)
+}
+
+/// The copy count and the anchored copy the step reported for its quote.
+fn copy_note(notes: &[EditNote]) -> (usize, Option<usize>) {
+    let [
+        EditNote::RepeatedCommentQuote {
+            copies, anchored, ..
+        },
+    ] = notes
+    else {
+        panic!("one repeated-quote note expected: {notes:?}");
+    };
+    (*copies, *anchored)
 }
 
 fn document_xml(docx: &[u8]) -> String {
@@ -114,6 +156,38 @@ fn commented_text(docx: &[u8]) -> Vec<String> {
     }
     assert!(open.is_empty(), "ranges left open: {open:?}");
     ranges.into_iter().map(|(_, text)| text).collect()
+}
+
+/// Each paragraph's visible text with `[` and `]` where comment ranges open
+/// and close, and a run's line break as `\n`; deleted text is left out.
+fn bracketed(docx: &[u8]) -> Vec<String> {
+    let xml = document_xml(docx);
+    let doc = roxmltree::Document::parse(&xml).expect("document XML parses");
+    doc.descendants()
+        .filter(|n| n.has_tag_name((W, "p")))
+        .map(|p| {
+            p.descendants()
+                .filter(|n| n.tag_name().namespace() == Some(W))
+                .filter_map(|n| match n.tag_name().name() {
+                    "commentRangeStart" => Some("["),
+                    "commentRangeEnd" => Some("]"),
+                    "t" => n.text(),
+                    "br" => Some("\n"),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The text inside tracked insertions.
+fn inserted_text(docx: &[u8]) -> String {
+    let xml = document_xml(docx);
+    let doc = roxmltree::Document::parse(&xml).expect("document XML parses");
+    doc.descendants()
+        .filter(|n| n.has_tag_name((W, "t")) && n.ancestors().any(|a| a.has_tag_name((W, "ins"))))
+        .filter_map(|t| t.text())
+        .collect()
 }
 
 /// All text that sits in a bold run.
@@ -172,13 +246,115 @@ fn comment_on_a_sentence_the_paragraph_no_longer_holds_is_refused() {
 }
 
 #[test]
-#[ignore = "bug: comment_create anchors the first of repeated quotes (reported to Engine 10-16)"]
-fn repeated_quote_comment_is_refused_rather_than_put_on_the_first_copy() {
+fn repeated_quote_comment_lands_on_the_first_copy_and_occurrence_picks_another() {
     let input = docx(&[&[("the cat and the dog", false)]]);
-    // `set_format` refuses a quote that occurs twice (AmbiguousFormatTarget);
-    // a comment has no more right to pick one of the copies.
-    assert!(comment(&input, &[(0, "the")]).is_err());
-    // A quote long enough to be unique still lands.
-    let output = comment(&input, &[(0, "the dog")]).unwrap();
+    // Without `occurrence` the first copy is anchored, as before, and the step
+    // says how many copies matched.
+    let (output, notes) = comment_copy(&input, "the", None).unwrap();
+    assert_eq!(bracketed(&output), ["[the] cat and the dog"]);
+    assert_eq!(copy_note(&notes), (2, Some(1)));
+    let (output, notes) = comment_copy(&input, "the", Some(2)).unwrap();
+    assert_eq!(bracketed(&output), ["the cat and [the] dog"]);
+    assert_eq!(copy_note(&notes), (2, Some(2)));
+    // A quote long enough to be unique still lands, with nothing to report.
+    let (output, notes) = comment_copy(&input, "the dog", None).unwrap();
     assert_eq!(commented_text(&output), ["the dog"]);
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+#[test]
+fn occurrence_addresses_each_of_two_identical_sentences() {
+    // No longer quote is unique here, so only `occurrence` reaches the second.
+    let input = docx(&[&[("Same line. Same line.", false)]]);
+    for (occurrence, anchored, expected) in [
+        (None, 1, "[Same line.] Same line."),
+        (Some(1), 1, "[Same line.] Same line."),
+        (Some(2), 2, "Same line. [Same line.]"),
+    ] {
+        let (output, notes) = comment_copy(&input, "Same line.", occurrence).unwrap();
+        assert_eq!(bracketed(&output), [expected], "occurrence {occurrence:?}");
+        assert_eq!(paragraph_text(&output), ["Same line. Same line."]);
+        assert_eq!(copy_note(&notes), (2, Some(anchored)));
+    }
+    for occurrence in [0, 3] {
+        let Err(DoceditError::Document(error)) =
+            comment_copy(&input, "Same line.", Some(occurrence))
+        else {
+            panic!("occurrence {occurrence} of two copies is not refused");
+        };
+        assert_eq!(
+            error.code,
+            ErrorCode::AnchorNotFound,
+            "occurrence {occurrence}"
+        );
+    }
+}
+
+#[test]
+fn occurrence_reaches_a_copy_inside_a_tracked_insertion() {
+    let input = docx_xml(&[concat!(
+        r#"<w:r><w:t>Pay the fee</w:t></w:r>"#,
+        r#"<w:ins w:id="1" w:author="Drafter" w:date="2026-10-01T00:00:00Z">"#,
+        r#"<w:r><w:t xml:space="preserve"> and the fee</w:t></w:r></w:ins>"#,
+    )]);
+    let (output, notes) = comment_copy(&input, "the fee", None).unwrap();
+    assert_eq!(bracketed(&output), ["Pay [the fee] and the fee"]);
+    assert_eq!(copy_note(&notes), (2, Some(1)));
+    // The second copy is pending inserted text: the range encloses the whole
+    // insertion rather than splitting it, and the insertion stays tracked.
+    let (output, notes) = comment_copy(&input, "the fee", Some(2)).unwrap();
+    assert_eq!(bracketed(&output), ["Pay the fee[ and the fee]"]);
+    assert_eq!(inserted_text(&output), " and the fee");
+    assert_eq!(copy_note(&notes), (2, Some(2)));
+}
+
+#[test]
+fn a_quote_that_also_matches_across_a_line_break_counts_that_copy() {
+    // A break adds no visible text, so the paragraph reads "xy xy" and the
+    // first copy runs across the break.
+    let input = docx_xml(&[concat!(
+        r#"<w:r><w:t>x</w:t></w:r><w:r><w:br/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve">y xy</w:t></w:r>"#,
+    )]);
+    // The default still anchors the copy inside one run, and names it as the
+    // second, so `occurrence: 2` reproduces it.
+    let (output, notes) = comment_copy(&input, "xy", None).unwrap();
+    assert_eq!(bracketed(&output), ["x\ny [xy]"]);
+    assert_eq!(copy_note(&notes), (2, Some(2)));
+    let (output, notes) = comment_copy(&input, "xy", Some(1)).unwrap();
+    assert_eq!(bracketed(&output), ["[x\ny] xy"]);
+    assert_eq!(copy_note(&notes), (2, Some(1)));
+    let (output, notes) = comment_copy(&input, "xy", Some(2)).unwrap();
+    assert_eq!(bracketed(&output), ["x\ny [xy]"]);
+    assert_eq!(copy_note(&notes), (2, Some(2)));
+
+    // A chosen copy right after a break encloses only its own text (Sol F1 on
+    // #1519: the range opened before the break).
+    let input = docx_xml(&[concat!(
+        r#"<w:r><w:t xml:space="preserve">xy </w:t></w:r><w:r><w:br/></w:r>"#,
+        r#"<w:r><w:t>xy</w:t></w:r>"#,
+    )]);
+    let (output, _) = comment_copy(&input, "xy", Some(2)).unwrap();
+    assert_eq!(bracketed(&output), ["xy \n[xy]"]);
+    // So does one that starts right after a break and runs across a later one
+    // (Bugbot on #1519: that copy still opened before the first break).
+    let input = docx_xml(&[concat!(
+        r#"<w:r><w:t xml:space="preserve">xy </w:t></w:r><w:r><w:br/></w:r>"#,
+        r#"<w:r><w:t>x</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>y</w:t></w:r>"#,
+    )]);
+    let (output, notes) = comment_copy(&input, "xy", Some(2)).unwrap();
+    assert_eq!(bracketed(&output), ["xy \n[x\ny]"]);
+    assert_eq!(copy_note(&notes), (2, Some(2)));
+}
+
+#[test]
+fn a_default_anchor_that_overlaps_the_counted_copies_claims_no_copy_number() {
+    // Visible "aaaaaa" holds three counted copies of "aa" (from 0, 2 and 4).
+    // The default takes the first copy inside one run, which starts at 1, so
+    // naming it "copy 1" would send `occurrence: 1` elsewhere (Sol F2 on #1519).
+    let input =
+        docx_xml(&[r#"<w:r><w:t>a</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>aaaaa</w:t></w:r>"#]);
+    let (output, notes) = comment_copy(&input, "aa", None).unwrap();
+    assert_eq!(bracketed(&output), ["a\n[aa]aaa"]);
+    assert_eq!(copy_note(&notes), (3, None));
 }

@@ -2074,6 +2074,7 @@ mod tests {
             steps: vec![EditStep::CommentCreate {
                 block_id: NodeId::from(block_id.as_str()),
                 expect: "scope of work".to_string(),
+                occurrence: None,
                 semantic_hash: None,
                 body: "Please clarify.".to_string(),
                 author: Some("Reviewer".to_string()),

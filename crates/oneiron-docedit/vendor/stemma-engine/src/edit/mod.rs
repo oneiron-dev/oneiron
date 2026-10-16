@@ -639,6 +639,10 @@ pub enum EditStep {
         /// Substring that must appear in the paragraph; the comment range wraps
         /// exactly this span. Matched in a single contiguous Normal segment.
         expect: String,
+        /// 1-based copy of `expect` to anchor when the quote occurs more than
+        /// once in the paragraph's visible text. `None` keeps the first-copy
+        /// anchor and reports the copy count in the step's result.
+        occurrence: Option<usize>,
         /// Optional full-block semantic-hash precondition.
         semantic_hash: Option<String>,
         /// The comment body text (must be non-empty).
@@ -2662,6 +2666,16 @@ pub enum EditError {
         step_index: usize,
     },
 
+    /// `CommentCreate`'s `occurrence` names a copy of `expect` the paragraph's
+    /// visible text does not hold (0, or more than `occurrences`).
+    CommentAnchorOccurrenceOutOfRange {
+        block_id: NodeId,
+        expected: String,
+        occurrence: usize,
+        occurrences: usize,
+        step_index: usize,
+    },
+
     /// `CommentCreate` targeted a whole block whose tracking status is not
     /// `Normal` (an inserted / deleted / moved paragraph). Commenting a paragraph
     /// that merely carries tracked *segments* is allowed; commenting a paragraph
@@ -3996,6 +4010,17 @@ impl std::fmt::Display for EditError {
                 "step {step_index}: comment anchor '{expected}' falls on text marked for \
                  deletion in paragraph '{block_id}'; a comment on struck text is ambiguous — \
                  target text that stays, comment before deleting, or resolve the deletion first"
+            ),
+            EditError::CommentAnchorOccurrenceOutOfRange {
+                block_id,
+                expected,
+                occurrence,
+                occurrences,
+                step_index,
+            } => write!(
+                f,
+                "step {step_index}: comment anchor {expected:?} occurs {occurrences} times in \
+                 paragraph '{block_id}'; occurrence {occurrence} is not one of them (1-based)"
             ),
             EditError::CommentOnTrackedBlock {
                 block_id,
@@ -10715,6 +10740,49 @@ fn apply_set_block_range_attr(
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+/// A non-fatal fact a step reports about how it applied; the transaction still
+/// commits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditNote {
+    /// `CommentCreate`'s `expect` occurs `copies` times (non-overlapping) in the
+    /// paragraph's visible text. `anchored` is the 1-based copy the comment
+    /// encloses; `None` when the first-copy default took a copy that overlaps
+    /// the counted ones (a self-overlapping quote). `occurrence` addresses any
+    /// counted copy.
+    RepeatedCommentQuote {
+        step_index: usize,
+        block_id: NodeId,
+        expected: String,
+        copies: usize,
+        anchored: Option<usize>,
+    },
+}
+
+impl std::fmt::Display for EditNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditNote::RepeatedCommentQuote {
+                step_index,
+                block_id,
+                expected,
+                copies,
+                anchored,
+            } => {
+                write!(
+                    f,
+                    "step {step_index}: comment anchor {expected:?} occurs {copies} times in \
+                     paragraph '{block_id}'; "
+                )?;
+                match anchored {
+                    Some(copy) => write!(f, "anchored copy {copy}")?,
+                    None => write!(f, "anchored a copy that overlaps the counted ones")?,
+                }
+                write!(f, "; set occurrence (1-based) to anchor a counted copy")
+            }
+        }
+    }
+}
+
 /// Find the maximum revision_id in a document's tracked changes.
 /// Used to determine the starting counter for new revision IDs.
 fn max_revision_id(doc: &CanonDoc) -> u32 {
@@ -10761,6 +10829,18 @@ pub fn apply_transaction_with_id_floor(
     transaction: &EditTransaction,
     external_max_revision_id: u32,
 ) -> Result<(CanonDoc, PendingParts), EditError> {
+    apply_transaction_with_notes(doc, transaction, external_max_revision_id)
+        .map(|(doc, pending, _)| (doc, pending))
+}
+
+/// [`apply_transaction_with_id_floor`], also returning the [`EditNote`]s its
+/// steps report.
+pub(crate) fn apply_transaction_with_notes(
+    doc: &CanonDoc,
+    transaction: &EditTransaction,
+    external_max_revision_id: u32,
+) -> Result<(CanonDoc, PendingParts, Vec<EditNote>), EditError> {
+    let mut notes = Vec::new();
     // Every guard supplied in one atomic transaction describes the snapshot
     // the caller inspected before submitting that transaction. Keep that
     // immutable snapshot available while the mutable clone advances through
@@ -11757,21 +11837,23 @@ pub fn apply_transaction_with_id_floor(
             EditStep::CommentCreate {
                 block_id,
                 expect,
+                occurrence,
                 semantic_hash,
                 body,
                 author,
                 rationale: _,
             } => {
-                verbs::comments::apply_create(
+                notes.extend(verbs::comments::apply_create(
                     &mut doc,
                     block_id,
                     expect,
+                    *occurrence,
                     semantic_hash.as_deref(),
                     body,
                     author.clone(),
                     &transaction.revision,
                     step_index,
-                )?;
+                )?);
             }
             EditStep::CommentReply {
                 parent_comment_id,
@@ -12362,7 +12444,7 @@ pub fn apply_transaction_with_id_floor(
     })?;
     // H2: one unified body-state validator after this producer's normalizers.
     crate::tracked_model::debug_assert_body_invariants(&doc, "apply_transaction");
-    Ok((doc, pending))
+    Ok((doc, pending, notes))
 }
 
 /// Re-attribute a tracked mark that a paragraph-append/delete/move step placed on

@@ -22,6 +22,7 @@ pub mod xlfn;
 
 pub use stemma::api::{Document, validate};
 pub use stemma::docx::ArchiveLimits;
+pub use stemma::edit::EditNote;
 use stemma::edit::{EditTransaction, MaterializationMode};
 pub use stemma::edit_v4::parse_transaction;
 pub use stemma::{ExportMode, ExportOptions, ValidatorLevel};
@@ -91,16 +92,27 @@ pub fn revise_with_limits(
     transaction_json: &str,
     limits: ArchiveLimits,
 ) -> Result<Vec<u8>, DoceditError> {
+    revise_with_notes(input, transaction_json, limits).map(|(output, _)| output)
+}
+
+/// [`revise_with_limits`], also returning the [`EditNote`]s the transaction's
+/// steps report, such as a comment quote that matched more than one copy and
+/// the copy it anchored.
+pub fn revise_with_notes(
+    input: &[u8],
+    transaction_json: &str,
+    limits: ArchiveLimits,
+) -> Result<(Vec<u8>, Vec<EditNote>), DoceditError> {
     preflight_with_limits(input, limits)?;
     let transaction = parse_native_revision(transaction_json)?;
-    let edited = Document::parse(input)?.apply(&transaction)?;
+    let (edited, notes) = Document::parse(input)?.apply_with_notes(&transaction)?;
     let output = edited.serialize(&ExportOptions {
         mode: ExportMode::Redline,
         validator_level: ValidatorLevel::Blocking,
         validator: None,
     })?;
     preflight_with_limits(&output, limits)?;
-    Ok(output)
+    Ok((output, notes))
 }
 
 /// Re-run the blocking OOXML linker on caller-supplied output at settlement.

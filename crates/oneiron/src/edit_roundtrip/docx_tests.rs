@@ -30,6 +30,36 @@ fn native_docx_refuses_stale_guard_and_invalid_transactions() {
 }
 
 #[test]
+fn a_comment_on_a_repeated_quote_carries_the_engine_note_into_the_proposal() {
+    use super::WarningCode;
+    let doc = Document::parse(DOCX).expect("fixture parses");
+    let block = &doc.read().blocks[0];
+    assert_eq!(block.text, "This is a test now foo bar baz");
+    let warnings = |quote: &str, occurrence: Option<usize>| {
+        let mut op = serde_json::json!({ "op": "comment_create", "target": block.id,
+            "expect": quote, "body": "Check this." });
+        if let Some(occurrence) = occurrence {
+            op["occurrence"] = occurrence.into();
+        }
+        let transaction =
+            serde_json::json!({ "ops": [op], "revision": { "author": "Editor" } }).to_string();
+        let Ok(EditOutcome::Proposed(proposal)) = run_docx_revision(DOCX, &transaction, "run")
+        else {
+            panic!("the comment on {quote:?} is not proposed");
+        };
+        proposal.manifest.warnings
+    };
+    // "ba" opens both "bar" and "baz"; the engine's note on it reaches the
+    // proposal for the default and for an explicit copy.
+    for occurrence in [None, Some(2)] {
+        let warnings = warnings("ba", occurrence);
+        let codes: Vec<_> = warnings.iter().map(|warning| warning.code).collect();
+        assert_eq!(codes, [WarningCode::SessionReported], "{warnings:?}");
+    }
+    assert!(warnings("bar", None).is_empty());
+}
+
+#[test]
 fn docx_artifact_proposal_settles_through_the_receipted_version_door() -> crate::error::Result<()> {
     use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
     use crate::edge::EdgeActorClass;

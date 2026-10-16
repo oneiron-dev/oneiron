@@ -703,6 +703,7 @@ fn gen_step(
             Some(EditStep::CommentCreate {
                 block_id: p.block_id.clone(),
                 expect: word,
+                occurrence: None,
                 semantic_hash: None,
                 body: "Fuzz-authored review comment.".to_string(),
                 author: Some("Fuzz".to_string()),

@@ -2838,6 +2838,7 @@ fn comment_create_is_an_annotation_surviving_accept_and_reject() {
             vec![EditStep::CommentCreate {
                 block_id,
                 expect: "Confidential Information".to_string(),
+                occurrence: None,
                 semantic_hash: None,
                 body: "Verify the definition cross-reference.".to_string(),
                 author: Some("Gate".to_string()),

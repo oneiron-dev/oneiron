@@ -130,6 +130,7 @@ fn t1_comment_round_trips_body_and_anchored_span() {
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
             expect: "Net Revenue".to_string(),
+            occurrence: None,
             semantic_hash: None,
             body: "Should this be capitalized consistently?".to_string(),
             author: Some("Reviewer".to_string()),
@@ -192,6 +193,7 @@ fn comments_survive_accept_all_and_reject_all() {
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
             expect: "Confidential Information".to_string(),
+            occurrence: None,
             semantic_hash: None,
             body: "Cross-check the definitions section.".to_string(),
             author: Some("Reviewer".to_string()),
@@ -229,6 +231,7 @@ fn comment_delete_removes_story_and_all_markers() {
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
             expect: "Indemnity".to_string(),
+            occurrence: None,
             semantic_hash: None,
             body: "Temporary note.".to_string(),
             author: Some("Reviewer".to_string()),
@@ -264,6 +267,7 @@ fn comment_delete_orphan_fails_loud() {
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
             expect: "Liability".to_string(),
+            occurrence: None,
             semantic_hash: None,
             body: "note".to_string(),
             author: Some("Reviewer".to_string()),
@@ -325,6 +329,7 @@ fn comment_range_survives_a_tracked_paragraph_edit() {
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
             expect: "text".to_string(),
+            occurrence: None,
             semantic_hash: None,
             body: "clarify".to_string(),
             author: Some("Reviewer".to_string()),
@@ -429,6 +434,7 @@ fn create_comment(base: &Document, expect: &str, body: &str) -> (Document, Strin
         .apply(&txn(vec![EditStep::CommentCreate {
             block_id,
             expect: expect.to_string(),
+            occurrence: None,
             semantic_hash: None,
             body: body.to_string(),
             author: Some("Reviewer".to_string()),
