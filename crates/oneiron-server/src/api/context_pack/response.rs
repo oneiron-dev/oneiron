@@ -236,6 +236,11 @@ pub(crate) struct CoreContextPackResponse {
     results: Vec<CoreContextEntity>,
     /// Neighbor entities hydrated through edge expansion.
     neighbors: Vec<CoreContextEntity>,
+    /// Index-only handles to the instruction files (AGENTS.md, CLAUDE.md) on
+    /// the returned code units' ancestor paths, each listed once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    instruction_files: Vec<oneiron::codebase::CodeInstructionHandle>,
     /// Retrieval and hydration stats.
     stats: CoreContextPackStats,
     /// Typed missing-data / low-confidence state.
@@ -471,6 +476,7 @@ pub(crate) fn core_context_pack_response(
             .into_iter()
             .map(core_context_entity)
             .collect(),
+        instruction_files: pack.instruction_files,
         stats: core_context_pack_stats(pack.stats),
         state,
         evidence,

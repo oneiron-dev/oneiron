@@ -91,6 +91,8 @@ pub struct RepoProposal {
     pub session: EntityId,
     #[serde(with = "entity_serde")]
     pub provenance_claim: EntityId,
+    /// Stamped onto the document operation this proposal lands as.
+    pub op_provenance: crate::code_document::CodeOpProvenance,
     pub path: String,
     pub content: Vec<u8>,
     pub message: String,
@@ -245,6 +247,8 @@ impl Vault {
                 "code proposal requires actor, session and provenance",
             ));
         };
+        request.op_provenance.validate()?;
+        let op_provenance = request.op_provenance.clone();
         let (path, content, message, operation) = match request.operation {
             RepoMutationOperation::CommitFile {
                 path,
@@ -292,6 +296,7 @@ impl Vault {
             actor,
             session,
             provenance_claim,
+            op_provenance,
             path,
             content,
             message,

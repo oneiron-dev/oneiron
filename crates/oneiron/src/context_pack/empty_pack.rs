@@ -236,6 +236,7 @@ pub(super) fn skipped_by_profile_pack() -> ContextPack {
         retrieval_quality,
         results: Vec::new(),
         neighbors: Vec::new(),
+        instruction_files: Vec::new(),
         stats,
     }
 }

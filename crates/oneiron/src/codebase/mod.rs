@@ -1,4 +1,5 @@
 mod ingest;
+mod instructions;
 mod repo_ref;
 mod residue;
 mod serve_lookup;
@@ -10,6 +11,7 @@ pub use self::ingest::{
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,
 };
 pub(crate) use self::ingest::{read_asset_blob_in_txn, validate_project_id};
+pub use self::instructions::{CODE_INSTRUCTION_FILE_NAMES, CodeInstructionHandle};
 pub use self::repo_ref::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_REPO_REF_MAX_BYTES, RepoRef};
 pub use self::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_ENTRY_KEYS, CODEBASE_FILE_PATH_MAX_BYTES,

@@ -636,6 +636,7 @@ fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResul
         retrieval_quality: Default::default(),
         results,
         neighbors: Vec::new(),
+        instruction_files: Vec::new(),
         stats: PackStats {
             critical_over_budget: false,
             critical_count: 0,
