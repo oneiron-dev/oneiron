@@ -119,8 +119,27 @@ impl<F: ScoreFetch> ScoreScraper<F> {
         self.last_fetch = Some(now);
         Ok(diffs)
     }
-    /// Scores nominate a candidate identity. No answerer binding or trial door
-    /// is present in this type, so scraping cannot switch a question's answerer.
+    /// Connect a benchmark nomination to a question-specific held-out plan.
+    /// No provider runs and no answerer binding changes while scraping.
+    pub fn nominate_trial(
+        &self,
+        vault: &Vault,
+        request: super::model_trials::ModelTrialRequest,
+        locality: crate::claim::CallerLocality,
+        now: u64,
+    ) -> Result<super::model_trials::ModelTrial> {
+        if self
+            .nominate(vault, &request.source, &request.benchmark)?
+            .as_ref()
+            != Some(&request.candidate.model)
+        {
+            return Err(invalid("trial candidate is not the benchmark nomination"));
+        }
+        vault.prepare_model_trial(request, locality, now)
+    }
+
+    /// Scores nominate an identity, never approve a trial result or change an
+    /// answerer binding. Only held-out evidence can qualify a switch offer.
     pub fn nominate(
         &self,
         vault: &Vault,
