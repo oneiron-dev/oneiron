@@ -164,7 +164,7 @@ where
             .get(attempt_id)?
             .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
         let payload = decode_byoa_record(&record)?;
-        self.check_login_placement(payload.user_login)?;
+        self.check_login_placement(payload.user_login, &payload.connector)?;
         let ByoaConnectorSpec::CliSandbox(spec) = payload.connector else {
             return Err(invalid(ERR_EXECUTION_SHAPE));
         };
