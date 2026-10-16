@@ -175,6 +175,18 @@ impl Document {
         Ok(self.derived(self.snapshot.apply(txn)?))
     }
 
+    /// [`Document::apply`], also returning the non-fatal diagnostics the
+    /// transaction's steps report (for example a comment quote that matched
+    /// more than one copy). They describe this edit only; [`Document::diagnostics`]
+    /// stays import provenance.
+    pub fn apply_with_diagnostics(
+        &self,
+        txn: &EditTransaction,
+    ) -> Result<(Document, Vec<Diagnostic>), RuntimeError> {
+        let (snapshot, diagnostics) = self.snapshot.apply_with_diagnostics(txn)?;
+        Ok((self.derived(snapshot), diagnostics))
+    }
+
     /// [`Document::apply`], but refusing a tracked write whose `txn.revision.author`
     /// collides with one of the document's ORIGIN Word author labels — the
     /// labels already present in the redline this `Document` was parsed from (see

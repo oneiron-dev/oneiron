@@ -639,6 +639,10 @@ pub enum EditStep {
         /// Substring that must appear in the paragraph; the comment range wraps
         /// exactly this span. Matched in a single contiguous Normal segment.
         expect: String,
+        /// 1-based copy of `expect` to anchor when the quote occurs more than
+        /// once in the paragraph's visible text. `None` keeps the first-copy
+        /// anchor and reports the copy count in the step's result.
+        occurrence: Option<usize>,
         /// Optional full-block semantic-hash precondition.
         semantic_hash: Option<String>,
         /// The comment body text (must be non-empty).
@@ -2662,6 +2666,16 @@ pub enum EditError {
         step_index: usize,
     },
 
+    /// `CommentCreate`'s `occurrence` names a copy of `expect` the paragraph's
+    /// visible text does not hold (0, or more than `occurrences`).
+    CommentAnchorOccurrenceOutOfRange {
+        block_id: NodeId,
+        expected: String,
+        occurrence: usize,
+        occurrences: usize,
+        step_index: usize,
+    },
+
     /// `CommentCreate` targeted a whole block whose tracking status is not
     /// `Normal` (an inserted / deleted / moved paragraph). Commenting a paragraph
     /// that merely carries tracked *segments* is allowed; commenting a paragraph
@@ -3996,6 +4010,17 @@ impl std::fmt::Display for EditError {
                 "step {step_index}: comment anchor '{expected}' falls on text marked for \
                  deletion in paragraph '{block_id}'; a comment on struck text is ambiguous — \
                  target text that stays, comment before deleting, or resolve the deletion first"
+            ),
+            EditError::CommentAnchorOccurrenceOutOfRange {
+                block_id,
+                expected,
+                occurrence,
+                occurrences,
+                step_index,
+            } => write!(
+                f,
+                "step {step_index}: comment anchor {expected:?} occurs {occurrences} times in \
+                 paragraph '{block_id}'; occurrence {occurrence} is not one of them (1-based)"
             ),
             EditError::CommentOnTrackedBlock {
                 block_id,
@@ -10761,6 +10786,19 @@ pub fn apply_transaction_with_id_floor(
     transaction: &EditTransaction,
     external_max_revision_id: u32,
 ) -> Result<(CanonDoc, PendingParts), EditError> {
+    apply_transaction_with_diagnostics(doc, transaction, external_max_revision_id)
+        .map(|(doc, pending, _)| (doc, pending))
+}
+
+/// [`apply_transaction_with_id_floor`], also returning the non-fatal
+/// diagnostics its steps report (a `CommentCreate` quote that matched more
+/// than one copy names the copy it anchored).
+pub(crate) fn apply_transaction_with_diagnostics(
+    doc: &CanonDoc,
+    transaction: &EditTransaction,
+    external_max_revision_id: u32,
+) -> Result<(CanonDoc, PendingParts, Vec<crate::runtime::Diagnostic>), EditError> {
+    let mut diagnostics = Vec::new();
     // Every guard supplied in one atomic transaction describes the snapshot
     // the caller inspected before submitting that transaction. Keep that
     // immutable snapshot available while the mutable clone advances through
@@ -11757,21 +11795,35 @@ pub fn apply_transaction_with_id_floor(
             EditStep::CommentCreate {
                 block_id,
                 expect,
+                occurrence,
                 semantic_hash,
                 body,
                 author,
                 rationale: _,
             } => {
-                verbs::comments::apply_create(
+                let repeated = verbs::comments::apply_create(
                     &mut doc,
                     block_id,
                     expect,
+                    *occurrence,
                     semantic_hash.as_deref(),
                     body,
                     author.clone(),
                     &transaction.revision,
                     step_index,
                 )?;
+                if let Some(repeated) = repeated {
+                    diagnostics.push(crate::runtime::Diagnostic {
+                        level: crate::runtime::DiagnosticLevel::Warning,
+                        message: format!(
+                            "step {step_index}: comment anchor {expect:?} occurs {} times in \
+                             paragraph '{block_id}'; anchored copy {}; set occurrence (1-based) \
+                             to anchor another copy",
+                            repeated.copies, repeated.anchored
+                        ),
+                        context: Some(format!("comment_create step {step_index}")),
+                    });
+                }
             }
             EditStep::CommentReply {
                 parent_comment_id,
@@ -12362,7 +12414,7 @@ pub fn apply_transaction_with_id_floor(
     })?;
     // H2: one unified body-state validator after this producer's normalizers.
     crate::tracked_model::debug_assert_body_invariants(&doc, "apply_transaction");
-    Ok((doc, pending))
+    Ok((doc, pending, diagnostics))
 }
 
 /// Re-attribute a tracked mark that a paragraph-append/delete/move step placed on

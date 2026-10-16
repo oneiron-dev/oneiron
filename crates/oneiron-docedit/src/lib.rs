@@ -89,16 +89,27 @@ pub fn revise_with_limits(
     transaction_json: &str,
     limits: ArchiveLimits,
 ) -> Result<Vec<u8>, DoceditError> {
+    revise_with_diagnostics(input, transaction_json, limits).map(|(output, _)| output)
+}
+
+/// [`revise_with_limits`], also returning the non-fatal diagnostics the
+/// transaction's steps report, such as a comment quote that matched more than
+/// one copy and the copy it anchored.
+pub fn revise_with_diagnostics(
+    input: &[u8],
+    transaction_json: &str,
+    limits: ArchiveLimits,
+) -> Result<(Vec<u8>, Vec<stemma::runtime::Diagnostic>), DoceditError> {
     preflight_with_limits(input, limits)?;
     let transaction = parse_native_revision(transaction_json)?;
-    let edited = Document::parse(input)?.apply(&transaction)?;
+    let (edited, diagnostics) = Document::parse(input)?.apply_with_diagnostics(&transaction)?;
     let output = edited.serialize(&ExportOptions {
         mode: ExportMode::Redline,
         validator_level: ValidatorLevel::Blocking,
         validator: None,
     })?;
     preflight_with_limits(&output, limits)?;
-    Ok(output)
+    Ok((output, diagnostics))
 }
 
 /// Re-run the blocking OOXML linker on caller-supplied output at settlement.

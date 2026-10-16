@@ -30,6 +30,42 @@ fn native_docx_refuses_stale_guard_and_invalid_transactions() {
 }
 
 #[test]
+fn a_comment_on_a_repeated_quote_tells_the_proposal_which_copy_it_anchored() {
+    use super::WarningCode;
+    let doc = Document::parse(DOCX).expect("fixture parses");
+    let block = &doc.read().blocks[0];
+    assert_eq!(block.text, "This is a test now foo bar baz");
+    let warnings = |quote: &str, occurrence: Option<usize>| {
+        let mut op = serde_json::json!({ "op": "comment_create", "target": block.id,
+            "expect": quote, "body": "Check this." });
+        if let Some(occurrence) = occurrence {
+            op["occurrence"] = occurrence.into();
+        }
+        let transaction =
+            serde_json::json!({ "ops": [op], "revision": { "author": "Editor" } }).to_string();
+        let Ok(EditOutcome::Proposed(proposal)) = run_docx_revision(DOCX, &transaction, "run")
+        else {
+            panic!("the comment on {quote:?} is not proposed");
+        };
+        proposal.manifest.warnings
+    };
+    // "ba" opens both "bar" and "baz".
+    for (occurrence, anchored) in [(None, 1), (Some(2), 2)] {
+        let warnings = warnings("ba", occurrence);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].code, WarningCode::SessionReported);
+        let detail = &warnings[0].detail;
+        assert!(detail.contains("occurs 2 times"), "{detail}");
+        assert!(
+            detail.contains(&format!("anchored copy {anchored}")),
+            "{detail}"
+        );
+        assert!(detail.contains("occurrence"), "{detail}");
+    }
+    assert!(warnings("bar", None).is_empty());
+}
+
+#[test]
 fn docx_artifact_proposal_settles_through_the_receipted_version_door() -> crate::error::Result<()> {
     use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
     use crate::edge::EdgeActorClass;

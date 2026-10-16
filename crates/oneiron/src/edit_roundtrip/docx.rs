@@ -5,8 +5,8 @@ use super::inspect::inspect;
 use super::opc;
 use super::session_validate::{diff_parts, validate};
 use super::{
-    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditOutcome, EditProposal, MutationMode,
-    OfficeFormat, RecalcStatus,
+    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditOutcome, EditProposal, EditWarning,
+    MutationMode, OfficeFormat, RecalcStatus, WarningCode,
 };
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::entity_id::EntityId;
@@ -54,12 +54,14 @@ pub(super) fn run_docx_revision_with_limits(
                 "native docx revision transaction is invalid",
             ))
         })?;
-    let current =
-        oneiron_docedit::revise_with_limits(input_bytes, &transaction, limits).map_err(|_| {
-            Error::Artifact(ArtifactError::EditRoundtripFailed(
-                "native docx revision failed validation or could not be written",
-            ))
-        })?;
+    let (current, diagnostics) =
+        oneiron_docedit::revise_with_diagnostics(input_bytes, &transaction, limits).map_err(
+            |_| {
+                Error::Artifact(ArtifactError::EditRoundtripFailed(
+                    "native docx revision failed validation or could not be written",
+                ))
+            },
+        )?;
     let after = match opc::read_with_limits(&current, limits) {
         Ok(package) => package,
         Err(_) => {
@@ -86,7 +88,10 @@ pub(super) fn run_docx_revision_with_limits(
             ops: vec![EditOp::DocxRevision { transaction }],
             touched_parts: diff_parts(&before, &after),
             mutation_mode: MutationMode::Full,
-            warnings: Vec::new(),
+            warnings: diagnostics
+                .into_iter()
+                .map(|note| EditWarning::new(WarningCode::SessionReported, note.message))
+                .collect(),
             pptx_holder_limits: None,
             slide_judgments: Vec::new(),
         },
