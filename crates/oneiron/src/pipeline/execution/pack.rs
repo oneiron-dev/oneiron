@@ -17,7 +17,7 @@ use crate::query_expansion::{
 use crate::retrieval_quality::{RetrievalDiagnostics, classify_retrieval_quality};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
 use crate::temporal::{TemporalHintReport, temporal_hints_from_query};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 impl PipelineBuilder<'_> {
@@ -272,6 +272,7 @@ impl PipelineBuilder<'_> {
         let mut total_in_scope = attempt.total_in_scope;
         let mut empty_reason = attempt.empty_reason;
         let mut signal_components = attempt.signal_components;
+        let mut media_evidence = attempt.media_evidence;
         let mut blend_components = attempt.blend_components;
         let mut access_factors = attempt.access_factors;
         let mut rerank_merged_components = attempt.rerank_merged_components;
@@ -348,6 +349,7 @@ impl PipelineBuilder<'_> {
                 total_in_scope = retry.total_in_scope;
                 empty_reason = retry.empty_reason;
                 signal_components = retry.signal_components;
+                media_evidence = retry.media_evidence;
                 blend_components = retry.blend_components;
                 access_factors = retry.access_factors;
                 rerank_merged_components = retry.rerank_merged_components;
@@ -375,6 +377,7 @@ impl PipelineBuilder<'_> {
                     && self.post_assessment_evidence_abstains(
                         &scores,
                         &signal_components,
+                        &media_evidence,
                         hyde_expansion.is_some(),
                     )?);
             if abstain {
@@ -661,6 +664,7 @@ impl PipelineBuilder<'_> {
         &self,
         scores: &[ScoredEntity],
         signal_components: &HashMap<EntityId, Vec<crate::store::RetrievalScoreComponent>>,
+        media_evidence: &HashSet<EntityId>,
         hyde_expanded: bool,
     ) -> Result<bool> {
         let floors = self.no_match_floors();
@@ -673,6 +677,7 @@ impl PipelineBuilder<'_> {
         context_pack_evidence_abstains(
             scores,
             signal_components,
+            media_evidence,
             self.text_search.as_ref().map(|(query, _)| query.as_str()),
             self.vector_search.is_some() || hyde_expanded,
             space,

@@ -145,6 +145,55 @@ impl ScopedRead<'_> {
         )
     }
 
+    /// [`Self::search`] over any of its seeds within this actor's resolved read authority: a
+    /// text query, a vector into the vault's own index, and media queries into declared
+    /// embedding spaces (OF-370), each `(space id, the tower that encoded it, its vector)` and
+    /// each its own ranked list beside the others.
+    pub fn search_seeded(
+        &self,
+        query: Option<&str>,
+        vector: Option<&[f32]>,
+        media: &[(&str, crate::embed::InputKind, &[f32])],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        if filter.deny_all {
+            return Ok(ScopedReadResult {
+                value: Vec::new(),
+                receipt: self.receipt_for(requested, &policy, &filter, 0),
+            });
+        }
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
+        let mut pipeline = self
+            .vault
+            .query()
+            .reading(self.store_read())
+            .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
+            .filter_candidates(&admitted);
+        if let Some(query) = query {
+            pipeline = pipeline.search_text(query, limit);
+        }
+        if let Some(vector) = vector {
+            pipeline = pipeline.search_vector(vector, limit);
+        }
+        for (space, kind, vector) in media {
+            pipeline = pipeline.search_media(space, *kind, vector, &[], limit);
+        }
+        let results = pipeline.limit(limit).run_for_pack()?;
+        self.filter_search_results(
+            results.scores,
+            limit,
+            requested,
+            &filter,
+            &policy,
+            results.read_suppressed.saturating_add(excluded.count()?),
+            &results.revisions,
+        )
+    }
+
     pub fn search_text(
         &self,
         query: &str,

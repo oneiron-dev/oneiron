@@ -169,7 +169,7 @@ impl SyncServer {
         }))
     }
 
-    /// Fills every media-bound space while passes store vectors, sleeps when
+    /// Fills every slot-bound space while passes store vectors, sleeps when
     /// one stores none, and backs off while a space fails. Each space's
     /// failure is logged once until it changes.
     async fn backfill_media_forever(self: Arc<Self>) {
@@ -219,7 +219,8 @@ impl SyncServer {
         }
     }
 
-    /// One pass over each space a media kind slot binds to. Blocking.
+    /// One pass over each space a kind slot binds to, the text slot's on the
+    /// one-space preset included. Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
@@ -228,7 +229,7 @@ impl SyncServer {
             Ok(bindings) => bindings,
             Err(error) => return vec![(String::new(), Err(error.into()))],
         };
-        let spaces: BTreeSet<&str> = [InputKind::Image, InputKind::Audio]
+        let spaces: BTreeSet<&str> = InputKind::ALL
             .into_iter()
             .filter_map(|kind| bindings.space_for(kind))
             .collect();

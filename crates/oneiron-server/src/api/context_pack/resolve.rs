@@ -7,8 +7,8 @@ use super::super::{
 use super::controls::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackPolicyControls,
     ContextPackRetrievalBudgetControls, ContextPackTimeControls, CoreContextPackRequest,
-    DecodedMediaQuery,
 };
+use super::media_query::embed_media_seeds;
 use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
@@ -20,15 +20,13 @@ use super::{
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
-use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::projection::View;
-use crate::server::{MediaEmbedRefusal, QueryDoor, SyncServer};
+use crate::server::{QueryDoor, SyncServer};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
-use oneiron::embed::InputKind;
 use std::sync::Arc;
 
 /// Assemble a context pack from existing retrieval and hydration APIs.
@@ -42,7 +40,7 @@ use std::sync::Arc;
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or the vault's inference policy refuses a media query's ai.embed call.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-pack assembly failed.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 503, description = "No ai.embed rung serves a media query's space, or the rung's call failed.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 503, description = "No ai.embed rung serves a media query's space (or, on the one-space preset, the text slot's space), or the rung's call failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 pub(crate) async fn core_context_pack(
@@ -216,11 +214,9 @@ pub(crate) async fn run_context_pack(
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
     )?;
-    // Embedded once everything free is checked: it is a paid call.
-    let media = match media {
-        Some(media) => Some(embed_media_query(server, media).await?),
-        None => None,
-    };
+    // Embedded once everything free is checked: it is a paid call. On the
+    // one-space preset the text query is embedded into the text slot's space.
+    let media = embed_media_seeds(server, media, query).await?;
 
     let mut builder = server
         .vault
@@ -243,8 +239,14 @@ pub(crate) async fn run_context_pack(
     if let Some(vector) = req.query_vector.as_deref() {
         builder = builder.search_vector(vector, candidate_limit);
     }
-    if let Some((space, kind, vector)) = media.as_ref() {
-        builder = builder.search_media(space, *kind, vector, &[], candidate_limit);
+    for seed in &media {
+        builder = builder.search_media(
+            &seed.space,
+            seed.kind,
+            &seed.vector,
+            &[],
+            candidate_limit,
+        );
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
@@ -302,54 +304,6 @@ pub(crate) async fn run_context_pack(
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     response.limit_clamped = req.limit_clamped;
     Ok((response, memories, cursor))
-}
-
-/// Embeds a pack's media query into its declared space through the
-/// `ai.embed` rung that space's id names (OF-370).
-async fn embed_media_query(
-    server: &SyncServer,
-    media: DecodedMediaQuery,
-) -> Result<(String, InputKind, Vec<f32>), ApiError> {
-    let embedder = server
-        .media_embedder(&media.space)
-        .map_err(media_query_refusal)?;
-    let vector = embedder
-        .embed_query(media.kind, &media.mime, media.bytes)
-        .await
-        .map_err(media_query_refusal)?;
-    Ok((media.space, media.kind, vector))
-}
-
-/// A media query's refusal as the pack answers it: a caller's own mistake is
-/// a 400, a seat that cannot serve the space a 503.
-fn media_query_refusal(refusal: MediaEmbedRefusal) -> ApiError {
-    match refusal {
-        MediaEmbedRefusal::Undeclared(_) => {
-            ApiError::bad_request(refusal.to_string(), Some("media.space"))
-        }
-        MediaEmbedRefusal::NoTower { .. } | MediaEmbedRefusal::NotText => {
-            ApiError::bad_request(refusal.to_string(), Some("media.mime"))
-        }
-        MediaEmbedRefusal::Denied(_) => ApiError::new(
-            refusal.to_string(),
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            },
-            [
-                "The vault's inference policy decides which models are called; admit this rung there.",
-            ],
-        ),
-        MediaEmbedRefusal::Vault(error) => {
-            core_engine_error("context-pack media query failed", error)
-        }
-        other => ApiError::new(
-            other.to_string(),
-            ApiErrorDetails::EmbedderUnavailable,
-            [
-                "Serve the rung the space's id names under [models.media.embed], or retry without media.",
-            ],
-        ),
-    }
 }
 
 pub(crate) fn resolved_context_pack_depth(
