@@ -24,10 +24,14 @@ pub const DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS: u64 = 16;
 /// Counted ancestor pairs one fold indexes before the log raises the check
 /// for pairs. A one-chain log of n counted rows holds n·(n−1)/2 of them.
 pub const DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS: u64 = 8 * 1024 * 1024;
-/// The `authority_log_fold_memory_floor` row: the bytes one fold may project
-/// to hold at its peak. A log whose fold would pass it is the one count the
-/// fold refuses, with a typed issue naming the floor.
-pub const DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// The most the `authority_log_fold_memory_floor` row's default reaches: the
+/// bytes one fold may project to hold at its peak. A log whose fold would
+/// pass the floor is the one count the fold refuses, with a typed issue
+/// naming it. With no row, the floor is a quarter of this machine's physical
+/// memory, at least 1 GiB and at most this: a one-chain log of about 5,000
+/// counted rows reaches it, and one agent enrolled per row measured 4.4 GB
+/// at 4,000 rows.
+pub const DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 /// Device-local authority observation policy durations. Key: ().
 const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
@@ -55,8 +59,10 @@ pub struct AuthorityObservationPolicy {
     pub log_headroom_handoffs: u64,
     /// The `authority_log_fold_headroom` row for counted ancestor pairs.
     pub log_headroom_ancestor_pairs: u64,
-    /// The `authority_log_fold_memory_floor` row, in bytes.
-    pub log_fold_memory_floor_bytes: u64,
+    /// The `authority_log_fold_memory_floor` row, in bytes. None reads a
+    /// quarter of this machine's physical memory, from 1 GiB up to
+    /// [`DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES`].
+    pub log_fold_memory_floor_bytes: Option<u64>,
 }
 
 impl Default for AuthorityObservationPolicy {
@@ -69,7 +75,7 @@ impl Default for AuthorityObservationPolicy {
             log_headroom_rows: DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
             log_headroom_handoffs: DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
             log_headroom_ancestor_pairs: DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
-            log_fold_memory_floor_bytes: DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
+            log_fold_memory_floor_bytes: None,
         }
     }
 }
@@ -85,7 +91,7 @@ impl AuthorityObservationPolicy {
             || self.log_headroom_rows == 0
             || self.log_headroom_handoffs == 0
             || self.log_headroom_ancestor_pairs == 0
-            || self.log_fold_memory_floor_bytes == 0
+            || self.log_fold_memory_floor_bytes == Some(0)
         {
             return Err(Error::InvalidConfig(
                 "authority log bounds must be positive".to_owned(),
@@ -106,7 +112,8 @@ impl RawValue for AuthorityObservationPolicy {
             self.log_headroom_rows,
             self.log_headroom_handoffs,
             self.log_headroom_ancestor_pairs,
-            self.log_fold_memory_floor_bytes,
+            // Zero: no row, the machine's floor.
+            self.log_fold_memory_floor_bytes.unwrap_or(0),
         ] {
             raw.extend_from_slice(&value.to_be_bytes());
         }
@@ -127,7 +134,7 @@ impl RawValue for AuthorityObservationPolicy {
             DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
             DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
             DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
-            DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
+            0,
         ];
         for (slot, bytes) in values.iter_mut().zip(raw.chunks_exact(8)) {
             *slot = u64::from_be_bytes(
@@ -144,7 +151,7 @@ impl RawValue for AuthorityObservationPolicy {
             log_headroom_rows: values[4],
             log_headroom_handoffs: values[5],
             log_headroom_ancestor_pairs: values[6],
-            log_fold_memory_floor_bytes: values[7],
+            log_fold_memory_floor_bytes: (values[7] != 0).then_some(values[7]),
         };
         policy.validate()?;
         Ok(policy)

@@ -36,10 +36,12 @@ use crate::store::Store;
 pub const MAX_AUTHORITY_ROWS_PER_SIGNER: usize = 2048;
 
 /// What one fold holds at its peak, per row and per ancestor pair, measured
-/// on the fleet (10-16). A row's state holds what its ancestors added, so
-/// the pairs carry the states as well as the ancestry index.
-const FOLD_BYTES_PER_ROW: u64 = 4096;
-const FOLD_BYTES_PER_ANCESTOR_PAIR: u64 = 256;
+/// on the fleet (10-16) and rounded up: at most 11.6 KB a row with no
+/// ancestors, and 252 to 626 bytes a pair (a confirm chain, then one agent
+/// enrolled and bound per row). A row's state holds what its ancestors
+/// added, so the pairs carry the states as well as the ancestry index.
+const FOLD_BYTES_PER_ROW: u64 = 16 * 1024;
+const FOLD_BYTES_PER_ANCESTOR_PAIR: u64 = 640;
 
 #[cfg(test)]
 thread_local! {
@@ -47,7 +49,12 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static FOLD_MEMORY_FLOOR_FOR_TEST: std::cell::Cell<Option<u64>> =
         const { std::cell::Cell::new(None) };
+    static PHYSICAL_MEMORY_FOR_TEST: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
 }
+
+/// The least the memory floor's default reaches, however small the machine.
+const FOLD_MEMORY_FLOOR_MIN_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// Runs `body` with the signer bound and the row and pair headroom rows
 /// scaled to `rows` per signer on this thread, so a test crosses them in a
@@ -67,6 +74,16 @@ pub(crate) fn with_fold_memory_floor_for_test<T>(bytes: u64, body: impl FnOnce()
     FOLD_MEMORY_FLOOR_FOR_TEST.with(|floor| floor.set(Some(bytes)));
     let result = body();
     FOLD_MEMORY_FLOOR_FOR_TEST.with(|floor| floor.set(None));
+    result
+}
+
+/// Runs `body` on this thread as on a machine with `bytes` of physical
+/// memory.
+#[cfg(test)]
+pub(crate) fn with_physical_memory_for_test<T>(bytes: u64, body: impl FnOnce() -> T) -> T {
+    PHYSICAL_MEMORY_FOR_TEST.with(|memory| memory.set(Some(bytes)));
+    let result = body();
+    PHYSICAL_MEMORY_FOR_TEST.with(|memory| memory.set(None));
     result
 }
 
@@ -98,16 +115,51 @@ fn headroom(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<(u64, 
     ))
 }
 
-/// The bytes a fold may project to hold at its peak: the policy row, the
-/// default without one, or a test's floor.
+/// The bytes a fold may project to hold at its peak: the policy row, else a
+/// quarter of this machine's physical memory between 1 GiB and
+/// [`DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES`] (the cap when the
+/// platform does not say), or a test's floor.
 pub(super) fn fold_memory_floor(policy: Option<&AuthorityObservationPolicy>) -> u64 {
     #[cfg(test)]
     if let Some(bytes) = FOLD_MEMORY_FLOOR_FOR_TEST.with(std::cell::Cell::get) {
         return bytes;
     }
-    policy.map_or(DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES, |policy| {
-        policy.log_fold_memory_floor_bytes
-    })
+    policy
+        .and_then(|policy| policy.log_fold_memory_floor_bytes)
+        .unwrap_or_else(|| {
+            physical_memory_bytes().map_or(DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES, |bytes| {
+                (bytes / 4).clamp(
+                    FOLD_MEMORY_FLOOR_MIN_BYTES,
+                    DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
+                )
+            })
+        })
+}
+
+/// This machine's physical memory, when the platform says.
+fn physical_memory_bytes() -> Option<u64> {
+    #[cfg(test)]
+    if let Some(bytes) = PHYSICAL_MEMORY_FOR_TEST.with(std::cell::Cell::get) {
+        return Some(bytes);
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: `sysconf` reads a configuration value and touches no memory
+        // of ours.
+        let (pages, page) = unsafe {
+            (
+                libc::sysconf(libc::_SC_PHYS_PAGES),
+                libc::sysconf(libc::_SC_PAGESIZE),
+            )
+        };
+        let pages = u64::try_from(pages).ok().filter(|pages| *pages > 0)?;
+        let page = u64::try_from(page).ok().filter(|page| *page > 0)?;
+        Some(pages.saturating_mul(page))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 /// What a fold of `rows` rows indexing `pairs` ancestor pairs holds at its

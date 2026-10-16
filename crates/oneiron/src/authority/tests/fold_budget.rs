@@ -4,8 +4,8 @@ use super::machine_identity::{host, request_for};
 use super::support::*;
 use super::*;
 use crate::authority::log_budget::{
-    authority_signer_label, fold_projected_bytes, with_fold_memory_floor_for_test,
-    with_rows_per_signer_for_test,
+    authority_signer_label, fold_memory_floor, fold_projected_bytes,
+    with_fold_memory_floor_for_test, with_physical_memory_for_test, with_rows_per_signer_for_test,
 };
 
 fn confirm_op(n: usize) -> AuthorityOp {
@@ -217,6 +217,31 @@ fn the_owners_one_chain_past_the_ancestor_bound_folds_and_owner_verbs_work() {
     });
 }
 
+/// Done-means (Engine on #1508): with no row, the memory floor is the
+/// machine's, a quarter of its physical memory from 1 GiB up to the 8 GiB
+/// cap, so a small machine's fold refuses at its own floor; the policy row
+/// overrides it.
+#[test]
+fn a_small_machine_folds_under_its_own_floor_and_the_row_overrides_it() {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let row = |bytes| AuthorityObservationPolicy {
+        log_fold_memory_floor_bytes: bytes,
+        ..AuthorityObservationPolicy::default()
+    };
+    for (physical, floor) in [
+        (2 * GIB, GIB),
+        (4 * GIB, GIB),
+        (12 * GIB, 3 * GIB),
+        (64 * GIB, 8 * GIB),
+    ] {
+        with_physical_memory_for_test(physical, || {
+            assert_eq!(fold_memory_floor(None), floor, "{physical}");
+            assert_eq!(fold_memory_floor(Some(&row(None))), floor, "{physical}");
+            assert_eq!(fold_memory_floor(Some(&row(Some(5 * GIB)))), 5 * GIB);
+        });
+    }
+}
+
 /// Done-means (rule 5, H72): the one count the fold refuses is its memory
 /// floor, a policy row. A vault whose log's fold would pass it holds no
 /// root, its typed issue names the floor, and owner verbs are refused with
@@ -243,7 +268,7 @@ fn a_log_past_its_memory_floor_names_the_floor_and_raising_the_row_restores_it()
     let floor = fold_projected_bytes(1, 0);
     host.vault
         .set_authority_observation_policy(AuthorityObservationPolicy {
-            log_fold_memory_floor_bytes: floor,
+            log_fold_memory_floor_bytes: Some(floor),
             ..AuthorityObservationPolicy::default()
         })
         .unwrap();
@@ -2030,7 +2055,8 @@ fn a_policy_row_written_before_the_signer_bound_reads_with_its_default() {
             policy.log_headroom_rows,
             policy.log_headroom_handoffs,
             policy.log_headroom_ancestor_pairs,
-            policy.log_fold_memory_floor_bytes,
+            // No row: the machine's floor.
+            policy.log_fold_memory_floor_bytes.unwrap_or(0),
         ]
     };
     assert_eq!(
@@ -2043,7 +2069,7 @@ fn a_policy_row_written_before_the_signer_bound_reads_with_its_default() {
             DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
             DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
             DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
-            DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
+            0,
         ]
     );
     assert_eq!(
@@ -2056,7 +2082,7 @@ fn a_policy_row_written_before_the_signer_bound_reads_with_its_default() {
             50,
             60,
             DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
-            DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
+            0,
         ]
     );
 }
