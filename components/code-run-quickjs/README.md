@@ -34,9 +34,9 @@ other than `$root`; it does not add a WASI adapter to make such an import work.
 
 The build emits:
 
-- `quickjs-first-party.wasm`: all 13 typed imports;
+- `quickjs-first-party.wasm`: all 15 typed imports;
 
-- `quickjs-foreign.wasm`: only the four non-write imports;
+- `quickjs-foreign.wasm`: only the six non-write imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
 
 The foreign WIT file is a generated import projection of the same world, not
@@ -63,7 +63,14 @@ random bytes. Both seeds and step sequence are host-owned. A guest cannot obtain
 ambient entropy through the initial QuickJS PRNG seed.
 
 `console.log(...)` produces the next observation. `finish(value)` marks a
-completed step. `writeOutput('/mnt/outputs/name', bytes)` returns an output file.
+completed step, and a later call replaces its answer.
+`writeOutput('/mnt/outputs/name', bytes)` appends to an output file, so a large
+file is written in pieces. None of them holds a result whole or charges a size
+budget: each streams to the host as it is written, through the hidden
+`output-text` and `output-bytes` imports, in frames of at most one 1 MiB
+message (text cut at a UTF-16 boundary, a lone surrogate sent as U+FFFD). The
+host keeps each body in the vault's result store and gives the model a handle
+and a preview.
 Foreign guests have no `self` object. Their `propose.file(...)` and
 `propose.claim(...)` produce typed proposal deltas, not committed writes.
 Only workspace/output file paths are proposal targets; upload and skill files

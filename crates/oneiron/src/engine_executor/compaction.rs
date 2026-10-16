@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Instant;
 
-use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
+use crate::code_run::{CodeRunBridgeCall, CodeRunHistoryTurn};
 use crate::compaction::{
     CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
@@ -368,21 +368,22 @@ pub(super) fn window_message(
     }
 }
 
-/// Every record whose words can reach a sealed window: each entity a run's
-/// calls returned so far, and `host`, the records the host itself put into
-/// the run's words (its speech, the epochs its requests rendered). A
-/// superset of what any step could have printed, because the guest keeps
-/// state across steps and no step boundary is stored with its calls. An id
-/// that never existed is no source. A deleted record's shell stays a source,
-/// so a summary written after the deletion is born withdrawn; a purged one
-/// leaves nothing to derive from, so the window is refused.
+/// Every record whose words can reach a sealed window: each entity `calls`
+/// returned (the run's calls since its newest epoch, which stands for the
+/// rest), and `host`, the records the host itself put into the run's words
+/// (its speech, the epoch its requests rendered). A superset of what any
+/// step could have printed, because the guest keeps state across steps and
+/// no step boundary is stored with its calls. An id that never existed is no
+/// source. A deleted record's shell stays a source, so a summary written
+/// after the deletion is born withdrawn; a purged one leaves nothing to
+/// derive from, so the window is refused.
 pub(super) fn served_sources(
     vault: &crate::Vault,
-    record: &CodeRunReplayRecord,
+    calls: &[CodeRunBridgeCall],
     host: impl IntoIterator<Item = EntityId>,
 ) -> crate::Result<Vec<EntityId>> {
     let mut found: std::collections::BTreeSet<EntityId> = host.into_iter().collect();
-    for call in &record.bridge_calls {
+    for call in calls {
         collect_ids(&call.outcome, &mut found);
     }
     let rtxn = vault.store.env.read_txn()?;
@@ -499,15 +500,16 @@ pub(super) fn window_pins(window: &[crate::compaction::CompactionWindowMessage])
     pins
 }
 
-/// The bridge positions this run spoke at: each call that emitted a bubble.
+/// The bridge positions `calls` spoke at: each call that emitted a bubble.
 /// A position no call spoke at names none of the run's records, whatever
 /// sits at its id. The trailing fallback speaks only once the run completes,
 /// after its last window. A blocked report's receipt is in its call's outcome.
-pub(super) fn speech_orders(record: &CodeRunReplayRecord) -> impl Iterator<Item = u32> + '_ {
-    record
-        .bridge_calls
+pub(super) fn speech_orders(
+    calls: &[CodeRunBridgeCall],
+) -> impl Iterator<Item = u32> + '_ {
+    calls
         .iter()
-        .filter_map(crate::code_run::CodeRunBridgeCall::emitted_speech_order)
+        .filter_map(CodeRunBridgeCall::emitted_speech_order)
 }
 
 /// Frame marks a summary may not forge: the record marks and this frame.
