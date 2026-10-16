@@ -298,6 +298,20 @@ fn sigterm(pid: u32) {
     signal(pid, libc::SIGTERM);
 }
 
+/// Stops a server this test started, and waits until it has stopped.
+fn stop(pid: u32) {
+    signal(pid, libc::SIGSTOP);
+    let pid = libc::pid_t::try_from(pid).expect("pid fits pid_t");
+    let mut status = 0;
+    // SAFETY: `waitpid` writes only `status`; `pid` is this test's child,
+    // and a stopped child is not reaped.
+    let waited = unsafe { libc::waitpid(pid, &raw mut status, libc::WUNTRACED) };
+    assert!(
+        waited == pid && libc::WIFSTOPPED(status),
+        "the server did not stop (status {status})"
+    );
+}
+
 fn signal(pid: u32, signal: libc::c_int) {
     let pid = libc::pid_t::try_from(pid).expect("pid fits pid_t");
     // SAFETY: `kill` takes plain integers and touches no memory; `pid` is a
@@ -424,7 +438,7 @@ fn a_session_whose_started_server_cannot_open_the_vault_binds_the_one_that_holds
     );
     let registered = home.wait_for_runtime_file(first.0.id(), &log_path);
     let url = registered["url"].as_str().expect("url").to_owned();
-    signal(first.0.id(), libc::SIGSTOP);
+    stop(first.0.id());
 
     // This session passes it over and starts its own `serve`, which cannot
     // open the vault and exits; the first server then goes on.

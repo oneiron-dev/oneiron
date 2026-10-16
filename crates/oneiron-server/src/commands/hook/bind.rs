@@ -37,6 +37,9 @@ const SERVE_LOG: &str = "serve.log";
 const STORE_FILE: &str = "data.mdb";
 /// The longest one probe waits.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long after a started `serve` exits the hook waits for whoever holds
+/// the vault to name itself: the lease writes its pid just after it is taken.
+const HOLDER_GRACE: Duration = Duration::from_millis(500);
 /// A pin or a descriptor is a few hundred bytes; a larger one is not read.
 const MAX_READ_BYTES: u64 = 64 * 1024;
 const NO_VAULT: &str = "Oneiron: no vault bound; set one up with `oneiron init ~/.oneiron/default` \
@@ -96,9 +99,9 @@ pub(super) fn session(flag: Option<&str>, oneiron: &Path, deadline: Instant) -> 
     start(oneiron, deadline)
 }
 
-/// The vault a prompt recalls from: the pin, when it answers, else the
-/// newest running local vault. A prompt never starts a server and prints no
-/// line of its own.
+/// The vault a prompt recalls from: the pin, if one is set and it answers;
+/// with no pin, the newest running local vault. A prompt never starts a
+/// server and prints no line of its own.
 pub(super) fn quietly(flag: Option<&str>, deadline: Instant) -> Option<String> {
     if let Some(pin) = pin(flag) {
         // One probe, as at session start: a pin that does not answer would
@@ -291,13 +294,16 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
             config.display()
         ))
     };
+    let mut exited_at = None;
     loop {
-        let exited = matches!(child.try_wait(), Ok(Some(_)));
-        if exited {
+        if exited_at.is_none() && matches!(child.try_wait(), Ok(Some(_))) {
+            exited_at = Some(Instant::now());
+        }
+        if let Some(exited) = exited_at {
             // Most often another session started a `serve` a moment before,
             // which holds the vault and is not ready yet, so this one could
-            // not open it: bind that one once it answers.
-            if !held_by_another(&vault, child.id()) {
+            // not open it: bind the server that answers next.
+            if !held_by_another(&vault, child.id()) && exited.elapsed() >= HOLDER_GRACE {
                 return did_not_start();
             }
             let running = running(deadline);
@@ -323,7 +329,7 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
             };
         }
         if Instant::now() >= deadline {
-            if exited {
+            if exited_at.is_some() {
                 return did_not_start();
             }
             return Bound::none(format!(
@@ -339,10 +345,17 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
 /// Whether a live process other than `child` holds the vault's writer
 /// lease, by the pid the lease's lock file records for whoever took it.
 fn held_by_another(vault: &Path, child: u32) -> bool {
+    // Neither a link nor a FIFO, which could hold the hook past its deadline.
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(vault.join(oneiron::VAULT_WRITER_LOCK_FILE))
+    else {
+        return false;
+    };
     let mut pid = String::new();
-    let read = std::fs::File::open(vault.join(oneiron::VAULT_WRITER_LOCK_FILE))
-        .and_then(|file| file.take(32).read_to_string(&mut pid));
-    read.is_ok()
+    file.metadata().is_ok_and(|metadata| metadata.is_file())
+        && file.take(32).read_to_string(&mut pid).is_ok()
         && pid
             .trim()
             .parse::<u32>()

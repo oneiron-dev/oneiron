@@ -85,8 +85,9 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    run folder. If that server answers within the hook's `--timeout`, the
    session binds it; if not, the next session finds it. When another
    session's server, still starting, already holds the vault, this one's
-   `serve` cannot open it and exits; the session then binds the other server
-   once it answers, within the same `--timeout`. With no config there is no
+   `serve` cannot open it and exits; the session then looks again for a
+   running vault and binds the newest that answers, within the same
+   `--timeout`. With no config there is no
    vault to start: the line says to set one up with `oneiron init`.
 
 `prompt` binds the same way but never starts a server and prints no line of
