@@ -289,7 +289,7 @@ fn admit(
     Ok(request)
 }
 
-fn failure(error: &LlmError) -> Response {
+pub(super) fn failure(error: &LlmError) -> Response {
     let (status, code) = match error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
         LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::BAD_GATEWAY, "provider_auth"),

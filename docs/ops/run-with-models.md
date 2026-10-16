@@ -722,6 +722,34 @@ The verbs, each the owner's and checked against the vault's inference policy:
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
+### Lazy images and `ask_image`
+
+A read serves each generated image down a ladder. A reader whose request
+says it takes images (`"image_input": true`) gets the full image when it
+fits. If it doesn't fit, the reader gets a 384-pixel JPEG thumbnail beside
+the image's description. If that doesn't fit either, it gets the description
+alone. Every rung carries the image's view handle (`<asset>@<hash>`). When
+nothing fits, the body is omitted and the vault asks whether everything is
+okay (`limits.image_room_bytes`, 32 MiB by default, is the room a model
+call's context gets when its host names none). The agent verb
+`vault.images.view` (`{"handle", "region": {"x", "y", "width", "height"},
+"edge"}`) fetches the full pixels behind a handle: the whole image, a crop,
+or a zoom to `edge` pixels.
+
+`POST /v1/ai/ask_image` (`{"handle", "question", "region"}`) asks a small
+vision model about the pixels instead, so they never enter the asker's
+context. Bind that model as its own role:
+
+```toml
+[models.roles.local_vision]
+rungs = ["local:qwen3-vl-4b"]
+```
+
+Its provider needs `image_input` among its capabilities. The answer is
+`{"asset_ref", "text", "receipt"}`. Each rung served and each pull (view,
+crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
+which rung each image got and whether the pixels were pulled afterwards.
+
 ## 11. When a provider refuses for a limit
 
 A rung refused for a limit hands the call to the next rung of its ladder, and
