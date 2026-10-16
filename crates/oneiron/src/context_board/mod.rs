@@ -69,8 +69,8 @@ mod surfaces_tests;
 mod tasks;
 
 pub use agents::{
-    AgentLane, AgentRow, AgentsSection, ChildAgentPresence, PeerPresence,
-    child_presence_for_actor, render_agents_section,
+    AgentLane, AgentRow, AgentsSection, ChildAgentPresence, PeerPresence, child_presence_for_actor,
+    render_agents_section,
 };
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
@@ -78,8 +78,8 @@ pub use frame::{
     CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
     SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
     TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_agents_section,
-    assemble_task_agent_sections, assemble_tasks_section, render_board_block,
-    resolve_board_budget, section_policy_for_budget_ref, shed,
+    assemble_task_agent_sections, assemble_tasks_section, render_board_block, resolve_board_budget,
+    section_policy_for_budget_ref, shed,
 };
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,

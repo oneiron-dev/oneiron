@@ -213,15 +213,15 @@ pub fn promotion_basis(
     let txn = vault.store.env.read_txn()?;
     let nodes = nodes_in_txn(vault, &txn, root)?;
     drop(txn);
-    let node = nodes
-        .get(candidate.as_bytes())
-        .ok_or(invalid("the candidate is not an experiment of this campaign"))?;
+    let node = nodes.get(candidate.as_bytes()).ok_or(invalid(
+        "the candidate is not an experiment of this campaign",
+    ))?;
     if node.invalid.is_some() || pruned_lineage(&nodes, &candidate) {
         return Err(invalid("a buggy or pruned candidate is not promoted"));
     }
-    let incumbent_node = nodes
-        .get(incumbent.as_bytes())
-        .ok_or(invalid("the incumbent is not an experiment of this campaign"))?;
+    let incumbent_node = nodes.get(incumbent.as_bytes()).ok_or(invalid(
+        "the incumbent is not an experiment of this campaign",
+    ))?;
     let (Some(after), Some(before)) = (&node.held_out, &incumbent_node.held_out) else {
         return Err(invalid(
             "both the candidate and the incumbent need held-out evidence",
@@ -305,10 +305,14 @@ pub fn reserve_confirmation(
         .ok_or(invalid("this campaign names no sealed confirmation cohort"))?;
     let basis = update_basis(vault, root, candidate, |basis| {
         if basis.call != HeldOutCall::Promote {
-            return Err(invalid("only a held-out Promote goes to sealed confirmation"));
+            return Err(invalid(
+                "only a held-out Promote goes to sealed confirmation",
+            ));
         }
         if basis.confirmation.is_some() {
-            return Err(invalid("the candidate's sealed confirmation is already spent"));
+            return Err(invalid(
+                "the candidate's sealed confirmation is already spent",
+            ));
         }
         basis.confirmation = Some(ConfirmationReceipt {
             cohort: seat.cohort,
@@ -371,7 +375,10 @@ pub fn promote_measured(
         (ResearchTarget::Skill { .. }, Some(proposal)) => {
             let verdict = skill_edit_verdict(vault, &proposal)?
                 .ok_or(invalid("the skill proposal has no gate verdict"))?;
-            let pin = binding.goal.as_ref().ok_or(invalid("a skill campaign pins its goal"))?;
+            let pin = binding
+                .goal
+                .as_ref()
+                .ok_or(invalid("a skill campaign pins its goal"))?;
             if verdict.goal_id != Some(pin.goal_id) || verdict.goal_revision != pin.revision {
                 return Err(invalid("the skill verdict was scored under another goal"));
             }
