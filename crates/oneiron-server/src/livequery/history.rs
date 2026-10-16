@@ -8,8 +8,7 @@ use std::sync::Arc;
 const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 
 pub(super) struct History {
-    session: Arc<Budget>,
-    hub: Arc<Budget>,
+    budget: Arc<Budget>,
     reservation: Option<Reservation>,
     bytes: usize,
 }
@@ -28,10 +27,9 @@ struct Entry {
 }
 
 impl History {
-    pub(super) fn new(session: Arc<Budget>, hub: Arc<Budget>) -> Self {
+    pub(super) fn new(budget: Arc<Budget>) -> Self {
         Self {
-            session,
-            hub,
+            budget,
             reservation: None,
             bytes: 0,
         }
@@ -74,8 +72,7 @@ impl History {
                 return Ok(false);
             }
         } else {
-            let Ok(reservation) = Reservation::new(self.session.clone(), self.hub.clone(), bytes)
-            else {
+            let Ok(reservation) = Reservation::new(self.budget.clone(), bytes) else {
                 return Ok(false);
             };
             self.reservation = Some(reservation);
