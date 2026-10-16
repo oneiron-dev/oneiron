@@ -125,6 +125,22 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// The paired yes/no question every decision read asks beside the labels: does this need
+/// more thinking? Keyed by its wording alone.
+pub const THINK_MORE: QuestionFamily = QuestionFamily {
+    name: "decision.think_more",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// The host's person question, asked beside the call's questions when the dial reaches the
+/// person: ask up to the next authorised role? Keyed by its wording alone.
+pub const ASK_UP: QuestionFamily = QuestionFamily {
+    name: "decision.ask_up",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Does this candidate violate one owner-authored policy row? Keyed by the
 /// document hash, row reference and action; wording comes from the row.
 pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {
@@ -162,6 +178,8 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    THINK_MORE,
+    ASK_UP,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
