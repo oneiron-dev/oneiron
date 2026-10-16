@@ -287,6 +287,7 @@ pub enum ErrorKind {
     GitHttpServeFailed,
     GitHttpExchangeIdle,
     GitHttpRepositoryBusy,
+    LfsReadRoomWaitedOut,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
     OriginPublicationBeyondOwner,
