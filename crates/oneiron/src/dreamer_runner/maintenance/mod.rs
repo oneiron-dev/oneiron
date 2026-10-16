@@ -3,6 +3,8 @@
 mod curator;
 mod evaluation;
 mod proposals;
+mod strength;
+pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 #[cfg(test)]
 mod tests;
@@ -112,6 +114,9 @@ pub(crate) fn execute(
 ) -> Result<DreamerAttemptExecution> {
     let facet = attempt.status.payload.attempt_type.as_str();
     match facet {
+        CONSOLIDATION_STRENGTH_FACET => {
+            strength::run(ctx.vault, attempt, ctx.now_ms)?;
+        }
         CURATOR_FACET => {
             curator::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }

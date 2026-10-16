@@ -59,6 +59,7 @@ pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;
 mod step_charge;
+pub mod strength;
 mod support;
 mod turn_text;
 mod wake_plan;

@@ -195,6 +195,9 @@ fn attach_evidence(
             let cited = evidence.for_source(*source_id);
             attach_ref(vault, txn, run, head, *source_id, &cited, auto_write_rate)?;
         }
+        crate::dreamer_consolidation::strength::record_verified_in_txn(
+            vault, txn, head, evidence, run.now_ms,
+        )?;
         if vault.get_claim_in_txn(txn, &head)?.as_ref() != Some(&original) {
             return Err(Error::InvalidClaimBody(
                 "evidence attachment altered its head",
