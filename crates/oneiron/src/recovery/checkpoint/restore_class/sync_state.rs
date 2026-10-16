@@ -107,5 +107,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_IMPORT_STAMPS, CONTENT),
     (&t::WIRE_LIMIT_QUESTION, CONTENT),
     (&t::RC42_WIRE_QUESTION, CONTENT),
+    (&t::WIRE_HEALTH_CHECK, CONTENT),
     (&t::RC42_WIRE_RECEIPT, CONTENT),
 ];

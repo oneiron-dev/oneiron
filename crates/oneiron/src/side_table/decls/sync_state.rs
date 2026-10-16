@@ -344,4 +344,8 @@ side_tables! {
     /// Persisted per-window wire call-volume counters (by verb and by actor) for one observation
     /// window. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
     RC42_WIRE_RECEIPT: SyncState b"wire:window:v2:" Named;
+    /// The serve health check past a threshold (OF-520): one check per crossing subject, and
+    /// how far the check has read each kind of kept crossing. Key: "check:" string (the
+    /// subject) | "cursor:" string (the crossing kind, and a limits row's key).
+    WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named;
 }

@@ -194,6 +194,8 @@ pub(super) async fn serve_with_config(
     let mut workers = sync_server.spawn_slot_workers();
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
+    // Crossed thresholds ask the ladder whether everything is okay (OF-520).
+    workers.push(crate::wire_health::spawn(&sync_server));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));

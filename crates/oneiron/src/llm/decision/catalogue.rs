@@ -124,6 +124,14 @@ pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Is everything okay past a wire, limit or scan threshold: a bot, or a valid burst
+/// (OF-520)? Keyed by the crossing.
+pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
+    name: "server.wire_health",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -137,4 +145,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     DESCRIPTION_FIT,
     AUTO_CHECK,
     CONFLICT_SETTLE,
+    WIRE_HEALTH,
 ];
