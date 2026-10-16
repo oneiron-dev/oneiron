@@ -29078,9 +29078,9 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 38,
+      "crate-vis": 37,
       "enum": 5,
-      "fn": 12,
+      "fn": 14,
       "re-export": 1,
       "struct": 9
      }
@@ -44099,7 +44099,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 85,
+      "const": 83,
       "re-export": 1,
       "type": 1
      }
