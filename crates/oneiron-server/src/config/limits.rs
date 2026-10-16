@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use oneiron::limit_ask::{EngineLimit, EngineLimits};
 use oneiron::origin::smart_http::ScanBounds;
 use serde::Deserialize;
 
@@ -121,6 +122,9 @@ pub struct LimitsConfig {
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
     pub feedback_inbox_bytes: u64,
+    /// The engine's rows (`oneiron::limit_ask`), which the vault opens with:
+    /// work past one is served whole, and the row asks.
+    pub engine: EngineLimits,
 }
 
 impl Default for LimitsConfig {
@@ -153,6 +157,7 @@ impl Default for LimitsConfig {
             live_documents: oneiron::live_rows::LiveRows::DEFAULT_LIVE_DOCUMENTS,
             retained_memory_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
+            engine: EngineLimits::default(),
         }
     }
 }
@@ -216,6 +221,7 @@ impl LimitsConfig {
             live_documents,
             retained_memory_bytes,
             feedback_inbox_bytes,
+            keyed_filter_json_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -246,6 +252,9 @@ impl LimitsConfig {
         set(&mut self.live_documents, live_documents);
         set(&mut self.retained_memory_bytes, retained_memory_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
+        if let Some(bound) = keyed_filter_json_bytes {
+            self.engine.set(EngineLimit::KeyedFilterJsonBytes, bound);
+        }
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -281,6 +290,11 @@ impl LimitsConfig {
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
+            }
+        }
+        for row in EngineLimit::ALL {
+            if self.engine.bound(row) == 0 {
+                anyhow::bail!("{} must be at least 1", row.key());
             }
         }
         for (key, value) in [
@@ -341,4 +355,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) live_documents: Option<usize>,
     pub(super) retained_memory_bytes: Option<u64>,
     pub(super) feedback_inbox_bytes: Option<u64>,
+    pub(super) keyed_filter_json_bytes: Option<u64>,
 }
