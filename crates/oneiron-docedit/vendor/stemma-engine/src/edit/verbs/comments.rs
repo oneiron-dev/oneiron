@@ -287,7 +287,10 @@ pub(crate) fn apply_create(
             match span_plan_at(&para.segments, &map, start_k, end_k) {
                 Some(plan) => splice_markers(&mut para.segments, plan, &comment_id),
                 None => {
-                    let cross = cross_plan(&para.segments, &map, start_k, end_k);
+                    let cross = CrossPlan {
+                        start_at_copy: true,
+                        ..cross_plan(&para.segments, &map, start_k, end_k)
+                    };
                     apply_cross_segment_markers(&mut para.segments, cross, &comment_id);
                 }
             }
@@ -1057,6 +1060,10 @@ enum Placement {
 struct CrossPlan {
     start: Placement,
     end: Placement,
+    /// Open a `Split` start on the text node holding the copy's first char,
+    /// past any non-text inline (a break, a bookmark) before it. A chosen
+    /// `occurrence` sets it; the default keeps its old placement.
+    start_at_copy: bool,
 }
 
 /// True when a segment's text is part of the VISIBLE anchor space (present in
@@ -1237,7 +1244,11 @@ fn cross_plan(
         _ => Placement::AfterSeg { seg_idx: end_seg },
     };
 
-    CrossPlan { start, end }
+    CrossPlan {
+        start,
+        end,
+        start_at_copy: false,
+    }
 }
 
 /// A zero-width Normal decoration segment carrying just marker inlines.
@@ -1284,7 +1295,7 @@ fn apply_cross_segment_markers(
         let s_off = start_split.and_then(|(si, off)| (si == i).then_some(off));
         let e_off = end_split.and_then(|(si, off)| (si == i).then_some(off));
         if s_off.is_some() || e_off.is_some() {
-            splice_markers_in_segment(&mut seg, s_off, e_off, comment_id);
+            splice_markers_in_segment(&mut seg, s_off, e_off, plan.start_at_copy, comment_id);
         }
         out.push(seg);
         if end_after == Some(i) {
@@ -1305,12 +1316,13 @@ fn apply_cross_segment_markers(
 /// the range with `commentRangeStart`; `end_off` closes it with
 /// `commentRangeEnd` + `commentReference`) and splice the markers in. Offsets
 /// count Text chars only; non-text inlines pass through unchanged. A boundary
-/// exactly at a text-node edge attaches to the adjacent node (position is
-/// identical either way).
+/// exactly at a text-node edge attaches to the earlier node, except that
+/// `start_at_copy` opens a start on the next one, past any non-text between.
 fn splice_markers_in_segment(
     seg: &mut TrackedSegment,
     start_off: Option<usize>,
     end_off: Option<usize>,
+    start_at_copy: bool,
     comment_id: &str,
 ) {
     // Cut list sorted by offset; at an equal offset the start marker precedes the
@@ -1353,7 +1365,10 @@ fn splice_markers_in_segment(
         let mut cursor = 0usize; // local chars emitted from this node
         while ci < cuts.len() {
             let (cut_off, kind) = cuts[ci];
-            if cut_off < node_start || cut_off > node_end {
+            if cut_off < node_start
+                || cut_off > node_end
+                || (start_at_copy && kind == 0 && cut_off == node_end)
+            {
                 break;
             }
             let local = cut_off - node_start;

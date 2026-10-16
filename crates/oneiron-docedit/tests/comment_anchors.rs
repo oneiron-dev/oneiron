@@ -336,6 +336,15 @@ fn a_quote_that_also_matches_across_a_line_break_counts_that_copy() {
     )]);
     let (output, _) = comment_copy(&input, "xy", Some(2)).unwrap();
     assert_eq!(bracketed(&output), ["xy \n[xy]"]);
+    // So does one that starts right after a break and runs across a later one
+    // (Bugbot on #1519: that copy still opened before the first break).
+    let input = docx_xml(&[concat!(
+        r#"<w:r><w:t xml:space="preserve">xy </w:t></w:r><w:r><w:br/></w:r>"#,
+        r#"<w:r><w:t>x</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>y</w:t></w:r>"#,
+    )]);
+    let (output, notes) = comment_copy(&input, "xy", Some(2)).unwrap();
+    assert_eq!(bracketed(&output), ["xy \n[x\ny]"]);
+    assert_eq!(copy_note(&notes), (2, Some(2)));
 }
 
 #[test]
