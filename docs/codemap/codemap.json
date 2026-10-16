@@ -3764,7 +3764,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SecretScanMode"
@@ -3772,7 +3772,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1
      }
     },
@@ -4506,7 +4506,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -14416,7 +14416,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 40,
       "enum": 1,
       "type": 1
      }
@@ -14436,7 +14436,7 @@
      "purpose": "Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 8,
       "struct": 4,
@@ -43071,7 +43071,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 43,
+   "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2592,
    "test_files": 879
