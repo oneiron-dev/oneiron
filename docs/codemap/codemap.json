@@ -2446,7 +2446,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 24,
       "struct": 1
      }
@@ -38536,13 +38536,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/local_replica.rs",
+     "purpose": "Local-only removal of one canonical window's replica (OF-534 demotion)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 1,
       "re-export": 13
      }
@@ -40313,7 +40323,7 @@
      "path": "src/sync/queue/scrub.rs",
      "purpose": "Carrier scrubs plus test injection hook",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -47420,7 +47430,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47632,7 +47642,7 @@
    },
    "over_bar": 79,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2870,
+   "source_files": 2871,
    "test_files": 903
   },
   "oneiron-android": {
