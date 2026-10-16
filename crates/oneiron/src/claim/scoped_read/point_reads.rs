@@ -340,10 +340,7 @@ impl ScopedRead<'_> {
                         | crate::registry::ENTITY_TYPE_SUMMARY
                 ))
             && !filter.deny_all
-            && filter
-                .entity_types
-                .as_ref()
-                .is_none_or(|types| types.contains(&hydrated.entity_type))
+            && filter.read_scope().bands.contains(&hydrated.entity_type)
             // Only authority covering every possible old position may reveal
             // deletion metadata, never a narrow grant.
             && self.credential_allows_id(&hydrated.id)
