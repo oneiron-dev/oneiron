@@ -3,7 +3,9 @@
 //! `/backlinks` cost nothing until walked. Reads go through the owner's
 //! scoped read, so owner-excluded scopes are absent; every listing and
 //! search is bounded and pages by cursor, so no call dumps the vault. Nothing
-//! here writes.
+//! here writes vault content: with the owner's diagnostics capture on
+//! (`retrieval_telemetry_capture`), a command leaves one retrieval-telemetry
+//! row, as a search does.
 
 use oneiron::Vault;
 use oneiron::claim::ScopedReadActorKey;

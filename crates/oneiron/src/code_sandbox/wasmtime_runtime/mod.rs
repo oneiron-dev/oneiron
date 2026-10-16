@@ -136,7 +136,11 @@ impl WasmtimeComponentRuntime {
             .ok_or(failure("invalid component deadline"))?;
         let mut bridge = Bridge {
             host,
-            adapter: self.adapter.as_deref_mut(),
+            adapter: if step.boundary.links_host_services() {
+                self.adapter.as_deref_mut()
+            } else {
+                None
+            },
             determinism: step.determinism,
             step_seq: step.seq,
             random_counter: 0,

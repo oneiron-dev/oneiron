@@ -204,6 +204,31 @@ pub(super) struct PendingEdgeOp {
     op: BatchOp,
 }
 
+/// Applies one ChildOf attempt inside a savepoint. LWW resolution stages the
+/// stored loser's delete before later gates (the overlay taint guard) judge the
+/// winner, so a rejected attempt must drop what it staged (F25 H211).
+fn apply_child_of_attempt(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+) -> Result<()> {
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    batch::apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut savepoint,
+        ops,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        false,
+    )?;
+    savepoint.commit()?;
+    Ok(())
+}
+
 /// Applies materialized edge ops. A write-gate rejection quarantines the
 /// rejected op (every op of a rejected ChildOf component) and continues;
 /// a LOCAL failure propagates fail-closed.
@@ -315,41 +340,15 @@ pub(super) fn apply_materialized_edge_ops(
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
         let ops: Vec<BatchOp> = component_ops.iter().map(|entry| entry.op.clone()).collect();
-        let apply_result = batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            ops,
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        );
-        match apply_result {
+        match apply_child_of_attempt(vault, wtxn, ops) {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(_) => {
-                // The component was rejected as a unit (a remote ChildOf cycle
-                // or single-parent violation — both up-front validation gates,
-                // nothing staged). Re-apply per-op in the same deterministic
-                // order so only the ops that individually fail a gate are
-                // quarantined — never falsely recording siblings that are valid
-                // on their own.
+                // The component was rejected as a unit and its savepoint
+                // dropped. Re-apply per-op in the same deterministic order so
+                // only the ops that individually fail a gate are quarantined —
+                // never falsely recording siblings that are valid on their own.
                 for pending in component_ops {
-                    let apply_result = batch::apply_ops(
-                        &vault.store,
-                        &vault.config,
-                        &vault.analyzer,
-                        wtxn,
-                        vec![pending.op],
-                        vault
-                            .text_index_trusted
-                            .load(std::sync::atomic::Ordering::Acquire),
-                        false,
-                        false,
-                    );
-                    match apply_result {
+                    match apply_child_of_attempt(vault, wtxn, vec![pending.op]) {
                         Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
                         Err(e) => {
                             quarantine_edge_apply_failure(

@@ -22,6 +22,8 @@ mod agent_verb_regressions;
 mod code_check;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction_host;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod host_services;
 mod memory_rows;
 mod output_decay;
 mod speech_identity_regressions;
