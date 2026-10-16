@@ -29,6 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/ladder.rs` | src | m | 4 crate-vis | — | One page through the ladder (ARCH-0077, "Layout selection"): a layout chosen by capability; then a… |
 | `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 11 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
+| `src/docx_body.rs` | src | s | 4 struct · 4 enum · 2 fn | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxParagraph, DocxRevision | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `src/edit/check.rs` | src | m | 15 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/media.rs` | src | s | 5 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
 | `src/edit/mod.rs` | src | s | 5 struct · 3 enum · 1 fn · 1 mod · 2 re-export · 1 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, Target, ValueEdit, Xfrm | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
@@ -56,7 +57,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
-| `src/lib.rs` | src | s | 1 enum · 8 fn · 10 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/lib.rs` | src | s | 1 enum · 8 fn · 11 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 2 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |
