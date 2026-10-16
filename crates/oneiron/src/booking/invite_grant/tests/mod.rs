@@ -832,6 +832,84 @@ fn a_proposed_booker_does_not_widen_the_page_grant() {
     );
 }
 
+/// A booking claim awaiting its owner's critical confirm (F14 H244-narrowed,
+/// the polarity rule over H279): a held Cancelled still unbinds the booking,
+/// and a held booker binds nobody, with no older booker standing in for it.
+#[test]
+fn a_held_cancellation_unbinds_and_a_held_booker_binds_nobody() {
+    let fixture = fixture();
+    let vault = &fixture.vault;
+    let held_claim = |id: EntityId, booking: EntityId, predicate: &str, value: Value, seed: u8| {
+        let mut body = ClaimBody::new(
+            predicate,
+            ClaimSubject::Entity(booking),
+            value,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.source = Some(ClaimSource::Observed);
+        body.valid_from = Some(NOW);
+        vault
+            .put_claim(
+                &id,
+                &body,
+                TimeRange {
+                    start: NOW,
+                    end: NOW,
+                },
+                NOW,
+            )
+            .expect("put the held claim");
+        crate::test_util::hold_claim_for_critical_confirm(vault, id, seed);
+    };
+    held_claim(
+        entity(0xF1),
+        fixture.booking,
+        BOOKING_STATUS_PREDICATE,
+        claim_value(&BookingStatusValue {
+            status: BookingStatus::Cancelled,
+            recorded_at: NOW,
+        }),
+        0x5C,
+    );
+    assert!(
+        !booking_page_grant_covers_recipient(vault, &fixture.page, RECIPIENT).expect("covers"),
+        "FAILBEFORE H244 narrowed: a held cancellation left the booking's invites covered"
+    );
+
+    let page = entity(0x92);
+    let booking = event(vault, 0x93);
+    put_booking_claims(
+        vault,
+        0x94,
+        booking,
+        page,
+        person(vault, 0x98, RECIPIENT.as_bytes()),
+        BookingStatus::Confirmed,
+    );
+    assert!(booking_page_grant_covers_recipient(vault, &page, RECIPIENT).expect("covers"));
+    let stranger = person(vault, 0x99, STRANGER.as_bytes());
+    held_claim(
+        entity(0xF2),
+        booking,
+        BOOKING_BOOKER_CONTACT_PREDICATE,
+        claim_value(&BookingBookerContactValue {
+            contact_ref: stranger,
+        }),
+        0x5D,
+    );
+    assert!(
+        !booking_page_grant_covers_recipient(vault, &page, STRANGER).expect("covers"),
+        "a held booker bound"
+    );
+    assert!(
+        !booking_page_grant_covers_recipient(vault, &page, RECIPIENT).expect("covers"),
+        "FAILBEFORE H244 narrowed: the older booker stood in for a held one"
+    );
+}
+
 // ── dispatch ────────────────────────────────────────────────────────
 
 #[test]
