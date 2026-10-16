@@ -40,7 +40,8 @@ use crate::campaign::claims::{
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_CAMPAIGN_MEMBER,
     PREDICATE_COMM_BOUNCE, PREDICATE_COMM_DO_NOT_CONTACT, encode_campaign_member_value,
     encode_comm_bounce_value, encode_do_not_contact_value, identical_live_head_in_txn,
-    live_campaign_member_head_in_txn, normalize_campaign_pack_token,
+    live_campaign_member_head_in_txn, live_campaign_member_heads_in_txn,
+    normalize_campaign_pack_token,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -98,8 +99,9 @@ pub struct SuppressionReceipt {
     /// The `comm.do_not_contact` head. Always present — this is the claim the
     /// external-effect gate reads.
     pub do_not_contact_claim_ref: EntityId,
-    /// The replacement `campaign.member` head, when a membership matched.
-    pub member_claim_ref: Option<EntityId>,
+    /// The suppressed `campaign.member` heads, one per live head the campaign
+    /// had, in their own claim-id order; empty when none matched.
+    pub member_claim_refs: Vec<EntityId>,
 }
 
 /// Suppresses one person on one channel, atomically.
@@ -125,8 +127,9 @@ pub fn apply_suppression(
 ///
 /// [`SuppressionCause::HardBounce`] writes `comm.bounce` first; both causes
 /// write `comm.do_not_contact` and, when the input names a campaign, supersede
-/// that `campaign.member` head to `state = suppressed` while preserving its
-/// channel rows and any CA-01 derivation `{ source_query, evidence_hash, epoch }`.
+/// each live `campaign.member` head for it to `state = suppressed` while
+/// preserving its channel rows and any CA-01 derivation
+/// `{ source_query, evidence_hash, epoch }`.
 ///
 /// One transaction is the whole point. A suppression that commits its evidence
 /// and loses its enforcement claim is a send that goes out after the person
@@ -140,9 +143,8 @@ pub fn apply_suppression(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidClaimBody`] when a hard bounce names no sender, when the
-/// channel token is not storable, or when the person carries more than one live
-/// `campaign.member` head for the campaign. Claim-validation and storage errors
+/// [`Error::InvalidClaimBody`] when a hard bounce names no sender or when the
+/// channel token is not storable. Claim-validation and storage errors
 /// propagate.
 pub(crate) fn apply_suppression_in_txn(
     vault: &Vault,
@@ -170,14 +172,14 @@ pub(crate) fn apply_suppression_in_txn(
             scope: DO_NOT_CONTACT_SCOPE_ALL.to_owned(),
         }),
     )?;
-    let member_claim_ref = match input.campaign_ref {
+    let member_claim_refs = match input.campaign_ref {
         Some(campaign_ref) => suppress_membership_in_txn(vault, wtxn, input, campaign_ref)?,
-        None => None,
+        None => Vec::new(),
     };
     Ok(SuppressionReceipt {
         bounce_claim_ref,
         do_not_contact_claim_ref,
-        member_claim_ref,
+        member_claim_refs,
     })
 }
 
@@ -207,42 +209,50 @@ fn write_hard_bounce_in_txn(
     )
 }
 
-/// Supersedes the matching `campaign.member` head to `suppressed`.
+/// Supersedes every live `campaign.member` head for the campaign to
+/// `suppressed`.
 ///
-/// The replacement is built from the head it replaces, so the channel rows
+/// Each replacement is built from the head it replaces, so the channel rows
 /// (each with its consent basis and sticky sender) and any derivation survive
 /// the transition — suppression removes a person from a cohort, it does not
-/// erase how they got there or what authorized the contact.
+/// erase how they got there or what authorized the contact. Two live heads are
+/// a torn cohort, but a restriction need not pick between them: each is
+/// suppressed on its own, so the tear can never veto the do-not-contact claim
+/// this turn already wrote (F06 H195).
 fn suppress_membership_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     input: &SuppressionInput,
     campaign_ref: EntityId,
-) -> Result<Option<EntityId>> {
-    let Some((old_id, old_value)) =
-        live_campaign_member_head_in_txn(&vault.store, wtxn, input.person_ref, campaign_ref)?
-    else {
-        return Ok(None);
-    };
-    if old_value.state == CampaignMemberState::Suppressed {
-        return Ok(Some(old_id));
+) -> Result<Vec<EntityId>> {
+    let heads =
+        live_campaign_member_heads_in_txn(&vault.store, wtxn, input.person_ref, campaign_ref)?;
+    let mut suppressed_ids = Vec::with_capacity(heads.len());
+    for (old_id, old_value) in heads {
+        if old_value.state == CampaignMemberState::Suppressed {
+            suppressed_ids.push(old_id);
+            continue;
+        }
+        let suppressed = CampaignMemberValue {
+            state: CampaignMemberState::Suppressed,
+            ..old_value
+        };
+        suppressed_ids.push(replace_member_head_in_txn(
+            vault,
+            wtxn,
+            MemberHeadReplacement {
+                person_ref: input.person_ref,
+                value: &suppressed,
+                evidence_ref: input.evidence_ref,
+                occurred: input.occurred_at,
+                old_id,
+            },
+        )?);
     }
-    let suppressed = CampaignMemberValue {
-        state: CampaignMemberState::Suppressed,
-        ..old_value
-    };
-    let new_id = replace_member_head_in_txn(
-        vault,
-        wtxn,
-        MemberHeadReplacement {
-            person_ref: input.person_ref,
-            value: &suppressed,
-            evidence_ref: input.evidence_ref,
-            occurred: input.occurred_at,
-            old_id,
-        },
-    )?;
-    Ok(Some(new_id))
+    // Ordered by the heads' own ids, so a redelivery that reuses them returns
+    // the same receipt.
+    suppressed_ids.sort_unstable();
+    Ok(suppressed_ids)
 }
 
 /// One replacement of a live `campaign.member` head.

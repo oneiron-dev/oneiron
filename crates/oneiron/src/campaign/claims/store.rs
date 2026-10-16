@@ -216,14 +216,15 @@ pub(super) fn matching_do_not_contact_in_txn(
 /// The live `campaign.member` head on `person_ref` scoped to `campaign_ref`.
 ///
 /// The membership counterpart of [`other_live_crm_stage_heads_in_txn`], and the
-/// single door ONE-1776's suppression and sticky-sender writers read through:
-/// both must supersede exactly the head they read, in the same txn, or leave two
-/// live memberships behind.
+/// door ONE-1776's sticky-sender writer reads through: it must supersede
+/// exactly the head it read, in the same txn, or leave two live memberships
+/// behind.
 ///
 /// Two live heads for one `(person, campaign)` is a TORN cohort, not a merge
 /// problem — the two rows can disagree about state, channels, and derivation,
 /// and picking one would silently discard the other's provenance. It is rejected
-/// for the same reason `crm.stage` rejects a second head.
+/// for the same reason `crm.stage` rejects a second head. A restriction needs no
+/// pick: suppression reads every head ([`live_campaign_member_heads_in_txn`]).
 ///
 /// # Errors
 ///
@@ -235,7 +236,26 @@ pub(in crate::campaign) fn live_campaign_member_head_in_txn(
     person_ref: EntityId,
     campaign_ref: EntityId,
 ) -> Result<Option<(EntityId, CampaignMemberValue)>> {
-    let mut head = None;
+    let mut heads = live_campaign_member_heads_in_txn(store, txn, person_ref, campaign_ref)?;
+    if heads.len() > 1 {
+        return Err(invalid_claim("campaign.member has more than one live head"));
+    }
+    Ok(heads.pop())
+}
+
+/// Every live `campaign.member` head on `person_ref` scoped to `campaign_ref`,
+/// in claim-id order.
+///
+/// # Errors
+///
+/// Storage and decode errors propagate.
+pub(in crate::campaign) fn live_campaign_member_heads_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    person_ref: EntityId,
+    campaign_ref: EntityId,
+) -> Result<Vec<(EntityId, CampaignMemberValue)>> {
+    let mut heads = Vec::new();
     for id in subject_claim_ids_in_txn(store, txn, &person_ref)? {
         let Some(body) = claim_body_in_txn(store, txn, &id)? else {
             continue;
@@ -249,12 +269,10 @@ pub(in crate::campaign) fn live_campaign_member_head_in_txn(
         if value.campaign != campaign_ref {
             continue;
         }
-        if head.is_some() {
-            return Err(invalid_claim("campaign.member has more than one live head"));
-        }
-        head = Some((id, value));
+        heads.push((id, value));
     }
-    Ok(head)
+    heads.sort_unstable_by_key(|(id, _)| *id);
+    Ok(heads)
 }
 
 /// The live CRM-pack claim head on `subject` carrying exactly `predicate` and
