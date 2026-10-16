@@ -92,9 +92,7 @@ async fn clear_schedule(
     let cleared = blocking(move || -> OwnerResult<ScheduleCleared> {
         let reader = request.reader().map_err(memory_invalid)?;
         Ok(ScheduleCleared {
-            cleared: server
-                .vault()
-                .clear_weave_digest_schedule(&owner, reader)?,
+            cleared: server.vault().clear_weave_digest_schedule(&owner, reader)?,
         })
     })
     .await?;

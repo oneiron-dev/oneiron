@@ -668,12 +668,10 @@ impl Vault {
     /// This install as a destination: its enrolled machine, or unknown
     /// before it has one. Never another machine.
     pub(crate) fn local_destination_in(&self, txn: &heed::RoTxn<'_>) -> Result<Destination> {
-        Ok(
-            match crate::identity::read_machine_id_in_txn(self, txn)? {
-                Some(machine) => Destination::Machine(machine),
-                None => Destination::Unknown,
-            },
-        )
+        Ok(match crate::identity::read_machine_id_in_txn(self, txn)? {
+            Some(machine) => Destination::Machine(machine),
+            None => Destination::Unknown,
+        })
     }
 
     /// The newest shelved packet of `window`, the one a relay answer for

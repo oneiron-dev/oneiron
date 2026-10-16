@@ -38,6 +38,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
             ),
             (
+                "vault.people.list",
+                crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
+            ),
+            (
+                "vault.people.get",
+                crate::code_run::vault_read::request_schema::<crate::memory::PersonRequest>(),
+            ),
+            (
+                "self.message",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessagePersonRequest>(
+                ),
+            ),
+            (
+                "self.grants.ask",
+                crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
+            ),
+            (
                 "self.memory.diary.query",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::DiaryQueryRequest,
@@ -124,6 +141,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
+            ),
+            (
+                "vault.packs.setup.prepare",
+                crate::code_run::vault_read::request_schema::<PackSetupRequest>(),
+            ),
+            (
+                "vault.packs.setup.get",
+                crate::code_run::vault_read::request_schema::<PackSetupRequest>(),
+            ),
+            (
+                "vault.packs.setup.answer",
+                crate::code_run::vault_read::request_schema::<PackSetupAnswerRequest>(),
+            ),
+            (
+                "vault.packs.setup.verify",
+                crate::code_run::vault_read::request_schema::<PackSetupVerifyRequest>(),
             ),
             (
                 "vault.authority.audit",
@@ -355,6 +388,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.rooms.messages",
                 crate::code_run::vault_read::request_schema::<RoomRequest>(),
+            ),
+            (
+                "vault.rooms.participants",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ParticipantsRequest,
+                >(),
             ),
             (
                 "vault.rooms.render",
@@ -620,6 +659,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.refs.links",
+                crate::code_run::vault_read::request_schema::<crate::lens::RecordLinksRequest>(),
+            ),
+            (
                 "vault.search.bm25",
                 crate::code_run::vault_read::request_schema::<QueryBm25Request>(),
             ),
@@ -766,6 +809,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.memory.diary.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.people.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.people.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.message" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.grants.ask" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -930,6 +1001,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.setup.verify" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1222,6 +1321,17 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/after")?.clone(),
             );
             &["room_ref"]
+        }
+        "vault.rooms.participants" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
         }
         "vault.rooms.render" => {
             properties.insert(
@@ -1584,6 +1694,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.refs.links" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.search.bm25" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1698,6 +1815,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary.review" => {
             let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
         }
+        "vault.people.list" => {
+            let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
+        }
+        "vault.people.get" => {
+            let _input: crate::memory::PersonRequest = decode(value.clone())?;
+        }
+        "self.message" => {
+            let _input: crate::memory::MessagePersonRequest = decode(value.clone())?;
+        }
+        "self.grants.ask" => {
+            let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
+        }
         "self.memory.diary.query" => {
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
@@ -1776,6 +1905,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
+        }
+        "vault.packs.setup.prepare" => {
+            let _input: PackSetupRequest = decode(value.clone())?;
+        }
+        "vault.packs.setup.get" => {
+            let _input: PackSetupRequest = decode(value.clone())?;
+        }
+        "vault.packs.setup.answer" => {
+            let _input: PackSetupAnswerRequest = decode(value.clone())?;
+        }
+        "vault.packs.setup.verify" => {
+            let _input: PackSetupVerifyRequest = decode(value.clone())?;
         }
         "vault.authority.audit" => {
             let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
@@ -1906,6 +2047,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.rooms.messages" => {
             let _input: RoomRequest = decode(value.clone())?;
+        }
+        "vault.rooms.participants" => {
+            let _input: crate::workspace_roster::ParticipantsRequest = decode(value.clone())?;
         }
         "vault.rooms.render" => {
             let _input: RoomRefRequest = decode(value.clone())?;
@@ -2107,6 +2251,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.refs.resolve" => {
             let _input: crate::lens::ResolveRecordRefRequest = decode(value.clone())?;
         }
+        "vault.refs.links" => {
+            let _input: crate::lens::RecordLinksRequest = decode(value.clone())?;
+        }
         "vault.search.bm25" => {
             let input: QueryBm25Request = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
@@ -2163,11 +2310,21 @@ pub fn invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
-    match verb {
+    if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) {
+        return Err(
+            wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))
+        );
+    }
+    // The row's one verb-hook boundary (ARCH-0080 §3).
+    crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
         "report" => encode(report(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
+        "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
+        "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
+        "self.message" => encode(self_message(memory, decode(value)?)?),
+        "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -2189,6 +2346,10 @@ pub fn invoke(
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
+        "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
+        "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
+        "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
         "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
@@ -2250,6 +2411,7 @@ pub fn invoke(
         "tasks.outcomes" => encode(tasks_outcomes(memory, decode(value)?)?),
         "vault.rooms.list" => encode(vault_rooms_list(memory, decode(value)?)?),
         "vault.rooms.messages" => encode(vault_rooms_messages(memory, decode(value)?)?),
+        "vault.rooms.participants" => encode(vault_rooms_participants(memory, decode(value)?)?),
         "vault.rooms.render" => encode(vault_rooms_render(memory, decode(value)?)?),
         "vault.rooms.find" => encode(vault_rooms_find(memory, decode(value)?)?),
         "vault.rooms.get" => encode(vault_rooms_get(memory, decode(value)?)?),
@@ -2317,6 +2479,7 @@ pub fn invoke(
         "vault.hydrate" => encode(vault_hydrate(memory, decode(value)?)?),
         "vault.get" => encode(vault_get(memory, decode(value)?)?),
         "vault.refs.resolve" => encode(vault_refs_resolve(memory, decode(value)?)?),
+        "vault.refs.links" => encode(vault_refs_links(memory, decode(value)?)?),
         "vault.search.bm25" => encode(vault_search_bm25(memory, decode(value)?)?),
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
@@ -2331,11 +2494,8 @@ pub fn invoke(
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
-        _ => {
-            Err(wrong_root(verb)
-                .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
-        }
-    }
+        _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
+    })
 }
 pub fn invoke_browser(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -2449,6 +2609,12 @@ pub fn self_memory_diary(
     memory: &Memory<'_>,
     input: DiaryEntryRequest,
 ) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "self.memory.diary",
+        &input,
+        &["/content"],
+    )?;
     crate::task_verb::sdk::self_memory_diary_write(memory, input)
 }
 pub fn self_memory_diary_reads(
@@ -2462,6 +2628,30 @@ pub fn self_memory_diary_review(
     input: crate::memory::DiaryReviewAnswer,
 ) -> MemoryResult<crate::memory::DiaryReadRequest> {
     memory.answer_diary_read(&input)
+}
+pub fn vault_people_list(
+    memory: &Memory<'_>,
+    input: crate::memory::PeopleListRequest,
+) -> MemoryResult<crate::memory::PeoplePage> {
+    memory.people_list(&input)
+}
+pub fn vault_people_get(
+    memory: &Memory<'_>,
+    input: crate::memory::PersonRequest,
+) -> MemoryResult<crate::context_board::PersonRow> {
+    memory.people_get(&input)
+}
+pub fn self_message(
+    memory: &Memory<'_>,
+    input: crate::memory::MessagePersonRequest,
+) -> MemoryResult<crate::memory::MessagePersonReceipt> {
+    memory.message_person(&input)
+}
+pub fn self_grants_ask(
+    memory: &Memory<'_>,
+    input: crate::memory::GrantAskRequest,
+) -> MemoryResult<crate::memory::GrantAskReceipt> {
+    memory.grants_ask(&input)
 }
 pub fn self_memory_diary_query(
     memory: &Memory<'_>,
@@ -2514,6 +2704,12 @@ pub fn tasks_create(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
 ) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "tasks.create",
+        &input,
+        &["/label", "/spec"],
+    )?;
     memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(
         crate::msgpack_value_from_json(&input.spec)?,
         input.label,
@@ -2532,6 +2728,12 @@ pub fn vault_witness(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     crate::memory::caps::check_witness_turn(&input)?;
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.witness",
+        &input,
+        &["/messages/*[author=companion]/content"],
+    )?;
     memory.witness(&input)
 }
 pub fn vault_claims_upsert(
@@ -2642,6 +2844,30 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_packs_setup_prepare(
+    memory: &Memory<'_>,
+    input: PackSetupRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)
+}
+pub fn vault_packs_setup_get(
+    memory: &Memory<'_>,
+    input: PackSetupRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::pack_setup_embedded(memory, input)
+}
+pub fn vault_packs_setup_answer(
+    memory: &Memory<'_>,
+    input: PackSetupAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)
+}
+pub fn vault_packs_setup_verify(
+    memory: &Memory<'_>,
+    input: PackSetupVerifyRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackSetupReceipt> {
+    crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)
 }
 pub fn vault_authority_audit(
     memory: &Memory<'_>,
@@ -3011,6 +3237,12 @@ pub fn vault_rooms_messages(
         input.limit.unwrap_or(256),
     )
 }
+pub fn vault_rooms_participants(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ParticipantsRequest,
+) -> MemoryResult<crate::workspace_roster::ParticipantsPage> {
+    memory.rooms_participants(&input)
+}
 pub fn vault_rooms_render(memory: &Memory<'_>, input: RoomRefRequest) -> MemoryResult<Vec<String>> {
     memory.rooms_render_threads(
         crate::EntityId::from_hex(&input.room_ref)?,
@@ -3069,6 +3301,12 @@ pub fn vault_rooms_speak(
     memory: &Memory<'_>,
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.rooms.speak",
+        &input,
+        &["/messages/*[author=companion]/content"],
+    )?;
     memory.rooms_speak(&input)
 }
 pub fn vault_projects_propose(
@@ -3468,6 +3706,12 @@ pub fn vault_refs_resolve(
     input: crate::lens::ResolveRecordRefRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>> {
     memory.resolve_record_ref(&input)
+}
+pub fn vault_refs_links(
+    memory: &Memory<'_>,
+    input: crate::lens::RecordLinksRequest,
+) -> MemoryResult<crate::lens::RecordLinks> {
+    memory.record_links(&input)
 }
 pub fn vault_search_bm25(
     memory: &Memory<'_>,

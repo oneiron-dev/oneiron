@@ -398,11 +398,22 @@ pub(super) async fn board_people(
 ) -> Result<(oneiron::context_board::People, BTreeSet<EntityId>), ApiError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
-    let people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        });
+    let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })
     .map_err(|error| core_engine_error("board people failed", error))?;
+    // Each `about` is the stored line of the highest band the reader reads.
+    let applied = read
+        .read_receipt(None, 0)
+        .map_err(|error| core_engine_error("board people failed", error))?
+        .applied;
+    let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
+    people
+        .set_about(&mut |person| server.vault.person_about(person, ceiling))
+        .map_err(|error| core_engine_error("board people failed", error))?;
     let run_key = auth
         .principal_ref()
         .filter(|_| auth.actor_class() == Some("agent"))

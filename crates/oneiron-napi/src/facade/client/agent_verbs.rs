@@ -35,6 +35,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_people_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.people.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_people_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.people.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_message(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.message", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_grants_ask(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.grants.ask", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_memory_diary_query(
         &self,
         input: serde_json::Value,
@@ -157,6 +181,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -183,6 +208,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -203,6 +229,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -223,6 +250,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -243,6 +271,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -263,6 +292,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -287,6 +317,42 @@ impl NativeClient {
     pub fn vault_packs_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.packs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_setup_prepare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.prepare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_setup_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_setup_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_setup_verify(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.setup.verify", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -493,6 +559,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -513,6 +580,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -533,6 +601,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -553,6 +622,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -573,6 +643,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -593,6 +664,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -613,6 +685,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -633,6 +706,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -653,6 +727,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -673,6 +748,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -693,6 +769,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -713,6 +790,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -733,6 +811,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -750,6 +829,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -788,6 +868,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.messages", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_participants(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.participants", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -1136,6 +1225,12 @@ impl NativeClient {
     pub fn vault_refs_resolve(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.refs.resolve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_refs_links(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.refs.links", input)
             .map_err(facade_error)
     }
     #[napi]
