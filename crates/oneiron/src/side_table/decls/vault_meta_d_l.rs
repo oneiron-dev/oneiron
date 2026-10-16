@@ -529,6 +529,8 @@ side_tables! {
     LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson;
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
+    /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
+    LLM_ENCODER_EXPORT: VaultMeta b"llm:encoder_export:v1" Named;
     /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
     LLM_EXTRACTION_TEACHER_PROBE: VaultMeta b"llm:extraction_teacher_probe:v1" LegacyJson;
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;

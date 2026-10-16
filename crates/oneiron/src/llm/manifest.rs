@@ -18,7 +18,9 @@ const RESIDENT_ROUTES: SideTable<(), BTreeMap<ModelSlot, ModelLocality>, LegacyJ
 /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
 const TEACHER_APPROVAL: SideTable<(), TeacherProbeApproval, LegacyJson> =
     SideTable::new(&side_table::LLM_EXTRACTION_TEACHER_PROBE);
+mod encoder_export;
 mod teacher_probe;
+pub use encoder_export::{CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork};
 pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -260,7 +262,7 @@ impl Vault {
     /// Update a manifest without changing its approved extraction-teacher binding.
     /// Initial teacher pins, and any teacher change, require a passing probe receipt.
     pub fn set_model_manifest(&self, manifest: &ModelManifest) -> Result<()> {
-        self.write_model_manifest(manifest, None)
+        self.write_model_manifest(manifest, None, None)
     }
 
     /// Publish the bench-approved teacher binding and its receipt in one vault transaction.
@@ -269,13 +271,14 @@ impl Vault {
         manifest: &ModelManifest,
         approval: &TeacherProbeApproval,
     ) -> Result<()> {
-        self.write_model_manifest(manifest, Some(approval))
+        self.write_model_manifest(manifest, Some(approval), None)
     }
 
     fn write_model_manifest(
         &self,
         manifest: &ModelManifest,
         new_approval: Option<&TeacherProbeApproval>,
+        new_encoder_export: Option<&EncoderExport>,
     ) -> Result<()> {
         manifest.validate()?;
         let mut txn = self.store.env.write_txn()?;
@@ -285,6 +288,19 @@ impl Vault {
             .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
         let policy = self.teacher_probe_policy_in_txn(&txn, approval.holder_ref.as_deref())?;
         approval.verify(manifest, &policy)?;
+        if let Some(export) = new_encoder_export {
+            if &export.request.teacher_approval != approval {
+                return Err(invalid("encoder export requires the pinned teacher approval"));
+            }
+            export.verify(manifest, &policy)?;
+            encoder_export::ENCODER_EXPORT.put(&self.store, &mut txn, &(), export)?;
+        } else if let Some(export) = encoder_export::ENCODER_EXPORT.get(&self.store, &txn, &())? {
+            if &export.request.teacher_approval != approval
+                || export.verify(manifest, &policy).is_err()
+            {
+                encoder_export::ENCODER_EXPORT.delete(&self.store, &mut txn, &())?;
+            }
+        }
         if let Some(approval) = new_approval {
             TEACHER_APPROVAL.put(&self.store, &mut txn, &(), approval)?;
         }
