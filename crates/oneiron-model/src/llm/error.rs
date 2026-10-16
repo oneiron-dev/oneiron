@@ -43,6 +43,27 @@ pub enum FatalLlmError {
     EmptyResponse,
     #[error("unsupported capability: {0}")]
     Unsupported(UnsupportedCapability),
+    #[error("label read failed: {0}")]
+    LabelRead(LabelReadFailure),
+}
+
+/// Why a decision read's answer cannot be read as its label probabilities. Each is checked on
+/// every call, and a read that fails one is refused, never taken as p = 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
+pub enum LabelReadFailure {
+    /// The read generated text: it scored nothing.
+    #[error("emitted text")]
+    EmittedText,
+    /// The read did not stop at the forced end of generation.
+    #[error("not an end-of-generation stop")]
+    NotEosStop,
+    /// A label's probability is absent from the read.
+    #[error("missing labels")]
+    MissingLabels,
+    /// The answer is not the read's shape: no single probability row, a value that is not a
+    /// finite number, or a body past its bound.
+    #[error("malformed")]
+    Malformed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]

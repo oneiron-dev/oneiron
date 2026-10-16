@@ -88,10 +88,12 @@ pub enum LimitRow {
     EmbedderAnswerBytes,
     /// Windows and documents one sync socket keeps state for.
     WindowsPerConnection,
+    /// Decision reads the owner's probe route holds at once.
+    DecisionReads,
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -104,6 +106,7 @@ impl LimitRow {
         Self::EmbedderBodyBytes,
         Self::EmbedderAnswerBytes,
         Self::WindowsPerConnection,
+        Self::DecisionReads,
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
@@ -122,6 +125,7 @@ impl LimitRow {
             Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
             Self::EmbedderAnswerBytes => "limits.embedder_answer_bytes",
             Self::WindowsPerConnection => "max_windows_per_connection",
+            Self::DecisionReads => "limits.decision_reads",
         }
     }
 }

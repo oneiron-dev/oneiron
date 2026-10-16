@@ -286,6 +286,14 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "edit ASR or TTS route"
 - safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
 
+#### decision-read-probe - `POST /v1/llm/decision_read`
+
+- when-to-use: Probe the house model's decision read: the label probabilities, P(more thinking) and P(ask a person) it gives one question over state the caller built, from one forward pass. A probe only; every typed decision still goes through decide() in process.
+- trigger phrases:
+  - "what does the house model read for this question?"
+  - "probe the decision read"
+- safety: Writes and decides nothing; requires an owner-grade bearer. Each probe is a paid model call on the raw inference meter; past `limits.decision_reads` it waits its turn.
+
 #### mcp-gateway - `POST /mcp`
 
 - when-to-use: Call Oneiron MCP JSON-RPC methods when a connector needs the executable MCP tool layer for initialized tools, tool listings, or tool calls.
@@ -583,6 +591,18 @@ Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core 
 `GET` returns `{ "purposes": { ... }, "voice": { ... } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`). `voice_precedence` is `nested_narrowing` (shipped default) or `vault_only`; `extraction_max_locality` is the owner-authored widest extraction destination (shipped `on_device`).
 
 `PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
+
+### Decision Read Probe
+
+Method: `POST` on the Tier-1 decision-read route.
+
+Authentication: `Authorization: Bearer <owner-grade credential>`; scoped credentials get `403 owner_required`.
+
+Body (JSON, at most 256 KiB): `{ "question": "...", "options": ["...", "..."], "state": { ... } }`. `options` (2 to 64 distinct labels, in order) is absent for a yes/no question. `state` is an object of at most 65,536 bytes that the caller built; the probe reads nothing from the vault. The model, its endpoint, the read recipe and the paired and person questions are the host's configuration (`[models.decision_read]`); a request cannot choose them.
+
+`200` returns `{ "model", "revision", "primary": [...], "paired_yes", "person_yes", "usage" }`. `primary` holds the options' probabilities in order (yes, then no, for a yes/no question), `paired_yes` is P(more thinking), and `person_yes`, present when the recipe asks the person question, is P(ask a person). `revision` names the served weights and the recipe.
+
+Errors: `400 invalid_request` (a bad question, options or state); `402 budget_denied`; `502 label_read`, whose `error.llm` names the failed check (`EmittedText`, `NotEosStop`, `MissingLabels` or `Malformed`; a failed read is never a probability of zero); `503 decision_read_unavailable` (no `[models.decision_read]`, or its recipe has no `[probe]`); `503 decision_read_waited_out` (the probe waited past `limits.queue_wait_timeout_ms` for its turn, and nothing was started).
 
 ### OpenAPI Schema
 

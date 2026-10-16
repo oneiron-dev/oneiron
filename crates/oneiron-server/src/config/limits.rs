@@ -61,6 +61,11 @@ pub struct LimitsConfig {
     /// keeps it until it is delivered. Past it, requests queue. A memory
     /// bound sized for the endpoint's machine, not a count.
     pub embedder_answer_bytes: u64,
+    /// Decision reads `POST /v1/llm/decision_read` holds at once, from the
+    /// owner check until the model's read ends. Past it, reads queue. The
+    /// model server reads one at a time whatever this is; the rest wait their
+    /// turn.
+    pub decision_reads: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
     /// when it declares none. Past it, an upload still lands and the row asks.
@@ -98,6 +103,7 @@ impl Default for LimitsConfig {
             lfs_memory_bytes: memory_floor(),
             embedder_requests: 2_048,
             embedder_answer_bytes: 256 * 1024 * 1024,
+            decision_reads: 2_048,
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
@@ -154,6 +160,7 @@ impl LimitsConfig {
             lfs_memory_bytes,
             embedder_requests,
             embedder_answer_bytes,
+            decision_reads,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             git_scan_blob_bytes,
@@ -173,6 +180,7 @@ impl LimitsConfig {
         set(&mut self.lfs_memory_bytes, lfs_memory_bytes);
         set(&mut self.embedder_requests, embedder_requests);
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
+        set(&mut self.decision_reads, decision_reads);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.git_scan_blob_bytes, git_scan_blob_bytes);
@@ -201,6 +209,7 @@ impl LimitsConfig {
             ("lfs_memory_bytes", self.lfs_memory_bytes),
             ("embedder_requests", self.embedder_requests as u64),
             ("embedder_answer_bytes", self.embedder_answer_bytes),
+            ("decision_reads", self.decision_reads as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
@@ -255,6 +264,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) lfs_memory_bytes: Option<u64>,
     pub(super) embedder_requests: Option<usize>,
     pub(super) embedder_answer_bytes: Option<u64>,
+    pub(super) decision_reads: Option<usize>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
     pub(super) git_scan_blob_bytes: Option<u64>,

@@ -114,6 +114,12 @@ pub struct SyncServer {
     pub(crate) tagger: Option<TaggerSlot>,
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
+    /// The house model's decision read the owner probes at
+    /// `/v1/llm/decision_read`, and the meter its reads are admitted on;
+    /// `None` turns the route off.
+    pub(crate) decision_read: Option<(crate::models::DecisionReadDoor, oneiron::BudgetGuard)>,
+    /// Reads that route holds at once (`limits.decision_reads`).
+    pub(crate) decision_reads: crate::admission::Admission<()>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -244,6 +250,12 @@ impl SyncServer {
             &config,
         );
         let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        let decision_reads = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::DecisionReads,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.decision_reads,
+            config.limits.queue_wait(),
+        );
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
@@ -277,6 +289,8 @@ impl SyncServer {
             embedder: None,
             tagger: None,
             llm: None,
+            decision_read: None,
+            decision_reads,
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
@@ -385,6 +399,18 @@ impl SyncServer {
         self
     }
 
+    /// Serves `door` at `/v1/llm/decision_read`, each read admitted as a run
+    /// on `meter`.
+    #[must_use]
+    pub fn with_decision_read(
+        mut self,
+        door: crate::models::DecisionReadDoor,
+        meter: oneiron::BudgetGuard,
+    ) -> Self {
+        self.decision_read = Some((door, meter));
+        self
+    }
+
     /// Writes every model call's run receipts to `receipts` instead of the
     /// log, including the calls of models and providers attached before.
     #[must_use]
@@ -407,6 +433,10 @@ impl SyncServer {
     pub fn with_ai(mut self, ai: crate::ai_host::AiHandle) -> Self {
         if let Some(raw) = ai.raw_inference() {
             self.llm = Some(raw);
+        }
+        // Its reads go on the raw routes' meter.
+        if let (Some(door), Some(raw)) = (ai.decision_read(), &self.llm) {
+            self.decision_read = Some((door, raw.meter().clone()));
         }
         self.ai = ai;
         self

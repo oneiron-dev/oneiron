@@ -43,6 +43,9 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::WindowsPerConnection => {
             crate::handler::window_row_tests::cross_the_windows(CALLERS).await
         }
+        LimitRow::DecisionReads => {
+            crate::api::llm::decision_read::tests::cross_the_decision_reads(CALLERS).await
+        }
     }
 }
 

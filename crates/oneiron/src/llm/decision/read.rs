@@ -123,11 +123,11 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                     .map_err(|_| invalid("decision read settlement refused"))?;
                 read
             }
-            Err(_) => {
+            Err(error) => {
                 self.guard
                     .settle_reserved(&lease)
                     .map_err(|_| invalid("decision read settlement refused"))?;
-                return Err(invalid("decision read failed"));
+                return Err(invalid(&format!("decision read failed: {error}")));
             }
         };
         let count = match labels {
