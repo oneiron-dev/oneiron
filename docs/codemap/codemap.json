@@ -13650,8 +13650,8 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 4
+      "crate-vis": 7,
+      "re-export": 6
      }
     },
     {
@@ -13671,6 +13671,53 @@
      "notable": [],
      "path": "src/counterparty_contact/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrustedContact",
+      "TrustedContactAcceptance",
+      "TrustedContactAnswer",
+      "TrustedContactAsk",
+      "TrustedContactAskOutcome",
+      "TrustedContactDial",
+      "TrustedContactParty",
+      "TrustedContactReach",
+      "TrustedContactRevocation",
+      "TrustedContactTier"
+     ],
+     "path": "src/counterparty_contact/trusted_contact.rs",
+     "purpose": "Trusted contact (OF-527): a person names another PERSON to hear a crisis notice",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 4,
+      "fn": 10,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrustedContactNotice"
+     ],
+     "path": "src/counterparty_contact/trusted_contact_notice.rs",
+     "purpose": "A trusted-contact notice crosses the OF-327 outbound rails like any other engine-staged send: staged with…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/counterparty_contact/trusted_contact_tests.rs",
+     "purpose": "OF-527 acceptance: a trusted contact hears a crisis notice only with both sides' live consent, only on the…",
      "surface": {}
     },
     {
@@ -28559,18 +28606,18 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 13
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/policy_model/notice.rs",
      "purpose": "The one notice a policy verdict emits — and the one audit row it files",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -28845,7 +28892,7 @@
      "purpose": "What the caller asks about, and how the classifier is configured",
      "surface": {
       "enum": 4,
-      "fn": 10,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -42249,7 +42296,7 @@
      "purpose": "Project-axis selection for corpus queries"
     },
     "counterparty_contact": {
-     "files": 7,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43224,8 +43271,8 @@
    },
    "over_bar": 46,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2599,
-   "test_files": 884
+   "source_files": 2601,
+   "test_files": 885
   },
   "oneiron-android": {
    "files": [
