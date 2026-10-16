@@ -95,9 +95,11 @@ pub struct ActionDispatch {
     pub read_receipt: ScopedReadReceipt,
 }
 impl ActionDispatch {
-    /// The outcome as the run's replay record spells it, for a host reply.
+    /// The outcome as the run's replay record spells it, as JSON for a host
+    /// reply.
     pub fn outcome_value(&self) -> Result<serde_json::Value> {
-        super::payload::self_dispatch_outcome_value(&self.outcome)
+        let value = super::payload::self_dispatch_outcome_value(&self.outcome)?;
+        rmpv::ext::from_value(value).map_err(|_| invalid("action outcome encoding"))
     }
 }
 /// What the host binds onto one action call, never the call's own body: the
