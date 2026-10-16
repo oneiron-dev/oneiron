@@ -78,6 +78,8 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
     pub(crate) transfers: crate::api::Transfers,
+    /// OF-520 questions retrieval queries past `config.limits` raised.
+    pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
@@ -131,9 +133,16 @@ pub struct SyncServer {
     pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
     /// The open feedback inbox's flood cap, counted while the inbox is on.
     pub(crate) feedback_flood: crate::api::FloodCap,
+    /// The port of the artifact-only listener on the API's host, set by the
+    /// serve path once it is bound. `None` where none serves.
+    artifact_port: Option<u16>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
+    /// With the override set, the runtime instant it holds from: the booking
+    /// clock then moves with the runtime's (paused) time.
+    #[cfg(test)]
+    pub(crate) booking_test_clock_from: Option<tokio::time::Instant>,
 }
 
 impl SyncServer {
@@ -254,7 +263,7 @@ impl SyncServer {
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),
                 &vault,
-            ),
+            )?,
             wire_telemetry,
             vault,
             root_doc,
@@ -271,6 +280,7 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
+            query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
             mcp_registry,
@@ -288,8 +298,11 @@ impl SyncServer {
             owner_host: None,
             feedback: None,
             feedback_flood,
+            artifact_port: None,
             #[cfg(test)]
             booking_test_now_secs: None,
+            #[cfg(test)]
+            booking_test_clock_from: None,
         })
     }
 
@@ -460,6 +473,20 @@ impl SyncServer {
     ) -> Self {
         self.feedback = host.map(Arc::new);
         self
+    }
+
+    /// Records that the artifact-only router ([`crate::build_artifact_app`])
+    /// serves this server's `/a/` on `port` of the API's host. Health then
+    /// advertises the port, and the API's own `/a/` sandboxes code bundles,
+    /// whose scripts would otherwise run on the API's origin.
+    #[must_use]
+    pub fn with_artifact_listener(mut self, port: u16) -> Self {
+        self.artifact_port = Some(port);
+        self
+    }
+
+    pub(crate) fn artifact_port(&self) -> Option<u16> {
+        self.artifact_port
     }
 
     /// Returns the vault backing this server (used by integration tests to

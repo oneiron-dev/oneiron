@@ -356,9 +356,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
         .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
-        .route("/a/{artifact}", get(serve_artifact_root))
-        .route("/a/{artifact}/", get(serve_artifact_root))
-        .route("/a/{artifact}/{*path}", get(serve_artifact_path))
+        .merge(artifact_routes())
         // ONE-1704: two SEPARATELY REGISTERED MCP endpoints, each pinned to one
         // immutable surface mode by its route entry. Nothing on the wire moves a
         // connection between them.
@@ -435,6 +433,32 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         ))
 }
 
+/// The `/a/` routes, which the API and the artifact-only listener both serve.
+fn artifact_routes() -> Router<Arc<SyncServer>> {
+    Router::new()
+        .route("/a/{artifact}", get(serve_artifact_root))
+        .route("/a/{artifact}/", get(serve_artifact_root))
+        .route("/a/{artifact}/{*path}", get(serve_artifact_path))
+}
+
+/// The artifact-only listener's router: `/a/` and nothing else, on an origin
+/// of its own. It keeps the API's wire receipts and its binding admission,
+/// which spends each holder proof's nonce, so a member's proof replays on
+/// neither listener.
+pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
+    artifact_routes()
+        .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            crate::wire_telemetry::observe_http,
+        ))
+        .with_state(server.clone())
+        .layer(middleware::from_fn_with_state(
+            server,
+            crate::auth::admit_http_binding,
+        ))
+}
+
 /// Health check endpoint.
 #[utoipa::path(
     get,
@@ -487,6 +511,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
         ai: server.ai.status().health(),
+        artifact_port: server.artifact_port(),
     })
 }
 
@@ -512,6 +537,13 @@ struct HealthResponse {
     runtime: RuntimeHealthStatus,
     /// Background AI state, redacted: states and reasons, never model names.
     ai: crate::ai_host::AiHealth,
+    /// The port on this host whose origin serves `/a/` with nothing else
+    /// beside it. Open artifacts there: on the API's origin a code bundle is
+    /// sandboxed, and its module scripts and fonts do not load. Absent where
+    /// no artifact listener serves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = 49152)]
+    artifact_port: Option<u16>,
 }
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────

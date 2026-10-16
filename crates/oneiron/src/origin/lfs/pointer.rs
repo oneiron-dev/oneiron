@@ -56,12 +56,15 @@ impl LfsPushedPointer {
     /// Reading the ADDED lines (rather than requiring a `version` line) is what
     /// makes a pointer MODIFICATION visible: retargeting a pointer changes
     /// `oid` and `size` while `version` stays context.
+    ///
+    /// `content` is the blob's bytes, split here on `\n`; a blank line, the
+    /// trailing newline's included, is no field.
     #[must_use]
-    pub fn from_pointer_lines(path: &str, added_lines: &[Vec<u8>]) -> Option<Self> {
+    pub fn from_pointer_content(path: &str, content: &[u8]) -> Option<Self> {
         let mut oid = None;
         let mut size_bytes = None;
         let mut fields = 0_usize;
-        for line in added_lines {
+        for line in content.split(|byte| *byte == b'\n') {
             let line = std::str::from_utf8(line).ok()?;
             if line.is_empty() {
                 continue;

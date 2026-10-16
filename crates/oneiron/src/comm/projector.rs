@@ -8,7 +8,6 @@ use super::consent::{OPT_OUT_REASON_STOP, rematerialize_party_channel_contact_ca
 use super::parties::{reconcile_comm_party_twins, resolve_or_create_party_in_txn};
 use super::projection_writes::{
     latest_claim_transition_boundary, matching_claims_in_txn, put_projected_comm_claim_in_txn,
-    require_at_most_one,
 };
 use super::records::{
     CommEventKind, CommRecord, comm_records_in_txn, decode_comm_record, next_event_sequence_in_txn,
@@ -22,7 +21,7 @@ use super::{
 use crate::Vault;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, ErrorKind};
 use crate::ports::{EntityStoreRead, TombstoneStore};
 use crate::receipt::FIELD_TASK_REF;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
@@ -84,6 +83,7 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     };
     let mut index = CommProjectorIndex::from_records(&records);
     drop(records);
+    let mut first_refusal = None;
     for event_id in index.pending_event_ids() {
         // Each event keeps its own write transaction, so a later bad event
         // cannot roll back what earlier events already projected.
@@ -95,11 +95,27 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
                 // retries after the party syncs.
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(CommError::Engine(error)) if storage_failure(&error) => {
+                return Err(CommError::Engine(error));
+            }
+            Err(error) => {
+                index.forget_accounted_txn();
+                // One event's refusal stays with that event: it keeps waiting
+                // and the pass reports it, but the events behind it (a later
+                // STOP for another party above all) still project (F06 H415).
+                first_refusal.get_or_insert(error);
+            }
         }
     }
     reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
-    Ok(())
+    first_refusal.map_or(Ok(()), Err)
+}
+
+fn storage_failure(error: &Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::Storage | ErrorKind::Io | ErrorKind::MapFull
+    )
 }
 
 /// Folds durable connector receipts into this projector. TASK identity fixes the
@@ -347,7 +363,10 @@ pub(super) fn project_event(
     event_id: EntityId,
     index: &CommProjectorIndex,
 ) -> CommResult<ProjectorIndexDelta> {
-    vault.try_with_write_txn_grouped(|wtxn| {
+    // A write group of its own, so the index can tell its own commit from
+    // any other writer's (`CommProjectorIndex::begin_event_txn`).
+    vault.try_with_write_txn(|wtxn| {
+        index.begin_event_txn(vault);
         let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
             return Ok(ProjectorIndexDelta::default());
         };
@@ -423,6 +442,7 @@ pub(super) fn project_event(
             projected: true,
         };
         put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
+        index.expect_own_commit();
         Ok(delta)
     })
 }
@@ -453,7 +473,6 @@ fn apply_projector_rule_in_txn(
                 None,
                 true,
             )?;
-            require_at_most_one(&active)?;
             let value = CommClaimValue::LastTouch {
                 party_ref,
                 channel_class: channel.to_owned(),
@@ -464,14 +483,26 @@ fn apply_projector_rule_in_txn(
             if !minted {
                 return Ok(ProjectorIndexDelta::default());
             }
-            if let Some((old_head_id, old_head)) = active.into_iter().find(|(id, _)| *id != new_id)
-            {
-                let head_at = old_head.valid_from.unwrap_or(occurred_at);
-                let close_at = occurred_at.max(head_at);
-                if occurred_at >= head_at {
-                    vault.supersede_claim_in_txn(wtxn, &new_id, &old_head_id, close_at)?;
-                } else {
-                    vault.supersede_claim_in_txn(wtxn, &old_head_id, &new_id, close_at)?;
+            // Provider spellings normalize to one slot, so the slot can hold
+            // more than one live head (F06 H415). The newest touch stays live
+            // and supersedes every other; this touch wins a tie, and among
+            // older heads the lowest id does.
+            let mut older: Vec<(EntityId, u64)> = active
+                .into_iter()
+                .filter(|(id, _)| *id != new_id)
+                .map(|(id, head)| (id, head.valid_from.unwrap_or(occurred_at)))
+                .collect();
+            older.sort_unstable_by_key(|(id, _)| *id);
+            let mut heads = vec![(new_id, occurred_at)];
+            heads.extend(older);
+            let (winner, close_at) = heads
+                .iter()
+                .copied()
+                .reduce(|best, head| if head.1 > best.1 { head } else { best })
+                .unwrap_or((new_id, occurred_at));
+            for (id, _) in heads {
+                if id != winner {
+                    vault.supersede_claim_in_txn(wtxn, &winner, &id, close_at)?;
                 }
             }
             Ok(ProjectorIndexDelta::default())
@@ -487,7 +518,9 @@ fn apply_projector_rule_in_txn(
                 None,
                 true,
             )?;
-            require_at_most_one(&active)?;
+            // Any live head on the normalized slot is a standing opt-out; two
+            // provider-spelled heads are restrictive OR, not a conflict
+            // (F06 H415).
             if active.is_empty() {
                 let history = matching_claims_in_txn(
                     vault,
@@ -570,6 +603,16 @@ fn apply_projector_rule_in_txn(
                     put_comm_record_in_txn(vault, wtxn, candidate.id, &consumed)?;
                     consumed_gate_ids.push((key.clone(), candidate.id));
                 }
+                // The heads may have landed without the cache (replicated,
+                // or written beside the projector), so a STOP on a standing
+                // slot still leaves the contact row saying opted out.
+                rematerialize_party_channel_contact_cache_in_txn(
+                    vault,
+                    wtxn,
+                    party_ref,
+                    channel,
+                    occurred_at,
+                )?;
                 Ok(ProjectorIndexDelta {
                     consumed_gate_ids,
                     projected_thread_transition: None,
