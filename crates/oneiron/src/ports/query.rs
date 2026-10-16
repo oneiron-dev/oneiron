@@ -98,6 +98,26 @@ pub trait EdgeStoreRead: Transactions {
         kind: crate::EdgeKind,
         target: &EntityId,
     ) -> Result<Option<crate::edge::EdgeInfo>>;
+    /// Key-only presence of one adjacency row: `Out` asks for
+    /// `center -kind-> peer`, `In` for `peer -kind-> center` on the center's
+    /// side, `Both` for either. A malformed value still occupies graph topology.
+    fn port_edge_present(
+        &self,
+        txn: &Self::Read<'_>,
+        center: &EntityId,
+        direction: super::EdgeDirection,
+        kind: crate::EdgeKind,
+        peer: &EntityId,
+    ) -> Result<bool>;
+    /// The reverse row of `peer -kind-> center`, read on the center's side and
+    /// decoded fail-closed. Its target is `peer`, as in an `In` stream.
+    fn port_edge_get_incoming(
+        &self,
+        txn: &Self::Read<'_>,
+        center: &EntityId,
+        kind: crate::EdgeKind,
+        peer: &EntityId,
+    ) -> Result<Option<crate::edge::EdgeInfo>>;
     /// Both directions must contain the same semantic edge. None means both absent.
     fn port_edge_consistent(
         &self,
@@ -176,6 +196,38 @@ pub trait ShortIdStoreRead: Transactions {
 pub enum DeletionFamily {
     Archive,
     HardDelete,
+}
+
+/// Stored job rows without a queue transition, for cleanup, admission and
+/// index rebuilds. The caller decodes; no lease, clock or ready entry moves.
+pub trait JobQueueRead: Transactions {
+    fn port_job_row(
+        &self,
+        txn: &Self::Read<'_>,
+        id: &crate::attempt_queue::AttemptId,
+    ) -> Result<Option<Vec<u8>>>;
+    /// Rows in id order after `after`. A malformed key fails as the id parser does.
+    fn port_job_rows<'a>(
+        &self,
+        txn: &'a Self::Read<'_>,
+        after: Option<crate::attempt_queue::AttemptId>,
+    ) -> Result<PortRows<'a, (crate::attempt_queue::AttemptId, Vec<u8>)>>;
+}
+
+/// The global change stream in id order, for a consumer that resumes after
+/// the last id it processed. Each row is its stored id and record, with the
+/// change table's own key and codec errors.
+pub trait ChangeLogStoreRead: Transactions {
+    fn port_changelog_after<'a>(
+        &self,
+        txn: &'a Self::Read<'_>,
+        after: Option<[u8; 16]>,
+    ) -> Result<PortRows<'a, ([u8; 16], super::ChangeLogRecord)>>;
+    /// The newest change, or None while the log is empty.
+    fn port_changelog_head(
+        &self,
+        txn: &Self::Read<'_>,
+    ) -> Result<Option<([u8; 16], super::ChangeLogRecord)>>;
 }
 
 /// Read half used by retrieval pipelines that hold only a storage snapshot.

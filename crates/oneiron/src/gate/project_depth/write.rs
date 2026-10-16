@@ -72,10 +72,7 @@ fn birth_from_policy(
         let body = if id == seed_id {
             seed_body.as_slice()
         } else {
-            raw = vault
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                 .ok_or_else(invalid)?;
             raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?
         };

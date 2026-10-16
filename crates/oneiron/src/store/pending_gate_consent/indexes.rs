@@ -5,6 +5,7 @@ use heed::{RoTxn, RwTxn};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
@@ -95,7 +96,7 @@ impl Store {
         // Low-level receipt tests and generic pending asks can legitimately
         // lack a claim body. They remain run-indexed; only readable CLAIM
         // rows participate in the inbox's semantic duplicate sidecar.
-        let semantic_claim_hash = match self.entities.get(wtxn, claim_id.as_bytes())? {
+        let semantic_claim_hash = match self.port_entity_raw(wtxn, &claim_id)? {
             None => None,
             Some(raw) => {
                 let Some(header) = EntityMetadataHeader::parse(&raw) else {

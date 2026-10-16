@@ -218,10 +218,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let id = super::default_manifest::default_policy_manifest_id()?;
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("policy manifest header"))?;

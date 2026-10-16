@@ -6,6 +6,7 @@ use crate::blob_artifact::{
 };
 use crate::deletion::DeleteReason;
 use crate::error::{Error, Result};
+use crate::side_table::{Named, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
 impl DependencyIndex for Vault {
@@ -279,6 +280,117 @@ impl JobQueue for Vault {
     }
     fn port_job_fail(&self, txn: &mut RwTxn<'_>, input: FailAttempt) -> Result<FailOutcome> {
         AttemptQueue::new(self).port_job_fail(txn, input)
+    }
+}
+impl<T: crate::store::ManifestDbs> JobQueueRead for T {
+    fn port_job_row(&self, txn: &RoTxn<'_>, id: &AttemptId) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .attempt_records()
+            .get(txn, id.as_bytes())?
+            .map(|raw| raw.to_vec()))
+    }
+    fn port_job_rows<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+        after: Option<AttemptId>,
+    ) -> Result<PortRows<'a, (AttemptId, Vec<u8>)>> {
+        use std::ops::Bound;
+        let after = after.map(|id| *id.as_bytes());
+        let lower = after
+            .as_ref()
+            .map_or(Bound::Unbounded, |key| Bound::Excluded(key.as_slice()));
+        let rows = self
+            .attempt_records()
+            .range(txn, &(lower, Bound::<&[u8]>::Unbounded))?;
+        Ok(Box::new(rows.map(|row| {
+            let (key, raw) = row?;
+            Ok((AttemptId::from_bytes(&key)?, raw.to_vec()))
+        })))
+    }
+}
+impl JobQueueRead for Vault {
+    fn port_job_row(&self, txn: &RoTxn<'_>, id: &AttemptId) -> Result<Option<Vec<u8>>> {
+        self.store.port_job_row(txn, id)
+    }
+    fn port_job_rows<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+        after: Option<AttemptId>,
+    ) -> Result<PortRows<'a, (AttemptId, Vec<u8>)>> {
+        self.store.port_job_rows(txn, after)
+    }
+}
+const CHANGE_ROWS: SideTable<[u8; 16], ChangeLogRecord, Named> =
+    SideTable::new(&crate::side_table::PORTS_CHANGE);
+/// The change family's keys: its prefix, and the prefix with its final ':'
+/// raised to ';', which bounds every id under it.
+fn change_bounds() -> (&'static [u8], Vec<u8>) {
+    let prefix = crate::side_table::PORTS_CHANGE.prefix;
+    let mut end = prefix.to_vec();
+    if let Some(last) = end.last_mut() {
+        *last = last.saturating_add(1);
+    }
+    (prefix, end)
+}
+/// One change row, failing with the side table's own key and codec errors.
+fn change_row(key: &[u8], raw: &[u8]) -> Result<([u8; 16], ChangeLogRecord)> {
+    let decl = &crate::side_table::PORTS_CHANGE;
+    let bad_key = crate::error::SideTableRowProblem::KeyShape;
+    let id = key
+        .strip_prefix(decl.prefix)
+        .and_then(|id| <[u8; 16]>::try_from(id).ok())
+        .ok_or_else(|| decl.row_error(bad_key))?;
+    Ok((id, CHANGE_ROWS.decode_value(raw)?))
+}
+impl<T: crate::store::ManifestDbs> ChangeLogStoreRead for T {
+    fn port_changelog_after<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+        after: Option<[u8; 16]>,
+    ) -> Result<PortRows<'a, ([u8; 16], ChangeLogRecord)>> {
+        use std::ops::Bound;
+        let (prefix, end) = change_bounds();
+        let start = match after {
+            Some(id) => [prefix, &id].concat(),
+            None => prefix.to_vec(),
+        };
+        let lower = if after.is_some() {
+            Bound::Excluded(start.as_slice())
+        } else {
+            Bound::Included(start.as_slice())
+        };
+        let rows = self
+            .vault_meta()
+            .range(txn, &(lower, Bound::Excluded(end.as_slice())))?;
+        Ok(Box::new(rows.map(|row| {
+            let (key, raw) = row?;
+            change_row(&key, &raw)
+        })))
+    }
+    fn port_changelog_head(&self, txn: &RoTxn<'_>) -> Result<Option<([u8; 16], ChangeLogRecord)>> {
+        use std::ops::Bound;
+        let (prefix, end) = change_bounds();
+        let range = (Bound::Included(prefix), Bound::Excluded(end.as_slice()));
+        self.vault_meta()
+            .rev_range(txn, &range)?
+            .next()
+            .map(|row| {
+                let (key, raw) = row?;
+                change_row(&key, &raw)
+            })
+            .transpose()
+    }
+}
+impl ChangeLogStoreRead for Vault {
+    fn port_changelog_after<'a>(
+        &self,
+        txn: &'a RoTxn<'_>,
+        after: Option<[u8; 16]>,
+    ) -> Result<PortRows<'a, ([u8; 16], ChangeLogRecord)>> {
+        self.store.port_changelog_after(txn, after)
+    }
+    fn port_changelog_head(&self, txn: &RoTxn<'_>) -> Result<Option<([u8; 16], ChangeLogRecord)>> {
+        self.store.port_changelog_head(txn)
     }
 }
 impl Vault {
