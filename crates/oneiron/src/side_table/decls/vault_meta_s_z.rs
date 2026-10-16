@@ -320,6 +320,14 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// One Coach training offer snapshot for a seat (OF-577), written once. Key: id16 (offer).
+    SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named;
+    /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
+    /// id16 (offer).
+    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
+    /// (check).
+    SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
     /// The amendment verdict replacing one attempt's outcome row (MessagePack map: amendment
     /// receipt, `skill_defect` share, event time). Key: the outcome row's full stored key, table
     /// prefix included.
