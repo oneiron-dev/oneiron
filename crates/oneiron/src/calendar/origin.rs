@@ -155,7 +155,10 @@ pub(crate) fn live_origin(
             continue;
         };
         let body = crate::claim::decode_claim_body(bytes, true)?;
-        if body.predicate == PREDICATE_CALENDAR_ORIGIN && claim_surfaceable(&body) {
+        if body.predicate == PREDICATE_CALENDAR_ORIGIN
+            && claim_surfaceable(&body)
+            && crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &id)?
+        {
             let origin = body
                 .value
                 .as_str()
@@ -564,8 +567,16 @@ pub(crate) fn invalidate_dependents(
 }
 pub(in crate::calendar) fn invalidated(vault: &Vault, event: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(!replay_origin_bound(&vault.store, &txn, event)?
-        || INVALIDATED_EVENT.contains(&vault.store, &txn, &event)?)
+    invalidated_in_txn(vault, &txn, event)
+}
+
+pub(in crate::calendar) fn invalidated_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<bool> {
+    Ok(!replay_origin_bound(&vault.store, txn, event)?
+        || INVALIDATED_EVENT.contains(&vault.store, txn, &event)?)
 }
 
 #[cfg(test)]

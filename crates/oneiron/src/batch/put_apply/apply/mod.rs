@@ -62,6 +62,7 @@ pub(in crate::batch) fn apply_put(
                 refinement_admission,
                 transition,
                 posture,
+                owner_authored,
             },
     } = request;
     let Replication {
@@ -230,7 +231,8 @@ pub(in crate::batch) fn apply_put(
                     wtxn,
                     &id,
                     crate::gate::ClaimGateWrite::plain(&body, write_envelope)
-                        .with_transition(transition),
+                        .with_transition(transition)
+                        .with_owner_authored(owner_authored),
                     policy,
                     options.gate_write_mode(),
                     options.decision.preflight,
@@ -655,6 +657,15 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    if body_changed && let Some(body) = decoded_claim_body.as_ref() {
+        if replicated {
+            crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, &id, body)?;
+        }
+        // A claim whose owner has not answered stays held through any new
+        // revision, and its owner is shown an item for this one.
+        crate::gate::show_owner_answer_item_in_txn(store, wtxn, &id, Some(body))?;
+    }
+
     // Past every check that can reject this row remotely: a replicated row
     // under a provisional id retires the local provisional entity only when
     // it lands (see `release_held_id_in_txn`).
@@ -706,6 +717,9 @@ pub(in crate::batch) fn apply_put(
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
+    if entity_type == ENTITY_TYPE_COMM_RECORD {
+        crate::comm::maintain_pending_stop_put(store, wtxn, &id, data)?;
     }
     // A local put over an erased row is a sanctioned recreation: the row it
     // writes is live, so the fence goes in the same commit. A row that still

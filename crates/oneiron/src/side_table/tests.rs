@@ -358,6 +358,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "CODE_DOCUMENT_HEAD",
         "CODE_RUN_COMPACTION",
         "CODE_RUN_REPLAY",
+        "COMM_PENDING_STOP",
         "CONNECTOR_GRANT_SLATE",
         "CONNECTOR_GRANT_SLATE_BINDING",
         "CONSENT_OWNER_REASON_RULE",

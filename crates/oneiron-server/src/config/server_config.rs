@@ -31,9 +31,10 @@ use crate::usage::UsageMode;
 ///   forgets its least recently requested window subscription (the window's
 ///   next change reaches the peer as `WINDOW_INVALIDATE`) and the row asks
 ///   its OF-520 question once; no socket is refused for the count.
-/// - `max_ephemeral_payload_bytes` / `max_ephemeral_snapshot_bytes` —
-///   ENFORCED before ephemeral hub mutation and before late-join snapshot
-///   send. Oversized late-join snapshots are skipped, not connection-fatal.
+/// - `max_ephemeral_payload_bytes` — ENFORCED on each ephemeral frame. The
+///   hub itself is charged to `limits.retained_memory_bytes`, never capped.
+/// - `max_ephemeral_snapshot_bytes` — the most one late-join presence frame
+///   carries; a larger hub is sent in parts.
 /// - `max_connections_per_user` — not enforced until auth has per-user
 ///   identity.
 #[derive(Clone)]
@@ -88,7 +89,8 @@ pub struct SyncServerConfig {
     pub ephemeral_timeout_ms: i64,
     /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
     pub max_ephemeral_payload_bytes: usize,
-    /// Maximum encoded hub snapshot bytes retained/sent to late joiners.
+    /// Maximum presence bytes in one late-join frame; a larger hub is sent in
+    /// parts.
     pub max_ephemeral_snapshot_bytes: usize,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
@@ -287,6 +289,9 @@ pub struct ServeConfig {
     /// Absent means no model seat is filled: every model-free path runs and
     /// the Dreamer reports idle for want of a model.
     pub models: Option<super::ModelsConfig>,
+    /// The `[browser]` section, absent until the config file names it.
+    /// Absent means code runs have no browser.
+    pub browser: Option<super::BrowserConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -346,6 +351,7 @@ impl Default for ServeConfig {
             limits: LimitsConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
+            browser: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -411,6 +417,7 @@ impl fmt::Debug for ServeConfig {
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
+            .field("browser", &self.browser)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -467,6 +474,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
             deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {

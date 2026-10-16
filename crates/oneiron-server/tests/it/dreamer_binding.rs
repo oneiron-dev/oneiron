@@ -8,9 +8,11 @@
 //! only its own turn, minted a new subject, and nothing bound.
 //!
 //! Where it binds follows the seeded policy (Engine ruling 2026-10-13): a
-//! correction on a predicate no rule names lands with its grant, and one on a
-//! class canon declares critical is held for the owner, in a fresh vault and
-//! in one seeded before those classes shipped.
+//! correction on a predicate a rule declares normal lands with its grant, and
+//! one on a class canon declares critical is held for the owner, in a fresh
+//! vault and in one seeded before those classes shipped. A predicate no rule
+//! names takes the criticality floor, so its claim waits for the owner's
+//! confirmation before any pass may hold it as a prior.
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,9 +79,9 @@ struct Case {
     /// The first turn, and the value on `predicate` it holds.
     first: (&'static str, &'static str),
     /// Who holds that value: the first pass, as its own unvetted claim, or
-    /// the owner, as an observed claim stated once the first pass has met
-    /// the person (a Dreamer claim in a critical class lands Proposed and is
-    /// never listed).
+    /// the owner, as an observed claim stated in person once the first pass
+    /// has met the person (a Dreamer claim in a critical class lands Proposed
+    /// and is never listed).
     owner_states_first: bool,
     second: (&'static str, &'static str),
     seeded_before_critical_classes: bool,
@@ -254,8 +256,19 @@ async fn binds_once(case: Case) {
                 "confidence": 1.0, "source": "observed",
             }))
             .unwrap();
+            // The owner states it in person, so the critical claim carries
+            // its own confirmation and the next pass may list it.
+            let authenticated = vault
+                .authenticate_owner(
+                    owner,
+                    &owner.to_hex(),
+                    true,
+                    oneiron::store::GateDecisionId::now(),
+                )
+                .unwrap();
             vault
                 .memory(owner, EdgeActorClass::Human)
+                .with_owner_authorship(&authenticated)
                 .claim_upsert(&input)
                 .unwrap();
         }
@@ -309,11 +322,11 @@ async fn binds_once(case: Case) {
     held(&Vault::open_owned(&vault_path, vault_config()).unwrap());
 }
 
-/// A predicate no rule names: the correction lands with its grant.
+/// A predicate a rule declares normal: the correction lands with its grant.
 #[tokio::test]
 async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
     binds_once(Case {
-        predicate: "residence.city",
+        predicate: "profile.city",
         first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
         owner_states_first: false,
         second: (

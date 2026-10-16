@@ -65,9 +65,12 @@ pub(super) fn complete(
     // name exactly the sources it was regenerated from. A dependency row
     // alone certifies nothing a door reads, and an edge to an undeclared
     // source would lose the row that withdraws it on that source's erase; an
-    // obsolete edge goes through the batch door first, which withdraws.
-    if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-        && crate::compaction::stored_epoch_in(store, txn, dependent, &row.body)?.may_be()
+    // obsolete edge goes through the batch door first, which withdraws. An
+    // ASSET_TEXT is read only beside the sources its edges name (facet rule
+    // C), so it is held to the same agreement.
+    if row.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+        || (row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+            && crate::compaction::stored_epoch_in(store, txn, dependent, &row.body)?.may_be())
     {
         let named = super::EdgeStoreRead::port_edges(
             store,

@@ -43,10 +43,9 @@
 bindgen CLI feature, so generated output and scaffolding always come from
 one release line. Crates resolve `0.29` to the newest `0.29.x` patch.
 
-Latest stable verified at authoring: **`uniffi 0.32.0`** (crates.io,
-2026-08-10). Staying on the pinned `0.29` line is deliberate; any move to a
-newer major-minor line is a contract amendment that re-verifies the generated Swift surface and the compile stub together — it is
-not ambient dependency drift.
+The `0.29` line is pinned on purpose, although newer lines exist. A move to a
+newer line changes the generated Swift surface, so the Swift compile stub moves
+with it.
 
 ## Head contract
 
@@ -112,11 +111,11 @@ CI runs all of the above plus a `.udl` census and a forbidden-path diff in
 
 The first runtime consumer — an app binding that needs the generated Swift
 or Kotlin surface against a live vault — replaces the definition-only
-bodies with actor-scoped core facade calls. It preserves the declared verbs,
-DTOs, error shape, and the coverage tests exactly; any desired surface
-change is a head-contract amendment that moves the manifest row in
-`scripts/sdk/agent-verbs.json`, the generated facade file
-(`src/facade_generated.rs`) with its macro invocation, the Rust-name drift
-guard, and the Swift compile probe together. Populating live `pack_version` values and the live Swift throw
-path are first-consumer scope, explicitly not claimed by this compile-only
-lane.
+bodies with actor-scoped core facade calls. The verb surface comes from
+`scripts/sdk/agent-verbs.json`: `scripts/sdk/generate.py` writes
+`src/facade_generated.rs` from its `uniffi` rows. A surface change edits the
+manifest row and regenerates. The export macro emits the SDK-name and Rust-name
+ledgers from the same invocation; the Swift compile stub
+(`swift/Sources/OneironUniFFIStub/main.swift`) is updated by hand to reference
+the new surface. Live `pack_version` values and the live Swift
+throw path are left to that consumer; this crate does not provide them.

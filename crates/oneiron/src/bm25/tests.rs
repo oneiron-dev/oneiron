@@ -41,6 +41,7 @@ fn test_config() -> VaultConfig {
         skip_text_index_manifest_check: false,
         off_record_enabled: true,
         off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
+        limits: crate::limit_ask::EngineLimits::default(),
         privacy: crate::config::VaultPrivacyConfig::default(),
     }
 }

@@ -396,7 +396,8 @@ func recallDtosCompile() {
         claimsReturned: 1,
         deepPending: nil,
         partial: false,
-        temporalHints: [hint]
+        temporalHints: [hint],
+        limitClamped: false
     )
     let _: UInt64 = meta.totalCandidates
     let pack = MemoryPack(

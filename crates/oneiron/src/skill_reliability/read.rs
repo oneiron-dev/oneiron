@@ -5,6 +5,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::ports::EntityStoreRead;
 use crate::skill::SkillRecord;
 use crate::temporal::TimeRange;
@@ -65,7 +66,15 @@ pub(super) fn resolved_reliability_posterior_in_txn(
     executor: Option<&str>,
 ) -> Result<Option<SkillReliabilityPosterior>> {
     let mut resolved: Option<SkillReliabilityPosterior> = None;
-    for (_, body, _) in active_reliability_heads_in_txn(vault, rtxn, skill, executor)? {
+    for (id, body, _) in active_reliability_heads_in_txn(vault, rtxn, skill, executor)? {
+        if !claim_consolidation_eligible_in_txn(
+            &vault.store,
+            rtxn,
+            &id,
+            ConsolidationReader::SkillReliabilityPosterior,
+        )? {
+            continue;
+        }
         let candidate = SkillReliabilityPosterior::from_value(&body.value)?;
         if resolved.is_none_or(|held| candidate.observations() > held.observations()) {
             resolved = Some(candidate);

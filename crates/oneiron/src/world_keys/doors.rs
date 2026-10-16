@@ -108,6 +108,8 @@ impl Vault {
     /// machine with no identity yet has no secret: no door mints one here.
     pub(crate) fn machine_secret_outside_txn(&self) -> Result<MachineSecret> {
         let keystore = self.device_keystore()?;
+        // The door signs its record with the machine key in its txn: load it here.
+        self.load_install_signing_if_minted()?;
         let (machine, vault_id) = {
             let txn = self.store.env.read_txn()?;
             let machine = crate::identity::read_machine_id_in_txn(self, &txn)?
@@ -212,13 +214,67 @@ impl Vault {
         world: EntityId,
         secret: &MachineSecret,
     ) -> Result<WorldKeyStatus> {
+        self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret)?
+            .map_err(FrontierWide::refused)
+    }
+
+    /// The key a settings edit leaves `world` with, in the edit's transaction.
+    /// - When this machine may read the world after the edit and the world has no
+    ///   key yet, the key is minted in this commit, and any refusal (no keystore, a
+    ///   keystore failure, no machine identity) refuses the edit: a private world
+    ///   never commits keyless on a machine that could mint its key.
+    /// - A world whose live edits outgrow one key record commits keyless with
+    ///   OF-520's question raised: the rate law refuses no edit for a count.
+    /// - Otherwise a refusal leaves the edit standing, as before: another reader
+    ///   mints, or the new recipients are wrapped on that reader's next ensure.
+    pub(crate) fn world_key_for_edit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        world: EntityId,
+        secret: Result<&MachineSecret>,
+    ) -> Result<Option<WorldKeyStatus>> {
+        let needs_key = {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let machine = crate::identity::read_machine_id_in_txn(self, txn)?;
+            fold.world_privacy(world).read != EffectiveRead::Everywhere
+                && fold.current_world_key(world).is_none()
+                && machine.is_some_and(|machine| {
+                    fold.trusted_machine(machine).is_some()
+                        && fold.world_readable_on(world, Destination::Machine(machine))
+                })
+        };
+        let attempt = match secret {
+            Ok(secret) => self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret),
+            Err(error) if needs_key => return Err(error),
+            Err(_) => return Ok(None),
+        };
+        match attempt {
+            Ok(Ok(status)) => Ok(Some(status)),
+            Ok(Err(_wide)) => Ok(None),
+            // Refusals all come before the first write.
+            Err(error @ crate::error::Error::Secret(_)) if needs_key => Err(error),
+            Err(crate::error::Error::Secret(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// [`Vault::ensure_world_key_in_txn`], with a world whose live edits outgrow one
+    /// key record told apart from every other refusal.
+    fn ensure_world_key_or_wide_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        world: EntityId,
+        secret: &MachineSecret,
+    ) -> Result<std::result::Result<WorldKeyStatus, FrontierWide>> {
         let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
         if !self.world_row_live_in_txn(txn, world)? {
             return Err(refused("the world has no live WORLD row here"));
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if fold.world_privacy(world).read == EffectiveRead::Everywhere {
-            return Ok(WorldKeyStatus::NotPrivate);
+            return Ok(Ok(WorldKeyStatus::NotPrivate));
         }
         require_mine_reader(&fold, world, secret.machine, &signing)?;
         let root = self.pinned_root_recipient_in_txn(txn, &fold)?;
@@ -227,20 +283,21 @@ impl Vault {
         let Some(current) = fold.current_world_key(world) else {
             let key = WorldKey::mint(world, FIRST_GENERATION)?;
             let id = *key.id();
-            let records = self
-                .append_world_key_wraps_in_txn(
-                    txn,
-                    &fold,
-                    &signing,
-                    secret.machine,
-                    &key,
-                    owner,
-                    &allowed,
-                    &mut seq,
-                )?
-                .map_err(FrontierWide::refused)?;
+            let records = match self.append_world_key_wraps_in_txn(
+                txn,
+                &fold,
+                &signing,
+                secret.machine,
+                &key,
+                owner,
+                &allowed,
+                &mut seq,
+            )? {
+                Ok(records) => records,
+                Err(wide) => return Ok(Err(wide)),
+            };
             self.require_counted_in_txn(txn, &records)?;
-            return Ok(WorldKeyStatus::Minted(id));
+            return Ok(Ok(WorldKeyStatus::Minted(id)));
         };
         let id = current.id;
         let missing: Vec<_> = allowed
@@ -248,7 +305,7 @@ impl Vault {
             .filter(|(recipient, _)| !current.wraps.contains_key(recipient))
             .collect();
         if missing.is_empty() {
-            return Ok(WorldKeyStatus::UpToDate(id));
+            return Ok(Ok(WorldKeyStatus::UpToDate(id)));
         }
         let key = open_counted(
             &fold,
@@ -257,23 +314,24 @@ impl Vault {
             &secret.secret,
         )
         .ok_or_else(|| refused("this machine holds no wrap of the world's current key"))?;
-        let records = self
-            .append_world_key_wraps_in_txn(
-                txn,
-                &fold,
-                &signing,
-                secret.machine,
-                &key,
-                current.owner,
-                &missing,
-                &mut seq,
-            )?
-            .map_err(FrontierWide::refused)?;
+        let records = match self.append_world_key_wraps_in_txn(
+            txn,
+            &fold,
+            &signing,
+            secret.machine,
+            &key,
+            current.owner,
+            &missing,
+            &mut seq,
+        )? {
+            Ok(records) => records,
+            Err(wide) => return Ok(Err(wide)),
+        };
         self.require_counted_in_txn(txn, &records)?;
-        Ok(WorldKeyStatus::Wrapped {
+        Ok(Ok(WorldKeyStatus::Wrapped {
             key: id,
             added: missing.len(),
-        })
+        }))
     }
 
     /// The settings door's step after an edit: the world's key follows its

@@ -47,6 +47,8 @@ oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract"
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 # Every subprocess starts with only the descriptors it is named.
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
+# Code mode's browser: a Chromium guest in a container, driven over CDP.
+oneiron-browser = { path = "../oneiron-browser", features = ["driver"] }
 # This install's this-device-only key slots (world privacy P6b).
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 # The Dreamer's starter motor: the server owns the wake supervisor and the
@@ -140,6 +142,8 @@ libc = "0.2"
 # staging directory open and checks it is its own (`process` for the euid).
 # The version the workspace already builds.
 [target.'cfg(unix)'.dependencies]
+# The per-user runtime folder `serve` registers in (local_servers.rs).
+dirs = "6"
 rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]

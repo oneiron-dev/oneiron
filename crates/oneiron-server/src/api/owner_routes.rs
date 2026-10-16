@@ -37,6 +37,7 @@ use crate::owner::{
     pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod history_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -70,6 +71,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/feedback/send", post(send_feedback))
         .route("/feedback/inbox", get(feedback_inbox))
         .route("/pack-drift", get(pack_drift_repairs))
+        .merge(history_routes::routes())
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the

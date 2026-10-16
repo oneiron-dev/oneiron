@@ -329,6 +329,9 @@ side_tables! {
     /// that synced truth currently names for it; repaired from synced truth on a stale or missing
     /// hit. Key: bytes32 (sha256 of party_key).
     COMM_PARTY_INDEX: VaultMeta b"comm.party.v1:" Raw;
+    /// An inbound STOP this replica has not projected yet: its party and channel, which hold a
+    /// send until the projection that releases it or the event's delete. Key: id16 (the event).
+    COMM_PENDING_STOP: VaultMeta b"comm.pending_stop.v1:" Named;
     /// Time-ordered commitment due-index row. Key: u64be + u8 + id16 + id16.
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.

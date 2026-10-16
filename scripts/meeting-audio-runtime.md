@@ -80,8 +80,12 @@ separate setup/failure/capture/scoring states. No test package is a real model o
 
 ## Exact remaining qualification inputs
 
-Use the existing MacBook interpreter recorded in `impl-notes/W7-C02.md`; do not
-run an inline launcher. The owner must provision compatible licensed runtimes,
+Use the existing interpreter on the owner's MacBook,
+`/Users/olety/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python`
+(CPython 3.13.5 arm64 with mlx/mlx-metal 0.32.2, mlx-lm 0.31.3, mlx-audio
+0.4.7, torch 2.14.0, silero-vad 6.2.1 and onnxruntime 1.30.0; `pyannote.audio`
+and `qwen-asr` are not installed in it). Do not downgrade its packages, and do
+not run an inline launcher. The owner must provision compatible licensed runtimes,
 full immutable snapshot/file hashes and access records for alignment, community-1
 and cleanup. MOSS comparison needs its own pinned snapshot and genuine full-file output.
 The new E3 capture CLI below runs its native port, but no such inference has been

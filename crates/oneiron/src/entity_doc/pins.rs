@@ -3,7 +3,10 @@
 use super::document::decode_frontier;
 use super::side_keys::HexPair;
 use super::{DocAuthorization, EntityDoc, ForkStatus, TextAnchor, invalid, storage};
+use crate::EdgeActorClass;
+use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, Error, Result};
+use crate::memory::MemoryResult;
 use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
@@ -293,6 +296,62 @@ impl Vault {
             .map(|(_, receipt)| receipt)
             .collect())
     }
+
+    /// Files one owner history-purge receipt for `entity`. A NOTE's purge
+    /// lands here beside the entity-text ones, so one list reads both.
+    pub(crate) fn put_text_purge_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        id: EntityId,
+        receipt: &PurgeReceipt,
+    ) -> Result<()> {
+        ENTITY_DOC_PURGE_RECEIPT.put(
+            &self.store,
+            txn,
+            &HexPair(HexId(*entity), HexId(id)),
+            receipt,
+        )
+    }
+
+    /// The owner's "erase history" (ARCH-0038: a purge reads as erase): drops
+    /// an entity's text history below its oldest pin, as the authenticated
+    /// `owner`; no Grant reaches it. A NOTE goes through
+    /// [`crate::memory::Memory::purge_note_history_as`]. Any other entity's
+    /// text goes through [`Self::purge_entity_text_history`], which clamps
+    /// `through` (the head when absent) to the pin floor.
+    pub fn erase_text_history_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        entity: &EntityId,
+        through: Option<&[u8]>,
+    ) -> MemoryResult<PurgeReceipt> {
+        if entity_type(self, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
+            let actor = owner.revalidate(self)?;
+            return self
+                .memory(actor, EdgeActorClass::Human)
+                .purge_note_history_as(owner, *entity, through);
+        }
+        let through = match through {
+            Some(bytes) => bytes.to_vec(),
+            None => self.read_entity_doc(entity, EntityDoc::frontier)?,
+        };
+        Ok(self.purge_entity_text_history(
+            entity,
+            &through,
+            &DocAuthorization::Owner(owner),
+            self.now_recorded_at(),
+        )?)
+    }
+}
+
+fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, entity)?
+            .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+            .map(|header| header.entity_type),
+    )
 }
 
 fn floor(

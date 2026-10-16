@@ -26,8 +26,8 @@ side_tables! {
     /// signer. Key: string.
     AUTHLOG_INGEST_COUNT: SyncState b"authlog:ingest_count:" Raw;
     /// Device-local authority observation policy: stale-roster window, ingest window, ingest check
-    /// threshold, log signer bound, log headroom rows and handoffs (6x u64be; a 3x row reads with
-    /// the default bounds). Key: ().
+    /// threshold, log signer bound, log headroom rows, handoffs and ancestor pairs, and the fold's
+    /// memory floor (8x u64be; a 3x or 6x row reads with the default bounds). Key: ().
     AUTHLOG_OBSERVATION_POLICY: SyncState b"authlog:observation_policy:duration_v1" Raw;
     /// Durable high-water mark (u64be) of a signer's highest observed authority-log sequence number.
     /// Key: string.
@@ -153,22 +153,18 @@ side_tables! {
     /// This device's stable client id (u64 LE, nonzero), minted once per install and reused as the
     /// sync client's peer id. Key: ().
     IDENTITY_CLIENT_ID: SyncState b"m:client_id" Raw;
-    /// Cached 32-byte Ed25519 verifying key derived from this device's signing seed; a stored value
-    /// that disagrees with the seed-derived key is corruption. Key: ().
+    /// Cached 32-byte Ed25519 verifying key of this device's receipt key, whose seed is in the
+    /// install's keystore slot; a stored value that disagrees with the derived key is corruption.
+    /// Dropped wherever the machine id is. Key: ().
     IDENTITY_DEVICE_PK: SyncState b"m:device_pk" Raw;
-    /// This device's 32-byte Ed25519 signing-key seed, stored plaintext and used to sign receipt
-    /// attestations. Key: ().
-    IDENTITY_DEVICE_SK: SyncState b"m:device_sk" Raw;
     /// The world-month window label a deleted world claim was addressed under, kept past its purge
     /// so every reader still finds its tombstone. Key: hex32 (entity id).
     DELETION_WINDOW_LABEL: SyncState b"m:dw:" Raw;
     /// Client-only: last Unix-seconds timestamp this device reached fully-synced status. Key: ().
     SYNC_M_LAST_SYNC: SyncState b"m:last_sync" Raw;
-    /// The MACHINE row this install is (16 B entity id), minted once with its machine key; never
+    /// The MACHINE row this install is (16 B entity id), which names its keystore slots; never
     /// synced and never restored from another install. Key: ().
     IDENTITY_MACHINE_ID: SyncState b"m:machine_id" Raw;
-    /// This install's machine signing-key seed (32 B), minted with its machine id. Key: ().
-    IDENTITY_MACHINE_SK: SyncState b"m:machine_sk" Raw;
     /// The owner recovery root this install pins (its id and anchor key), and the admitter
     /// its machine was mine under before the pin last changed. Local like the machine id:
     /// never synced, and dropped wherever the machine id is. Key: ().

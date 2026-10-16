@@ -81,7 +81,9 @@ impl BatchBuilder<'_> {
         };
         let changes_claims = super::vad_postcommit::ops_change_proactivity(&self.ops);
         let tasks = super::vad_postcommit::ops_put_tasks(&self.ops);
-        let gate_mode = gate_mode.with_birth_mask(self.birth_mask);
+        let gate_mode = gate_mode
+            .with_birth_mask(self.birth_mask)
+            .with_text_births(std::mem::take(&mut self.text_births));
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);
@@ -151,6 +153,7 @@ pub(super) fn admit_federated_puts(
             let admitted = crate::sync::selector::admit_federated_entity_blob(
                 vault,
                 &policy,
+                wtxn,
                 &id.to_hex(),
                 Some(&blob),
             )?;
