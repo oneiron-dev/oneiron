@@ -218,6 +218,10 @@ impl Vault {
             };
             items.push((publication_id, disposition));
         }
+        // The walk above reads origin rows only. A ref effect an earlier
+        // attempt left prepared (a re-drive of a Published row, a staged or
+        // batched publish) is its own GitWire row: finish it here too.
+        git.recover_ref_effects(repo, learned_at)?;
         self.sweep_orphan_origin_publication_owners(git, repo_id, repo, learned_at)?;
         Ok(OriginCensusReport { items })
     }

@@ -33,8 +33,8 @@ use crate::claim::{
 use crate::error::{Error, Result};
 use crate::llm::decision::catalogue::CONFLICT_SETTLE;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionLadder, DecisionRung, MAX_DECISION_STATE_BYTES, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    DecisionRung, MAX_DECISION_STATE_BYTES, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
@@ -146,7 +146,10 @@ fn is_repo_conflict(body: &ClaimBody) -> bool {
 /// a supersession coaching marker's evidence refs (its new and old claim).
 fn named_ids(body: &ClaimBody) -> Vec<EntityId> {
     let mut seen = BTreeSet::new();
-    let evidence = body.evidence.as_ref().map(|evidence| marker_ids(evidence, "refs"));
+    let evidence = body
+        .evidence
+        .as_ref()
+        .map(|evidence| marker_ids(evidence, "refs"));
     MEMBER_KEYS
         .iter()
         .flat_map(|key| marker_ids(&body.value, key).collect::<Vec<_>>())
@@ -288,8 +291,7 @@ pub(crate) fn open_conflict_in_txn(
             return Err(invalid_consolidation("the conflict is already settled"));
         }
     }
-    open_conflict_from(vault, txn, marker, body)?
-        .ok_or(invalid_consolidation("conflict subject"))
+    open_conflict_from(vault, txn, marker, body)?.ok_or(invalid_consolidation("conflict subject"))
 }
 
 /// Writes `settlement` for `conflict` in the caller's transaction, after the
@@ -349,13 +351,23 @@ pub(crate) fn apply_settlement_in_txn(
             }
             vault.cancel_deferred_claim_in_txn(txn, &loser)?;
             vault.store.close_pending_gate_consent_in_txn(
-                txn, &loser, now, "superseded", reasons(), None,
+                txn,
+                &loser,
+                now,
+                "superseded",
+                reasons(),
+                None,
             )?;
             vault.supersede_claim_in_txn_as(txn, &winner, &loser, now, close_as)?;
             // The lifecycle projector may raise a Proposed row's tray again;
             // a settled loser keeps no actionable consent.
             vault.store.close_pending_gate_consent_in_txn(
-                txn, &loser, now, "superseded", reasons(), None,
+                txn,
+                &loser,
+                now,
+                "superseded",
+                reasons(),
+                None,
             )?;
             superseded.push(loser);
         }
@@ -376,8 +388,11 @@ pub(crate) fn apply_settlement_in_txn(
             ),
         ));
     }
-    let candidate =
-        super::persistence::resolved_candidate(&conflict.body, conflict.marker, Value::Map(resolution));
+    let candidate = super::persistence::resolved_candidate(
+        &conflict.body,
+        conflict.marker,
+        Value::Map(resolution),
+    );
     let resolved = EntityId::now();
     vault
         .batch_in()
@@ -434,7 +449,11 @@ impl ConflictSettleDecisions<'_> {
     /// or answers outside the vocabulary, or the conflict's state is past the
     /// ladder's bound. Only a standing member can be kept. The question is
     /// keyed by the contested predicates, so each learns its own bands.
-    pub fn rule(&self, vault: &Vault, conflict: &OpenConflict) -> Result<Option<ConflictSettlement>> {
+    pub fn rule(
+        &self,
+        vault: &Vault,
+        conflict: &OpenConflict,
+    ) -> Result<Option<ConflictSettlement>> {
         let txn = vault.store.env.read_txn()?;
         let mut members = Vec::new();
         let mut keepable = Vec::new();
@@ -470,7 +489,11 @@ impl ConflictSettleDecisions<'_> {
             .iter()
             .map(|label| (*label).to_owned())
             .collect();
-        options.extend(keepable.iter().map(|id| format!("{KEEP_PREFIX}{}", id.to_hex())));
+        options.extend(
+            keepable
+                .iter()
+                .map(|id| format!("{KEEP_PREFIX}{}", id.to_hex())),
+        );
         let key = conflict.predicates.join("\n");
         let question = CONFLICT_SETTLE.question(
             &[key.as_bytes()],

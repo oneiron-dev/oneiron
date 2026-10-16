@@ -2,9 +2,9 @@
 
 use super::ladder::millis;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt, DecisionRung,
-    DecisionTime, HumanAskReason, ProviderPin, Reasoning, ReasoningCause, Reversibility, StopCause,
-    TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
+    DecisionRung, DecisionTime, HumanAskReason, ProviderPin, Reasoning, ReasoningCause,
+    Reversibility, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{

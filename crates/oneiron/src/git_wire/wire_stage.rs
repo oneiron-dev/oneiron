@@ -176,6 +176,28 @@ impl GitWire<'_> {
         }
         Ok(receipts)
     }
+
+    /// [`Self::recover`] for the repository's ref effects only: every
+    /// direct, staged or batched publish still prepared, including a
+    /// re-drive whose origin row is already terminal. Each one finishes by
+    /// its stored record under the same rules, so a terminal origin row stays
+    /// terminal and a stale authority still refuses its move.
+    pub(crate) fn recover_ref_effects(
+        &self,
+        repo: &GitWireRepo,
+        now: u64,
+    ) -> GitWireResult<Vec<GitWireReceipt>> {
+        let _guard = lock_repository(&repo.common_dir)?;
+        let mut receipts = Vec::new();
+        for record in self.prepared_records(repo)? {
+            if record.operation != super::GitWireOperation::PublishRefs.as_str() {
+                continue;
+            }
+            let outcome = self.finish_record(repo, record, now)?;
+            receipts.push(outcome.receipt().clone());
+        }
+        Ok(receipts)
+    }
 }
 
 fn resolve_plan_publications(

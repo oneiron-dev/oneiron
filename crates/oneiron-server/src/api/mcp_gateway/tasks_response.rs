@@ -682,6 +682,18 @@ fn mcp_agent_verb_input(
             Ok(input)
         }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.host" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.sharing" => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "room_ref".to_owned(),
+                json!(a.room_ref.as_ref().ok_or_else(invalid)?),
+            );
+            Ok(Value::Object(map))
+        }
+        "vault.companions.sharing.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.workspace.work_companion.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.workspace.work_companion.set" => a.spec.clone().ok_or_else(invalid),
         "self.skills.save" => a.spec.clone().ok_or_else(invalid),
         "self.skills.fork" => a.spec.clone().ok_or_else(invalid),
         "self.skills.callables" => Ok(Value::Object(serde_json::Map::new())),
@@ -907,6 +919,23 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "vault.rooms.consent" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.host" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.sharing" => {
+            if let Some(value) = input.get("room_ref") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.companions.sharing.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.workspace.work_companion.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.workspace.work_companion.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.skills.save" => {
@@ -1514,6 +1543,48 @@ async fn execute_agent_verb_listing(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_consent(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.host" => {
+            let input: oneiron::task_verb::sdk::RoomHostRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_host(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.sharing" => {
+            let input: oneiron::task_verb::sdk::RoomRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_sharing(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.companions.sharing.get" => {
+            let input: oneiron::task_verb::sdk::CompanionSharingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_companions_sharing_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.workspace.work_companion.get" => {
+            let input: oneiron::task_verb::sdk::WorkspaceRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_workspace_work_companion_get(&memory, input)
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.workspace.work_companion.set" => {
+            let input: oneiron::task_verb::sdk::WorkCompanionSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_workspace_work_companion_set(&memory, input)
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
