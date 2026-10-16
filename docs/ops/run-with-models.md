@@ -742,6 +742,16 @@ seconds or characters is charged its row's `rates` (defaults: an image 4000
 tokens, an audio second 50, a video second 10000, four characters of speech
 one). `inputs = ["text", "image"]` narrows or widens what a row takes.
 
+An embed row takes text only until its `inputs` widen it (`inputs = ["text",
+"image", "audio"]` for a multimodal model). Texts go as one `input` batch. A
+call with an image or audio sends each part as its own document in the chat
+form (`messages` in place of `input`, an image as a `data:` URL, audio as
+`input_audio`), as vLLM serves multimodal embedding models, and gets one vector
+per part, in order. Every vector of one answer has one width, the `dimensions`
+param's when the call names one. The stored-media backfill and the context
+pack's `media` query embed through this row, and each refuses a vector whose
+width is not its space's declared width.
+
 The verbs, each the owner's and checked against the vault's inference policy:
 
 - `GET /v1/ai/options?operation=image&inputs=text,image`: every row that
