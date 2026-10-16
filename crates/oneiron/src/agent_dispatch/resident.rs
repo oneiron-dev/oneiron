@@ -1,5 +1,12 @@
 //! Persistent resident bindings. Goal records are data, never prompt edits.
-use super::{AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+use super::{
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus,
+    AgentDispatchTarget, AgentDispatcher, DispatchAgent, decode_agent_dispatch_input,
+};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
+    ClaimOutcome, SetAttemptResult,
+};
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, Error, Result};
@@ -10,8 +17,13 @@ use crate::{
     WriteProvenance,
 };
 use rmpv::Value;
+use std::collections::HashSet;
 
 const PREDICATE: &str = "agent.resident";
+/// A completed resident run's result TURN. Parts: attempt.
+const RUN_RESULT: &[u8] = b"oneiron:resident-run-result:v1";
+/// The run's answer body, as the result TURN holds it. Parts: result TURN.
+const RUN_RESULT_BODY: &[u8] = b"oneiron:resident-run-result-body:v1";
 
 /// Wake policy changes scheduling only. It conveys no scope or approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +207,13 @@ impl AgentDispatcher<'_> {
             crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND,
             crate::receipt::MAX_RECEIPT_QUERY_SCAN,
         )?;
+        // Completion retires a wake's dedupe entry, so a message whose wake
+        // already ran is known by its key on the resident's run instead.
+        let woken: HashSet<String> = crate::attempt_queue::AttemptQueue::new(self.vault)
+            .list_run(&resident_run_id(agent))?
+            .into_iter()
+            .filter_map(|row| row.dedupe_key)
+            .collect();
         let mut outcomes = Vec::new();
         for row in rows {
             let payload = crate::surface_event::decode_surface_event_attempt_payload(&row.payload)?;
@@ -222,19 +241,23 @@ impl AgentDispatcher<'_> {
                     continue;
                 }
             }
+            let intent = blake3::hash(event.correlation_id.as_bytes()).to_hex();
+            let key = format!(
+                "resident:{}:{}:{}",
+                agent.to_hex(),
+                spec.inbox_identity_ref.to_hex(),
+                intent
+            );
+            if woken.contains(&format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")) {
+                continue;
+            }
             if outcomes.len() >= limit.min(64) {
                 break;
             }
-            let intent = blake3::hash(event.correlation_id.as_bytes()).to_hex();
             let outcome = self.dispatch(DispatchAgent {
                 target: AgentDispatchTarget::Custom(agent),
                 parent_attempt: None,
-                dedupe_key: Some(format!(
-                    "resident:{}:{}:{}",
-                    agent.to_hex(),
-                    spec.inbox_identity_ref.to_hex(),
-                    intent
-                )),
+                dedupe_key: Some(key),
                 run_id: Some(format!("resident:{}", agent.to_hex())),
                 now,
             })?;
@@ -244,6 +267,246 @@ impl AgentDispatcher<'_> {
         }
         Ok(outcomes)
     }
+}
+
+impl Vault {
+    /// The binding a host wakes and runs `agent` under: a settled, valid
+    /// resident binding, or none. A held binding binds no wake.
+    pub fn settled_resident_agent(&self, agent: EntityId) -> Result<Option<ResidentAgentSpec>> {
+        let binding = {
+            let txn = self.store.env.read_txn()?;
+            self.resident_binding_for_effect_in_txn(&txn, agent)?
+        };
+        let Some((_, spec)) = binding else {
+            return Ok(None);
+        };
+        validate(self, &spec)?;
+        Ok(Some(spec))
+    }
+}
+
+impl AgentDispatcher<'_> {
+    /// The resident run pump's view: each ready run of one of `residents`,
+    /// oldest first, with the resident it runs for. It reads only; the claim
+    /// checks the row again.
+    pub fn ready_resident_runs(
+        &self,
+        residents: &[EntityId],
+        now: u64,
+    ) -> Result<Vec<(AttemptId, EntityId)>> {
+        let rows = AttemptQueue::new(self.vault).list_kind_bounded(
+            crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
+            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
+        )?;
+        let mut ready = Vec::new();
+        for row in rows {
+            if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+                || row
+                    .scheduled_at
+                    .or(row.backoff_until)
+                    .is_some_and(|at| at > now)
+            {
+                continue;
+            }
+            // A row this view cannot decode is no resident run; its own
+            // worker reports it.
+            let Ok(Some((agent, _))) = resident_run_input(&row) else {
+                continue;
+            };
+            if residents.contains(&agent) {
+                ready.push((row.id, agent));
+            }
+        }
+        Ok(ready)
+    }
+
+    /// Claims one resident run by id, the way a workflow host claims its
+    /// leaf: never by kind, as the generic `dreamer` queue holds other jobs.
+    /// `None` when the row is no longer a ready run of a settled resident,
+    /// or another worker holds it.
+    pub fn claim_resident_run(
+        &self,
+        id: AttemptId,
+        lease_owner: &str,
+        now: u64,
+    ) -> Result<Option<(AgentDispatchStatus, ResidentAgentSpec)>> {
+        let queue = AttemptQueue::new(self.vault);
+        let mut txn = self.vault.store.env.write_txn()?;
+        let Some(row) = queue.get_in_write_txn(&txn, id)? else {
+            return Ok(None);
+        };
+        let Some((agent, input)) = resident_run_input(&row)? else {
+            return Ok(None);
+        };
+        let Some((_, resident)) = self.vault.resident_binding_for_effect_in_txn(&txn, agent)?
+        else {
+            return Ok(None);
+        };
+        self.dispatchable_definition_in_txn(&txn, &input.target)?;
+        let ClaimOutcome::Claimed(attempt) = crate::ports::JobQueue::port_job_claim_id(
+            self.vault,
+            &mut txn,
+            id,
+            ClaimAttempt {
+                lease_owner: lease_owner.to_owned(),
+                now,
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        // OF-220: the TASK this try realizes is taken on the task highway,
+        // as the Dreamer's admission takes it.
+        crate::task_verb::highway_runner::accept_leased_task_in_txn(
+            self.vault, &mut txn, &attempt,
+        )?;
+        txn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(Some((AgentDispatchStatus { attempt, input }, resident)))
+    }
+}
+
+impl AgentDispatcher<'_> {
+    /// Gives a completed resident run its durable result before the runner
+    /// completes the attempt: one TURN naming the answer of the run's
+    /// finished step, which holds that body for as long as the TURN lives
+    /// (OF-597), set as the attempt's result so the task highway's Done
+    /// resolves it. The TURN's id derives from the attempt, so a replayed
+    /// completion finds the TURN it made.
+    pub fn attach_resident_run_result(
+        &self,
+        attempt: &AttemptRecord,
+        lease_owner: &str,
+        run: &crate::code_run::CodeRunReplayRecord,
+        now: u64,
+    ) -> Result<EntityId> {
+        use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
+        let result_ref = EntityId::derive(RUN_RESULT, &[attempt.id.as_bytes().as_slice()])?;
+        // The finished step's observation, never a marker or a file the run
+        // wrote after it.
+        let answer = run
+            .outputs
+            .iter()
+            .rev()
+            .find(|output| output.complete && output.path.ends_with(".observation.txt"));
+        let field = |key: &str, value: Value| (Value::from(key), value);
+        let artifact = Value::Map(vec![
+            field("kind", Value::from("resident.run_result")),
+            field(
+                "attempt_ref",
+                Value::from(crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())),
+            ),
+            field("run_ref", Value::from(run.run_id.to_hex())),
+            field(
+                "task_ref",
+                attempt.task_ref.clone().map_or(Value::Nil, Value::from),
+            ),
+            field(
+                "answer",
+                answer.map_or(Value::Nil, |output| {
+                    Value::Map(vec![
+                        field("path", Value::from(output.path.clone())),
+                        field("handle", Value::from(output.handle.clone())),
+                        field("bytes", Value::from(output.raw_len)),
+                        field("lines", Value::from(output.lines)),
+                    ])
+                }),
+            ),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &artifact)
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        // An inline body lives in the run's own rows; only a file needs a holder.
+        let held = match answer {
+            Some(output)
+                if self
+                    .vault
+                    .store
+                    .body_dir()?
+                    .open_body(&output.raw_blake3, output.raw_len)?
+                    .is_some() =>
+            {
+                Some(OwnedBody {
+                    owner: result_ref,
+                    occurrence: EntityId::derive(
+                        RUN_RESULT_BODY,
+                        &[result_ref.as_bytes().as_slice()],
+                    )?,
+                    state: BodyState::Complete {
+                        body: BodyRef {
+                            blake3: output.raw_blake3,
+                            bytes: output.raw_len,
+                            location: BodyLocation::File,
+                        },
+                    },
+                })
+            }
+            _ => None,
+        };
+        let mut txn = self.vault.store.env.write_txn()?;
+        if self
+            .vault
+            .get_entity_type_in_txn(&txn, &result_ref)?
+            .is_none()
+        {
+            self.vault
+                .batch_in()
+                .put(
+                    &result_ref,
+                    crate::registry::ENTITY_TYPE_TURN,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &bytes,
+                )
+                .apply(&mut txn)?;
+        }
+        if let Some(held) = &held {
+            crate::provenance::body::publish_body_in_txn(&self.vault.store, &mut txn, held)?;
+        }
+        AttemptQueue::new(self.vault).set_result_in_txn(
+            &mut txn,
+            SetAttemptResult {
+                id: attempt.id,
+                lease_owner: lease_owner.to_owned(),
+                attempt_count: attempt.attempt_count,
+                result_ref: AttemptResultRef::new(result_ref.to_hex())?,
+                now,
+            },
+        )?;
+        txn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(result_ref)
+    }
+}
+
+/// The run id every inbox wake of `agent` carries.
+fn resident_run_id(agent: EntityId) -> String {
+    format!("resident:{}", agent.to_hex())
+}
+
+/// A run a resident's host executes: a top-level dispatch of the resident,
+/// either a wake from its inbox or a TASK assigned to it. Workflow leaves and
+/// spawned children carry a parent attempt and are other hosts' work.
+fn resident_run_input(record: &AttemptRecord) -> Result<Option<(EntityId, AgentDispatchInput)>> {
+    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+        return Ok(None);
+    }
+    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)?;
+    if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE || payload.parent_attempt.is_some() {
+        return Ok(None);
+    }
+    let input = decode_agent_dispatch_input(&payload.input)?;
+    let AgentDispatchTarget::Custom(agent) = &input.target else {
+        return Ok(None);
+    };
+    let agent = *agent;
+    if record.task_ref.is_none() && record.run_id.as_deref() != Some(&resident_run_id(agent)) {
+        return Ok(None);
+    }
+    Ok(Some((agent, input)))
 }
 
 fn validate(vault: &Vault, spec: &ResidentAgentSpec) -> Result<()> {

@@ -94,7 +94,9 @@ impl CursorRow {
     pub(super) fn new(position: Option<FactPosition>, at: u64) -> Self {
         Self {
             position: position.map(|position| match position {
-                FactPosition::ClaimChangelog(position) => CursorPosition::ClaimChangelog(position.0),
+                FactPosition::ClaimChangelog(position) => {
+                    CursorPosition::ClaimChangelog(position.0)
+                }
                 FactPosition::Settlement(position) => CursorPosition::Settlement(position.0),
             }),
             paused: false,
@@ -122,7 +124,11 @@ impl CursorRow {
     }
 }
 
-pub(super) fn cursor(vault: &Vault, binding: EntityId, source: FactSource) -> Result<Option<CursorRow>> {
+pub(super) fn cursor(
+    vault: &Vault,
+    binding: EntityId,
+    source: FactSource,
+) -> Result<Option<CursorRow>> {
     let rtxn = vault.store.env.read_txn()?;
     CURSORS.get(&vault.store, &rtxn, &(binding, [source.tag()]))
 }
@@ -153,7 +159,13 @@ pub(super) fn advance_cursor_in_txn(
     if current.is_some_and(|current| current >= position) {
         return Ok(());
     }
-    put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(Some(position), at))
+    put_cursor_in_txn(
+        vault,
+        txn,
+        binding,
+        source,
+        &CursorRow::new(Some(position), at),
+    )
 }
 
 /// How a run ended.

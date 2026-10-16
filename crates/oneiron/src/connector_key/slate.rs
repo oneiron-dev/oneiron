@@ -38,7 +38,12 @@ pub enum SlateDisposition {
     NeverAllow,
 }
 impl SlateDisposition {
-    pub const ALL: [Self; 4] = [Self::AlwaysAllow, Self::Auto, Self::AlwaysAsk, Self::NeverAllow];
+    pub const ALL: [Self; 4] = [
+        Self::AlwaysAllow,
+        Self::Auto,
+        Self::AlwaysAsk,
+        Self::NeverAllow,
+    ];
     pub fn as_str(self) -> &'static str {
         match self {
             Self::AlwaysAllow => "always_allow",
@@ -48,7 +53,9 @@ impl SlateDisposition {
         }
     }
     pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|setting| setting.as_str() == value)
+        Self::ALL
+            .into_iter()
+            .find(|setting| setting.as_str() == value)
     }
 }
 
@@ -325,7 +332,10 @@ pub(in crate::connector_key) fn declaration_expands(
     carry: &BTreeSet<(String, String)>,
 ) -> bool {
     next.data_class != old.data_class
-        && !carry.contains(&(next.data_class.as_str().into(), old.data_class.as_str().into()))
+        && !carry.contains(&(
+            next.data_class.as_str().into(),
+            old.data_class.as_str().into(),
+        ))
         || next
             .header_parameters
             .iter()
@@ -513,7 +523,6 @@ fn is_resolved_schema(value: &serde_json::Value) -> bool {
     }
     true
 }
-
 
 /// A stamped slate is an admission for one connector, not a reusable grant.
 /// Reserve its identity in the same transaction as the key registration.

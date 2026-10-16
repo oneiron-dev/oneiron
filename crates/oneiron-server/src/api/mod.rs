@@ -109,6 +109,8 @@ mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
 mod lease;
 mod llm;
+#[cfg(feature = "mesh")]
+pub(crate) use llm::MeshLlm;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
@@ -263,6 +265,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/context-board/turns/{turn}",
             get(context_board_turn_history),
         )
+        .route("/explain/memory/{entity}", get(core_explain_memory))
+        .route("/explain/gate/{receipt}", get(core_explain_gate))
         .route("/context-board/scratchpad", post(context_board_scratchpad))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))

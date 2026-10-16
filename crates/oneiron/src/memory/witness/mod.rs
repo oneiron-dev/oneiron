@@ -10,7 +10,8 @@ mod stream;
 mod types;
 pub use stream::*;
 pub(crate) use stream::{
-    MessageStreamRuntime, message_completion_in_txn, message_stream_finality_in_txn,
+    MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
+    message_stream_finality_in_txn,
 };
 mod validation;
 

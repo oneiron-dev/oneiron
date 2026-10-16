@@ -794,6 +794,68 @@ pub fn settle_skill_tradeoff_ask(
         // The role check below is the authorization: a board member who is
         // not a vault owner answers on their own behalf.
         let actor = owner.revalidate_person_in_txn(vault, txn)?;
+        settle_ask_in_txn(
+            vault,
+            txn,
+            actor,
+            format!("{:?}", owner.decision_id()),
+            TradeoffRung::Person,
+            proposal,
+            expected_question_digest,
+            choice,
+            at,
+        )
+    })
+}
+
+/// [`settle_skill_tradeoff_ask`] for an agent that holds a responsible role
+/// the ask has reached (ROLES-EVERYWHERE). The agent must be a live, bound
+/// writer in the settling transaction; the role check is the authorization,
+/// and its pick is learned as the role's preference like a person's.
+/// # Errors
+/// A writer that is not a live agent, plus every error of
+/// [`settle_skill_tradeoff_ask`]. An error writes nothing.
+pub fn settle_skill_tradeoff_ask_as_agent(
+    vault: &Vault,
+    agent: &crate::write_envelope::WriteActor,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    vault.with_write_txn_grouped(|txn| {
+        if agent.actor_class() != crate::edge::EdgeActorClass::Agent {
+            return Err(invalid("an agent tradeoff pick requires an agent actor"));
+        }
+        vault.verify_write_actor_in_txn(txn, agent)?;
+        let actor = agent.entity_ref();
+        settle_ask_in_txn(
+            vault,
+            txn,
+            actor,
+            format!("agent:{}", actor.to_hex()),
+            TradeoffRung::Role,
+            proposal,
+            expected_question_digest,
+            choice,
+            at,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settle_ask_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    authentication: String,
+    rung: TradeoffRung,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    {
         let ask: SkillTradeoffAsk = load(vault, txn, &key(ASK_PREFIX, proposal))?
             .ok_or(invalid("no pending skill tradeoff ask"))?;
         let question = &ask.question;
@@ -872,10 +934,10 @@ pub fn settle_skill_tradeoff_ask(
         let resolution = TradeoffResolution {
             pending: pending.id,
             owner: actor,
-            authentication: format!("{:?}", owner.decision_id()),
+            authentication,
             evidence: expected_question_digest.to_owned(),
-            rung: TradeoffRung::Person,
+            rung,
         };
         record_tradeoff_resolution_in_txn(vault, txn, pending, resolution, choice, &cycle, at)
-    })
+    }
 }

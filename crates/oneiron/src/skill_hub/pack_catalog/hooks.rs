@@ -227,15 +227,19 @@ impl PackHook {
             scalar("phase")?.ok_or_else(|| invalid("HOOK.md requires a phase"))?,
         ))
         .map_err(|_| invalid("hook phase is pre, post or fact"))?;
+        // An entry is a verb glob, or `<fact kind>:<predicate glob>`; the
+        // first ':' splits them.
         let verbs: Vec<String> = json_list(&fields, "verbs")?;
         if verbs.is_empty()
             || verbs.iter().any(|verb| {
                 verb.is_empty()
                     || verb.len() > 256
+                    || verb.starts_with(':')
+                    || verb.ends_with(':')
                     || !verb.bytes().all(|b| {
                         b.is_ascii_lowercase()
                             || b.is_ascii_digit()
-                            || matches!(b, b'.' | b'_' | b'-' | b'*')
+                            || matches!(b, b'.' | b'_' | b'-' | b'*' | b':')
                     })
             })
         {
