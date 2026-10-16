@@ -111,6 +111,7 @@ impl InferencePolicySnapshot {
         if let (Some(role), Some(manifest)) = (role, &manifest) {
             manifest.bind_request(role, &routes, request)?;
         }
+        // Installed catalog rows are stored rows: the pack install activates them.
         let registry = registry::read_model_registry_row(store, txn, &request.model)?;
         if role.is_none()
             && let Some(row) = &registry

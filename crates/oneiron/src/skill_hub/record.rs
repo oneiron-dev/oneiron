@@ -100,7 +100,9 @@ impl HubSyncPolicy {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    /// Parses the pinned wire spelling.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "pinned-ref" => Some(Self::PinnedRef),
             "pinned-commit" => Some(Self::PinnedCommit),

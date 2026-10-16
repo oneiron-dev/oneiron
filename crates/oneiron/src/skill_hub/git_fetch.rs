@@ -19,27 +19,25 @@ impl GitEndpointSkillHubAdapter {
         if !is_oid(expected_commit) {
             return Err(invalid("Git transport requires a full commit pin"));
         }
-        let endpoint = if std::path::Path::new(endpoint).is_absolute() {
-            let path = std::fs::canonicalize(endpoint)?;
-            path.to_str()
-                .ok_or_else(|| invalid("Git path is not UTF-8"))?
-                .to_owned()
-        } else {
-            let url = reqwest::Url::parse(endpoint).map_err(|_| invalid("invalid Git endpoint"))?;
-            if !matches!(url.scheme(), "https" | "http")
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.query().is_some()
-                || url.fragment().is_some()
-            {
-                return Err(invalid("Git endpoint scheme or credentials refused"));
-            }
-            url.to_string()
-        };
+        Ok(Self {
+            hub_id,
+            endpoint: normalize_endpoint(endpoint)?,
+            commit: expected_commit.to_ascii_lowercase(),
+        })
+    }
+    /// Follows a tag to the commit it names now (a pinned-ref sync). The commit
+    /// only pins this transport: the fetched bytes earn nothing until their
+    /// content hash passes the scan and install doors.
+    pub fn at_tag(hub_id: EntityId, endpoint: &str, tag: &str) -> Result<Self> {
+        if !valid_tag(tag) {
+            return Err(invalid("invalid Git tag"));
+        }
+        let endpoint = normalize_endpoint(endpoint)?;
+        let (_, commit) = fetch_revision(&endpoint, &format!("refs/tags/{tag}"))?;
         Ok(Self {
             hub_id,
             endpoint,
-            commit: expected_commit.to_ascii_lowercase(),
+            commit,
         })
     }
     /// Immutable resolved revision to attach to host tracking/provenance.
@@ -67,54 +65,8 @@ impl GitEndpointSkillHubAdapter {
         if subtree != "." {
             crate::skill::canonical_skill_tree_hash([(subtree.as_str(), &[][..])])?;
         }
-        let repo = GitScratch::new()?;
-        repo.run(
-            &[
-                "--git-dir=repo",
-                "config",
-                "remote.origin.url",
-                &self.endpoint,
-            ],
-            4096,
-        )?;
-        repo.run(
-            &["--git-dir=repo", "config", "remote.origin.promisor", "true"],
-            4096,
-        )?;
-        repo.run(
-            &[
-                "--git-dir=repo",
-                "config",
-                "remote.origin.partialclonefilter",
-                "blob:none",
-            ],
-            4096,
-        )?;
-        repo.run(
-            &[
-                "--git-dir=repo",
-                "fetch",
-                "--quiet",
-                "--no-tags",
-                "--no-recurse-submodules",
-                "--depth=1",
-                "--filter=blob:none",
-                "--",
-                "origin",
-                &revision,
-            ],
-            4096,
-        )?;
-        let resolved = repo.run(
-            &[
-                "--git-dir=repo",
-                "rev-parse",
-                "--verify",
-                "FETCH_HEAD^{commit}",
-            ],
-            128,
-        )?;
-        if std::str::from_utf8(&resolved).ok().map(str::trim) != Some(self.commit.as_str()) {
+        let (repo, resolved) = fetch_revision(&self.endpoint, &revision)?;
+        if resolved != self.commit {
             return Err(invalid("Git tag or commit drift"));
         }
         let object = if subtree == "." {
@@ -169,6 +121,78 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
         // No repository-wide checkout or scan. Hosts select a subtree explicitly.
         Err(invalid("Git discovery requires an explicit subtree ref"))
     }
+}
+fn normalize_endpoint(endpoint: &str) -> Result<String> {
+    if std::path::Path::new(endpoint).is_absolute() {
+        let path = std::fs::canonicalize(endpoint)?;
+        return Ok(path
+            .to_str()
+            .ok_or_else(|| invalid("Git path is not UTF-8"))?
+            .to_owned());
+    }
+    let url = reqwest::Url::parse(endpoint).map_err(|_| invalid("invalid Git endpoint"))?;
+    if !matches!(url.scheme(), "https" | "http")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid("Git endpoint scheme or credentials refused"));
+    }
+    Ok(url.to_string())
+}
+/// One shallow, blob-less fetch into a fresh scratch store. Returns the store
+/// and the commit the revision resolved to.
+fn fetch_revision(endpoint: &str, revision: &str) -> Result<(GitScratch, String)> {
+    let repo = GitScratch::new()?;
+    repo.run(
+        &["--git-dir=repo", "config", "remote.origin.url", endpoint],
+        4096,
+    )?;
+    repo.run(
+        &["--git-dir=repo", "config", "remote.origin.promisor", "true"],
+        4096,
+    )?;
+    repo.run(
+        &[
+            "--git-dir=repo",
+            "config",
+            "remote.origin.partialclonefilter",
+            "blob:none",
+        ],
+        4096,
+    )?;
+    repo.run(
+        &[
+            "--git-dir=repo",
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--depth=1",
+            "--filter=blob:none",
+            "--",
+            "origin",
+            revision,
+        ],
+        4096,
+    )?;
+    let resolved = repo.run(
+        &[
+            "--git-dir=repo",
+            "rev-parse",
+            "--verify",
+            "FETCH_HEAD^{commit}",
+        ],
+        128,
+    )?;
+    let resolved = std::str::from_utf8(&resolved)
+        .ok()
+        .map(str::trim)
+        .filter(|commit| is_oid(commit))
+        .ok_or_else(|| invalid("Git revision did not resolve to a commit"))?
+        .to_ascii_lowercase();
+    Ok((repo, resolved))
 }
 fn is_oid(text: &str) -> bool {
     matches!(text.len(), 40 | 64) && text.bytes().all(|b| b.is_ascii_hexdigit())

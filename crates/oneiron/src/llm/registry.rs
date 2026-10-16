@@ -242,15 +242,50 @@ impl Vault {
     }
     /// Atomic, insert-only seed. Existing host prices and scraped scores survive reseeding.
     pub fn seed_model_catalog(&self, seed: &CatalogSeed) -> Result<()> {
-        let checked = CatalogSeed::from_json(&encode(seed)?)?;
         let mut txn = self.store.env.write_txn()?;
+        self.refresh_model_catalog_in_txn(&mut txn, seed, None)?;
+        txn.commit()?;
+        Ok(())
+    }
+    /// A pack refresh: a new model is inserted; a row still equal to what the
+    /// prior pack shipped takes the new catalog and keeps its scores; a row
+    /// the host edited stays as it is. With no prior pack this is the seed.
+    pub(crate) fn refresh_model_catalog_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        seed: &CatalogSeed,
+        prior: Option<&CatalogSeed>,
+    ) -> Result<()> {
+        let checked = CatalogSeed::from_json(&encode(seed)?)?;
+        let shipped: BTreeMap<&str, &ModelRegistryRow> = prior
+            .map(|prior| {
+                prior
+                    .rows
+                    .iter()
+                    .map(|row| (row.catalog.model.as_str(), row))
+                    .collect()
+            })
+            .unwrap_or_default();
         for row in checked.rows {
             let key = row.catalog.model.as_str().to_owned();
-            if !REGISTRY_ROW.contains(&self.store, &txn, &key)? {
-                REGISTRY_ROW.put(&self.store, &mut txn, &key, &row)?;
+            match REGISTRY_ROW.get(&self.store, txn, &key)? {
+                None => REGISTRY_ROW.put(&self.store, txn, &key, &row)?,
+                Some(existing)
+                    if shipped.get(key.as_str()).is_some_and(|old| {
+                        old.wire == existing.wire && old.catalog == existing.catalog
+                    }) =>
+                {
+                    let refreshed = ModelRegistryRow {
+                        version: row.version,
+                        wire: row.wire,
+                        catalog: row.catalog,
+                        ..existing
+                    };
+                    REGISTRY_ROW.put(&self.store, txn, &key, &refreshed)?;
+                }
+                Some(_) => {}
             }
         }
-        txn.commit()?;
         Ok(())
     }
     pub fn apply_model_scores(&self, snapshot: &ScoreSnapshot) -> Result<Vec<ModelScoreDiff>> {
