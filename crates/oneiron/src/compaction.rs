@@ -76,7 +76,8 @@ pub use epoch::{
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
-    EpochMint, EpochPlacement, PriorEpoch, epoch_exportable_in, epoch_sources_admitted_in,
+    EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
+    epoch_sources_admitted_in,
 };
 pub use gate::{
     CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,

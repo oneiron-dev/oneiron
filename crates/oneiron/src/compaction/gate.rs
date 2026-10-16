@@ -443,6 +443,9 @@ pub enum CompactionOff {
     /// The run lives in an off-record room, whose overlay compaction is not
     /// built; its window stays raw.
     OffRecordRun,
+    /// The run's agent profile gives its window to its own harness, which
+    /// compacts it: Oneiron never compacts it twice.
+    HarnessCompacts,
 }
 
 impl CompactionOff {
@@ -457,6 +460,7 @@ impl CompactionOff {
             Self::SeatTooSmall => "compaction_seat_too_small",
             Self::BackendFailed => "backend_failed",
             Self::OffRecordRun => "off_record_run",
+            Self::HarnessCompacts => "harness_compacts",
         }
     }
 }

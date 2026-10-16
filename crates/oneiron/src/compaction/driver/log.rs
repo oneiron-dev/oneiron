@@ -34,8 +34,10 @@ impl CompactionDriver {
     /// [`Self::request_for`] for a host-numbered log (an executor run): the
     /// window stops at the recorded watermark's turn, `pins` occur verbatim
     /// in it, `sources` is the whole `DerivedFrom` set, refused above
-    /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut, and
-    /// `prior` is the host's last epoch and the last turn it covers.
+    /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut,
+    /// `prior` is the host's last epoch and the last turn it covers, and
+    /// `calls` is how many of the host's calls `sources` were read from.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn request_for_log(
         &mut self,
         vault: &Vault,
@@ -44,6 +46,7 @@ impl CompactionDriver {
         pins: Vec<String>,
         sources: Vec<EntityId>,
         prior: Option<crate::compaction::PriorEpoch>,
+        calls: u64,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, .. } = &self.state else {
             return Err(Error::InvariantViolation(
@@ -90,7 +93,7 @@ impl CompactionDriver {
             window,
             pins,
             sources,
-            WindowLog::Host { prior },
+            WindowLog::Host { prior, calls },
         )
     }
 }
