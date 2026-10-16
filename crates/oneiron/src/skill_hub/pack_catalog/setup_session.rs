@@ -4,8 +4,10 @@
 //! credentials under, the consent receipts of the permissions the owner
 //! allowed, the connector keys bound to connections, and each connection's
 //! latest check. Installing grants nothing and a session activates nothing;
-//! the pack's own qualification still decides Active. The setup skill is
-//! read from the exact source, so a Candidate is set up before it qualifies.
+//! the pack's own qualification still decides Active. A built-in pack's
+//! qualification is its checked setup connection, so the check that turns it
+//! Verified qualifies it in the same flow. The setup skill is read from the
+//! exact source, so a Candidate is set up before it qualifies.
 //!
 //! Model setup is not here: first-run model setup is the server's one
 //! shared operation (`commands::init::setup_models`, ARCH-0036), and a
@@ -359,7 +361,7 @@ impl Vault {
         })
     }
 
-    fn pack_setup_receipt_in_txn(
+    pub(crate) fn pack_setup_receipt_in_txn(
         &self,
         txn: &RoTxn<'_>,
         pack: &str,

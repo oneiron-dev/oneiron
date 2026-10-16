@@ -7,7 +7,9 @@ use std::time::Instant;
 
 mod receipt;
 use receipt::QualificationEvidence;
-pub use receipt::{CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt};
+pub use receipt::{
+    CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt, SETUP_CHECK_QUALIFICATION_SUITE,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeTool {
