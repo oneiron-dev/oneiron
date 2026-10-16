@@ -1,7 +1,10 @@
 //! ZIP central-directory reader and copy-through writer. All source records
-//! remain owned by the package; only declared XML leaf edits can produce output.
+//! remain owned by the package; only checked edits and added parts change output.
 use super::{Error, Result, XmlLimits, xml};
+
+mod parts;
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
+pub use parts::{Relationship, rels_name};
 use std::{
     collections::HashSet,
     io::{Read, Write},
@@ -49,6 +52,15 @@ struct Entry {
     replacement: Option<Vec<u8>>,
 }
 
+/// A part this package did not read: written fresh at export, after every
+/// retained record, with fixed timestamps.
+#[derive(Debug, Clone)]
+struct Added {
+    name: String,
+    data: Vec<u8>,
+    deflated: Vec<u8>,
+}
+
 impl Entry {
     /// A ZIP directory entry (`xl/`) names a folder, not a part.
     fn is_directory(&self) -> bool {
@@ -60,12 +72,13 @@ impl Entry {
 /// entries, central-directory metadata, comments and untouched local records.
 #[derive(Debug, Clone)]
 pub struct Package {
-    source: Vec<u8>,
+    source: std::sync::Arc<[u8]>,
     entries: Vec<Entry>,
     cd_offset: usize,
     eocd: usize,
     limits: Limits,
     editability: Editability,
+    added: Vec<Added>,
 }
 
 impl Package {
@@ -75,18 +88,7 @@ impl Package {
     /// entry whose name ends in `/` is a ZIP directory entry: its folder path
     /// passes the same checks, and the archive keeps it, but it is no part.
     pub fn open(source: &[u8], limits: Limits) -> Result<Self> {
-        if [
-            limits.archive_bytes,
-            limits.entries,
-            limits.part_bytes,
-            limits.expanded_bytes,
-            limits.xml.max_depth,
-            limits.xml.max_nodes,
-        ]
-        .contains(&0)
-        {
-            return Err(Error::Invalid("resource limits must be positive"));
-        }
+        check_limits(limits)?;
         if source.len() > limits.archive_bytes {
             return Err(Error::Invalid("archive size limit"));
         }
@@ -292,12 +294,13 @@ impl Package {
             entries[index].local.end = next; // Includes descriptor and non-entry padding.
         }
         let mut package = Self {
-            source: source.to_vec(),
+            source: source.into(),
             entries,
             cd_offset,
             eocd,
             limits,
             editability: Editability::Unsigned,
+            added: Vec::new(),
         };
         package.editability = package.signature_or_unsafe_metadata();
         Ok(package)
@@ -352,10 +355,14 @@ impl Package {
             .iter()
             .filter(|entry| !entry.is_directory())
             .map(|entry| entry.name.as_str())
+            .chain(self.added.iter().map(|part| part.name.as_str()))
     }
 
     /// Returns verified expanded bytes for one part.
     pub fn part(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        if let Some(part) = self.added.iter().find(|part| part.name == name) {
+            return Ok(Some(part.data.clone()));
+        }
         self.entries
             .iter()
             .find(|entry| entry.name == name && !entry.is_directory())
@@ -375,22 +382,21 @@ impl Package {
     ) -> Result<()> {
         let index = self.editable_xml_part(name)?;
         let old = self.expanded(&self.entries[index])?;
-        let other_size =
-            self.entries
-                .iter()
-                .enumerate()
-                .try_fold(0usize, |total, (at, entry)| {
-                    total
-                        .checked_add(if at == index {
-                            0
-                        } else {
-                            entry
-                                .replacement
-                                .as_ref()
-                                .map_or(entry.uncompressed, Vec::len)
-                        })
-                        .ok_or(Error::Edit("edited package size overflow"))
-                })?;
+        let other_size = self.entries.iter().enumerate().try_fold(
+            self.added_bytes(),
+            |total, (at, entry)| {
+                total
+                    .checked_add(if at == index {
+                        0
+                    } else {
+                        entry
+                            .replacement
+                            .as_ref()
+                            .map_or(entry.uncompressed, Vec::len)
+                    })
+                    .ok_or(Error::Edit("edited package size overflow"))
+            },
+        )?;
         let budget = self.limits.part_bytes.min(
             self.limits
                 .expanded_bytes
@@ -410,6 +416,9 @@ impl Package {
     pub fn replace_xml_part(&mut self, name: &str, value: Vec<u8>) -> Result<()> {
         if name == "[Content_Types].xml" {
             return Err(Error::Edit("package metadata is not a document part"));
+        }
+        if self.added.iter().any(|part| part.name == name) {
+            return self.rewrite_added(name, value);
         }
         let index = self.editable_xml_part(name)?;
         let old = self.expanded(&self.entries[index])?;
@@ -439,21 +448,21 @@ impl Package {
         if new.len() > self.limits.part_bytes {
             return Err(Error::Edit("edited part size limit"));
         }
-        let total = self
-            .entries
-            .iter()
-            .enumerate()
-            .try_fold(0usize, |sum, (at, entry)| {
-                sum.checked_add(if at == index {
-                    new.len()
-                } else {
-                    entry
-                        .replacement
-                        .as_ref()
-                        .map_or(entry.uncompressed, Vec::len)
-                })
-                .ok_or(Error::Edit("edited package size overflow"))
-            })?;
+        let total =
+            self.entries
+                .iter()
+                .enumerate()
+                .try_fold(self.added_bytes(), |sum, (at, entry)| {
+                    sum.checked_add(if at == index {
+                        new.len()
+                    } else {
+                        entry
+                            .replacement
+                            .as_ref()
+                            .map_or(entry.uncompressed, Vec::len)
+                    })
+                    .ok_or(Error::Edit("edited package size overflow"))
+                })?;
         if total > self.limits.expanded_bytes {
             return Err(Error::Edit("edited package size limit"));
         }
@@ -475,7 +484,11 @@ impl Package {
     /// Compute the exact compressed output length with a counting sink before
     /// committing a replacement; no over-budget ZIP allocation is attempted.
     fn check_export_size(&self, edited: usize, candidate: Option<&[u8]>) -> Result<()> {
-        let mut total = self.source.len();
+        let mut total = self
+            .source
+            .len()
+            .checked_add(self.added_archive_bytes()?)
+            .ok_or(Error::Edit("edited ZIP size overflow"))?;
         for (index, entry) in self.entries.iter().enumerate() {
             let replacement = if index == edited {
                 candidate
@@ -514,8 +527,8 @@ impl Package {
     /// untouched local records and compressed payloads, patch central offsets,
     /// and replace only edited entry payload/header/checksum fields.
     pub fn export(&self) -> Result<Vec<u8>> {
-        if self.entries.iter().all(|entry| entry.replacement.is_none()) {
-            return Ok(self.source.clone());
+        if self.added.is_empty() && self.entries.iter().all(|entry| entry.replacement.is_none()) {
+            return Ok(self.source.to_vec());
         }
         let mut out = Vec::with_capacity(self.source.len());
         let mut offsets = vec![0u32; self.entries.len()];
@@ -552,6 +565,12 @@ impl Package {
                 out.extend_from_slice(&self.source[entry.local.clone()]);
             }
         }
+        let mut added_offsets = Vec::with_capacity(self.added.len());
+        for part in &self.added {
+            added_offsets.push(as_u32(out.len())?);
+            out.extend_from_slice(&part.header(LOCAL, None)?);
+            out.extend_from_slice(&part.deflated);
+        }
         let cd_offset = as_u32(out.len())?;
         for (index, entry) in self.entries.iter().enumerate() {
             let mut record = self.source[entry.central.clone()].to_vec();
@@ -575,8 +594,15 @@ impl Package {
             }
             out.extend_from_slice(&record);
         }
+        for (part, offset) in self.added.iter().zip(added_offsets) {
+            out.extend_from_slice(&part.header(CENTRAL, Some(offset))?);
+        }
         let cd_size = as_u32(out.len() - cd_offset as usize)?;
         let mut footer = self.source[self.eocd..].to_vec();
+        let count = u16::try_from(self.entries.len() + self.added.len())
+            .map_err(|_| Error::Invalid("ZIP32 entry limit"))?;
+        patch16(&mut footer, 8, count);
+        patch16(&mut footer, 10, count);
         patch32(&mut footer, 12, cd_size);
         patch32(&mut footer, 16, cd_offset);
         out.extend_from_slice(&footer);
@@ -604,6 +630,22 @@ impl Package {
         }
         Ok(out)
     }
+}
+
+fn check_limits(limits: Limits) -> Result<()> {
+    if [
+        limits.archive_bytes,
+        limits.entries,
+        limits.part_bytes,
+        limits.expanded_bytes,
+        limits.xml.max_depth,
+        limits.xml.max_nodes,
+    ]
+    .contains(&0)
+    {
+        return Err(Error::Invalid("resource limits must be positive"));
+    }
+    Ok(())
 }
 
 fn get16(bytes: &[u8], at: usize) -> Result<u16> {
