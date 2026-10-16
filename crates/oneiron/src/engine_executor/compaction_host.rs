@@ -119,7 +119,8 @@ impl EngineNativeExecutor<'_> {
     /// failure pins and every record whose words reached them. A window
     /// longer than the backend takes whole, or whose pins the summary could
     /// not hold, stops at the last step that fits; the next crossing seals
-    /// the rest.
+    /// the rest. A run in an off-record room reads all of it through its
+    /// room's overlay over base.
     fn seal_compaction_window(
         &self,
         driver: &mut crate::compaction::CompactionDriver,
@@ -127,14 +128,11 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         watermark: u64,
     ) -> EngineExecutorResult<Option<crate::compaction::CompactionRequest>> {
-        let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage else {
-            return Ok(None);
-        };
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
         // The run's position is its coverage rows, withdrawn summaries
         // included: erasing a summary never moves where the next one starts.
-        let coverage = vault.code_run_compaction_coverage(run_id)?;
+        let coverage = self.storage.code_run_compaction_coverage(run_id)?;
         let newest = coverage
             .iter()
             .max_by_key(|row| row.epoch())
@@ -255,27 +253,39 @@ impl EngineNativeExecutor<'_> {
             )?);
         }
         host.extend(newest.map(|row| row.summary_id()));
-        let sources = super::compaction::served_sources(vault, calls, host)?;
+        let (sources, request_id) = match &self.storage {
+            crate::code_run::ExecutorStorage::Canonical(vault) => {
+                let rtxn = vault.store.env.read_txn()?;
+                (
+                    super::compaction::served_sources(&vault.store, &rtxn, calls, host)?,
+                    vault.store.clock.entity_id()?,
+                )
+            }
+            crate::code_run::ExecutorStorage::Session(binding) => binding.answered(|| {
+                let view = binding.session.read_view()?;
+                let rtxn = view.read().base().env.read_txn()?;
+                Ok((
+                    super::compaction::served_sources(&view, &rtxn, calls, host)?,
+                    crate::store::ManifestDbs::clock(&view).entity_id()?,
+                ))
+            })?,
+        };
         let prior = prior.map(|(epoch, last)| crate::compaction::PriorEpoch::new(epoch, last));
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         Ok(Some(driver.request_for_log(
-            vault, &session, window, pins, sources, prior, calls,
+            request_id, &session, window, pins, sources, prior, calls,
         )?))
     }
 
-    /// This run's swapped epochs with their summaries' prose.
+    /// This run's swapped epochs with their summaries' prose, where the run's
+    /// rows are: base, or its room's overlay over base.
     pub(super) fn compaction_epochs(
         &self,
         run_id: crate::EntityId,
     ) -> EngineExecutorResult<Vec<(crate::code_run::CodeRunCompactionCoverage, Option<String>)>>
     {
-        Ok(match &self.storage {
-            crate::code_run::ExecutorStorage::Canonical(vault) => {
-                vault.code_run_compaction_epochs(run_id)?
-            }
-            crate::code_run::ExecutorStorage::Session(_) => Vec::new(),
-        })
+        Ok(self.storage.code_run_compaction_epochs(run_id)?)
     }
 
     /// One call's outcome, with the run's seat receipt.
