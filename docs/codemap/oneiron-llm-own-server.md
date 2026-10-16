@@ -11,6 +11,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | s | 1 struct · 1 fn · 1 re-export | OwnServerBackend | Own-server LlmBackend |
+| `src/lib.rs` | src | s | 1 struct · 1 fn · 1 mod · 2 re-export | OwnServerBackend | Own-server LlmBackend |
+| `src/mesh/client.rs` | src | m | 2 struct · 1 trait · 2 fn | LlmNodes, MeshLlmTransport, VaultLlmNodes | The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and… |
+| `src/mesh/mod.rs` | src | s | 1 const · 2 re-export | — | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
+| `src/mesh/serve.rs` | src | s | 1 struct · 1 trait · 2 fn | LlmMeshHandler, LlmMeshService | The serving side: the node that has the model runs another owner node's call under its own admission, and… |
 | `src/tests.rs` | test | m | — | — | — |
 | `tests/remote_transport.rs` | test | s | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |

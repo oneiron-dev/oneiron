@@ -55325,8 +55325,51 @@
      "purpose": "Own-server LlmBackend",
      "surface": {
       "fn": 1,
-      "re-export": 1,
+      "mod": 1,
+      "re-export": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LlmNodes",
+      "MeshLlmTransport",
+      "VaultLlmNodes"
+     ],
+     "path": "src/mesh/client.rs",
+     "purpose": "The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and…",
+     "surface": {
+      "fn": 2,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mesh/mod.rs",
+     "purpose": "Models on the owner's other nodes (OF-575, owner ruling MESH: \"a phone uses the MacBook's model\")",
+     "surface": {
+      "const": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LlmMeshHandler",
+      "LlmMeshService"
+     ],
+     "path": "src/mesh/serve.rs",
+     "purpose": "The serving side: the node that has the model runs another owner node's call under its own admission, and…",
+     "surface": {
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -55347,6 +55390,13 @@
     }
    ],
    "modules": {
+    "mesh": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Models on the owner's other nodes (OF-575, owner ruling MESH: \"a phone uses the MacBook's model\")"
+    },
     "tests": {
      "files": 1,
      "impl_vault": false,
@@ -55357,7 +55407,7 @@
    },
    "over_bar": 0,
    "purpose": "Own-server LlmBackend",
-   "source_files": 1,
+   "source_files": 4,
    "test_files": 2
   },
   "oneiron-llm-systemone": {
@@ -59849,13 +59899,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -60081,7 +60131,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
