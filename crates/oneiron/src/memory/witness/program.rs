@@ -11,7 +11,7 @@ use super::codec::{
 use super::session::{Admit, OverlaySink};
 use super::validation::{
     validate_existing_witness_message, validate_existing_witness_message_orders,
-    validate_existing_witness_turn,
+    validate_existing_witness_turn, validate_witness_occurrence,
 };
 use super::{distinct_message_orders, witness_message_envelope};
 
@@ -574,6 +574,10 @@ impl Memory<'_> {
         }
         // A witnessed row is learned as it occurs; an imported one when it is
         // imported, whatever clock its source kept.
+        if imported.is_none() {
+            let now = self.vault.store.clock.now_recorded_at();
+            validate_witness_occurrence(now, turn.occurred_at)?;
+        }
         let learned_at = imported
             .as_ref()
             .map_or(turn.occurred_at, |stamp| stamp.imported_at);
