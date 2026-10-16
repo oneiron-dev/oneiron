@@ -33,6 +33,10 @@ pub enum AgentVerb {
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultPacksPut,
+    VaultPacksSetupPrepare,
+    VaultPacksSetupGet,
+    VaultPacksSetupAnswer,
+    VaultPacksSetupVerify,
     VaultAuthorityAudit,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
@@ -136,6 +140,7 @@ pub enum AgentVerb {
     VaultHydrate,
     VaultGet,
     VaultRefsResolve,
+    VaultRefsLinks,
     VaultSearchBm25,
     VaultNeighbors,
     VaultStructuralPut,
@@ -183,6 +188,10 @@ impl AgentVerb {
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultPacksPut,
+        Self::VaultPacksSetupPrepare,
+        Self::VaultPacksSetupGet,
+        Self::VaultPacksSetupAnswer,
+        Self::VaultPacksSetupVerify,
         Self::VaultAuthorityAudit,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
@@ -286,6 +295,7 @@ impl AgentVerb {
         Self::VaultHydrate,
         Self::VaultGet,
         Self::VaultRefsResolve,
+        Self::VaultRefsLinks,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
@@ -336,6 +346,10 @@ impl AgentVerb {
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
+            Self::VaultPacksSetupGet => "vault.packs.setup.get",
+            Self::VaultPacksSetupAnswer => "vault.packs.setup.answer",
+            Self::VaultPacksSetupVerify => "vault.packs.setup.verify",
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
@@ -441,6 +455,7 @@ impl AgentVerb {
             Self::VaultHydrate => "vault.hydrate",
             Self::VaultGet => "vault.get",
             Self::VaultRefsResolve => "vault.refs.resolve",
+            Self::VaultRefsLinks => "vault.refs.links",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
@@ -487,6 +502,10 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupGet
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -577,6 +596,7 @@ impl AgentVerb {
                 | Self::VaultHydrate
                 | Self::VaultGet
                 | Self::VaultRefsResolve
+                | Self::VaultRefsLinks
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -644,6 +664,10 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupGet
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -734,6 +758,7 @@ impl AgentVerb {
                 | Self::VaultHydrate
                 | Self::VaultGet
                 | Self::VaultRefsResolve
+                | Self::VaultRefsLinks
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -805,6 +830,7 @@ impl AgentVerb {
                 | Self::VaultHydrate
                 | Self::VaultGet
                 | Self::VaultRefsResolve
+                | Self::VaultRefsLinks
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
         )
@@ -836,6 +862,10 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupGet
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -965,6 +995,9 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultPacksSetupPrepare
+                | Self::VaultPacksSetupAnswer
+                | Self::VaultPacksSetupVerify
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -1074,6 +1107,10 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksSetupPrepare => &["spec"],
+            Self::VaultPacksSetupGet => &["spec"],
+            Self::VaultPacksSetupAnswer => &["spec"],
+            Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -1177,6 +1214,7 @@ impl AgentVerb {
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
+            Self::VaultRefsLinks => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -1225,6 +1263,10 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksSetupPrepare => &["spec"],
+            Self::VaultPacksSetupGet => &["spec"],
+            Self::VaultPacksSetupAnswer => &["spec"],
+            Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -1328,6 +1370,7 @@ impl AgentVerb {
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
+            Self::VaultRefsLinks => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],

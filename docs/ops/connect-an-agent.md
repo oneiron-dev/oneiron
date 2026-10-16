@@ -128,3 +128,39 @@ The next call that agent makes is refused with JSON-RPC error `-32001`
   `-32000` (`reply_too_large`); either way the session goes on.
 - `oneiron mcp` prints nothing on stdout but MCP messages, and never prints the
   slip or seed anywhere.
+
+## An app that speaks the OpenAI chat API
+
+An app built on OpenAI's chat completions can use the vault without MCP.
+`POST /v1/chat/completions` on the same server takes an OpenAI chat body and
+answers with a `chat.completion`. For each call the server recalls the vault
+for the newest user message, puts what it finds just before that message as
+one user-role block marked as data (never a system message), sends the call to
+the model the body names, and proposes the exchange back to your vault as an
+`integration.exchange` claim: the newest user text, the answer and the model.
+That claim waits for your review like any proposed claim, whatever the app's
+tier.
+
+- Mint the app its own credential (`oneiron token agent --name my-app`). A
+  `read-only` credential is refused, since the proxy always proposes, and so
+  is one bound to a world or a facet.
+- Every request carries the slip (`Authorization: Bearer`) and a fresh holder
+  proof (`x-oneiron-binding`), signed the way `oneiron mcp` and `oneiron api`
+  sign them. A stock OpenAI client sends only the bearer, so it cannot call
+  the proxy yet. To try one call, with the `token` and `binding_key` that
+  `token agent` prints without `--out`:
+
+  ```bash
+  ONEIRON_SECRET=<token> ONEIRON_BINDING_KEY=<binding_key> \
+    oneiron api raw POST /v1/chat/completions --data '{"model": "<provider/name@revision>",
+      "messages": [{"role": "user", "content": "What did I decide about the trip?"}]}'
+  ```
+
+- `model` must be a model id your `[models]` config serves; any other id is
+  refused with 404 `model_not_found`. The call is admitted and paid like your
+  own `/v1/llm` calls.
+- Calls are buffered. `stream: true`, `n` above 1, tools, images and any body
+  field the proxy does not know are refused with 400, never dropped.
+- The reply carries one extra `oneiron` object: `injected` says whether
+  memory went in, and `remembered` gives the proposed claim or why it was
+  refused.

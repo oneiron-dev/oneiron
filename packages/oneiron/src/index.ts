@@ -206,6 +206,12 @@ export class Oneiron {
     },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+      setup: {
+        prepare: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as unknown),
+        get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupGet(input) as unknown),
+        answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as unknown),
+        verify: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupVerify(input) as unknown),
+      },
     },
     authority: {
       audit: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityAudit(input) as unknown),
@@ -325,6 +331,7 @@ export class Oneiron {
     get: (input: Facade.EntityRequest): {value: Facade.EntityView | null; narrowing: unknown} => this.#call(() => this.#client.vaultGet(input) as {value: Facade.EntityView | null; narrowing: unknown}),
     refs: {
       resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRefsResolve(input) as unknown),
+      links: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRefsLinks(input) as unknown),
     },
     search: {
       bm25: (input: Facade.QueryBm25Request): {value: (Facade.LexicalHit)[]; narrowing: unknown} => this.#call(() => this.#client.vaultSearchBm25(input) as {value: (Facade.LexicalHit)[]; narrowing: unknown}),

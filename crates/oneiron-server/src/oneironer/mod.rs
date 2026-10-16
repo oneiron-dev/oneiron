@@ -38,6 +38,11 @@ pub(crate) enum EncoderNotSelected {
         "the vault binds extraction_encoder {bound}; this tagger serves checkpoint {serving}, which is not its revision"
     )]
     OtherEncoder { bound: String, serving: String },
+    /// The vault binds the checkpoint another configured tier serves.
+    #[error(
+        "the vault binds extraction_encoder {bound}, which tier {tier:?} serves; this server serves another tier (set oneironer.tier = {tier:?} or --oneironer-tier {tier})"
+    )]
+    OtherTier { bound: String, tier: String },
 }
 
 /// Native and HTTP providers share the marker, worker and persistence path.
@@ -113,8 +118,9 @@ impl TaggerSlot {
     /// encoder by `name@checkpoint`; the slot serves it when that revision is
     /// the configured checkpoint, whichever provider and engine run it. A
     /// vault with no manifest takes the host's `[oneironer]` section as its
-    /// selection. The binding is the vault's: the slot never picks a
-    /// generative seat to tag with, and a manifest cannot bind one
+    /// selection. A vault that binds another configured tier's checkpoint is
+    /// told which tier serves it. The binding is the vault's: the slot never
+    /// picks a generative seat to tag with, and a manifest cannot bind one
     /// (`ModelManifest::validate`).
     pub(crate) fn selected_by(&self, vault: &oneiron::Vault) -> anyhow::Result<()> {
         let Some(manifest) = vault.model_manifest()? else {
@@ -126,6 +132,13 @@ impl TaggerSlot {
         let bound = manifest.extraction_encoder(route)?;
         let serving = self.config.checkpoint_sha16.as_deref().unwrap_or_default();
         if bound.revision() != serving {
+            if let Some(tier) = self.config.tier_serving(bound.revision()) {
+                return Err(EncoderNotSelected::OtherTier {
+                    bound: bound.as_str().to_owned(),
+                    tier: tier.to_owned(),
+                }
+                .into());
+            }
             return Err(EncoderNotSelected::OtherEncoder {
                 bound: bound.as_str().to_owned(),
                 serving: serving.to_owned(),
@@ -204,6 +217,7 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
             tracing::info!(
                 engine = %engine.engine.id(),
                 pick = engine.pick.as_str(),
+                tier = config.tier.as_deref().unwrap_or("-"),
                 "oneironer engine serving"
             );
             serving = Some(engine);
