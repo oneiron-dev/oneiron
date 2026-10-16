@@ -30,6 +30,8 @@ pub(super) struct EffectInput<'a, S> {
     /// The seat's count bound, rechecked under the admission writer lock.
     pub(super) admission_ceiling: Option<crate::outbound_chokepoint::AdmissionCeiling>,
     pub(super) suppression_receipt: Option<ReceiptRecord>,
+    /// The booking-page grant calendar admission bound to this invite, if any.
+    pub(super) authorization: crate::outbound_chokepoint::PreparedAuthorization,
 }
 
 pub(super) fn execute_admitted<S: OutboundExecutionSink>(
@@ -49,6 +51,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         parked,
         admission_ceiling,
         suppression_receipt,
+        authorization,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
@@ -60,7 +63,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         resolved_endpoint: None,
         gate: effect,
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
-        authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
+        authorization,
         verified_actor,
         owner_proof,
         dedupe_key: request.intent.dedupe_key.clone(),

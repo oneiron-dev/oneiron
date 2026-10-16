@@ -262,7 +262,10 @@ fn bound_ask_first_answer_cas_has_one_version_claim_and_resolved_result() -> Res
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let owner = EntityId::now();
-    let one = EntityId::now();
+    // Only the vault's owner grants: the granting holder is the owner.
+    let one = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let two = EntityId::now();
     actors(&vault, owner, &[owner, one, two])?;
     let mut ask = spec(&vault, one);

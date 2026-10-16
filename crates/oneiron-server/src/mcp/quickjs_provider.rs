@@ -186,8 +186,10 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()
     }
-    fn compaction(&self, byline: WriteActor) -> Option<RunCompaction> {
-        self.compaction.as_ref().map(|seat| seat(byline))
+    fn compaction(&self, byline: WriteActor, credential: &str) -> Option<RunCompaction> {
+        self.compaction
+            .as_ref()
+            .map(|seat| seat(byline, credential))
     }
     fn lease(&self) -> &BudgetLease {
         &self.lease
