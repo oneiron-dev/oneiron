@@ -141,4 +141,49 @@ mod tests {
             .expect("repo mutation recovery");
         assert_ref_and_publication_untouched(&state);
     }
+
+    /// The origin refuses a Prepared publication itself, before the wire runs:
+    /// the ref moved away while an uncertain attempt was saved. When the ref
+    /// later carries the expected value again, nothing may apply the refused
+    /// move.
+    #[test]
+    fn a_refused_publication_leaves_no_attempt_generic_recovery_can_run() {
+        let (_vault_dir, vault) = test_vault();
+        let (_repo_dir, root, base) = seeded_repo();
+        let next = commit(&root, "next", "next\n");
+        let other = commit(&root, "other", "other\n");
+        force_ref(&root, &base);
+        let wire = GitWire::new(&vault).expect("wire");
+        let repo = open_repo(&wire, &root, &base);
+        let repo_id = repo_id_of(&vault, &repo);
+        let ask = request(&vault, &repo, repo_id, Some(base.clone()), next);
+        let id = origin_publication_id(&ask).expect("id");
+        let blocked = root.join(".git/refs/heads/main.lock");
+        std::fs::write(&blocked, b"another git ref transaction").expect("block CAS");
+        assert!(vault.publish_origin_ref(&wire, ask).is_err());
+        std::fs::remove_file(blocked).expect("unblock CAS");
+        force_ref(&root, &other);
+        let report = vault
+            .reconcile_origin_publications(&wire, repo_id, &repo, LEARNED_AT + 1)
+            .expect("census");
+        assert_eq!(
+            report.items,
+            vec![(id, OriginCensusDisposition::MarkedConflicted)]
+        );
+        force_ref(&root, &base);
+        wire.recover(&repo, LEARNED_AT + 2).expect("recover");
+        assert_eq!(
+            wire.read_ref(&repo, &main_ref()).expect("ref"),
+            Some(base),
+            "a refused publication's move ran"
+        );
+        assert_eq!(
+            vault
+                .origin_publication(id)
+                .expect("row")
+                .map(|record| record.status),
+            Some(OriginPublicationStatus::Conflicted)
+        );
+        assert_eq!(claim_count(&vault), 0);
+    }
 }
