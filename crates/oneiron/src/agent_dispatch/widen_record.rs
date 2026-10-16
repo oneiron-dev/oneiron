@@ -75,6 +75,9 @@ pub(super) struct WidenIntent {
     /// The spawn's `budget` (OF-532), carved at approval like any launch.
     #[serde(default)]
     pub budget: Option<u64>,
+    /// The spawn's explicit team-run stamp (OF-540); absent inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<super::TeamRunStamp>,
 }
 
 impl WidenIntent {
@@ -98,6 +101,7 @@ impl WidenIntent {
             healer_case: spawn.healer_case.clone(),
             type_ref: spawn.type_ref.clone(),
             budget: spawn.budget,
+            team: spawn.team.clone(),
         })
     }
 
@@ -144,6 +148,7 @@ impl WidenIntent {
                 spend: None,
                 // A widened spawn is a child: it inherits its parent's origin.
                 origin_conversation: None,
+                team: self.team.clone(),
             },
         ))
     }

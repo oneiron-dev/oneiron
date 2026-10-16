@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 16] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 17] = [
     "schema_version",
     "target",
     "agent_def",
@@ -47,6 +47,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 16] = [
     "budget",
     "launch",
     "origin_conversation",
+    "team",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -73,6 +74,8 @@ pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[13];
 pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[14];
 /// OF-221: the conversation a root dispatch's host stamped as its origin.
 pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[15];
+/// OF-540: the team run the dispatch works in.
+pub(super) const KEY_TEAM: &str = AGENT_DISPATCH_INPUT_KEYS[16];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -149,6 +152,9 @@ pub struct AgentDispatchInput {
     /// spend and cap, as the caller saw them. The cost part of the spawn
     /// receipt.
     pub launch: Option<super::LaunchStatement>,
+    /// OF-540: the team run this dispatch works in, frozen once at spawn.
+    /// `None` is no team run; the terminal receipt stamps it otherwise.
+    pub team: Option<super::TeamRunStamp>,
 }
 
 impl AgentDispatchInput {
@@ -168,6 +174,7 @@ impl AgentDispatchInput {
             type_ref: crate::task_type::TaskTypeRef::seeded_root(),
             budget: None,
             launch: None,
+            team: None,
         }
     }
 }
@@ -205,6 +212,10 @@ pub struct AgentSpawnContext {
     /// always inherits its parent's stored origin, so a spawning agent can
     /// never name one.
     pub origin_conversation: Option<EntityId>,
+    /// OF-540: the team run this spawn works in. Set wins, so a nested team
+    /// names its own; None keeps the parent's frozen stamp, and a root
+    /// without one is no team run.
+    pub team: Option<super::TeamRunStamp>,
 }
 
 impl AgentSpawnContext {
@@ -252,6 +263,12 @@ impl AgentSpawnContext {
     #[must_use]
     pub const fn with_origin_conversation(mut self, conversation: EntityId) -> Self {
         self.origin_conversation = Some(conversation);
+        self
+    }
+
+    #[must_use]
+    pub fn with_team(mut self, team: super::TeamRunStamp) -> Self {
+        self.team = Some(team);
         self
     }
 }
