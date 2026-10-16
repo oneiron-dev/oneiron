@@ -75,7 +75,8 @@ fn length(bytes: &[u8], at: usize, width: usize) -> Option<u64> {
 fn step(marker: u8, bytes: &[u8], at: usize) -> Option<(usize, u64, usize)> {
     let sized = |width: usize, extra: usize| -> Option<(usize, u64, usize)> {
         let len = usize::try_from(length(bytes, at, width)?).ok()?;
-        Some((width.checked_add(extra)?.checked_add(len)?, 0, len))
+        // Saturate so a length near usize::MAX still reaches the scalar check.
+        Some((width.saturating_add(extra).saturating_add(len), 0, len))
     };
     let counted = |width: usize, per: u64| -> Option<(usize, u64, usize)> {
         Some((width, length(bytes, at, width)?.checked_mul(per)?, 0))

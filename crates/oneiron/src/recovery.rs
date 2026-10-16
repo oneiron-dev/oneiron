@@ -8,6 +8,7 @@
 pub mod checkpoint;
 
 use std::ffi::OsString;
+#[cfg(test)]
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};

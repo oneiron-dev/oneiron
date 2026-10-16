@@ -358,7 +358,21 @@ fn a_snapshot_body_wider_than_any_manifest_is_refused_before_it_is_decoded() {
     );
     assert!(peak < 1 << 20, "refused after holding {peak} bytes");
 
-    // The largest manifest the schema admits still decodes.
+    // A field whose header claims 4 GiB, with 4 MiB behind it: the decoder
+    // copied all 4 MiB before finding the body short.
+    let mut long = vec![0x81, 0xaa];
+    long.extend_from_slice(b"project_id");
+    long.extend_from_slice(&[0xdb, 0xff, 0xff, 0xff, 0xff]);
+    long.resize(long.len() + (4 << 20), b'p');
+    let (decoded, peak) = peak_allocated(|| decode_codebase_snapshot(&long));
+    let err = decoded.expect_err("a field longer than any path is refused");
+    assert!(
+        err.to_string()
+            .contains("field longer than its manifest allows"),
+        "{err}"
+    );
+    assert!(peak < 1 << 20, "refused after holding {peak} bytes");
+
     // The largest manifest the schema admits, its last path as long as a
     // path may be, still decodes.
     let files = (1..CODEBASE_SNAPSHOT_MAX_FILES)
