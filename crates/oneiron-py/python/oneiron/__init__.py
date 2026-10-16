@@ -308,6 +308,9 @@ class Oneiron:
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs":
             return Oneiron._VaultReceiptsVerbs(self._client)
         @property
+        def images(self) -> "Oneiron._VaultImagesVerbs":
+            return Oneiron._VaultImagesVerbs(self._client)
+        @property
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
         @property
@@ -379,6 +382,12 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
         def get(self, spec):
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
+    class _VaultImagesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def view(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull."""
+            return json.loads(_translate(lambda: self._client.vault_images_view(json.dumps(request, allow_nan=False))))
     class _VaultKvVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

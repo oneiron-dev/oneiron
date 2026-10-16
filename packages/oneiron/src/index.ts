@@ -186,6 +186,10 @@ export class Oneiron {
     receipts: Object.assign((limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)), {
       get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultReceiptsGet(input) as unknown),
     }),
+    images: {
+      /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
+      view: (request: ImageViewRequest): PulledImage => this.#call(() => {  const result = JSON.parse(this.#client.vaultImagesView(keyedJson(request))) as PulledImage; return result }),
+    },
     kv: {
       /** Exact actor-owned worldless key lookup, never recall. */
       get: (request: KeyValueAddress): KeyValueItem | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultKvGet(keyedJson(request))) as WireItem | null; return result === null ? null : itemFromWire(result) }),

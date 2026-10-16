@@ -1,6 +1,6 @@
 //! `/v1/ai`: the server's model-backed surfaces — status, chat turns, the
-//! session hints the Dreamer's triggers read, and the `ai.*` verbs past
-//! text (options, image, video, speech, transcribe, embed).
+//! session hints the Dreamer's triggers read, the `ai.*` verbs past text
+//! (options, image, video, speech, transcribe, embed), and `ask_image`.
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -17,6 +17,7 @@ use crate::server::SyncServer;
 
 pub(crate) mod chat;
 mod media;
+mod vision;
 mod waves;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -43,6 +44,7 @@ fn media_routes() -> Router<Arc<SyncServer>> {
         .route("/speech", post(media::speech))
         .route("/transcribe", post(media::transcribe))
         .route("/embed", post(media::embed))
+        .route("/ask_image", post(vision::ask_image))
         .layer(DefaultBodyLimit::max(MEDIA_BODY_LIMIT))
 }
 

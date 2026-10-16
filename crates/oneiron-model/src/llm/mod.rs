@@ -20,9 +20,8 @@ mod burst_inputs;
 mod call;
 mod defaults;
 pub use defaults::{
-    DEFAULT_ASSET_TEXT_AT, ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable,
-    ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane, VoicePrecedence,
-    locality_within_extraction_bound,
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
+    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
 };
 // Public so `oneiron`'s resident-default door ranks routes the same way the table does.
 pub use defaults::locality_rank;

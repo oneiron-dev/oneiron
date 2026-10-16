@@ -42,17 +42,26 @@ pub enum EngineLimit {
     /// live share is the least of this and the pool split between the runs
     /// open on it.
     CodeResultSessionMemoryBytes,
+    /// Bytes of image forms one model call's context takes when its host
+    /// names no room of its own (OF-329's lazy images). Past the room each
+    /// image steps down its ladder: the full image, then a thumbnail beside
+    /// its description, then the description alone, each with its view
+    /// handle. An image no form of which fits the room a read had left is
+    /// served as its handle alone, and asks whether everything is okay: the
+    /// crossing measures the bytes its smallest form needed.
+    ImageRoomBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
         Self::CodeResultMemoryBytes,
         Self::CodeResultSessionMemoryBytes,
+        Self::ImageRoomBytes,
     ];
 
     /// The config key that sets the row.
@@ -64,6 +73,7 @@ impl EngineLimit {
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
             Self::CodeResultMemoryBytes => "limits.code_result_memory_bytes",
             Self::CodeResultSessionMemoryBytes => "limits.code_result_session_memory_bytes",
+            Self::ImageRoomBytes => "limits.image_room_bytes",
         }
     }
 
@@ -76,6 +86,7 @@ impl EngineLimit {
             Self::CodeResultScanBytes => 256 << 20,
             Self::CodeResultMemoryBytes => memory_share(8),
             Self::CodeResultSessionMemoryBytes => memory_share(64),
+            Self::ImageRoomBytes => 32 << 20,
         }
     }
 }
