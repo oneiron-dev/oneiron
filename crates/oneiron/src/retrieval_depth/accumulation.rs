@@ -197,14 +197,11 @@ impl DepthAccumulator {
     }
 
     /// Claims rank by source, as the pack does, before the cut. A backend
-    /// rerank owns the order it set, so a reranked read keeps it.
+    /// rerank owns the order it set, so a reranked read keeps it, except
+    /// that an observed claim still never sits above a stated one of its
+    /// question.
     fn rank_sources(&mut self, scoped: &ScopedRead<'_>) -> Result<()> {
-        if self.order.is_empty()
-            || self
-                .retrieval_diagnostics
-                .succeeded
-                .contains(&RetrievalSignal::Rerank)
-        {
+        if self.order.is_empty() {
             return Ok(());
         }
         let bodies = self.candidate_claim_bodies(scoped)?;
@@ -212,6 +209,19 @@ impl DepthAccumulator {
             .into_iter()
             .zip(bodies)
             .collect();
+        if self
+            .retrieval_diagnostics
+            .succeeded
+            .contains(&RetrievalSignal::Rerank)
+        {
+            crate::context_pack::source_ranking::clamp_order(
+                &mut rows,
+                &Default::default(),
+                |(_, body)| body.as_ref(),
+            )?;
+            self.order = rows.into_iter().map(|(id, _)| id).collect();
+            return Ok(());
+        }
         let scores = &self.scores;
         let ranked = crate::context_pack::source_ranking::rank(
             &mut rows,

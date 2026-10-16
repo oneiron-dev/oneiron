@@ -144,6 +144,59 @@ pub(crate) fn rank<T>(
     Ok(scores)
 }
 
+/// The observed-below-stated clamp alone, for an order a backend rerank set:
+/// each observed claim that sits above a stated claim of its question moves
+/// to just below the last one. Every other row keeps its place, and no
+/// score changes. `body` yields a row's claim body, `None` for a non-claim.
+pub(crate) fn clamp_order<T>(
+    rows: &mut Vec<T>,
+    policy: &SourceRankingPolicy,
+    body: impl Fn(&T) -> Option<&ClaimBody>,
+) -> Result<()> {
+    policy.validate()?;
+    // The same opt-out as the scored clamp: an override favouring observations.
+    if policy.factor(Some(ClaimSource::Observed)) > policy.factor(Some(ClaimSource::UserStated)) {
+        return Ok(());
+    }
+    let mut last_stated = HashMap::<Question, usize>::new();
+    for (index, row) in rows.iter().enumerate() {
+        if let Some(body) = body(row)
+            && body.source == Some(ClaimSource::UserStated)
+            && let Some(key) = question(body)
+        {
+            last_stated.insert(key, index);
+        }
+    }
+    let moves: Vec<Option<usize>> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let body = body(row).filter(|body| body.source == Some(ClaimSource::Observed))?;
+            last_stated
+                .get(&question(body)?)
+                .copied()
+                .filter(|last| *last > index)
+        })
+        .collect();
+    if moves.iter().all(Option::is_none) {
+        return Ok(());
+    }
+    let mut after = HashMap::<usize, Vec<T>>::new();
+    let mut kept = Vec::with_capacity(rows.len());
+    for (index, (row, target)) in rows.drain(..).zip(&moves).enumerate() {
+        match target {
+            Some(target) => after.entry(*target).or_default().push(row),
+            None => kept.push((index, row)),
+        }
+    }
+    // A move's target is a stated row, which never moves itself.
+    for (index, row) in kept {
+        rows.push(row);
+        rows.extend(after.remove(&index).unwrap_or_default());
+    }
+    Ok(())
+}
+
 /// The multiplier and the observed-below-stated clamp, the one implementation
 /// every path shares. `bodies[i]` is row i's claim body, `None` for a row
 /// that is not a claim.
