@@ -67,6 +67,7 @@ vaultRoomsRender(input: unknown): unknown
 vaultRoomsFind(input: unknown): unknown
 vaultRoomsGet(input: unknown): unknown
 vaultRoomsTrunk(input: unknown): unknown
+vaultRoomsReplyStrips(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
@@ -89,7 +90,28 @@ aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
+vaultCommit(input: unknown): unknown
+vaultRemember(input: unknown): unknown
+vaultClaimsRetract(input: unknown): unknown
+vaultForget(input: unknown): unknown
+vaultClaimsList(input: unknown): unknown
+vaultClaimsHistory(input: unknown): unknown
+vaultDelete(input: unknown): unknown
+vaultWritesPending(input: unknown): unknown
+vaultHydrate(input: unknown): unknown
+vaultGet(input: unknown): unknown
+vaultSearchBm25(input: unknown): unknown
+vaultNeighbors(input: unknown): unknown
+vaultStructuralPut(input: unknown): unknown
+vaultHabitsCheckin(input: unknown): unknown
+vaultClaimsAdmit(input: unknown): unknown
+vaultArtifactsPut(input: unknown): unknown
+vaultArtifactsAppend(input: unknown): unknown
+vaultArtifactsRead(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
+vaultNotesCreate(input: unknown): unknown
+vaultNotesFromEntity(input: unknown): unknown
+vaultNotesEdit(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
