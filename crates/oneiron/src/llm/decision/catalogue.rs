@@ -62,5 +62,14 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// How should this parked contradiction settle (keep one member, hold both, dismiss or
+/// escalate)? Keyed by the contested predicates.
+pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_settle",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
-pub const FAMILIES: &[QuestionFamily] = &[TELEMETRY_ANOMALY, CRITIC_REVIEW, FANOUT_ASK];
+pub const FAMILIES: &[QuestionFamily] =
+    &[TELEMETRY_ANOMALY, CRITIC_REVIEW, FANOUT_ASK, CONFLICT_SETTLE];

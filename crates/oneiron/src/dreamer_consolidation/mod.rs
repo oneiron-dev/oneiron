@@ -58,6 +58,7 @@ mod roles;
 pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;
+mod settle;
 mod step_charge;
 mod support;
 mod turn_text;
@@ -85,6 +86,13 @@ pub use roles::{
     RoleBackend, RoleBackends, RoleCall,
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
+pub use settle::{
+    CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement,
+    OpenConflict, ParkedConflictPass, SettledConflict, settle_parked_conflicts,
+};
+pub(crate) use settle::{
+    apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
+};
 pub use support::*;
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
