@@ -14918,6 +14918,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_dag/participation.rs",
+     "purpose": "A live append's participation (OF-529): the thread it lands in, and the room's participation gate its writer…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation_dag/policy.rs",
      "purpose": "Actor-bound write-policy preflight for the append operation",
      "surface": {
@@ -43652,7 +43662,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 158
+      "fn": 159
      }
     },
     {
@@ -45938,8 +45948,8 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 14
+      "crate-vis": 11,
+      "re-export": 15
      }
     },
     {
@@ -46608,7 +46618,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 10
      }
     },
@@ -46665,11 +46675,39 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 6,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ParticipantView",
+      "ParticipantsPage",
+      "ParticipantsRequest"
+     ],
+     "path": "src/workspace_roster/rooms/participants.rs",
+     "purpose": "The participant read (OF-529): `vault.rooms.participants` folds the participation stream of a room, or of…",
+     "surface": {
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "JoinCause"
+     ],
+     "path": "src/workspace_roster/rooms/participation.rs",
+     "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
+     "surface": {
+      "crate-vis": 33,
+      "enum": 1
      }
     },
     {
@@ -48309,7 +48347,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49366,7 +49404,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 77,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49387,9 +49425,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 104,
+   "over_bar": 105,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2980,
+   "source_files": 2983,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56987,7 +57025,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 136
+      "fn": 137
      }
     },
     {
@@ -58000,7 +58038,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 137
+      "fn": 138
      }
     },
     {
