@@ -60,6 +60,7 @@ pub(super) enum LifecycleJobKind {
     ReassertDrain,
     Housekeeping,
     RepositoryMaintenance,
+    MirrorPush,
 }
 
 /// The lifecycle loop, and the housekeeping pass it last started. Dropping it
@@ -132,6 +133,9 @@ impl SyncServer {
                 {
                     repositories_due = Instant::now() + SERVED_REPOSITORY_MAINTENANCE_EVERY;
                 }
+                // Each mirror target keeps its own cadence; the pass pushes
+                // only the due ones.
+                server.start_mirror_pushes(&admit).await;
             }
         });
         LifecycleScheduler {

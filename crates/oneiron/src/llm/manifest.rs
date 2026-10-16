@@ -18,7 +18,11 @@ const RESIDENT_ROUTES: SideTable<(), BTreeMap<ModelSlot, ModelLocality>, LegacyJ
 /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
 const TEACHER_APPROVAL: SideTable<(), TeacherProbeApproval, LegacyJson> =
     SideTable::new(&side_table::LLM_EXTRACTION_TEACHER_PROBE);
+mod encoder_export;
 mod teacher_probe;
+pub use encoder_export::{
+    CheckpointPin, EncoderDistillationRequest, EncoderExport, SharedBaseFork,
+};
 pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -36,13 +40,19 @@ pub enum ModelRole {
     Checker,
     DreamerCurrent,
     DreamerTarget,
+    /// Optional until the owner binds a checkpoint from a training pack.
+    DreamerDistilled,
     Asr,
     Captioner,
     DocParsing,
     AudioVad,
     TtsDeferred,
+    /// The Local-vision slot's small vision model: reads an image's full
+    /// pixels and answers a question about them in text (`ask_image`,
+    /// OF-329), through the LLM slot. No model is chosen for it.
+    LocalVision,
 }
-pub const MODEL_ROLES: [ModelRole; 14] = [
+pub const MODEL_ROLES: [ModelRole; 16] = [
     ModelRole::RetrievalEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
@@ -52,11 +62,13 @@ pub const MODEL_ROLES: [ModelRole; 14] = [
     ModelRole::Checker,
     ModelRole::DreamerCurrent,
     ModelRole::DreamerTarget,
+    ModelRole::DreamerDistilled,
     ModelRole::Asr,
     ModelRole::Captioner,
     ModelRole::DocParsing,
     ModelRole::AudioVad,
     ModelRole::TtsDeferred,
+    ModelRole::LocalVision,
 ];
 impl ModelRole {
     /// A role of the generative family: it generates or rules through the
@@ -70,6 +82,7 @@ impl ModelRole {
                 | Self::Checker
                 | Self::DreamerCurrent
                 | Self::DreamerTarget
+                | Self::DreamerDistilled
                 | Self::ExtractionTeacher
         )
     }
@@ -201,7 +214,7 @@ impl ModelManifest {
         if self.version != 2
             || MODEL_ROLES
                 .iter()
-                .any(|role| !self.roles.contains_key(role))
+                .any(|role| *role != ModelRole::DreamerDistilled && !self.roles.contains_key(role))
         {
             return Err(invalid("manifest v2 requires every role key"));
         }
@@ -320,7 +333,7 @@ impl Vault {
     /// Update a manifest without changing its approved extraction-teacher binding.
     /// Initial teacher pins, and any teacher change, require a passing probe receipt.
     pub fn set_model_manifest(&self, manifest: &ModelManifest) -> Result<()> {
-        self.write_model_manifest(manifest, None)
+        self.write_model_manifest(manifest, None, None)
     }
 
     /// Publish the bench-approved teacher binding and its receipt in one vault transaction.
@@ -329,30 +342,57 @@ impl Vault {
         manifest: &ModelManifest,
         approval: &TeacherProbeApproval,
     ) -> Result<()> {
-        self.write_model_manifest(manifest, Some(approval))
+        self.write_model_manifest(manifest, Some(approval), None)
     }
 
     fn write_model_manifest(
         &self,
         manifest: &ModelManifest,
         new_approval: Option<&TeacherProbeApproval>,
+        new_encoder_export: Option<&EncoderExport>,
+    ) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        self.write_model_manifest_in_txn(&mut txn, manifest, new_approval, new_encoder_export)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Training swaps commit their receipt and custody binding with the manifest.
+    pub(crate) fn write_model_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        manifest: &ModelManifest,
+        new_approval: Option<&TeacherProbeApproval>,
+        new_encoder_export: Option<&EncoderExport>,
     ) -> Result<()> {
         manifest.validate()?;
-        let mut txn = self.store.env.write_txn()?;
-        let saved_approval = TEACHER_APPROVAL.get(&self.store, &txn, &())?;
+        let saved_approval = TEACHER_APPROVAL.get(&self.store, txn, &())?;
         let approval = new_approval
             .or(saved_approval.as_ref())
             .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
-        let policy = self.teacher_probe_policy_in_txn(&txn, approval.holder_ref.as_deref())?;
+        let policy = self.teacher_probe_policy_in_txn(txn, approval.holder_ref.as_deref())?;
         approval.verify(manifest, &policy)?;
+        if let Some(export) = new_encoder_export {
+            if &export.request.teacher_approval != approval {
+                return Err(invalid(
+                    "encoder export requires the pinned teacher approval",
+                ));
+            }
+            export.verify(manifest, &policy)?;
+            encoder_export::ENCODER_EXPORT.put(&self.store, txn, &(), export)?;
+        } else if let Some(export) = encoder_export::ENCODER_EXPORT.get(&self.store, txn, &())? {
+            if &export.request.teacher_approval != approval
+                || export.verify(manifest, &policy).is_err()
+            {
+                encoder_export::ENCODER_EXPORT.delete(&self.store, txn, &())?;
+            }
+        }
         if let Some(approval) = new_approval {
-            TEACHER_APPROVAL.put(&self.store, &mut txn, &(), approval)?;
+            TEACHER_APPROVAL.put(&self.store, txn, &(), approval)?;
         }
         // A tighter owner pin clears stale resident routes atomically.
-        RESIDENT_ROUTES.delete(&self.store, &mut txn, &())?;
-        MANIFEST.put(&self.store, &mut txn, &(), manifest)?;
-        txn.commit()?;
-        Ok(())
+        RESIDENT_ROUTES.delete(&self.store, txn, &())?;
+        MANIFEST.put(&self.store, txn, &(), manifest)
     }
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)

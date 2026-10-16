@@ -92,13 +92,21 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     }
     // The registry holds all or one world, and all or a set of facets. Refuse
     // a wider registration instead of silently projecting away verifier bounds.
+    // A facet bound the owner's own credential carries binds nothing (owner
+    // ruling FACET-READ), so it refuses no facet set.
     let axis = |id: Option<oneiron::EntityId>| {
         id.map_or(ScopeAxis::All, |id| {
             ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(id)]))
         })
     };
+    let facets_owner_exempt = || {
+        server
+            .vault
+            .credential_facets_owner_exempt(proof)
+            .unwrap_or(false)
+    };
     if !axis(actor.scope.world_ref).is_narrowing_of(&proof.scope().worlds)
-        || !actor.scope.facets.is_narrowing_of(&proof.scope().facets)
+        || (!actor.scope.facets.is_narrowing_of(&proof.scope().facets) && !facets_owner_exempt())
     {
         return Err(mcp_proof_error());
     }

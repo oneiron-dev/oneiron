@@ -602,6 +602,19 @@ impl Vault {
         txn.commit()?;
         Ok(verified)
     }
+    /// Lands the host-signed record of an executed ownership change in the
+    /// change's own writer. The fold admits it as a roster-signed Owner
+    /// action and keeps no state for it; the change itself is the shared
+    /// act's.
+    pub(crate) fn append_owner_handover_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        handover: OwnerHandover,
+    ) -> Result<()> {
+        handover.validate()?;
+        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::OwnerHandover(handover))
+    }
     pub(super) fn append_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

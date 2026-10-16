@@ -1,5 +1,6 @@
 //! Durable companion task queue over AttemptQueue with payload codec and dedupe keys.
 
+use super::codec::invalid_companion;
 use super::codec::{
     decode_scope, decode_subject, encode_scope, encode_subject, invalid_companion_task,
 };
@@ -8,7 +9,6 @@ use super::keys::{
     COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ERR_INVALID_COMPANION_TASK_PAYLOAD, KEY_TASK,
     KEY_TASK_SCHEMA_VERSION, KEY_TASK_SCOPE, KEY_TASK_SUBJECT,
 };
-use super::codec::invalid_companion;
 use super::model::{CompanionScope, CompanionSubject, CompanionTaskKey};
 use crate::Vault;
 use crate::attempt_queue::{
@@ -493,7 +493,9 @@ fn check_task_target(vault: &Vault, txn: &heed::RoTxn<'_>, key: &CompanionTaskKe
             entity_type: crate::registry::ENTITY_TYPE_PERSON,
             ..
         } => Ok(()),
-        _ => Err(invalid_companion("companion task target must be a live PERSON")),
+        _ => Err(invalid_companion(
+            "companion task target must be a live PERSON",
+        )),
     }
 }
 

@@ -169,7 +169,8 @@ impl ConsolidationExecutor<'_> {
             return Ok(PartitionRun::Refused { reason });
         }
 
-        let mut candidates = Vec::new();
+        let mut parsed = Vec::new();
+        let mut skipped = 0;
         for (slice, step_hash, response, failure_policy) in replies {
             // Live rules, not the policy copy sent before the parallel calls.
             let rules = failure_rules::load(ctx.vault)?;
@@ -198,14 +199,9 @@ impl ConsolidationExecutor<'_> {
                     &response,
                 )?)?;
             }
-            candidates.extend(Self::decode_candidates(
-                &partition,
-                &response,
-                resources,
-                &slice.scope,
-                attempt_id,
-                ctx.now_ms,
-            )?);
+            let (taken, missed) = Self::parse_candidates(&response, resources, &slice.scope)?;
+            parsed.extend(taken);
+            skipped += missed;
             resources.require_output(resources.scope())?;
             if ctx.deadline.expired() {
                 return Ok(PartitionRun::Checkpoint);
@@ -231,6 +227,39 @@ impl ConsolidationExecutor<'_> {
                 return Err(error.into());
             }
         }
+        // Which listed claim each candidate corrects is decided beside the
+        // extraction, as one typed pack over every child's candidates.
+        let corrects = match self
+            .decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)
+            .await
+        {
+            Ok(Some(corrects)) => corrects,
+            Ok(None) => return Ok(PartitionRun::Trapped),
+            Err(DurableStepError::SpentFinalizeRefused { usage }) => {
+                charges.record_usage(&usage);
+                return Ok(PartitionRun::Checkpoint);
+            }
+            Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
+                return Ok(PartitionRun::Checkpoint);
+            }
+            Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
+                charges.record_usage(&usage);
+                return Ok(PartitionRun::Refused {
+                    reason: format!("correction read refused: {}", errors.join("; ")),
+                });
+            }
+            Err(error) => {
+                return Ok(PartitionRun::Refused {
+                    reason: error.to_string(),
+                });
+            }
+        };
+        if ctx.deadline.expired() {
+            return Ok(PartitionRun::Checkpoint);
+        }
+        let candidates = Self::build_candidates(
+            parsed, &corrects, skipped, &partition, resources, attempt_id, ctx.now_ms,
+        );
         // Assembly verifies and collapses evidence across ALL child slots
         // before counting corroboration or routing coupled conflicts.
         self.resolve_conflicts(candidates, resources, ctx, (attempt_id, run_id), charges)

@@ -1,6 +1,7 @@
 //! One provider entry: how to reach a model server, as data.
 use std::collections::BTreeMap;
 
+use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
 use serde::Deserialize;
 
@@ -131,6 +132,9 @@ pub(super) struct ProviderFile {
     capabilities: Option<Vec<LlmCapability>>,
     locality: Option<ModelLocality>,
     revision: Option<String>,
+    payer: Option<Payer>,
+    #[serde(default)]
+    rates: Vec<UnitRate>,
 }
 
 /// A validated provider entry.
@@ -163,6 +167,10 @@ pub struct ProviderConfig {
     /// Revision stamped on every engine model id from this provider, so a
     /// change of served weights can be recorded as a new identity.
     pub revision: String,
+    /// An explicit host binding; absent config keeps the own-key/local default.
+    pub payer: Payer,
+    /// Host-supplied token conversions for the allocation's named unit.
+    pub rates: Vec<UnitRate>,
 }
 
 impl ProviderFile {
@@ -232,6 +240,20 @@ impl ProviderFile {
                 "models.providers.{name}: the provider name and revision may use only A-Z, a-z, 0-9, '.', '-' and '_'"
             );
         }
+        for rate in &self.rates {
+            if rate.per == 0 || LeaseUnit::new(rate.unit.as_str()).is_err() {
+                anyhow::bail!(
+                    "models.providers.{name}.rates requires a valid unit and nonzero per"
+                );
+            }
+        }
+        let payer = self.payer.unwrap_or_else(|| {
+            if self.key_env.is_some() || self.key_secret.is_some() {
+                Payer::CustomerKey
+            } else {
+                Payer::Local
+            }
+        });
         Ok(ProviderConfig {
             kind,
             base_url,
@@ -248,6 +270,8 @@ impl ProviderFile {
                 .unwrap_or_else(|| kind.default_capabilities()),
             locality: self.locality.unwrap_or_else(|| kind.default_locality()),
             revision,
+            payer,
+            rates: self.rates,
         })
     }
 }

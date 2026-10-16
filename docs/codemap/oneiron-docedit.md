@@ -18,7 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deck/fingerprint.rs` | src | s | 2 crate-vis | — | Content and render fingerprints |
 | `src/deck/fixture.rs` | src | s | 8 crate-vis | — | A synthetic ECMA-376 deck builder shared by the deck, design-plan and emission tests: the package plumbing… |
 | `src/deck/graph.rs` | src | s | 14 crate-vis | — | The deck's part graph: relationship targets resolved to part names, and the presentation, slide, layout… |
-| `src/deck/mod.rs` | src | m | 15 struct · 7 enum · 4 fn · 1 const · 3 re-export · 2 crate-vis | Affine, Ambiguity, Autofit, BodyView, Bullet, DeckError, DeckView, Dependency +14 | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
+| `src/deck/mod.rs` | src | m | 15 struct · 7 enum · 5 fn · 1 const · 3 re-export · 2 crate-vis | Affine, Ambiguity, Autofit, BodyView, Bullet, DeckError, DeckView, Dependency +14 | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
 | `src/deck/resolve.rs` | src | m | 15 crate-vis | — | The four property-specific resolvers (geometry, text body, paragraph, run) |
 | `src/deck/shapes.rs` | src | s | 3 crate-vis | — | The shape walk: every shape in document order with its identity evidence, placeholder, resolved geometry and… |
 | `src/deck/template.rs` | src | s | 4 struct · 1 enum · 1 fn | LayoutView, MasterView, Spacing, TemplateView, TextStyle | The template reader: masters and their layouts, each placeholder with its resolved geometry and the… |
@@ -57,7 +57,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
-| `src/lib.rs` | src | s | 1 enum · 8 fn · 12 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/lib.rs` | src | s | 1 enum · 8 fn · 13 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
 | `src/live/deck_export.rs` | src | m | 6 struct · 1 enum · 5 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/mod.rs` | src | s | 1 enum · 2 mod · 2 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
 | `src/live/pptx.rs` | src | L | 16 struct · 6 enum · 20 fn | ApproveScope, AttributionIndex, ChangeKind, Conflict, DeckDiff, DeckFork, DeckNode, DeckOp +14 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
@@ -69,12 +69,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ooxml.rs` | src | m | 3 struct · 9 fn · 4 const | Node, XmlError, XmlTree | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 2 re-export | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | L | 2 struct · 1 enum · 8 fn · 1 re-export | Editability, Limits, Package | ZIP central-directory reader and copy-through writer |
-| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 7 fn · 5 crate-vis | Relationship | The add-part door |
+| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 8 fn · 5 crate-vis | Relationship | The add-part door |
 | `src/retained_opc/xml/ffi.rs` | src | s | 17 crate-vis | — | Minimal Expat C ABI |
 | `src/retained_opc/xml/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
 | `src/retained_opc/xml/retained.rs` | src | m | 1 struct · 4 crate-vis | XmlLimits | One authoritative parse |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
+| `src/xlsx_body.rs` | src | L | 6 struct · 4 enum · 10 fn · 2 const | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxSheet +2 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
 | `tests/comment_anchors.rs` | test | m | — | — | Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from… |

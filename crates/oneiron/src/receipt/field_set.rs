@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use super::kernel::{
     FIELD_ACTIVATED_MEMORY_IDS, FIELD_BOARD_STATE_REF, FIELD_DISCLOSURE_STAMP,
     FIELD_MANIFEST_ACTOR_CLAIMS, FIELD_MANIFEST_SKILLS, FIELD_MODEL, FIELD_PERSONA_COMPILE_STAMP,
-    FIELD_PROMPT_INPUT_REF, FIELD_REASONING_EFFORT, FIELD_SUBSTRATE_REF, ReceiptRecord, hex_lower,
+    FIELD_PROMPT_INPUT_REF, FIELD_REASONING_EFFORT, FIELD_SUBSTRATE_REF, FIELD_TYPE_REF_NODE,
+    FIELD_TYPE_REF_TREE_VERSION, ReceiptRecord, hex_lower,
 };
 // Referenced only by an intra-doc link on the public `ContextReceiptFields`;
 // gated so the name is in scope for rustdoc without being an unused import.
@@ -280,7 +281,57 @@ pub fn append_context_receipt_fields(
     Ok(())
 }
 
+/// Stamps the OF-543 `typeRef={node_id, tree_version}` field-set on a
+/// spawn/task receipt. Every such receipt carries one; an unsure placement
+/// stamps the root. Attaching to a non-spawn/task kind is rejected.
+pub fn append_task_type_fields(
+    receipt: &mut ReceiptRecord,
+    type_ref: &crate::task_type::TaskTypeRef,
+) -> Result<()> {
+    if !receipt.receipt_kind.is_spawn_or_task_receipt() {
+        return Err(Error::InvariantViolation(
+            "typeRef field-set requires a spawn/task receipt",
+        ));
+    }
+    if type_ref.node_id.is_empty() {
+        return Err(Error::InvariantViolation(
+            "typeRef node_id must not be empty",
+        ));
+    }
+    receipt
+        .fields
+        .insert(FIELD_TYPE_REF_NODE.to_owned(), type_ref.node_id.clone());
+    receipt.fields.insert(
+        FIELD_TYPE_REF_TREE_VERSION.to_owned(),
+        type_ref.tree_version.to_string(),
+    );
+    Ok(())
+}
+
 impl ReceiptRecord {
+    /// The OF-543 task-type stamp recorded on this receipt, read from the
+    /// recorded fields alone. `None` on receipts that predate the stamp.
+    #[must_use]
+    pub fn task_type_ref(&self) -> Option<crate::task_type::TaskTypeRef> {
+        let node_id = self.fields.get(FIELD_TYPE_REF_NODE)?;
+        if node_id.is_empty() {
+            return None;
+        }
+        let tree_version = self.fields.get(FIELD_TYPE_REF_TREE_VERSION)?.parse().ok()?;
+        Some(crate::task_type::TaskTypeRef::new(
+            node_id.clone(),
+            tree_version,
+        ))
+    }
+
+    /// The spawn/task receipt law: a missing `typeRef` is invalid, never
+    /// untyped. Returns the stamp, or refuses the receipt.
+    pub fn require_task_type_ref(&self) -> Result<crate::task_type::TaskTypeRef> {
+        self.task_type_ref().ok_or(Error::InvariantViolation(
+            "spawn/task receipt requires a typeRef",
+        ))
+    }
+
     /// Reads the frozen attribution context; an absent required stamp is invalid.
     pub fn pack_attribution_fields(&self) -> Result<super::PackAttributionFields> {
         let encoded =

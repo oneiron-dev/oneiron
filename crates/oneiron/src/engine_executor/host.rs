@@ -7,14 +7,15 @@ use super::store::{
     write_json,
 };
 use super::types::{
-    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeStream, JsResultCall,
-    JsResultRef, JsResultTarget, SelfDispatchResponse,
+    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream,
+    JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
     CodeRunResultBinding, ExecutorCallSite, ExecutorStorage, GatedActorWrite, ResultFacet,
     ResultRead, ResultReply, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDurableWait, SelfEffect, SelfFailedResult, agent_verb_rows_of, result_card, result_refusal,
+    SelfDurableWait, SelfEffect, SelfFailedResult, SelfSkillCall, SelfSkillCallResult,
+    agent_verb_rows_of, result_card, result_refusal,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -69,6 +70,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// run does nothing more for it: later calls and recorded-output reads
     /// are refused, and the step closes the run.
     pub(super) declined: Option<EntityId>,
+    /// The run's executor, `provider/name@revision`, as the callable skills
+    /// its program calls are credited to (OF-353).
+    skill_executor: Option<String>,
 }
 
 impl<'a, 's> RecordingJsHost<'a, 's> {
@@ -99,7 +103,15 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             hard_failure: None,
             left_a_gap: false,
             declined: None,
+            skill_executor: None,
         }
+    }
+
+    /// Names the run's executor, as the callable skills its program calls
+    /// are credited to (OF-353).
+    pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
+        self.skill_executor = Some(executor.as_str().to_owned());
+        self
     }
 
     /// Bind only committed observations from the current run to the linked
@@ -130,29 +142,32 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         Ok(self)
     }
 
-    /// A verb answer too large for one reply, stored whole as a body of the
-    /// run as it is encoded. The guest and the replay row get its handle
-    /// (`result_handle_json`), never the answer; nothing is refused for size.
+    /// A verb's or a callable skill's answer too large for one reply, stored
+    /// whole as a body of the run as it is encoded. The guest and the replay
+    /// row get its handle (`result_handle_json`), never the answer; nothing is
+    /// refused for size.
     fn store_large_answer(
         &mut self,
         seq: u64,
-        outcome: SelfDispatchOutcome,
+        mut outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
-        let SelfDispatchOutcome::AgentVerb(mut answer) = outcome else {
-            return Ok(outcome);
+        let answer = match &mut outcome {
+            SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
+            SelfDispatchOutcome::SkillCall(result) => &mut result.output,
+            _ => return Ok(outcome),
         };
         let mut size = ByteCount::default();
-        serde_json::to_writer(&mut size, &answer.output).map_err(|error| {
+        serde_json::to_writer(&mut size, &*answer).map_err(|error| {
             Error::InvalidConfig(format!("verb answer encoding failed: {error}"))
         })?;
         if size.0 <= RESULT_REPLY_INLINE_BYTES {
-            return Ok(SelfDispatchOutcome::AgentVerb(answer));
+            return Ok(outcome);
         }
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
         let mut sink = storage.code_run_output_sink()?;
-        write_json(&mut sink, &answer.output)?;
+        write_json(&mut sink, &*answer)?;
         let output = storage.publish_code_run_output(
             bridge_result_output_path(seq),
             sink,
@@ -161,10 +176,200 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         )?;
         let name = self.next_auto_name();
         self.bind(name.clone(), output.handle.clone());
-        answer.output = result_handle_json(&output);
-        answer.output["name"] = json!(name);
+        *answer = result_handle_json(&output);
+        answer["name"] = json!(name);
         self.captured.push(output);
-        Ok(SelfDispatchOutcome::AgentVerb(answer))
+        Ok(outcome)
+    }
+
+    /// `self.skills.call` (OF-353): an agent-callable skill run as a step of
+    /// its own, on the sibling runtime the caller's step lent, under the
+    /// running attempt's lease, with this host as its bridge. The skill's own
+    /// calls are gated and recorded as the run's, at the positions after this
+    /// one's. A skill that fails answers a typed failure the program reads;
+    /// a halt or a declined TASK among its calls is this call's answer too.
+    fn call_skill(
+        &mut self,
+        seq: u64,
+        started_at_ms: u64,
+        call: &SelfCall,
+        skill: SelfSkillCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchOutcome> {
+        let failed = |error: String| {
+            SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::SkillsCall,
+                error,
+            })
+        };
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
+        let lease = match self
+            .gated_write
+            .admit_skill_call_for_executor_run(site, call)?
+        {
+            Ok(lease) => lease,
+            Err(refused) => return Ok(refused),
+        };
+        let Some(executor) = self.skill_executor.clone() else {
+            return Ok(failed("skills_call_no_executor".to_owned()));
+        };
+        let (run_id, determinism) = (self.run_id, self.determinism);
+        let ran = crate::skill::execute_callable_skill(
+            &lease.vault,
+            &lease.leased,
+            &skill.skill,
+            &executor,
+            &skill.args,
+            runtime,
+            &mut *self,
+            run_id,
+            seq,
+            determinism,
+            started_at_ms / 1000,
+        );
+        if self.hard_failure.is_some() || self.left_a_gap {
+            return Ok(failed("host_bridge_halted".to_owned()));
+        }
+        if self.declined.is_some() {
+            return Ok(failed("task_declined".to_owned()));
+        }
+        let output = ran.and_then(|step| {
+            serde_json::from_str::<serde_json::Value>(&step.observation).map_err(|_| {
+                Error::InvalidConfig("callable skill returned non-JSON output".to_owned())
+            })
+        });
+        Ok(match output {
+            Ok(output) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
+                skill: skill.skill,
+                output,
+            }),
+            Err(error) => failed(error.to_string()),
+        })
+    }
+
+    /// One `self.*` call over the bridge. `runtime` is the sibling a call
+    /// that runs a step of its own runs it on, when the caller's runtime
+    /// lent one ([`JsCodeModeHost::dispatch_self_nested`]).
+    fn dispatch_call(
+        &mut self,
+        call: SelfCall,
+        runtime: Option<&mut dyn JsCodeModeRuntime>,
+    ) -> Result<SelfDispatchResponse> {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
+        // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
+        // stamped here — on the one ordering path every `self.*` call takes —
+        // before the row is recorded or the effect dispatched. Guest code
+        // cannot forge either, and the replay row, the dispatched call and the
+        // emitted bubble all carry the same number.
+        let call = call.with_bridge_stamp(seq, started_at_ms);
+        // Past a wait or a halt the bridge answers without dispatching, but a
+        // session-bound run is still answered as its participant stands: once
+        // they left the room it hears `NotInRoom`, never the wait or the halt.
+        if (self.durable_wait.is_some()
+            || self.hard_failure.is_some()
+            || self.left_a_gap
+            || self.declined.is_some())
+            && let Some(storage) = self.storage
+            && let Err(err) = storage.answered(|| Ok(()))
+        {
+            self.left_a_gap = true;
+            return Err(err);
+        }
+        if let Some(wait) = &self.durable_wait {
+            let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
+            let row =
+                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            self.bridge_calls.push(row);
+            return Ok(self.respond(outcome));
+        }
+        if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
+            // Fail-closed after the first hard failure or unrecorded call:
+            // no further gate dispatches; the guest sees a typed Failed
+            // response (budget attached) and the replay row records exactly
+            // that. A declined TASK is closed the same way, without failing
+            // the step.
+            let error =
+                if self.declined.is_some() && self.hard_failure.is_none() && !self.left_a_gap {
+                    "task_declined"
+                } else {
+                    "host_bridge_halted"
+                };
+            let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect(),
+                error: error.to_owned(),
+            });
+            let row =
+                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            self.bridge_calls.push(row);
+            return Ok(self.respond(outcome));
+        }
+        // ONE-1314: the current step's own history, observed at the last
+        // moment before this call dispatches. The durable half was observed
+        // when the step opened; together they are every bridge call this run
+        // has made, so a write can never be sealed against a narrower history
+        // than the one already recorded.
+        self.gated_write.observe_bridge_history(&self.bridge_calls);
+        // This call's row keeps its own position: a callable skill's calls
+        // take the positions after it, and their rows land first.
+        let place = self.bridge_calls.len();
+        let dispatched = match (&call, runtime) {
+            (SelfCall::SkillsCall(skill), Some(runtime)) => {
+                let skill = skill.clone();
+                self.call_skill(seq, started_at_ms, &call, skill, runtime)
+            }
+            _ => {
+                let site = ExecutorCallSite {
+                    run_id: self.run_id,
+                    seq,
+                    step_start: self.step_start,
+                    earlier: &self.bridge_calls,
+                };
+                self.gated_write
+                    .dispatch_for_executor_run(site, call.clone())
+            }
+        };
+        let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
+                    // Infrastructure failure: no guest-visible response
+                    // exists for this call at all.
+                    self.left_a_gap = true;
+                    return Err(err);
+                };
+                let row = CodeRunBridgeCall::record(
+                    seq,
+                    &call,
+                    &error_outcome,
+                    started_at_ms,
+                    started_at_ms,
+                )?;
+                self.bridge_calls.insert(place, row);
+                self.hard_failure = Some(err);
+                return Ok(self.respond(error_outcome));
+            }
+        };
+        let finished_at_ms = started_at_ms;
+        let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?;
+        if self.durable_wait.is_none()
+            && let SelfDispatchOutcome::DurableWait(wait) = &outcome
+        {
+            self.durable_wait = Some(wait.clone());
+        }
+        if let SelfDispatchOutcome::TaskRefusal(refusal) = &outcome
+            && refusal.declined()
+        {
+            self.declined = Some(refusal.task_ref);
+        }
+        self.bridge_calls.insert(place, row);
+        Ok(self.respond(outcome))
     }
 
     /// The run's live result names, oldest first: this step's binds over
@@ -541,106 +746,15 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
     }
 
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
-        // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
-        // stamped here — on the one ordering path every `self.*` call takes —
-        // before the row is recorded or the effect dispatched. Guest code
-        // cannot forge either, and the replay row, the dispatched call and the
-        // emitted bubble all carry the same number.
-        let call = call.with_bridge_stamp(seq, started_at_ms);
-        // Past a wait or a halt the bridge answers without dispatching, but a
-        // session-bound run is still answered as its participant stands: once
-        // they left the room it hears `NotInRoom`, never the wait or the halt.
-        if (self.durable_wait.is_some()
-            || self.hard_failure.is_some()
-            || self.left_a_gap
-            || self.declined.is_some())
-            && let Some(storage) = self.storage
-            && let Err(err) = storage.answered(|| Ok(()))
-        {
-            self.left_a_gap = true;
-            return Err(err);
-        }
-        if let Some(wait) = &self.durable_wait {
-            let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
-            let row =
-                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
-            self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
-        }
-        if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
-            // Fail-closed after the first hard failure or unrecorded call:
-            // no further gate dispatches; the guest sees a typed Failed
-            // response (budget attached) and the replay row records exactly
-            // that. A declined TASK is closed the same way, without failing
-            // the step.
-            let error =
-                if self.declined.is_some() && self.hard_failure.is_none() && !self.left_a_gap {
-                    "task_declined"
-                } else {
-                    "host_bridge_halted"
-                };
-            let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
-                effect: call.effect(),
-                error: error.to_owned(),
-            });
-            let row =
-                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
-            self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
-        }
-        // ONE-1314: the current step's own history, observed at the last
-        // moment before this call dispatches. The durable half was observed
-        // when the step opened; together they are every bridge call this run
-        // has made, so a write can never be sealed against a narrower history
-        // than the one already recorded.
-        self.gated_write.observe_bridge_history(&self.bridge_calls);
-        let site = ExecutorCallSite {
-            run_id: self.run_id,
-            seq,
-            step_start: self.step_start,
-            earlier: &self.bridge_calls,
-        };
-        let dispatched = self
-            .gated_write
-            .dispatch_for_executor_run(site, call.clone());
-        let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
-                    // Infrastructure failure: no guest-visible response
-                    // exists for this call at all.
-                    self.left_a_gap = true;
-                    return Err(err);
-                };
-                let row = CodeRunBridgeCall::record(
-                    seq,
-                    &call,
-                    &error_outcome,
-                    started_at_ms,
-                    started_at_ms,
-                )?;
-                self.bridge_calls.push(row);
-                self.hard_failure = Some(err);
-                return Ok(self.respond(error_outcome));
-            }
-        };
-        let finished_at_ms = started_at_ms;
-        let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?;
-        if self.durable_wait.is_none()
-            && let SelfDispatchOutcome::DurableWait(wait) = &outcome
-        {
-            self.durable_wait = Some(wait.clone());
-        }
-        if let SelfDispatchOutcome::TaskRefusal(refusal) = &outcome
-            && refusal.declined()
-        {
-            self.declined = Some(refusal.task_ref);
-        }
-        self.bridge_calls.push(row);
-        Ok(self.respond(outcome))
+        self.dispatch_call(call, None)
+    }
+
+    fn dispatch_self_nested(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchResponse> {
+        self.dispatch_call(call, Some(runtime))
     }
 }
 

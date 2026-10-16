@@ -18,7 +18,7 @@ use super::types::{
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
     KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
     KEY_ORIGIN_CONVERSATION, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
-    KEY_SPAWN_INTENT, KEY_TARGET, TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
 
@@ -96,6 +96,17 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             .map_err(|_| Error::InvalidConfig("healer case encode".into()))?;
         entries.push((Value::from("healer_case"), Value::Binary(bytes)));
     }
+    // OF-543: the type stamp always rides the payload, root included — a
+    // spawn without one is invalid, never untyped.
+    if input.type_ref.node_id.is_empty() {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "task_type_ref node_id must not be empty",
+        )));
+    }
+    entries.push((
+        Value::from(KEY_TASK_TYPE_REF),
+        Value::from(input.type_ref.wire_form().as_str()),
+    ));
     if let Some(budget) = input.budget {
         entries.push((Value::from(KEY_BUDGET), Value::from(budget)));
     }
@@ -133,6 +144,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut spawn_intent = None;
     let mut scope = None;
     let mut healer_case = None;
+    let mut type_ref = None;
     let mut budget = None;
     let mut launch = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
@@ -299,6 +311,20 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                 super::healer_context::validate(&case)?;
                 healer_case = Some(case);
             }
+            KEY_TASK_TYPE_REF => {
+                let wire = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "task_type_ref must be node_id@tree_version",
+                    ),
+                ))?;
+                type_ref = Some(
+                    crate::task_type::TaskTypeRef::parse_wire(wire).map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "task_type_ref must be node_id@tree_version",
+                        ))
+                    })?,
+                );
+            }
             KEY_BUDGET => {
                 budget = Some(value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("budget must be an integer"),
@@ -398,6 +424,9 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         project_ref,
         spawn_intent,
         scope,
+        // Rows written before OF-543 carry no stamp; they read as the
+        // seeded root, the unsure placement, rather than failing decode.
+        type_ref: type_ref.unwrap_or_default(),
         budget,
         launch,
     })
@@ -433,6 +462,15 @@ pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
 /// Absent / wrong-kind / wrong-attempt-type / undecodable are all "no dispatch
 /// lineage", never storage corruption: the queue and codec are `pub`, so any
 /// attempt id can be named as a parent (the D13 non-boundary ruling).
+/// The OF-543 type stamp of a queue row's dispatch payload, for the
+/// terminal attempt receipt. `None` only for non-dispatch rows.
+#[must_use]
+pub(crate) fn attempt_task_type_ref(
+    record: &AttemptRecord,
+) -> Option<crate::task_type::TaskTypeRef> {
+    record_dispatch_input(record).map(|input| input.type_ref)
+}
+
 pub(super) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
     if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return None;

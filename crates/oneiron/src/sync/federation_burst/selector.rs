@@ -66,7 +66,7 @@ pub fn prepare_selector_fetch(
     payload: &[u8],
 ) -> Result<PreparedSelectorFetch> {
     let peer = peer_for_request(vault, principal, scope, payload)?;
-    let (decision, work) = admit_work(vault, &peer, key, WorkKind::Selector, payload, 1)?;
+    let (decision, work) = admit_work(vault, &peer, key, WorkKind::Selector, payload, 1, None)?;
     Ok(PreparedSelectorFetch {
         selector: peer.selector.clone(),
         peer,

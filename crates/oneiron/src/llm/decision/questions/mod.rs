@@ -2,7 +2,9 @@
 
 mod arrival;
 mod graph_ask;
+mod health_ask;
 mod outcomes;
+mod recipe;
 mod records;
 mod refresh;
 mod standing;
@@ -18,7 +20,12 @@ pub use graph_ask::{
     GraphTypeSelection, GraphUnitContext, run_graph_ask, run_graph_ask_by_type,
     select_graph_units_by_type,
 };
+pub use health_ask::{
+    HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
+};
 pub use outcomes::{calibration_pairs, person_changed_pairs, project_bound_outcomes};
+pub(crate) use recipe::run_graph_question_with_proposals;
+pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions, refresh_question,

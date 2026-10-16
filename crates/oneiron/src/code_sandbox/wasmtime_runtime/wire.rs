@@ -255,7 +255,15 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 return Ok(json!({ "error": refusal }).to_string());
             }
             let call = self_call(name, input, state.determinism.frozen_unix_ms / 1000)?;
-            let answered = state.host.dispatch_self(call)?;
+            // A callable skill runs a step of its own while this one waits on
+            // the reply (OF-353), on a fresh sibling of this runtime: never
+            // on this step's store.
+            let answered = if matches!(call, SelfCall::SkillsCall(_)) {
+                let mut sibling = state.nested.fresh();
+                state.host.dispatch_self_nested(call, &mut sibling)?
+            } else {
+                state.host.dispatch_self(call)?
+            };
             let body = fit_reply(state.host, reply_body(&answered.outcome)?)?;
             Ok(answered.guest_json(body).to_string())
         }
@@ -506,6 +514,13 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 at: args.at.map_or(Ok(now), js_time)?,
             })
         }
+        RunVerb::SelfSkillsCall => {
+            let args: crate::code_run::SkillCallInput = decode(input)?;
+            SelfCall::SkillsCall(crate::code_run::SelfSkillCall {
+                skill: EntityId::from_hex(&args.skill)?,
+                args: args.args,
+            })
+        }
     })
 }
 
@@ -575,6 +590,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({"output":{"task":value.task_ref.to_hex(),"level":value.level.as_str(),"outcome":value.outcome_word(),"replay":value.replay}})
         }
         SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
+        SelfDispatchOutcome::SkillCall(value) => json!({"output":value.output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }

@@ -105,15 +105,19 @@ impl McpSurfaceMode {
     }
 }
 
-/// The exported verb family a generated tool projects from.
+/// The exported verb root a generated tool projects from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpVerbFamily {
-    Board,
+    /// `self.`: the calling agent's own focus, memory and skills.
+    SelfRoot,
+    Vault,
+    Connector,
+    Ai,
     Tasks,
-    Rooms,
+    /// The native read table's `memory.` methods.
     Memory,
     /// The bare verbs over any handle (ARCH-0067 §4), such as `describe` and
-    /// `cancel`: their row names carry no family prefix.
+    /// `cancel`: their row names carry no root.
     Handle,
 }
 
@@ -121,9 +125,11 @@ impl McpVerbFamily {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Board => "board",
+            Self::SelfRoot => "self",
+            Self::Vault => "vault",
+            Self::Connector => "connector",
+            Self::Ai => "ai",
             Self::Tasks => "tasks",
-            Self::Rooms => "rooms",
             Self::Memory => "memory",
             Self::Handle => "handle",
         }
@@ -131,9 +137,11 @@ impl McpVerbFamily {
 
     fn from_prefix(prefix: &str) -> Option<Self> {
         match prefix {
-            "board" => Some(Self::Board),
+            "self" => Some(Self::SelfRoot),
+            "vault" => Some(Self::Vault),
+            "connector" => Some(Self::Connector),
+            "ai" => Some(Self::Ai),
             "tasks" => Some(Self::Tasks),
-            "rooms" => Some(Self::Rooms),
             "memory" => Some(Self::Memory),
             _ => None,
         }
@@ -146,8 +154,8 @@ pub struct McpGeneratedVerbTool {
     /// The exported row verbatim. The tool name IS the verb name.
     pub name: &'static str,
     pub family: McpVerbFamily,
-    /// The row's suffix, borrowed out of the row itself; a bare row's whole
-    /// name.
+    /// The row past its root, borrowed out of the row itself (it may hold
+    /// further dots, as in `turn.continue`); a bare row's whole name.
     pub verb: &'static str,
 }
 
@@ -219,7 +227,7 @@ fn project_verb_row(
         },
         None => (McpVerbFamily::Handle, row),
     };
-    if verb.is_empty() || verb.contains('.') {
+    if verb.split('.').any(str::is_empty) {
         return Err(unprojectable);
     }
     if AgentVerb::from_name(row).is_none()

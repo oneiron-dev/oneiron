@@ -8,15 +8,15 @@ use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
-    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, home_search_candidates,
-    index_selection_revision, promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet,
-    selected_item_blob_with, shelve_sealed_window, window_index_page,
+    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_tail_for,
+    home_search_candidates, index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
+    sealed_shelf_packet, selected_item_blob_with, shelve_sealed_window, window_index_page,
     window_index_projection_with,
 };
-use oneiron::world_keys::SealedContentId;
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
+use oneiron::world_keys::SealedContentId;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -108,6 +108,15 @@ struct SealedGetRequest {
     id: String,
 }
 
+/// The authority entries a machine holds, as concatenated 32-byte hashes in
+/// base64, and how many missing entries it takes in one page (OF-469).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityTailRequest {
+    held: String,
+    limit: usize,
+}
+
 pub(super) fn run(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -115,6 +124,7 @@ pub(super) fn run(
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
+    let call = super::RpcCall::of(&request);
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -129,13 +139,14 @@ pub(super) fn run(
             "residence.sealed.put" => sealed_put(server, auth, peer, request.params),
             "residence.sealed.list" => sealed_list(server, peer, request.params),
             "residence.sealed.get" => sealed_get(server, peer, request.params),
+            "residence.authority.tail" => authority_tail(server, peer, request.params),
             _ => Err(AppError::bad_request(
                 "unknown residence RPC",
                 Some("method"),
             )),
         }
     })();
-    super::RpcReply::answer(request.request_id, result)
+    super::RpcReply::answer(server, auth, call, request.request_id, result)
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {
@@ -700,4 +711,32 @@ fn sealed_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<A
         }),
         Some(Vec::new()),
     ))
+}
+
+/// The signed authority entries the proved machine lacks, parents first
+/// (OF-469). Only a machine of the owner's is served; any other looks missing.
+fn authority_tail(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityTailRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(input.held)
+        .map_err(|_| AppError::invalid_params())?;
+    if raw.len() % 32 != 0 {
+        return Err(AppError::invalid_params());
+    }
+    let held: std::collections::BTreeSet<oneiron::authority::AuthorityEntryHash> = raw
+        .chunks_exact(32)
+        .map(|hash| <[u8; 32]>::try_from(hash).map_err(|_| AppError::invalid_params()))
+        .collect::<Result<_, _>>()?;
+    let entries = authority_tail_for(&server.vault, peer, &held, input.limit)
+        .map_err(|_| AppError::not_found("authority history", None))?;
+    let entries: Vec<String> = entries
+        .iter()
+        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+        .collect();
+    Ok((json!({"entries": entries}), Some(Vec::new())))
 }

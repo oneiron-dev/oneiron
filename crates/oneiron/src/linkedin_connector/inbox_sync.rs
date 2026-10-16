@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::surface_event::{
     InboundSurfaceEventInput, InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt,
+    SurfaceEventAck, SurfaceEventAdmission,
 };
 
 use super::normalize_keys::{
@@ -160,6 +161,9 @@ pub struct LinkedInInboxSyncReport {
     pub duplicate_messages: usize,
     pub backfill_skipped_messages: usize,
     pub receipts: Vec<InboundSurfaceRouteReceipt>,
+    /// The durable handoff each new message was admitted under, before its
+    /// seen marker was written.
+    pub admitted: Vec<SurfaceEventAck>,
 }
 
 impl LinkedInInboxSyncReport {
@@ -171,6 +175,7 @@ impl LinkedInInboxSyncReport {
             duplicate_messages: 0,
             backfill_skipped_messages: 0,
             receipts: Vec::new(),
+            admitted: Vec::new(),
         }
     }
 }
@@ -271,6 +276,33 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                     }
                 };
                 if receipt.outcome == InboundSurfaceRouteOutcome::Routed {
+                    // The durable handoff commits before the seen marker: a
+                    // crash between them re-polls the message, and the
+                    // handoff's correlation id dedupes the second admission.
+                    let admission = match self
+                        .vault
+                        .enqueue_inbound_surface_event(event.event_input.clone(), now)
+                    {
+                        Ok(admission) => admission,
+                        Err(err) => {
+                            release_linkedin_inbox_message_claim(
+                                self.vault,
+                                &self.config,
+                                &event.message,
+                            )?;
+                            return Err(err);
+                        }
+                    };
+                    let SurfaceEventAdmission::Accepted(ack) = admission else {
+                        // The identity stopped routing between the two reads.
+                        release_linkedin_inbox_message_claim(
+                            self.vault,
+                            &self.config,
+                            &event.message,
+                        )?;
+                        report.receipts.push(receipt);
+                        continue;
+                    };
                     finalize_linkedin_inbox_seen_message(
                         self.vault,
                         &self.config,
@@ -278,6 +310,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                         &event.event_input,
                     )?;
                     report.new_messages = report.new_messages.saturating_add(1);
+                    report.admitted.push(ack);
                 } else {
                     release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
                 }

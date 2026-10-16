@@ -8,21 +8,35 @@ use std::collections::BTreeMap;
 
 /// Reads the common scalar frontmatter subset. Complex YAML is refused, not guessed.
 /// Hosts can normalize richer YAML before publication, without changing this parser's trust floor.
+///
+/// The marketplaces' own shapes map here at ingress (ARCH-0053 §7: any git repo
+/// or static index is a hub, so a marketplace needs no adapter of its own):
+/// agentskills.io's optional `version` falls back to `metadata.version`, then to
+/// a version named by the tree's content; `allowed-tools` may be its plain
+/// space- or comma-delimited list; the `metadata.requires.{bins,env,mcp}`
+/// precondition block, top-level or under one vendor key (ClawHub's
+/// `openclaw`), joins the capability surface; and Claude Code's invocation
+/// hints are read as inert.
 pub(crate) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
     validate_source_files(&files)?;
     let front = source_frontmatter(instruction_text(&files)?)?
         .ok_or_else(|| invalid("SKILL.md needs frontmatter"))?;
-    let (fields, caps, role, call) = frontmatter_fields(front)?;
+    let (fields, caps, role, call, metadata_version) = frontmatter_fields(front)?;
     let scalar = |key: &str| -> Result<String> {
         let value = *fields
             .get(key)
             .ok_or_else(|| invalid("missing required frontmatter scalar"))?;
         frontmatter_scalar(value)
     };
+    let version = match (fields.contains_key("version"), metadata_version) {
+        (true, _) => scalar("version")?,
+        (false, Some(version)) => version,
+        (false, None) => content_version(&files)?,
+    };
     let record = SkillRecord::new(
         scalar("name")?,
         scalar("description")?,
-        scalar("version")?,
+        version,
         ClaimApprovalStatus::Proposed,
         SkillLifecycle::Candidate,
         ClaimSource::Imported,
@@ -88,6 +102,8 @@ type ParsedFrontmatter<'a> = (
     SkillCapabilitySurface,
     SkillRole,
     Option<SkillCallContract>,
+    // `metadata.version`, for a source whose frontmatter names no version.
+    Option<String>,
 );
 
 fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
@@ -96,11 +112,31 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
     let mut call_fields = serde_json::Map::new();
     let mut in_call = false;
     let mut metadata_block = false;
+    let mut requires_block = false;
+    let mut metadata_version = None;
     let mut metadata_keys = std::collections::BTreeSet::new();
     for line in front.lines() {
         if line.trim().is_empty() || line.starts_with('#') {
             continue;
         }
+        if requires_block
+            && let Some(requirement) = line
+                .strip_prefix("    ")
+                .filter(|rest| !rest.starts_with(char::is_whitespace))
+        {
+            let (key, value) = requirement
+                .split_once(':')
+                .ok_or_else(|| invalid("invalid metadata requirement"))?;
+            let entries = capability_list(value.trim())?
+                .into_iter()
+                .map(serde_json::Value::String)
+                .collect();
+            let block =
+                serde_json::Map::from_iter([(key.to_owned(), serde_json::Value::Array(entries))]);
+            add_requirements(&block, &mut caps)?;
+            continue;
+        }
+        requires_block = false;
         if line.starts_with(char::is_whitespace) {
             let nested = line
                 .strip_prefix("  ")
@@ -119,7 +155,33 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
                         "call must have unique reference, arguments and returns fields",
                     ));
                 }
+            } else if metadata_block && key == "requires" && value.trim().is_empty() {
+                if !metadata_keys.insert(key) {
+                    return Err(invalid("unsupported metadata scalar"));
+                }
+                requires_block = true;
+            } else if metadata_block && value.trim_start().starts_with('{') {
+                // A vendor's map (ClawHub: `openclaw: {"requires": …}`) is read
+                // only for its precondition block.
+                let serde_json::Value::Object(vendor) = serde_json::from_str(value.trim())
+                    .map_err(|_| invalid("metadata map requires a JSON object"))?
+                else {
+                    return Err(invalid("metadata map requires a JSON object"));
+                };
+                if !metadata_keys.insert(key) {
+                    return Err(invalid("unsupported metadata scalar"));
+                }
+                metadata_requirements(
+                    &serde_json::Map::from_iter([(
+                        key.to_owned(),
+                        serde_json::Value::Object(vendor),
+                    )]),
+                    &mut caps,
+                )?;
             } else if metadata_block {
+                if key == "version" {
+                    metadata_version = Some(frontmatter_scalar(value.trim())?);
+                }
                 if key.is_empty()
                     || !key
                         .bytes()
@@ -150,6 +212,12 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
         }
         match key {
             "name" | "description" | "version" | "license" | "compatibility" | "role" => {}
+            // Claude Code's invocation hints: read as inert, never a capability.
+            "homepage"
+            | "model"
+            | "argument-hint"
+            | "user-invocable"
+            | "disable-model-invocation" => {}
             "call" => {
                 if value.is_empty() {
                     in_call = true;
@@ -166,13 +234,24 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
             }
             "metadata" if value.is_empty() => metadata_block = true,
             "metadata" => {
-                let _: BTreeMap<String, String> = serde_json::from_str(value)
-                    .map_err(|_| invalid("metadata requires a JSON string map"))?;
+                let serde_json::Value::Object(metadata) = serde_json::from_str(value)
+                    .map_err(|_| invalid("metadata requires a JSON object"))?
+                else {
+                    return Err(invalid("metadata requires a JSON object"));
+                };
+                metadata_version = match metadata.get("version") {
+                    None => None,
+                    Some(serde_json::Value::String(version)) if !version.is_empty() => {
+                        Some(version.clone())
+                    }
+                    Some(_) => return Err(invalid("metadata version must be a string")),
+                };
+                metadata_requirements(&metadata, &mut caps)?;
             }
-            // These are JSON arrays, a closed YAML flow-sequence subset. No expansion, aliases or tags.
+            // A JSON array (a closed YAML flow-sequence subset; no expansion,
+            // aliases or tags) or a plain delimited list.
             "allowed-tools" | "requires-bins" | "requires-env" | "requires-mcp" => {
-                let entries: Vec<String> = serde_json::from_str(value)
-                    .map_err(|_| invalid("capabilities require a JSON string array"))?;
+                let entries = capability_list(value)?;
                 let set = match key {
                     "allowed-tools" => &mut caps.allowed_tools,
                     "requires-bins" => &mut caps.bins,
@@ -210,7 +289,113 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
     } else {
         None
     };
-    Ok((fields, caps, role, call))
+    Ok((fields, caps, role, call, metadata_version))
+}
+
+/// A capability list: a JSON string array, or the plain list agentskills.io
+/// (space-delimited) and Claude Code (comma-delimited) write. A separator inside
+/// parentheses belongs to its entry, as in `Bash(git add:*)`.
+fn capability_list(value: &str) -> Result<Vec<String>> {
+    if value.starts_with('[') {
+        return serde_json::from_str(value)
+            .map_err(|_| invalid("capabilities require a JSON string array"));
+    }
+    let value = if value.starts_with(['"', '\'']) {
+        frontmatter_scalar(value)?
+    } else {
+        value.to_owned()
+    };
+    let mut entries = Vec::new();
+    let mut entry = String::new();
+    let mut depth = 0usize;
+    for c in value.chars() {
+        match c {
+            ',' | ' ' | '\t' if depth == 0 => {
+                if !entry.is_empty() {
+                    entries.push(std::mem::take(&mut entry));
+                }
+            }
+            '(' => {
+                depth += 1;
+                entry.push(c);
+            }
+            ')' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| invalid("unbalanced capability list"))?;
+                entry.push(c);
+            }
+            _ => entry.push(c),
+        }
+    }
+    if depth != 0 {
+        return Err(invalid("unbalanced capability list"));
+    }
+    if !entry.is_empty() {
+        entries.push(entry);
+    }
+    if entries.is_empty() {
+        return Err(invalid("empty capability list"));
+    }
+    Ok(entries)
+}
+
+/// The `requires` block of a metadata map, top-level or under one vendor key.
+fn metadata_requirements(
+    metadata: &serde_json::Map<String, serde_json::Value>,
+    caps: &mut SkillCapabilitySurface,
+) -> Result<()> {
+    let vendors = metadata
+        .values()
+        .filter_map(|value| value.as_object()?.get("requires"));
+    for block in metadata.get("requires").into_iter().chain(vendors) {
+        let serde_json::Value::Object(block) = block else {
+            return Err(invalid("metadata requires must be a map"));
+        };
+        add_requirements(block, caps)?;
+    }
+    Ok(())
+}
+
+/// Adds declared requirements to the surface. Any-of binaries count as all of
+/// them, the wider reading; an OS filter or a config key asks for nothing the
+/// surface tracks. Anything else is normalized before import.
+fn add_requirements(
+    block: &serde_json::Map<String, serde_json::Value>,
+    caps: &mut SkillCapabilitySurface,
+) -> Result<()> {
+    for (kind, entries) in block {
+        let set = match kind.as_str() {
+            "bins" | "anyBins" => &mut caps.bins,
+            "env" => &mut caps.env,
+            "mcp" => &mut caps.mcp,
+            "os" | "config" => continue,
+            _ => return Err(invalid("unknown requirement kind; normalize before import")),
+        };
+        let serde_json::Value::Array(entries) = entries else {
+            return Err(invalid("requirements must be a string array"));
+        };
+        for entry in entries {
+            match entry {
+                serde_json::Value::String(entry) if !entry.is_empty() => {
+                    set.insert(entry.clone());
+                }
+                _ => return Err(invalid("requirements must be a string array")),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The version of a source that names none (agentskills.io makes it optional),
+/// named by its content so the same tree always reads the same version.
+fn content_version(files: &[HubFile]) -> Result<String> {
+    let hash = crate::skill::canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_slice())),
+    )?;
+    Ok(format!("0.0.0+{}", &hash.to_hex()[..12]))
 }
 
 #[derive(serde::Deserialize)]
@@ -249,7 +434,7 @@ pub(crate) fn declared_role_call(
     let Some(front) = source_frontmatter(instruction_text(files)?)? else {
         return Ok((None, None));
     };
-    let (fields, _, role, call) = frontmatter_fields(front)?;
+    let (fields, _, role, call, _) = frontmatter_fields(front)?;
     Ok((fields.contains_key("role").then_some(role), call))
 }
 
@@ -280,7 +465,7 @@ pub(crate) fn package_from_source(
                 .map(frontmatter_fields)
                 .transpose()?;
             if record.role == SkillRole::Callable
-                && !parsed.as_ref().is_some_and(|(_, _, role, call)| {
+                && !parsed.as_ref().is_some_and(|(_, _, role, call, _)| {
                     *role == SkillRole::Callable && call == &record.call
                 })
             {
@@ -288,7 +473,7 @@ pub(crate) fn package_from_source(
                     "callable source frontmatter must match its native call contract",
                 ));
             }
-            if let Some((fields, _, role, call)) = &parsed
+            if let Some((fields, _, role, call, _)) = &parsed
                 && ((fields.contains_key("role") && *role != record.role)
                     || (fields.contains_key("call") && call != &record.call))
             {
@@ -296,7 +481,7 @@ pub(crate) fn package_from_source(
                     "native skill role/call differs from declared frontmatter",
                 ));
             }
-            let caps = parsed.map(|(_, caps, _, _)| caps).unwrap_or_default();
+            let caps = parsed.map(|(_, caps, _, _, _)| caps).unwrap_or_default();
             let mut package = HubPackage::new(record.clone(), files, caps);
             package.format = SkillPackageFormat::Native;
             package

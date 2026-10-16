@@ -16,16 +16,12 @@ impl UsageLedger {
         source: UsageMode,
     ) -> Result<UsageRecordResult, UsageError> {
         event.validate()?;
-        let cost = event.cost_input().calculate()?;
-        if !source.debits_usage() {
-            return Ok(UsageRecordResult {
-                recorded: false,
-                replayed: false,
-                source,
-                cost,
-                vault_rollup: None,
-            });
-        }
+        // A meter records facts for every payer. A source never turns a
+        // quantity into a wallet debit, and an unknown price is not zero.
+        let cost = event
+            .cost_input()
+            .map(|input| input.calculate())
+            .transpose()?;
         let key = usage_event_key(&event.owner, &event.vault_id, &event.idempotency_key);
         let rollup_key = vault_rollup_key(&event.owner, &event.vault_id);
         self.vault
@@ -66,7 +62,7 @@ impl UsageLedger {
                 }
                 let mut rollup =
                     rollup.unwrap_or_else(|| UsageRollup::vault(&event.owner, &event.vault_id));
-                rollup.add_event(&event, &cost)?;
+                rollup.add_event(&event, cost.as_ref())?;
                 let stored = StoredUsageEvent {
                     event,
                     source,
@@ -131,7 +127,7 @@ impl UsageLedger {
 pub(super) struct StoredUsageEvent {
     pub event: UsageEvent,
     pub source: UsageMode,
-    pub cost: Money,
+    pub cost: Option<Money>,
     pub recorded_at: u64,
 }
 
@@ -145,15 +141,16 @@ fn merge_stored_event(
 ) -> Result<(), UsageError> {
     let stored = decode_entry(raw)?;
     stored.event.validate()?;
-    stored.cost.validate()?;
+    if let Some(cost) = &stored.cost {
+        cost.validate()?;
+    }
     if stored.event.owner != owner
         || stored.event.vault_id != vault
-        || !stored.source.debits_usage()
         || usage_event_key(owner, vault, &stored.event.idempotency_key) != key
     {
         return Err(oneiron::Error::CorruptedIndex("usage event scope").into());
     }
     rollup
         .get_or_insert_with(|| UsageRollup::vault(owner, vault))
-        .add_event(&stored.event, &stored.cost)
+        .add_event(&stored.event, stored.cost.as_ref())
 }

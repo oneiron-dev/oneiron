@@ -769,6 +769,34 @@ The verbs, each the owner's and checked against the vault's inference policy:
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
+### Lazy images and `ask_image`
+
+A read serves each generated image down a ladder. A reader whose request
+says it takes images (`"image_input": true`) gets the full image when it
+fits. If it doesn't fit, the reader gets a 384-pixel JPEG thumbnail beside
+the image's description. If that doesn't fit either, it gets the description
+alone. Every rung carries the image's view handle (`<asset>@<hash>`). When
+nothing fits, the body is omitted and the vault asks whether everything is
+okay (`limits.image_room_bytes`, 32 MiB by default, is the room a model
+call's context gets when its host names none). The agent verb
+`vault.images.view` (`{"handle", "region": {"x", "y", "width", "height"},
+"edge"}`) fetches the full pixels behind a handle: the whole image, a crop,
+or a zoom to `edge` pixels.
+
+`POST /v1/ai/ask_image` (`{"handle", "question", "region"}`) asks a small
+vision model about the pixels instead, so they never enter the asker's
+context. Bind that model as its own role:
+
+```toml
+[models.roles.local_vision]
+rungs = ["local:qwen3-vl-4b"]
+```
+
+Its provider needs `image_input` among its capabilities. The answer is
+`{"asset_ref", "text", "receipt"}`. Each rung served and each pull (view,
+crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
+which rung each image got and whether the pixels were pulled afterwards.
+
 ## 11. When a provider refuses for a limit
 
 A rung refused for a limit hands the call to the next rung of its ladder, and
@@ -781,7 +809,9 @@ keeps it:
 - **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
   wait of 15 minutes or more) is parked until the reset it names.
 - **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
-  "billing") is parked until the owner tops up or clears it.
+  "billing", Anthropic's `billing_error`) is parked until the owner tops up
+  or clears it. The same words in an error inside an open stream read the
+  same way.
 
 While only rests stop a call, it waits for the first offer back and tries the
 chain again, until its waits pass the vault's longest wait in all (a caller
@@ -789,12 +819,28 @@ with its own deadline passes its own budget). A call whose every offer is
 parked on credit fails `quota_spent`; one that ran out of wait fails
 `rate_limited` with the earliest reset.
 
-A spent window or spent credit leaves the owner a question in
-`GET /v1/ai/status` (`quota_questions`: the provider, model, route, what was
-spent, the reset if any, and the choices). Answer it with
-`POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
-`top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
-`add_account` close the question and leave the offer parked until its reset.
+Once every rung of a call has parked, each offer parked on a spent window or
+spent credit leaves the owner a question in `GET /v1/ai/status`
+(`quota_questions`: the provider, model, route, what was spent, the reset if
+any, the choices, and `fallbacks`). A call that a later rung serves asks
+nothing. `fallbacks` lists the chat models on other providers that still have
+usage left, and while it is non-empty the choices include `use_fallback`.
+Answer with `POST /v1/ai/quota/{id}`
+`{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait" | "use_fallback", "fallback": "<model>"}`:
+
+- `top_up` and `pay_as_you_go` put the offer back in rotation now.
+- `wait` and `add_account` close the question and leave the offer parked
+  until its reset.
+- `use_fallback` names one of `fallbacks` (its engine id). While the offer is
+  parked, a call whose every rung has parked goes to that model instead,
+  whenever the model's own offer is in rotation and the call's world may go
+  where it runs. Setting it is the permission, paid models included. Once the
+  offer is back, calls use it again.
+
+On raw `/v1/llm/stream`, a stream that fails after it has started ends with
+one last line carrying the same typed body as a refusal before it:
+`{"error": {"code": "quota_spent", "llm": …, "quota": {…}}}` when credit or a
+window runs out mid-stream.
 
 ## 12. Batch GPU pods (`[gpu]`)
 
@@ -829,3 +875,72 @@ an answer that names another model, or makes vectors another way, is refused
 as the endpoint's would be. On a vault bound to an account, each pod's answer
 is sealed to that account before it is read. Pod URLs follow the endpoint's
 rules: HTTPS unless loopback, and no credential or query in the URL.
+
+## 13. The decision ladder
+
+Every typed decision the server asks (decide()) goes through one ladder,
+built when the server starts and lent to each caller
+(`SyncServer::decision_ladder()`; the queue, dials and bands are on
+`SyncServer::decision_host()`). Its rungs come from the seats you already
+bind:
+
+- **Rule**: the host's rule table, always first. It abstains on a question
+  it holds no row for, so the call goes to the next rung.
+- **System One**: the seat `[models.decisions.system_one]` binds (below).
+- **Escalation**: the house model's decision read (section 9), when its
+  recipe names the paired question. The recipe's person question becomes the
+  ladder's "ask up?" question, and `person_threshold` becomes its row.
+- **Big**: the big model, through the seat `[models.decisions.big]` names
+  (below).
+- **The local head**: no typed provider fills it yet, so the ladder steps
+  past it.
+- **The owner**: the last rung is a durable queue. Each ask waits in the
+  vault until you answer it (owner-actions.md, "Answer the decision
+  ladder's asks").
+
+`[models.decisions]` binds the System One seat and words the host's own
+questions. A question you don't word is not asked, and its hook stays
+unbound:
+
+```toml
+[models.decisions]
+# The write gate's auto check through the ladder: allow or hold.
+auto_check = "Should this claim land without the owner's review?"
+
+[models.decisions.seat]
+# A manifest-backed execute_code run picks its seat through the ladder:
+# a model among those described under `facet`, then one of its efforts.
+facet = "code-task"
+model = "Which model should run this task?"
+effort = "At which effort should it run?"
+budget_ms = 2000        # each pick's anytime budget
+
+[models.decisions.system_one]
+endpoint = "https://systemone.example/v1/systemone"   # HTTPS, or HTTP on loopback
+key_env = "ONEIRON_SYSTEMONE_KEY"                     # its bearer token
+model = "systemone-head"
+version = "2026-10-01"
+remote_opt_in = false   # a vault that is not hosted sends unit state only with this set
+budget_units = 100000   # its own meter; models.raw_budget_units when unset
+
+[models.decisions.big]
+role = "generative_reasoner"   # the seat whose model answers (the default)
+version = "2026-10"            # the revision the rung's pin names
+wording = "You answer one typed question about the state you are given."
+reply = "json"                 # or "lines"
+budget_units = 50000           # its own meter; models.raw_budget_units when unset
+```
+
+The Big rung asks each question as one model call on that seat. The call is
+routed against the vault's live model policy, like a chat turn, and sent under
+its own run on the rung's meter. `wording` is the system message. The question,
+what it takes and the state follow as the user message, with the reply format:
+one JSON object `{"answer", "probability"}`, or two lines `answer:` and
+`probability:`. A reply that names nothing the question takes, or no
+probability from 0 to 1, abstains, and the ladder moves on. The rung takes
+noul, choice and score questions, not boxes.
+
+The System One seat takes noul and choice questions. Each is one call,
+admitted and settled on its meter. It never runs on a relay vault. The
+escalation read is metered on `models.raw_budget_units`. A model rung blocks
+on the server's runtime, so a caller runs a ladder call on a blocking thread.

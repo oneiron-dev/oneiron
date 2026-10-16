@@ -13,7 +13,7 @@ use oneiron::llm::media::{
     AiMediaDoor, AiOperation, MediaBackend, MediaCaps, MediaFuture, MediaJobState, MediaRequest,
     MediaResponse, Modality,
 };
-use oneiron::llm::run_admission::{MediaGate, RunPermit, RunReceiptSink};
+use oneiron::llm::run_admission::{HostAccount, MediaGate, RunPermit, RunReceiptSink};
 use oneiron::llm::{SingleRouteBackend, SingleSend};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCatalogEntry,
@@ -228,6 +228,7 @@ pub struct MediaRuntime {
     seats: BTreeMap<AiOperation, MediaSeat>,
     meter: Option<BudgetGuard>,
     receipts: Arc<dyn RunReceiptSink>,
+    host: Option<Arc<HostAccount>>,
     jobs: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>>,
 }
 
@@ -237,6 +238,7 @@ impl MediaRuntime {
             seats: BTreeMap::new(),
             meter: None,
             receipts: Arc::new(LoggedReceipts),
+            host: None,
             jobs: Mutex::default(),
         }
     }
@@ -328,6 +330,10 @@ impl MediaRuntime {
         runtime
     }
 
+    pub(super) fn set_host_account(&mut self, host: Arc<HostAccount>) {
+        self.host = Some(host);
+    }
+
     pub(super) fn set_receipts(&mut self, receipts: Arc<dyn RunReceiptSink>) {
         self.receipts = receipts;
     }
@@ -400,7 +406,12 @@ impl MediaRuntime {
     ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + '_> {
         let ladder = self.ladder(&request)?;
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(MEDIA_RUN, meter, Arc::clone(&self.receipts));
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
         Ok(async move { ladder.media(&run, request, None).await })
     }
 

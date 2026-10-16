@@ -5,17 +5,23 @@ use clap::{Args, Parser, Subcommand};
 use crate::commands;
 use crate::config::ServeArgs;
 
+mod deployment_args;
+pub use deployment_args::HostRelayArgs;
 mod hook_args;
 mod owner_args;
+mod wake_args;
 pub use hook_args::{
-    HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs,
+    HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
+    HookRecallArgs,
 };
 pub use owner_args::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
-    SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
+    ImportArchiveArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs,
+    ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs, RestoreArgs, RunArgs,
+    RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
+    SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
+pub use wake_args::{WakeArgs, WakeCommand};
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
 const DEFAULT_SERVER_MAP_SIZE: usize = 1 << 33;
@@ -88,6 +94,9 @@ pub enum Command {
     /// Agent runs waiting for consent: list, review, approve or decline whole.
     #[command(subcommand)]
     Runs(RunsCommand),
+    /// Fork alarms a held root handoff left: list them, or acknowledge one.
+    #[command(subcommand)]
+    HandoffAlarms(HandoffAlarmsCommand),
     /// Move a stopped vault to the configured embedding model: repin it and
     /// queue every record to be embedded again, which the next `serve` does.
     Reembed(Box<ReembedArgs>),
@@ -107,6 +116,8 @@ pub enum Command {
     /// session or the prompt, or queue the session's log. Always exits 0
     /// once parsed; a mistyped command exits 1, never 2.
     Hook(HookArgs),
+    /// Read or acknowledge a host instance wake inbox.
+    Wake(WakeArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
@@ -116,6 +127,83 @@ pub enum Command {
     /// Run this host's local embedder for other vaults.
     #[command(subcommand)]
     Embedder(EmbedderCommand),
+    /// Official subscription seats: where a vendor login may run and what
+    /// you run to sign one in. Never takes or shows a vendor token.
+    #[command(subcommand)]
+    Seat(SeatCommand),
+}
+
+#[derive(Subcommand)]
+pub enum SeatCommand {
+    /// List every seat route with its placement on your own runtime and on
+    /// an Oneiron-hosted one (no vendor approvals assumed).
+    Routes,
+    /// Print the sign-in plan for one seat: placement verdict, the login you
+    /// run yourself, and what the seat does when its plan window is dry.
+    LoginPlan(Box<SeatLoginPlanArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SeatLoginPlanArgs {
+    /// Seat route label (see `seat routes`).
+    #[arg(long)]
+    pub route: String,
+    /// Your own label for the account. A label only, never a credential.
+    #[arg(long)]
+    pub account: String,
+    /// Runtime mode the seat would run under.
+    #[arg(long, default_value = "local_free")]
+    pub mode: crate::runtime::RuntimeMode,
+    /// Which of your machines holds the login.
+    #[arg(long)]
+    pub machine: Option<String>,
+    /// Where the vendor's own login store lives on that machine.
+    #[arg(long = "login-store")]
+    pub login_store: Option<String>,
+    /// Custody handle name for endpoint-shaped seats.
+    #[arg(long = "credential-handle")]
+    pub credential_handle: Option<String>,
+    /// Say the vendor binary is modified. A Claude login seat then refuses:
+    /// the hosting permission covers the unmodified binary only.
+    #[arg(long = "modified-binary")]
+    pub modified_binary: bool,
+    /// Anthropic has approved offering a Claude.ai login via the Agent SDK.
+    #[arg(long = "anthropic-sdk-approved")]
+    pub anthropic_sdk_approved: bool,
+    /// OpenAI has approved hosted ChatGPT-plan use.
+    #[arg(long = "openai-hosted-approved")]
+    pub openai_hosted_approved: bool,
+    /// What a dry seat does: park (default), continue_on_local, overdraft.
+    #[arg(long, default_value = "park")]
+    pub dry: String,
+    /// Spend cap units when --dry is overdraft. Zero parks instead.
+    #[arg(long = "overdraft-cap", default_value_t = 0)]
+    pub overdraft_cap: u64,
+    /// Plan-window percent already used, when known.
+    #[arg(long = "plan-percent-used")]
+    pub plan_percent_used: Option<u8>,
+    /// Plan-window reset (epoch seconds), when known.
+    #[arg(long = "plan-resets-at")]
+    pub plan_resets_at: Option<u64>,
+    /// Judge dryness at this epoch second instead of the host clock.
+    #[arg(long, default_value_t = 0)]
+    pub now: u64,
+    /// Sign in with ChatGPT: our app registration's client id.
+    #[arg(long = "siwc-client-id")]
+    pub siwc_client_id: Option<String>,
+    /// Sign in with ChatGPT: the registered redirect URI.
+    #[arg(long = "siwc-redirect-uri")]
+    pub siwc_redirect_uri: Option<String>,
+    /// Sign in with ChatGPT: your PKCE verifier. Only its S256 challenge is
+    /// printed, inside the authorize URL; the verifier is never stored.
+    #[arg(long = "siwc-verifier")]
+    pub siwc_verifier: Option<String>,
+    /// Sign in with ChatGPT: OAuth state value.
+    #[arg(long = "siwc-state")]
+    pub siwc_state: Option<String>,
+    /// Sign in with ChatGPT: OAuth scope, when the registration asks for one.
+    #[arg(long = "siwc-scope")]
+    pub siwc_scope: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -201,12 +289,14 @@ pub enum HostCommand {
     /// Run one vault as a Firecracker VM behind a unix socket: start it on
     /// the first connection or a due wake, and sleep it when idle.
     Vm(Box<HostVmArgs>),
+    /// Run a blind iroh relay room and a ciphertext-only locker, never an engine.
+    Relay(HostRelayArgs),
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct HostVmArgs {
     /// JSON VM profile: firecracker, kernel, rootfs, vault_disk, state_dir,
-    /// vcpus, mem_mib and optional boot_args.
+    /// vcpus, mem_mib and optional boot_args and allowed_origins.
     #[arg(long)]
     pub config: PathBuf,
     #[arg(long)]
@@ -503,6 +593,12 @@ pub struct McpArgs {
     #[arg(long, value_name = "FILE")]
     pub credential_file: Option<PathBuf>,
 
+    /// Run this instance's wake adapter while the MCP bridge is alive. The
+    /// TOML file's parent is the harness config-dir instance. `inbox = true`
+    /// uses `wake inbox`; otherwise helper, tmux and boot are tried in order.
+    #[arg(long, value_name = "FILE")]
+    pub wake_config: Option<PathBuf>,
+
     /// Environment variable holding the paired slip.
     #[arg(long, default_value = "ONEIRON_SECRET")]
     pub secret_env: String,
@@ -741,6 +837,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Secrets(command) => commands::secrets(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
+        Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.
         Command::Reembed(args) => {
             crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?
@@ -753,11 +850,13 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
+        Command::Wake(args) => crate::wake_adapters::command(args),
         Command::Hook(args) => {
             crate::logging::off_runtime("hook", move || commands::hook(args)).await
         }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
+        Command::Host(HostCommand::Relay(args)) => crate::managed::run_relay(&args.config).await,
         #[cfg(target_os = "linux")]
         Command::Host(HostCommand::Vm(args)) => {
             crate::managed::run_vault_vm(crate::managed::VaultVmRun {
@@ -775,5 +874,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
+        Command::Seat(SeatCommand::Routes) => commands::seat_routes(),
+        Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
     }
 }
