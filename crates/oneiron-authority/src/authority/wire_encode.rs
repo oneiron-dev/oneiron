@@ -236,6 +236,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::OwnerRoot(record) => super::owner_root::owner_root_value(record),
         AuthorityOp::WorldPrivacy(edit) => super::world_privacy::world_privacy_value(edit),
+        AuthorityOp::OwnerHandover(handover) => {
+            super::owner_handover::owner_handover_value(handover)
+        }
         AuthorityOp::WorldKeyWraps(record) => super::world_key_wraps::world_key_wraps_value(record),
     }
 }
