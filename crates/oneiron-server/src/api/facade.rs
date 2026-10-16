@@ -54,8 +54,10 @@ use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
+    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
+use oneiron::runtime_hooks::{InvocationId, VerbHookPre, VerbHookStop};
+use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::credential_memory;
@@ -277,6 +279,124 @@ fn facade_room_turn(headers: &HeaderMap) -> Result<Option<EntityId>, FacadeApiEr
         })
 }
 
+/// Names the logical verb a request runs (ARCH-0080 §3), as 32 hex digits:
+/// its verb hooks fire once for it, and a retry of a pending call names the
+/// same one to find its ask.
+pub(crate) const INVOCATION_HEADER: &str = "x-oneiron-invocation";
+
+/// The invocation the request names, if it names one.
+fn facade_invocation_id(headers: &HeaderMap) -> Result<Option<InvocationId>, FacadeApiError> {
+    let Some(value) = headers.get(INVOCATION_HEADER) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .ok()
+        .and_then(InvocationId::parse_hex)
+        .map(Some)
+        .ok_or_else(|| {
+            FacadeApiError::new(
+                StatusCode::BAD_REQUEST,
+                MEMORY_CODE_BAD_REQUEST,
+                "invalid invocation header",
+                ["Name the invocation as 32 lowercase hex digits."],
+            )
+        })
+}
+
+/// `memory` bound to the invocation the request names, if it names one.
+fn facade_invocation<'v>(
+    memory: oneiron::Memory<'v>,
+    headers: &HeaderMap,
+) -> Result<oneiron::Memory<'v>, FacadeApiError> {
+    Ok(match facade_invocation_id(headers)? {
+        Some(invocation) => memory.with_invocation(invocation),
+        None => memory,
+    })
+}
+
+/// The pre chain of row `verb` for `actor` over `args`, off the async
+/// runtime (ARCH-0080 §3): a hook may write, open an ask and run its
+/// sandbox. Every server door that runs a row itself, not through `invoke`,
+/// crosses it here.
+pub(crate) async fn row_hooks_pre(
+    server: &Arc<SyncServer>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    invocation: Option<InvocationId>,
+    verb: &str,
+    args: serde_json::Value,
+) -> Result<VerbHookPre, MemoryError> {
+    let server = Arc::clone(server);
+    let verb = verb.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let memory = server.vault.memory(actor, class);
+        let memory = match invocation {
+            Some(invocation) => memory.with_invocation(invocation),
+            None => memory,
+        };
+        verb_hook_boundary::row_pre(&memory, &verb, args)
+    })
+    .await
+    .map_err(|_| hooks_did_not_finish())?
+}
+
+/// The post chain over that row's result, off the async runtime: the
+/// caller's view of it.
+pub(crate) async fn row_hooks_post(
+    server: &Arc<SyncServer>,
+    pre: VerbHookPre,
+    result: serde_json::Value,
+) -> Result<serde_json::Value, MemoryError> {
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || verb_hook_boundary::row_post(&server.vault, pre, result))
+        .await
+        .map_err(|_| hooks_did_not_finish())?
+}
+
+fn hooks_did_not_finish() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INTERNAL,
+        "the verb's hooks did not finish on this server",
+        &["Retry; if the failure persists, report it with this request's id."],
+    )
+}
+
+/// The pre chain of a row this route runs itself (ARCH-0080 §3): the args to
+/// run it with. Its caller is the credential's actor; a credential bound to
+/// none calls as the host, the vault's owner in person when it is
+/// owner-grade.
+async fn facade_hooks_pre(
+    server: &Arc<SyncServer>,
+    headers: &HeaderMap,
+    auth: &CoreAuth,
+    verb: &str,
+    value: serde_json::Value,
+) -> Result<VerbHookPre, FacadeApiError> {
+    let (actor, class) = match facade_actor(auth) {
+        Ok(actor) => actor,
+        Err(_) => (
+            verb_hook_boundary::host_actor().map_err(MemoryError::from)?,
+            if auth.is_owner_grade() {
+                EdgeActorClass::Human
+            } else {
+                EdgeActorClass::System
+            },
+        ),
+    };
+    let invocation = facade_invocation_id(headers)?;
+    Ok(row_hooks_pre(server, actor, class, invocation, verb, value).await?)
+}
+
+/// The post chain over that row's result: the caller's view of it.
+async fn facade_hooks_post(
+    server: &Arc<SyncServer>,
+    pre: VerbHookPre,
+    output: serde_json::Value,
+) -> Result<serde_json::Value, FacadeApiError> {
+    Ok(row_hooks_post(server, pre, output).await?)
+}
+
 /// The proof a write carries when the vault's owner makes it in person, on the
 /// owner's own undelegated full slip: owner-authored writes carry their own
 /// confirmation. `None` for any other credential, which writes as itself. The
@@ -338,7 +458,10 @@ fn facade_invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory = credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
+    let memory = facade_invocation(
+        credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
+        headers,
+    )?;
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => {
@@ -418,9 +541,12 @@ fn facade_invoke_born(
     value: serde_json::Value,
     position: BirthPosition,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory = credential_memory(&server.vault, Some(auth), actor, class)
-        .at(auth.locality())
-        .with_birth_position(position);
+    let memory = facade_invocation(
+        credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality())
+            .with_birth_position(position),
+        headers,
+    )?;
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
@@ -593,6 +719,10 @@ struct FacadeErrorBody {
     /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
     #[serde(flatten)]
     wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
+    /// A verb hook's stop (ARCH-0080 §3): skipped with its reason, pending
+    /// on an ask with the invocation and the ask, or hidden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook: Option<Box<VerbHookStop>>,
 }
 
 impl FacadeApiError {
@@ -612,6 +742,7 @@ impl FacadeApiError {
                     suggestions: suggestions.into_iter().map(Into::into).collect(),
                     receipt_ref: None,
                     wrong_root: None,
+                    hook: None,
                 },
                 narrowing: None,
             },
@@ -667,6 +798,9 @@ impl From<MemoryError> for FacadeApiError {
             | MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER => StatusCode::CONFLICT,
             // A paid call its line cannot cover, as a chat turn's is.
             MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
+            // A verb hook asked first: accepted, not run, and the body names
+            // the ask a retry with the same invocation waits on.
+            MEMORY_CODE_PENDING_ASK => StatusCode::ACCEPTED,
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
@@ -691,6 +825,7 @@ impl From<MemoryError> for FacadeApiError {
                     suggestions: error.suggestions,
                     receipt_ref: None,
                     wrong_root: error.wrong_root,
+                    hook: error.hook,
                 },
                 narrowing: error.read_receipt,
             },

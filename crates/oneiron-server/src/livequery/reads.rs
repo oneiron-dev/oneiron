@@ -3,7 +3,7 @@ use oneiron::EntityId;
 use oneiron::memory::{ClaimListFilter, Memory, NeighborOpts};
 use oneiron::task_verb::sdk::RecallRequest;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::AppError;
 
@@ -124,9 +124,72 @@ impl Read {
         })
     }
 
+    /// The row this read is, and its args in the row's own input shape: a
+    /// verb hook reads one shape whichever door the row came through.
+    fn row(&self) -> Result<(&'static str, Value), AppError> {
+        Ok(match self {
+            Self::Hydrate(refs) => ("vault.hydrate", json!({ "refs": refs })),
+            Self::Query(query, limit) => (
+                "vault.search.bm25",
+                json!({ "query": query, "limit": limit }),
+            ),
+            Self::Neighbors(entity_ref, opts) => (
+                "vault.neighbors",
+                json!({ "entity_ref": entity_ref, "opts": opts }),
+            ),
+            Self::PendingWrites(limit) => ("vault.writes.pending", json!({ "limit": limit })),
+            Self::Receipts(limit) => ("vault.receipts", json!({ "limit": limit })),
+            Self::ClaimList(filter) => ("vault.claims.list", result(filter)?),
+            Self::ClaimHistory(claim_ref) => {
+                ("vault.claims.history", json!({ "claim_ref": claim_ref }))
+            }
+            Self::Recall(request) => ("vault.recall", result(request)?),
+        })
+    }
+
+    /// The read a hook's rewrite of the row's args names, under the same caps
+    /// [`Self::parse`] holds a request to.
+    fn rewritten(verb: &str, mut args: Value) -> Result<Self, AppError> {
+        if let Some(fields) = args.as_object_mut() {
+            // The row's field names, where this socket spells them in
+            // camelCase.
+            for (row, socket) in [("entity_ref", "entityRef"), ("claim_ref", "claimRef")] {
+                if let Some(value) = fields.remove(row) {
+                    fields.insert(socket.to_owned(), value);
+                }
+            }
+            if verb == "vault.writes.pending" && fields.get("limit").is_none_or(Value::is_null) {
+                fields.insert(
+                    "limit".to_owned(),
+                    json!(oneiron::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
+                );
+            }
+        }
+        Self::parse(verb, args)
+    }
+
     /// The read's result, and the rows it carries: `None` when one of the
-    /// refs it spells names no row.
+    /// refs it spells names no row. The row's verb hooks run around it
+    /// (ARCH-0080 §3), and the result is the caller's view of it.
     pub(super) fn run(
+        self,
+        server: &crate::server::SyncServer,
+        auth: &crate::auth::CoreAuth,
+        memory: &Memory<'_>,
+    ) -> Result<(Value, Option<Vec<EntityId>>), AppError> {
+        let (verb, args) = self.row()?;
+        let hooks = oneiron::task_verb::verb_hook_boundary::row_pre(memory, verb, args.clone())?;
+        let read = if hooks.args == args {
+            self
+        } else {
+            Self::rewritten(verb, hooks.args.clone())?
+        };
+        let (value, rows) = read.run_read(server, auth, memory)?;
+        let value = oneiron::task_verb::verb_hook_boundary::row_post(server.vault(), hooks, value)?;
+        Ok((value, rows))
+    }
+
+    fn run_read(
         self,
         server: &crate::server::SyncServer,
         auth: &crate::auth::CoreAuth,

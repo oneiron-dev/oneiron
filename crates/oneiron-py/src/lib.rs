@@ -112,6 +112,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             read_receipt: None,
             policy_denial: None,
             wrong_root: None,
+            hook: None,
         })
     })
 }
@@ -127,6 +128,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         read_receipt: None,
         policy_denial: None,
         wrong_root: None,
+        hook: None,
     })
 }
 

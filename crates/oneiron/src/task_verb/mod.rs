@@ -215,6 +215,7 @@ mod sdk_diary;
 mod sdk_host;
 mod sdk_self;
 mod sdk_shared;
+pub mod verb_hook_boundary;
 
 #[cfg(test)]
 mod ask_outcome_tests;

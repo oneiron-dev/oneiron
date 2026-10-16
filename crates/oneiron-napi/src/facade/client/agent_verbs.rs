@@ -181,6 +181,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -207,6 +208,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -227,6 +229,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -247,6 +250,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -267,6 +271,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -287,6 +292,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -538,6 +544,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -558,6 +565,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -578,6 +586,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -598,6 +607,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -618,6 +628,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -638,6 +649,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -658,6 +670,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -678,6 +691,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -698,6 +712,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -718,6 +733,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -738,6 +754,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -758,6 +775,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self
@@ -778,6 +796,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -795,6 +814,7 @@ impl NativeClient {
                 read_receipt: None,
                 policy_denial: None,
                 wrong_root: None,
+                hook: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;

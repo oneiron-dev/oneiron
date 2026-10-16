@@ -180,6 +180,14 @@ pub(crate) async fn execute_mcp_generated_verb(
                     None
                 };
                 let produced = execute_mcp_agent_verb(server, &args, actor, &mut served).await;
+                let produced = match produced {
+                    // A verb hook's stop is a result the client reads, not a
+                    // refusal (ARCH-0080 §3).
+                    Err(McpGatewayError {
+                        hook: Some(stop), ..
+                    }) => return mcp_hook_stop_result(server, &args, actor, *stop, &served),
+                    produced => produced,
+                };
                 // A refusal is released by the rows its verb served first.
                 let (output, source, carrier, epoch) = produced.map_err(|error| {
                     super::device_release::mcp_release_error(
@@ -371,6 +379,9 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
 
 /// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
 pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+    if let Some(stop) = error.hook {
+        return mcp_hook_stop(*stop);
+    }
     if let Some(correction) = error.wrong_root {
         let mut refusal = McpGatewayError::new(-32601, "wrong_root", error.message);
         refusal.wrong_root = Some(correction);
@@ -405,6 +416,46 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         }
         None => McpGatewayError::new(code, "facade_error", error.message),
     }
+}
+
+/// A verb hook's stop as a gateway refusal (ARCH-0080 §3): its stable kind,
+/// and the typed stop a code-mode door hands back to its run.
+pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGatewayError {
+    use oneiron::runtime_hooks::VerbHookStop;
+    let kind = match &stop {
+        VerbHookStop::Skipped { .. } => "verb_hook_skipped",
+        VerbHookStop::Pending { .. } => "verb_hook_pending",
+        VerbHookStop::Hidden { .. } => "verb_hook_hidden",
+    };
+    let mut error = McpGatewayError::new(-32020, kind, stop.to_string());
+    error.hook = Some(Box::new(stop));
+    error
+}
+
+/// A verb hook's stop as the tool result a client reads (ARCH-0080 §3): the
+/// verb gave no output, so `isError` is set, and `structuredContent.hook`
+/// carries the typed stop, a pending ask's invocation and handle included.
+fn mcp_hook_stop_result(
+    server: &Arc<SyncServer>,
+    args: &McpVerbToolArgs,
+    actor: &McpCallContext,
+    stop: oneiron::runtime_hooks::VerbHookStop,
+    served: &[oneiron::EntityId],
+) -> Result<Value, McpGatewayError> {
+    let text = stop.to_string();
+    let structured = json!({
+        "tool": args.tool.name,
+        "family": args.tool.family.as_str(),
+        "verb": args.tool.verb,
+        "hook": stop,
+        "actor": mcp_actor_result(actor),
+    });
+    let result = json!({
+        "content": [mcp_text_content(text)],
+        "structuredContent": structured,
+        "isError": true,
+    });
+    mcp_release_result(server, actor, served, false, result)
 }
 
 /// Every structured refusal states the same four things: the machine code, the
@@ -461,6 +512,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         stamp.stamp_json(object);
+    }
+    if let Some(stop) = error.hook
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("hook".to_owned(), json!(*stop));
     }
     json!({
         "jsonrpc": "2.0",
@@ -1313,7 +1369,9 @@ pub(crate) async fn execute_agent_verb_input(
 }
 
 /// [`execute_agent_verb_input`], its surface listing in `producers` the rows
-/// its reads pick.
+/// its reads pick. Every MCP and code-mode row crosses its verb hooks here,
+/// once (ARCH-0080 §3), under the invocation the call carried or a fresh
+/// one: the pre chain before the row, the post chain over its result.
 async fn execute_agent_verb_listing(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -1345,12 +1403,20 @@ async fn execute_agent_verb_listing(
             format!("{tool} input names unknown field `{field}`"),
         ));
     }
+    if !oneiron::task_verb::sdk::AgentVerb::from_name(tool)
+        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp)
+    {
+        return Err(invalid());
+    }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).
     let mut position = actor.scope.birth_position();
     if let Ok(Some(facet)) = actor.landing {
         position.facet = Some(facet);
     }
+    let invocation = actor
+        .invocation
+        .unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
     let memory = crate::api::credential_memory(
         &server.vault,
         actor.auth.as_ref(),
@@ -1359,10 +1425,53 @@ async fn execute_agent_verb_listing(
     )
     .at(actor.locality())
     .with_birth_position(position)
-    .listing_producers(producers);
+    .listing_producers(producers)
+    .with_invocation(invocation);
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
+    };
+    let hooks = crate::api::facade::row_hooks_pre(
+        server,
+        actor.actor_ref,
+        actor.actor_class,
+        Some(invocation),
+        tool,
+        input,
+    )
+    .await
+    .map_err(mcp_facade_error)?;
+    let (output, source, carrier, epoch) =
+        execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
+    let output = crate::api::facade::row_hooks_post(server, hooks, output)
+        .await
+        .map_err(mcp_facade_error)?;
+    Ok((output, source, carrier, epoch))
+}
+
+/// One row of [`execute_agent_verb_listing`], on the args its pre chain left.
+async fn execute_agent_verb_row(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    input: Value,
+    actor: &McpCallContext,
+    memory: oneiron::Memory<'_>,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
     };
     match tool {
         "report" => {
