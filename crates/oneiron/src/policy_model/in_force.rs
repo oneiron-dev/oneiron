@@ -148,6 +148,7 @@ impl Vault {
         let fresh = content_binding(request, &policy, config)?;
         if verdict.binding.content_hash != fresh.content_hash
             || verdict.safeguard_binding != config.safeguard_binding.selector()
+            || verdict.decision_binding != config.decision_binding(PolicyPlane::OwnerPolicy)
         {
             return Ok(true);
         }

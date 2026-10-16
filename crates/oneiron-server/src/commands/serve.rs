@@ -28,6 +28,10 @@ pub(super) async fn serve_with_config(
     mut config: ServeConfig,
     config_file: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
+        "a relay host never opens a vault; use `oneiron host relay --config <room.json>`"
+    );
     use oneiron_vault_contract::host::Host;
     use oneiron_vault_contract::host_adapters::{ActivatedListener, AwakePolicy, DesktopHost};
 
@@ -197,6 +201,13 @@ pub(super) async fn serve_with_config(
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
+    // Open sockets may never close by themselves, so the drain is bounded.
+    let (stopping, mut stopped) = tokio::sync::watch::channel(false);
+    // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    if config.hooks {
+        workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
+    }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
@@ -221,8 +232,6 @@ pub(super) async fn serve_with_config(
         super::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
     #[cfg(not(unix))]
     let _ = config_file;
-    // Open sockets may never close by themselves, so the drain is bounded.
-    let (stopping, mut stopped) = tokio::sync::watch::channel(false);
     let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
         let _ = stopped.wait_for(|stop| *stop).await;
     };
@@ -278,6 +287,34 @@ pub(super) async fn serve_with_config(
     Ok(())
 }
 
+/// Builds the hook sandbox off the runtime (it compiles and probes the
+/// component) and starts the fact-hook runner. A sandbox that fails to load
+/// starts no runner.
+#[cfg(feature = "code-sandbox-wasmtime")]
+async fn spawn_fact_hooks(
+    server: &Arc<SyncServer>,
+    stop: tokio::sync::watch::Receiver<bool>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    use oneiron::runtime_hooks::{FactHookRunner, sandbox};
+    let built = crate::logging::off_runtime("hook sandbox", || {
+        let (bytes, pin) = sandbox::hook_component_bytes();
+        sandbox::HookSandbox::from_component(bytes, pin).map_err(anyhow::Error::from)
+    })
+    .await
+    .and_then(|built| built);
+    match built {
+        Ok(sandbox) => Some(FactHookRunner::spawn(
+            Arc::clone(server.vault()),
+            Arc::new(sandbox),
+            stop,
+        )),
+        Err(error) => {
+            tracing::warn!(%error, "hook sandbox did not load; fact hooks are off");
+            None
+        }
+    }
+}
+
 /// With no `auth_secret`, `--insecure-allow-unauthenticated` lets a request
 /// with no credential act as the owner, so that mode serves only loopback.
 /// An empty secret counts as none: it can mint and verify nothing. The
@@ -327,7 +364,7 @@ fn sign_root_project(vault: &oneiron::Vault, secret: Option<&str>) -> anyhow::Re
 
 /// Ctrl-C, or SIGTERM where there is one: the stop an operator or a service
 /// manager sends.
-async fn stop_requested() {
+pub(crate) async fn stop_requested() {
     let interrupt = async {
         if tokio::signal::ctrl_c().await.is_err() {
             std::future::pending::<()>().await;

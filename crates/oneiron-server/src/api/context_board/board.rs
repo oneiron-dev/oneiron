@@ -21,6 +21,8 @@ use utoipa::ToSchema;
 
 /// WORLDS rows past this many collapse into the section's additive overflow.
 const BOARD_WORLDS_CAP: usize = 16;
+/// Most INBOX rows one board renders; the lens orders them by impact.
+const BOARD_INBOX_CAP: usize = 16;
 
 /// Names the room whose ROOM section this board renders.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -212,18 +214,19 @@ pub(super) fn board_parts(
     // ROOM, read fresh through the caller's own facade handle, with its host
     // among the board session's present participants.
     let room = match (&targets.room, &memory) {
-        (Some(target), Some(memory)) => match memory.rooms_render_hosted(target.id, targets.session)
-        {
-            Ok(room) => Some(room),
-            Err(error) if !target.explicit && caller_fault(&error) => None,
-            Err(error) => {
-                return Err(board_memory_error(
-                    "board room failed",
-                    "room.conversation_id",
-                    error,
-                ));
+        (Some(target), Some(memory)) => {
+            match memory.rooms_render_hosted(target.id, targets.session) {
+                Ok(room) => Some(room),
+                Err(error) if !target.explicit && caller_fault(&error) => None,
+                Err(error) => {
+                    return Err(board_memory_error(
+                        "board room failed",
+                        "room.conversation_id",
+                        error,
+                    ));
+                }
             }
-        },
+        }
         _ => None,
     };
     let room_section = room
@@ -255,25 +258,24 @@ pub(super) fn board_parts(
             .filter(|row| row.is_intent)
             .filter_map(|row| EntityId::from_hex(&row.id).ok()),
     );
-    let project = match (targets.project, &room) {
-        (Some(project), _) => Some(
-            project_row(server, read, project)?.ok_or_else(|| {
+    let project =
+        match (targets.project, &room) {
+            (Some(project), _) => Some(project_row(server, read, project)?.ok_or_else(|| {
                 ApiError::bad_request("unknown project", Some("project.project_id"))
-            })?,
-        ),
-        // An ordinary room's body is not a project room's and reads as an
-        // error here: it names no project.
-        (None, Some(room)) => match vault
-            .project_room(room.room)
-            .ok()
-            .flatten()
-            .and_then(|room| EntityId::from_hex(&room.project_id).ok())
-        {
-            Some(project) => project_row(server, read, project)?,
-            None => None,
-        },
-        (None, None) => None,
-    };
+            })?),
+            // An ordinary room's body is not a project room's and reads as an
+            // error here: it names no project.
+            (None, Some(room)) => match vault
+                .project_room(room.room)
+                .ok()
+                .flatten()
+                .and_then(|room| EntityId::from_hex(&room.project_id).ok())
+            {
+                Some(project) => project_row(server, read, project)?,
+                None => None,
+            },
+            (None, None) => None,
+        };
     let lead = match project {
         Some((project, row)) => {
             named.push(project);
@@ -287,10 +289,12 @@ pub(super) fn board_parts(
     // AGENTS: the caller's live spawns, then this turn's candidates. No
     // authorized peer roster exists yet, so the peer lane is empty.
     let children = match targets.actor() {
-        Some(actor) => {
-            oneiron::context_board::child_presence_for_actor(vault, actor, targets.run_id.as_deref())
-                .map_err(|error| core_engine_error("board agents failed", error))?
-        }
+        Some(actor) => oneiron::context_board::child_presence_for_actor(
+            vault,
+            actor,
+            targets.run_id.as_deref(),
+        )
+        .map_err(|error| core_engine_error("board agents failed", error))?,
         None => Vec::new(),
     };
     let agents =
@@ -308,6 +312,31 @@ pub(super) fn board_parts(
     .map_err(|error| core_engine_error("board skills failed", error))?;
     let skills_section = skills.board_section().map_err(board_frame_error)?;
 
+    // INBOX: the caller's own slice of the inbox lens, kept to rows that
+    // reach it through an identity its read admits. Hidden when empty.
+    let inbox = match targets.actor() {
+        Some(actor) => {
+            let mut rows = Vec::new();
+            let slice = vault
+                .agent_inbox_slice(actor, BOARD_INBOX_CAP, None)
+                .map_err(|error| core_engine_error("board inbox failed", error))?;
+            for item in slice {
+                let mut readable = false;
+                for participant in item.participants.iter().filter(|row| row.actor_ref == actor) {
+                    readable |= read
+                        .is_ref_readable(&participant.identity_ref)
+                        .map_err(|error| core_engine_error("board inbox failed", error))?;
+                }
+                if readable {
+                    rows.push(item);
+                }
+            }
+            oneiron::context_board::assemble_inbox_section(actor, &rows)
+                .map_err(board_frame_error)?
+        }
+        None => None,
+    };
+
     let mut sections = vec![worlds.clone()];
     if let Some(memories) = memories {
         sections.extend(
@@ -319,6 +348,7 @@ pub(super) fn board_parts(
     sections.push(agents_section);
     sections.push(skills_section);
     sections.extend(room_section.clone());
+    sections.extend(inbox);
     Ok(BoardParts {
         authority,
         scope,
@@ -423,5 +453,8 @@ fn board_memory_error(context: &'static str, field: &str, error: MemoryError) ->
 }
 
 pub(super) fn board_frame_error(error: BoardFrameError) -> ApiError {
-    ApiError::bad_request(format!("context board render failed: {error}"), Some("board"))
+    ApiError::bad_request(
+        format!("context board render failed: {error}"),
+        Some("board"),
+    )
 }

@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use oneiron::session_lifecycle::SessionKey;
 use oneiron::{DreamerConsolidationScope, WakeTrigger};
 use tokio::sync::Notify;
 
@@ -36,9 +37,8 @@ fn scope_lane(scope: DreamerConsolidationScope) -> usize {
 /// session hints are queued in order and NEVER reordered; only ADJACENT
 /// Activity hints inside the idle floor coalesce (a typing burst is one
 /// endpoint-preserving period).
-/// Boundary hints never coalesce or evict: overflow sheds only Activity, and
-/// reports [`TickPushError::QueueFull`] when a full all-boundary queue receives
-/// another boundary.
+/// Boundary hints never coalesce, evict or refuse for the count: they wait
+/// in arrival order. This soft row sheds only loss-tolerant Activity periods.
 pub(super) const SESSION_HINT_QUEUE_CAP: usize = 8;
 
 #[derive(Debug, Default)]
@@ -77,16 +77,12 @@ impl PushShared {
 pub enum TickPushError {
     /// The receiving supervisor is gone; the signal can never be consumed.
     Closed,
-    /// A full all-boundary session queue cannot durably accept another
-    /// AppOpen/ExplicitEnd point. The producer may retry.
-    QueueFull,
 }
 
 impl fmt::Display for TickPushError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Closed => write!(f, "push tick channel closed"),
-            Self::QueueFull => write!(f, "session hint queue full"),
         }
     }
 }
@@ -224,13 +220,16 @@ impl TickSource for PushTick {
         self.recv().await
     }
 
-    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, Option<u64>, u64)> {
+    fn take_buffered_session_hint(
+        &mut self,
+    ) -> Option<(SessionKey, SessionHint, Option<u64>, u64)> {
         self.shared
             .lock_state()
             .session_hints
             .pop_front()
             .map(|carrier| {
                 (
+                    carrier.key,
                     carrier.hint,
                     carrier.first.claimed_ms,
                     carrier.first.arrival_ms,
@@ -344,6 +343,7 @@ impl HintPusher {
     /// results (H-S4).
     pub fn push_session_hint(
         &self,
+        key: SessionKey,
         hint: SessionHint,
         claimed_ms: Option<u64>,
     ) -> Result<(), TickPushError> {
@@ -356,19 +356,18 @@ impl HintPusher {
             if hint == SessionHint::Activity
                 && let Some(last) = state.session_hints.back_mut()
                 && last.hint == SessionHint::Activity
+                && last.key == key
                 && arrival_ms.saturating_sub(last.last.arrival_ms) < self.shared.coalesce_floor_ms
             {
                 last.aggregate_activity(claimed_ms, arrival_ms);
             } else {
-                if state.session_hints.len() == SESSION_HINT_QUEUE_CAP {
+                if state.session_hints.len() >= SESSION_HINT_QUEUE_CAP {
                     let oldest_activity = state
                         .session_hints
                         .iter()
                         .position(|queued| queued.hint == SessionHint::Activity);
                     match (hint, oldest_activity) {
-                        (SessionHint::AppOpen | SessionHint::ExplicitEnd, None) => {
-                            return Err(TickPushError::QueueFull);
-                        }
+                        (SessionHint::AppOpen | SessionHint::ExplicitEnd, None) => {}
                         (SessionHint::Activity, None) => {
                             tracing::warn!(
                                 ?claimed_ms,
@@ -388,7 +387,7 @@ impl HintPusher {
                 }
                 state
                     .session_hints
-                    .push_back(SessionHintCarrier::point(hint, claimed_ms, arrival_ms));
+                    .push_back(SessionHintCarrier::point(key, hint, claimed_ms, arrival_ms));
             }
         }
         self.shared.notify.notify_one();

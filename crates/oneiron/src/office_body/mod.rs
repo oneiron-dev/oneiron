@@ -1,29 +1,35 @@
 //! Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body
-//! shape"): an imported DOCX as a typed model in one Loro document, edited
-//! together, the file an export.
+//! shape"): an imported DOCX, XLSX or PPTX as a typed model, edited together,
+//! the file an export.
 //!
 //! People edit the live body. Machine work runs on a fork and lands as a
-//! three-way diff that someone other than its opener merges. Every commit runs
-//! under a fresh peer stamped with its actor and keeps a MadeBy receipt over its
-//! exact operation span. An export projects the body onto the imported package
-//! as one tracked revision and lands it as a new version of the artifact,
-//! recorded with the body frontier it projects.
+//! three-way diff that someone other than its opener merges. Every commit keeps
+//! a MadeBy receipt over its exact operations. An export projects the body onto
+//! the imported package and lands it as a new version of the artifact, recorded
+//! with the body frontier it projects.
 //!
-//! An XLSX body is a map keyed by sheet and address. Its export writes the
-//! changed cells and names into the imported package and recalculates it in
-//! process; [`Vault::preview_xlsx_body`] shows the recalculated values without
-//! landing a version.
+//! DOCX and XLSX bodies are Loro documents on the entity-document plane's
+//! typed-body door ([`crate::typed_body`], schemas `office.docx.v1` and
+//! `office.xlsx.v1`), which keeps their commits, receipts and forks. A DOCX
+//! export lands as one tracked revision. An XLSX body is a map keyed by sheet
+//! and address; its export writes the changed cells and names and recalculates
+//! in process, and [`Vault::preview_xlsx_body`] shows the recalculated values
+//! without landing a version.
 //!
-//! The Loro document lives in this module's side tables until the
-//! entity-document plane has a typed-body door. PPTX bodies follow.
+//! A PPTX body is the OF-510 live deck, kept in this module's tables: its
+//! operations apply in order on one head, machine work lands through the deck
+//! preflight, and its export stays a proposal artifact until the deck export
+//! gate opens. Erasing the artifact erases its office rows ([`erase_in_txn`]).
 
 mod docx;
 mod fork;
+mod pptx;
 mod xlsx;
 
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub use oneiron_docedit::xlsx_body::{XlsxArea, XlsxBook, XlsxLock, XlsxStyle, XlsxValue};
+pub use pptx::{PptxBody, PptxExport, PptxReview};
 pub use xlsx::{BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
 
 use crate::Vault;
@@ -35,10 +41,17 @@ use crate::error::{Error, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::provenance::text_commit::TextCommitReceipt;
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::typed_body::{
+    TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState, birth_typed_body_in_txn,
+    discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn, edit_typed_body_in_txn,
+    merge_typed_body_fork_in_txn, open_typed_body_fork_in_txn, typed_body_fork_in_txn,
+    typed_body_in_txn,
+};
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
-use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
+use loro::{ExportMode, LoroDoc};
 use oneiron_docedit::ArchiveLimits;
 use oneiron_docedit::docx_body::{DocxRevision, project_docx, read_docx_blocks};
 use oneiron_docedit::retained_opc::Limits;
@@ -47,12 +60,16 @@ use oneiron_xlsx_formula::RecalcClock;
 use oneiron_xlsx_formula::engine::FormualizerEngine;
 use serde::{Deserialize, Serialize};
 
-const HEADS: SideTable<EntityId, OfficeBodyHead, Named> =
+/// Each artifact's office facts: its format and the version it imported.
+const SOURCES: SideTable<EntityId, OfficeBodySource, Named> =
     SideTable::new(&side_table::OFFICE_BODY_HEAD);
+/// Deck bodies by artifact, and open deck forks by fork id.
 const DOCS: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::OFFICE_BODY_DOC);
+/// Deck commit receipts, by artifact or fork id and sequence.
 const COMMITS: SideTable<Vec<u8>, TextCommitReceipt, Named> =
     SideTable::new(&side_table::OFFICE_BODY_COMMIT);
-const FORKS: SideTable<EntityId, OfficeBodyFork, Named> =
+/// Deck forks, by artifact and fork.
+const FORKS: SideTable<(EntityId, EntityId), OfficeBodyFork, Named> =
     SideTable::new(&side_table::OFFICE_BODY_FORK);
 const EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
     SideTable::new(&side_table::OFFICE_BODY_EXPORT);
@@ -62,6 +79,25 @@ const EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
 pub enum OfficeBodyKind {
     Docx,
     Xlsx,
+    Pptx,
+}
+
+impl OfficeBodyKind {
+    /// The body's typed-body schema tag.
+    fn schema(self) -> &'static str {
+        match self {
+            Self::Docx => "office.docx.v1",
+            Self::Xlsx => "office.xlsx.v1",
+            Self::Pptx => "office.pptx.v1",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OfficeBodySource {
+    kind: OfficeBodyKind,
+    source_version: u64,
+    source_hash: [u8; 32],
 }
 
 /// One artifact's live body.
@@ -69,19 +105,18 @@ pub enum OfficeBodyKind {
 pub struct OfficeBodyHead {
     pub artifact: EntityId,
     pub kind: OfficeBodyKind,
-    pub schema: u32,
     /// The imported version every export projects onto.
     pub source_version: u64,
     pub source_hash: [u8; 32],
     /// The body as imported: every export's base.
     pub import_frontier: Vec<u8>,
     pub frontier: Vec<u8>,
-    /// Commit receipts kept for the body so far.
+    /// Commits on the body so far, merged forks' included.
     pub commits: u64,
 }
 
-/// One call's commit: the new frontier, the paragraph ids it minted in operation
-/// order (none for a workbook), and its receipt.
+/// One call's commit: the new frontier, the ids it minted in operation order
+/// (paragraphs, deck nodes; none for a workbook), and its receipt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfficeBodyEdit {
     pub frontier: Vec<u8>,
@@ -161,8 +196,8 @@ pub struct XlsxPreview {
 }
 
 impl Vault {
-    /// Import one DOCX or XLSX version of `artifact` (the head when `version` is
-    /// `None`) as its live body. One artifact has one body.
+    /// Import one DOCX, XLSX or PPTX version of `artifact` (the head when
+    /// `version` is `None`) as its live body. One artifact has one body.
     pub fn import_office_body(
         &self,
         artifact: &EntityId,
@@ -173,7 +208,11 @@ impl Vault {
         let body = self
             .get_blob_artifact(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let format = OfficeFormat::from_media_type(&body.media_type)?;
+        let kind = match OfficeFormat::from_media_type(&body.media_type)? {
+            OfficeFormat::Docx => OfficeBodyKind::Docx,
+            OfficeFormat::Xlsx => OfficeBodyKind::Xlsx,
+            OfficeFormat::Pptx => OfficeBodyKind::Pptx,
+        };
         let version = match version {
             Some(version) => version,
             None => {
@@ -185,86 +224,86 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version(artifact, version)?
             .ok_or(Error::EntityNotFound)?;
-        let doc = LoroDoc::new();
-        doc.set_record_timestamp(true);
-        let (kind, schema, receipt) = match format {
-            OfficeFormat::Docx => {
-                let blocks = read_docx_blocks(&bytes, ArchiveLimits::DEFAULT)
-                    .map_err(|_| invalid("the DOCX package could not be read"))?;
-                let ((), receipt) = stamped(&doc, *artifact, actor, made_by, "import", |doc| {
-                    docx::import(doc, &blocks)
-                })?;
-                (OfficeBodyKind::Docx, docx::SCHEMA, receipt)
-            }
-            OfficeFormat::Xlsx => {
-                let book = read_xlsx_cells(&bytes, self.docedit_package_limits()?)
-                    .map_err(|_| invalid("the XLSX package could not be read"))?;
-                let ((), receipt) = stamped(&doc, *artifact, actor, made_by, "import", |doc| {
-                    xlsx::import(doc, &book)
-                })?;
-                (OfficeBodyKind::Xlsx, xlsx::SCHEMA, receipt)
-            }
-            OfficeFormat::Pptx => return Err(invalid("PPTX office bodies are not built yet")),
-        };
-        let frontier = doc.oplog_frontiers().encode();
-        let mut head = OfficeBodyHead {
-            artifact: *artifact,
+        let source = OfficeBodySource {
             kind,
-            schema,
             source_version: version,
             source_hash: *blake3::hash(&bytes).as_bytes(),
-            import_frontier: frontier.clone(),
-            frontier,
-            commits: 0,
         };
-        self.with_write_txn_grouped(|wtxn| {
-            if HEADS.contains(&self.store, wtxn, artifact)? {
-                return Err(invalid("the artifact already has a live body"));
+        let writer = writer(kind, actor, made_by);
+        match kind {
+            OfficeBodyKind::Docx => {
+                let blocks = read_docx_blocks(&bytes, ArchiveLimits::DEFAULT)
+                    .map_err(|_| invalid("the DOCX package could not be read"))?;
+                self.with_write_txn_grouped(|wtxn| {
+                    claim_source(&self.store, wtxn, artifact, &source)?;
+                    birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
+                        docx::import(doc, &blocks)
+                    })
+                    .map(drop)
+                })?;
             }
-            self.store_doc(wtxn, artifact, &doc)?;
-            self.record_commit(wtxn, artifact, &mut head.commits, &receipt)?;
-            HEADS.put(&self.store, wtxn, artifact, &head)
-        })?;
-        Ok(head)
+            OfficeBodyKind::Xlsx => {
+                let book = read_xlsx_cells(&bytes, self.docedit_package_limits()?)
+                    .map_err(|_| invalid("the XLSX package could not be read"))?;
+                self.with_write_txn_grouped(|wtxn| {
+                    claim_source(&self.store, wtxn, artifact, &source)?;
+                    birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
+                        xlsx::import(doc, &book)
+                    })
+                    .map(drop)
+                })?;
+            }
+            OfficeBodyKind::Pptx => {
+                check_made_by(actor, made_by)?;
+                let state = pptx::DeckState::import(&bytes, self.docedit_package_limits()?)?;
+                self.with_write_txn_grouped(|wtxn| {
+                    claim_source(&self.store, wtxn, artifact, &source)?;
+                    self.birth_deck(wtxn, artifact, state, made_by)
+                })?;
+            }
+        }
+        self.office_body_head(artifact)?
+            .ok_or(Error::EntityNotFound)
     }
 
     pub fn office_body_head(&self, artifact: &EntityId) -> Result<Option<OfficeBodyHead>> {
         let txn = self.store.env.read_txn()?;
-        HEADS.get(&self.store, &txn, artifact)
+        if !SOURCES.contains(&self.store, &txn, artifact)? {
+            return Ok(None);
+        }
+        self.head_in_txn(&txn, artifact).map(Some)
     }
 
     /// The typed body at its head, or at an earlier frontier of its history.
     pub fn read_docx_body(&self, artifact: &EntityId, at: Option<&[u8]>) -> Result<DocxBody> {
-        docx::read(&self.body_at(artifact, OfficeBodyKind::Docx, at)?)
+        let txn = self.store.env.read_txn()?;
+        docx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Docx, at)?.1)
     }
 
     /// The typed workbook body at its head, or at an earlier frontier.
     pub fn read_xlsx_body(&self, artifact: &EntityId, at: Option<&[u8]>) -> Result<XlsxBody> {
-        xlsx::read(&self.body_at(artifact, OfficeBodyKind::Xlsx, at)?)
-    }
-
-    fn body_at(&self, artifact: &EntityId, kind: OfficeBodyKind, at: Option<&[u8]>) -> Result<LoroDoc> {
         let txn = self.store.env.read_txn()?;
-        let head = HEADS
-            .get(&self.store, &txn, artifact)?
-            .ok_or(Error::EntityNotFound)?;
-        if head.kind != kind {
-            return Err(invalid("the artifact's live body is another format"));
-        }
-        let doc = self.load_doc(&txn, artifact, Some(&head.frontier))?;
-        match at {
-            None => Ok(doc),
-            Some(frontier) => fork_at(&doc, frontier),
-        }
+        xlsx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Xlsx, at)?.1)
     }
 
     /// Every commit receipt of the body, in commit order.
     pub fn office_body_commits(&self, artifact: &EntityId) -> Result<Vec<TextCommitReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        Ok(COMMITS
-            .scan_from(&self.store, &txn, artifact.as_bytes())?
+        let kind = {
+            let txn = self.store.env.read_txn()?;
+            source(&self.store, &txn, artifact)?.kind
+        };
+        if kind == OfficeBodyKind::Pptx {
+            let txn = self.store.env.read_txn()?;
+            return Ok(COMMITS
+                .scan_from(&self.store, &txn, artifact.as_bytes())?
+                .into_iter()
+                .map(|(_, receipt)| receipt)
+                .collect());
+        }
+        Ok(self
+            .typed_body_receipts(artifact)?
             .into_iter()
-            .map(|(_, receipt)| receipt)
+            .flatten()
             .collect())
     }
 
@@ -280,12 +319,20 @@ impl Vault {
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
-        self.edit_live(artifact, OfficeBodyKind::Docx, base, actor, made_by, |doc| {
-            apply_all(doc, ops)
-        })
+        self.edit_live(
+            artifact,
+            OfficeBodyKind::Docx,
+            base,
+            (actor, made_by),
+            |_, _| Ok(()),
+            |doc| apply_all(doc, ops),
+        )
     }
 
     /// A person's operations on a live workbook body, as [`Self::edit_docx_body`].
+    /// A cell takes one value, so operations read against an older `base` that
+    /// write a cell or name the head changed since refuse rather than lose
+    /// either write.
     pub fn edit_xlsx_body(
         &self,
         artifact: &EntityId,
@@ -295,9 +342,14 @@ impl Vault {
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
-        self.edit_live(artifact, OfficeBodyKind::Xlsx, base, actor, made_by, |doc| {
-            apply_xlsx(doc, ops)
-        })
+        self.edit_live(
+            artifact,
+            OfficeBodyKind::Xlsx,
+            base,
+            (actor, made_by),
+            |base, head| xlsx::admit_at(base, head, ops),
+            |doc| apply_xlsx(doc, ops),
+        )
     }
 
     fn edit_live(
@@ -305,40 +357,27 @@ impl Vault {
         artifact: &EntityId,
         kind: OfficeBodyKind,
         base: Option<&[u8]>,
-        actor: WriteActor,
-        made_by: &MadeBy,
+        (actor, made_by): (WriteActor, &MadeBy),
+        admit: impl FnOnce(&LoroDoc, &LoroDoc) -> Result<()>,
         edit: impl FnOnce(&LoroDoc) -> Result<Vec<String>>,
     ) -> Result<OfficeBodyEdit> {
         if actor.actor_class() != EdgeActorClass::Human {
             return Err(invalid("machine work edits a fork, not the live body"));
         }
         self.with_write_txn_grouped(|wtxn| {
-            let mut head = HEADS
-                .get(&self.store, wtxn, artifact)?
-                .ok_or(Error::EntityNotFound)?;
-            if head.kind != kind {
-                return Err(invalid("the artifact's live body is another format"));
+            if let Some(base) = base {
+                let (_, live) = self.loro_body(wtxn, artifact, kind, None)?;
+                let (_, target) = self.loro_body(wtxn, artifact, kind, Some(base))?;
+                admit(&target, &live)?;
             }
-            let live = self.load_doc(wtxn, artifact, Some(&head.frontier))?;
-            let target = match base {
-                Some(base) => fork_at(&live, base)?,
-                None => live.fork(),
-            };
-            let before = target.oplog_vv();
-            let (minted, receipt) = stamped(&target, *artifact, actor, made_by, "edit", edit)?;
-            let updates = target
-                .export(ExportMode::updates(&before))
-                .map_err(|_| invalid("office body update export"))?;
-            live.import(&updates)
-                .map_err(|_| invalid("office body update import"))?;
-            validate(kind, &live)?;
-            head.frontier = self.store_doc(wtxn, artifact, &live)?;
-            self.record_commit(wtxn, artifact, &mut head.commits, &receipt)?;
-            HEADS.put(&self.store, wtxn, artifact, &head)?;
+            let writer = writer(kind, actor, made_by);
+            let (minted, commit) =
+                edit_typed_body_in_txn(self, wtxn, artifact, base, writer, edit)?;
+            validate(kind, &self.loro_body(wtxn, artifact, kind, None)?.1)?;
             Ok(OfficeBodyEdit {
-                frontier: head.frontier.clone(),
+                frontier: commit.frontier,
                 minted,
-                receipt,
+                receipt: commit.receipt,
             })
         })
     }
@@ -349,108 +388,104 @@ impl Vault {
         artifact: &EntityId,
         actor: WriteActor,
     ) -> Result<OfficeBodyFork> {
-        let id = self.new_entity_id()?;
-        let at = self.now_recorded_at();
-        self.with_write_txn_grouped(|wtxn| {
-            let head = HEADS
-                .get(&self.store, wtxn, artifact)?
-                .ok_or(Error::EntityNotFound)?;
-            let live = self.load_doc(wtxn, artifact, Some(&head.frontier))?;
-            let fork = OfficeBodyFork {
-                id,
-                artifact: *artifact,
-                opener: actor.entity_ref(),
-                base: head.frontier,
-                commits: 0,
-                opened_at: at,
-                state: ForkState::Open,
-            };
-            self.store_doc(wtxn, &id, &live.fork())?;
-            FORKS.put(&self.store, wtxn, &id, &fork)?;
-            Ok(fork)
+        self.with_write_txn_grouped(|wtxn| match source(&self.store, wtxn, artifact)?.kind {
+            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor),
+            kind => Ok(fork_view(open_typed_body_fork_in_txn(
+                self,
+                wtxn,
+                artifact,
+                kind.schema(),
+                actor,
+            )?)),
         })
     }
 
-    pub fn office_body_fork(&self, fork: &EntityId) -> Result<Option<OfficeBodyFork>> {
+    pub fn office_body_fork(
+        &self,
+        artifact: &EntityId,
+        fork: &EntityId,
+    ) -> Result<Option<OfficeBodyFork>> {
         let txn = self.store.env.read_txn()?;
-        FORKS.get(&self.store, &txn, fork)
+        if source(&self.store, &txn, artifact)?.kind == OfficeBodyKind::Pptx {
+            return FORKS.get(&self.store, &txn, &(*artifact, *fork));
+        }
+        Ok(typed_body_fork_in_txn(&self.store, &txn, artifact, fork)?
+            .map(|(record, _)| fork_view(record)))
     }
 
     /// The opener's operations on its open fork of a DOCX body.
     pub fn edit_docx_body_fork(
         &self,
+        artifact: &EntityId,
         fork: &EntityId,
         ops: &[DocxBodyOp],
         actor: WriteActor,
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
-        self.edit_fork(fork, OfficeBodyKind::Docx, actor, made_by, |doc| {
-            apply_all(doc, ops)
-        })
+        self.edit_fork(
+            (artifact, fork),
+            OfficeBodyKind::Docx,
+            (actor, made_by),
+            |doc| apply_all(doc, ops),
+        )
     }
 
     /// The opener's operations on its open fork of a workbook body.
     pub fn edit_xlsx_body_fork(
         &self,
+        artifact: &EntityId,
         fork: &EntityId,
         ops: &[XlsxBodyOp],
         actor: WriteActor,
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
-        self.edit_fork(fork, OfficeBodyKind::Xlsx, actor, made_by, |doc| {
-            apply_xlsx(doc, ops)
-        })
+        self.edit_fork(
+            (artifact, fork),
+            OfficeBodyKind::Xlsx,
+            (actor, made_by),
+            |doc| apply_xlsx(doc, ops),
+        )
     }
 
     fn edit_fork(
         &self,
-        fork: &EntityId,
+        (artifact, fork): (&EntityId, &EntityId),
         kind: OfficeBodyKind,
-        actor: WriteActor,
-        made_by: &MadeBy,
+        (actor, made_by): (WriteActor, &MadeBy),
         edit: impl FnOnce(&LoroDoc) -> Result<Vec<String>>,
     ) -> Result<OfficeBodyEdit> {
         self.with_write_txn_grouped(|wtxn| {
-            let mut record = FORKS
-                .get(&self.store, wtxn, fork)?
-                .ok_or(Error::EntityNotFound)?;
-            if record.state != ForkState::Open || record.opener != actor.entity_ref() {
-                return Err(invalid("only the opener writes to its open fork"));
-            }
-            let head = HEADS
-                .get(&self.store, wtxn, &record.artifact)?
-                .ok_or(Error::EntityNotFound)?;
-            if head.kind != kind {
+            if source(&self.store, wtxn, artifact)?.kind != kind {
                 return Err(invalid("the artifact's live body is another format"));
             }
-            let doc = self.load_doc(wtxn, fork, None)?;
-            let (minted, receipt) = stamped(&doc, record.artifact, actor, made_by, "fork", edit)?;
-            validate(kind, &doc)?;
-            let frontier = self.store_doc(wtxn, fork, &doc)?;
-            self.record_commit(wtxn, fork, &mut record.commits, &receipt)?;
-            FORKS.put(&self.store, wtxn, fork, &record)?;
+            let writer = writer(kind, actor, made_by);
+            let (minted, commit) =
+                edit_typed_body_fork_in_txn(self, wtxn, artifact, fork, writer, edit)?;
+            let proposal = typed_body_fork_in_txn(&self.store, wtxn, artifact, fork)?
+                .and_then(|(_, doc)| doc)
+                .ok_or_else(|| invalid("the fork is not open"))?;
+            validate(kind, &proposal)?;
             Ok(OfficeBodyEdit {
-                frontier,
+                frontier: commit.frontier,
                 minted,
-                receipt,
+                receipt: commit.receipt,
             })
         })
     }
 
     /// The fork's proposal against the live head, read at both frontiers.
-    pub fn office_body_fork_diff(&self, fork: &EntityId) -> Result<OfficeBodyDiff> {
+    pub fn office_body_fork_diff(
+        &self,
+        artifact: &EntityId,
+        fork: &EntityId,
+    ) -> Result<OfficeBodyDiff> {
         let txn = self.store.env.read_txn()?;
-        let record = FORKS
-            .get(&self.store, &txn, fork)?
-            .ok_or(Error::EntityNotFound)?;
-        let head = HEADS
-            .get(&self.store, &txn, &record.artifact)?
-            .ok_or(Error::EntityNotFound)?;
-        let live = self.load_doc(&txn, &record.artifact, Some(&head.frontier))?;
-        let proposal = self.load_doc(&txn, fork, None)?;
-        three_way(head.kind, &live, &proposal, &record.base, &head.frontier)
+        let kind = loro_kind(&self.store, &txn, artifact)?;
+        let (record, proposal) = open_fork(&self.store, &txn, artifact, fork)?;
+        let (head, live) = self.loro_body(&txn, artifact, kind, None)?;
+        three_way(kind, &live, &proposal, &record.base, &head.frontier)
     }
 
     /// Land a reviewed fork. The reviewer names the head it read; a moved head,
@@ -460,86 +495,60 @@ impl Vault {
     /// receipts join the body's.
     pub fn merge_office_body_fork(
         &self,
+        artifact: &EntityId,
         fork: &EntityId,
         expected_head: &[u8],
         actor: WriteActor,
     ) -> Result<OfficeBodyDiff> {
-        let at = self.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
-            let mut record = FORKS
-                .get(&self.store, wtxn, fork)?
-                .ok_or(Error::EntityNotFound)?;
-            if record.state != ForkState::Open {
-                return Err(invalid("the fork is not open"));
-            }
-            // "The opener's lineage and its forks never settle their own proposal."
+            let kind = loro_kind(&self.store, wtxn, artifact)?;
+            let (record, proposal) = open_fork(&self.store, wtxn, artifact, fork)?;
             if record.opener == actor.entity_ref() {
                 return Err(invalid("a fork's opener cannot merge it"));
             }
-            let mut head = HEADS
-                .get(&self.store, wtxn, &record.artifact)?
-                .ok_or(Error::EntityNotFound)?;
+            let (head, live) = self.loro_body(wtxn, artifact, kind, None)?;
             if head.frontier != expected_head {
                 return Err(invalid(
                     "the body moved since the review; read the diff again",
                 ));
             }
-            let live = self.load_doc(wtxn, &record.artifact, Some(&head.frontier))?;
-            let proposal = self.load_doc(wtxn, fork, None)?;
-            let diff = three_way(head.kind, &live, &proposal, &record.base, &head.frontier)?;
+            let diff = three_way(kind, &live, &proposal, &record.base, &head.frontier)?;
             if diff.blocking() {
                 return Err(invalid("the fork conflicts with the live body"));
             }
             let updates = proposal
-                .export(ExportMode::all_updates())
+                .export(ExportMode::updates(&live.oplog_vv()))
                 .map_err(|_| invalid("office body fork export"))?;
             let scratch = live.fork();
             scratch
                 .import(&updates)
                 .map_err(|_| invalid("office body fork import"))?;
-            validate(head.kind, &scratch)?;
-            live.import(&updates)
-                .map_err(|_| invalid("office body fork import"))?;
-            head.frontier = self.store_doc(wtxn, &record.artifact, &live)?;
-            for (_, receipt) in COMMITS.scan_from(&self.store, wtxn, fork.as_bytes())? {
-                self.record_commit(wtxn, &record.artifact, &mut head.commits, &receipt)?;
-            }
-            HEADS.put(&self.store, wtxn, &record.artifact, &head)?;
-            record.state = ForkState::Merged {
-                by: actor.entity_ref(),
-                at,
-                head: head.frontier.clone(),
-            };
-            FORKS.put(&self.store, wtxn, fork, &record)?;
-            DOCS.delete(&self.store, wtxn, fork)?;
+            validate(kind, &scratch)?;
+            merge_typed_body_fork_in_txn(self, wtxn, artifact, fork, expected_head, actor)?;
             Ok(diff)
         })
     }
 
     /// Abandon an open fork's unlanded work.
-    pub fn discard_office_body_fork(&self, fork: &EntityId, actor: WriteActor) -> Result<()> {
-        let at = self.now_recorded_at();
+    pub fn discard_office_body_fork(
+        &self,
+        artifact: &EntityId,
+        fork: &EntityId,
+        actor: WriteActor,
+    ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
-            let mut record = FORKS
-                .get(&self.store, wtxn, fork)?
-                .ok_or(Error::EntityNotFound)?;
-            if record.state != ForkState::Open {
-                return Err(invalid("the fork is not open"));
+            if source(&self.store, wtxn, artifact)?.kind == OfficeBodyKind::Pptx {
+                return self.discard_deck_fork(wtxn, artifact, fork, actor);
             }
-            record.state = ForkState::Discarded {
-                by: actor.entity_ref(),
-                at,
-            };
-            FORKS.put(&self.store, wtxn, fork, &record)?;
-            DOCS.delete(&self.store, wtxn, fork)?;
-            Ok(())
+            discard_typed_body_fork_in_txn(self, wtxn, artifact, fork, actor).map(drop)
         })
     }
 
     /// Project the body onto its imported package and land it as the artifact's
     /// next version: a DOCX body as one tracked revision, an XLSX body as its
     /// changed cells and names, recalculated. The projection is deterministic
-    /// in the body frontier, the author and the export time.
+    /// in the body frontier, the author and the export time. A deck exports
+    /// through [`Self::export_pptx_body`].
     pub fn export_office_body(
         &self,
         artifact: &EntityId,
@@ -556,7 +565,8 @@ impl Vault {
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
         let at = self.now_recorded_at();
-        let Some((bytes, changes, recalc)) = self.project_body(artifact, &head, request.author, at)?
+        let Some((bytes, changes, recalc)) =
+            self.project_body(artifact, &head, request.author, at)?
         else {
             return Ok(OfficeBodyExport {
                 frontier: head.frontier,
@@ -572,10 +582,7 @@ impl Vault {
             }
         };
         self.with_write_txn_grouped(|wtxn| {
-            let current = HEADS
-                .get(&self.store, wtxn, artifact)?
-                .ok_or(Error::EntityNotFound)?;
-            if current.frontier != head.frontier {
+            if self.head_in_txn(wtxn, artifact)?.frontier != head.frontier {
                 return Err(invalid("the body moved during the export; export again"));
             }
             let version = self.append_blob_artifact_version_in_txn(
@@ -625,7 +632,12 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at)? {
             Some((bytes, _, recalc)) => (bytes, recalc),
-            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, &head.frontier)?,
+            None => recalc_xlsx(
+                &self.body_source(artifact, &head)?,
+                limits,
+                at,
+                &head.frontier,
+            )?,
         };
         let book = read_xlsx_cells(&bytes, limits)
             .map_err(|_| invalid("the projected workbook could not be read"))?;
@@ -634,6 +646,16 @@ impl Vault {
             book,
             recalc,
         })
+    }
+
+    /// The body frontier an export version projects, when it is one.
+    pub fn office_body_export(
+        &self,
+        artifact: &EntityId,
+        version: u64,
+    ) -> Result<Option<OfficeBodyExportRecord>> {
+        let txn = self.store.env.read_txn()?;
+        EXPORTS.get(&self.store, &txn, &version_key(artifact, version))
     }
 
     /// The body at `head` projected onto its imported package: the bytes, the
@@ -646,44 +668,49 @@ impl Vault {
         author: &str,
         at: u64,
     ) -> Result<Option<(Vec<u8>, usize, Option<String>)>> {
+        if head.kind == OfficeBodyKind::Pptx {
+            return Err(invalid(
+                "a deck export is a proposal until its export gate opens: use export_pptx_body",
+            ));
+        }
         let (live, base) = {
             let txn = self.store.env.read_txn()?;
-            let live = self.load_doc(&txn, artifact, Some(&head.frontier))?;
-            let base = fork_at(&live, &head.import_frontier)?;
+            let live = self
+                .loro_body(&txn, artifact, head.kind, Some(&head.frontier))?
+                .1;
+            let base = self
+                .loro_body(&txn, artifact, head.kind, Some(&head.import_frontier))?
+                .1;
             (live, base)
         };
-        match head.kind {
-            OfficeBodyKind::Docx => {
-                let changes = docx::changes(&docx::read(&base)?, &docx::read(&live)?)?;
-                if changes.is_empty() {
-                    return Ok(None);
-                }
-                let revision = DocxRevision {
-                    author: author.to_owned(),
-                    date: timestamp(at)?.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-                    group: blake3::hash(&head.frontier).to_hex()[..16].to_owned(),
-                };
-                let bytes = project_docx(
-                    &self.body_source(artifact, head)?,
-                    &changes,
-                    &revision,
-                    ArchiveLimits::DEFAULT,
-                )
-                .map_err(|_| invalid("the body could not be projected onto its package"))?;
-                Ok(Some((bytes, changes.len(), None)))
+        if head.kind == OfficeBodyKind::Docx {
+            let changes = docx::changes(&docx::read(&base)?, &docx::read(&live)?)?;
+            if changes.is_empty() {
+                return Ok(None);
             }
-            OfficeBodyKind::Xlsx => {
-                let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;
-                if changes.is_empty() {
-                    return Ok(None);
-                }
-                let limits = self.docedit_package_limits()?;
-                let projected = project_xlsx(&self.body_source(artifact, head)?, &changes, limits)
-                    .map_err(|_| invalid("the body could not be projected onto its package"))?;
-                let (bytes, recalc) = recalc_xlsx(&projected, limits, at, &head.frontier)?;
-                Ok(Some((bytes, changes.len(), recalc)))
-            }
+            let revision = DocxRevision {
+                author: author.to_owned(),
+                date: timestamp(at)?.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                group: blake3::hash(&head.frontier).to_hex()[..16].to_owned(),
+            };
+            let bytes = project_docx(
+                &self.body_source(artifact, head)?,
+                &changes,
+                &revision,
+                ArchiveLimits::DEFAULT,
+            )
+            .map_err(|_| invalid("the body could not be projected onto its package"))?;
+            return Ok(Some((bytes, changes.len(), None)));
         }
+        let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;
+        if changes.is_empty() {
+            return Ok(None);
+        }
+        let limits = self.docedit_package_limits()?;
+        let projected = project_xlsx(&self.body_source(artifact, head)?, &changes, limits)
+            .map_err(|_| invalid("the body could not be projected onto its package"))?;
+        let (bytes, recalc) = recalc_xlsx(&projected, limits, at, &head.frontier)?;
+        Ok(Some((bytes, changes.len(), recalc)))
     }
 
     /// The imported version, checked against the hash the import recorded.
@@ -697,35 +724,40 @@ impl Vault {
         Ok(source)
     }
 
-    /// The body frontier an export version projects, when it is one.
-    pub fn office_body_export(
+    fn head_in_txn(&self, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<OfficeBodyHead> {
+        let source = source(&self.store, txn, artifact)?;
+        let (import_frontier, frontier, commits) = match source.kind {
+            OfficeBodyKind::Pptx => pptx::DeckState::load(&self.store, txn, artifact)?.head(),
+            kind => {
+                let (head, _) = self.loro_body(txn, artifact, kind, None)?;
+                (head.birth, head.frontier, head.commits)
+            }
+        };
+        Ok(OfficeBodyHead {
+            artifact: *artifact,
+            kind: source.kind,
+            source_version: source.source_version,
+            source_hash: source.source_hash,
+            import_frontier,
+            frontier,
+            commits,
+        })
+    }
+
+    /// The Loro body of `artifact` as `kind`, at its head or a detached copy at
+    /// an earlier frontier.
+    fn loro_body(
         &self,
+        txn: &RoTxn<'_>,
         artifact: &EntityId,
-        version: u64,
-    ) -> Result<Option<OfficeBodyExportRecord>> {
-        let txn = self.store.env.read_txn()?;
-        EXPORTS.get(&self.store, &txn, &version_key(artifact, version))
-    }
-
-    fn load_doc(&self, txn: &RoTxn<'_>, id: &EntityId, frontier: Option<&[u8]>) -> Result<LoroDoc> {
-        let bytes = DOCS
-            .get(&self.store, txn, id)?
-            .ok_or(Error::CorruptedIndex("office body document missing"))?;
-        let doc = LoroDoc::from_snapshot(&bytes)
-            .map_err(|_| Error::CorruptedIndex("office body document"))?;
-        if frontier.is_some_and(|frontier| doc.oplog_frontiers().encode() != frontier) {
-            return Err(Error::CorruptedIndex("office body frontier"));
+        kind: OfficeBodyKind,
+        at: Option<&[u8]>,
+    ) -> Result<(TypedBodyHead, LoroDoc)> {
+        if source(&self.store, txn, artifact)?.kind != kind {
+            return Err(invalid("the artifact's live body is another format"));
         }
-        doc.set_record_timestamp(true);
-        Ok(doc)
-    }
-
-    fn store_doc(&self, wtxn: &mut RwTxn<'_>, id: &EntityId, doc: &LoroDoc) -> Result<Vec<u8>> {
-        let bytes = doc
-            .export(ExportMode::Snapshot)
-            .map_err(|_| invalid("office body snapshot"))?;
-        DOCS.put(&self.store, wtxn, id, &bytes)?;
-        Ok(doc.oplog_frontiers().encode())
+        typed_body_in_txn(&self.store, txn, artifact, kind.schema(), at)?
+            .ok_or(Error::CorruptedIndex("office body document missing"))
     }
 
     fn record_commit(
@@ -741,16 +773,90 @@ impl Vault {
     }
 }
 
-/// Run one call's operations under a fresh peer and commit them stamped with the
-/// actor; the receipt covers exactly that peer's operations.
-fn stamped<T>(
-    doc: &LoroDoc,
-    document: EntityId,
-    actor: WriteActor,
-    made_by: &MadeBy,
-    verb: &str,
-    edit: impl FnOnce(&LoroDoc) -> Result<T>,
-) -> Result<(T, TextCommitReceipt)> {
+/// Removes `artifact`'s office rows: its format record, a deck body with its
+/// forks and their receipts, and its export records. A Loro body goes with the
+/// typed body's own eraser. Registered in `deletion/derived_rows.rs`.
+pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
+    for (_, fork) in FORKS.scan_keys(store, txn, entity.as_bytes())? {
+        DOCS.delete(store, txn, &fork)?;
+        COMMITS.delete_from(store, txn, fork.as_bytes())?;
+    }
+    FORKS.delete_from(store, txn, entity.as_bytes())?;
+    COMMITS.delete_from(store, txn, entity.as_bytes())?;
+    EXPORTS.delete_from(store, txn, entity.as_bytes())?;
+    DOCS.delete(store, txn, entity)?;
+    SOURCES.delete(store, txn, entity)?;
+    Ok(())
+}
+
+fn claim_source(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    source: &OfficeBodySource,
+) -> Result<()> {
+    if SOURCES.contains(store, wtxn, artifact)? {
+        return Err(invalid("the artifact already has a live body"));
+    }
+    SOURCES.put(store, wtxn, artifact, source)
+}
+
+fn source(store: &Store, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<OfficeBodySource> {
+    SOURCES
+        .get(store, txn, artifact)?
+        .ok_or(Error::EntityNotFound)
+}
+
+/// A Loro body's kind; a deck has its own fork doors.
+fn loro_kind(store: &Store, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<OfficeBodyKind> {
+    match source(store, txn, artifact)?.kind {
+        OfficeBodyKind::Pptx => Err(invalid(
+            "a deck fork is reviewed and landed through its own doors",
+        )),
+        kind => Ok(kind),
+    }
+}
+
+/// An open fork's record and proposal document.
+fn open_fork(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    fork: &EntityId,
+) -> Result<(TypedBodyFork, LoroDoc)> {
+    let (record, proposal) =
+        typed_body_fork_in_txn(store, txn, artifact, fork)?.ok_or(Error::EntityNotFound)?;
+    Ok((
+        record,
+        proposal.ok_or_else(|| invalid("the fork is not open"))?,
+    ))
+}
+
+fn fork_view(record: TypedBodyFork) -> OfficeBodyFork {
+    OfficeBodyFork {
+        id: record.fork,
+        artifact: record.entity,
+        opener: record.opener,
+        base: record.base,
+        commits: record.commits,
+        opened_at: record.opened_at,
+        state: match record.state {
+            TypedForkState::Open => ForkState::Open,
+            TypedForkState::Merged { by, at, head } => ForkState::Merged { by, at, head },
+            TypedForkState::Discarded { by, at } => ForkState::Discarded { by, at },
+        },
+    }
+}
+
+fn writer(kind: OfficeBodyKind, actor: WriteActor, made_by: &MadeBy) -> TypedBodyWriter<'_> {
+    TypedBodyWriter {
+        schema: kind.schema(),
+        actor,
+        made_by,
+    }
+}
+
+fn check_made_by(actor: WriteActor, made_by: &MadeBy) -> Result<()> {
     if made_by.process.actor != actor.entity_ref()
         || !made_by.process.is_valid()
         || made_by.inputs.len() > 1024
@@ -759,31 +865,7 @@ fn stamped<T>(
             "the MadeBy envelope does not name this actor's process",
         ));
     }
-    doc.set_peer_id(LoroDoc::new().peer_id())
-        .map_err(|_| invalid("office body peer"))?;
-    let peer = doc.peer_id();
-    let value = edit(doc)?;
-    let at = i64::try_from(made_by.at).map_err(|_| invalid("office body commit time"))?;
-    let message = format!(
-        "oneiron.office_body.v1 {verb} actor={}.{}",
-        actor.entity_ref().to_hex(),
-        crate::edit_distance::actor_class_token(actor.actor_class()),
-    );
-    doc.commit_with(CommitOptions::new().commit_msg(&message).timestamp(at));
-    let end = doc.oplog_vv().get(&peer).copied().unwrap_or(0);
-    if end <= 0 {
-        return Err(invalid("the call changed nothing"));
-    }
-    Ok((
-        value,
-        TextCommitReceipt {
-            document,
-            peer,
-            start: 0,
-            end,
-            made_by: made_by.clone(),
-        },
-    ))
+    Ok(())
 }
 
 fn apply_all(doc: &LoroDoc, ops: &[DocxBodyOp]) -> Result<Vec<String>> {
@@ -806,6 +888,7 @@ fn validate(kind: OfficeBodyKind, doc: &LoroDoc) -> Result<()> {
     match kind {
         OfficeBodyKind::Docx => docx::read(doc).map(drop),
         OfficeBodyKind::Xlsx => xlsx::read(doc).map(drop),
+        OfficeBodyKind::Pptx => Err(invalid("a deck body is not a Loro document")),
     }
 }
 
@@ -816,7 +899,10 @@ fn three_way(
     base: &[u8],
     head: &[u8],
 ) -> Result<OfficeBodyDiff> {
-    let before = fork_at(live, base)?;
+    let frontier = loro::Frontiers::decode(base).map_err(|_| invalid("invalid body frontier"))?;
+    let before = live
+        .fork_at(&frontier)
+        .map_err(|_| invalid("unknown body frontier"))?;
     let frontiers = (base.to_vec(), head.to_vec());
     Ok(match kind {
         OfficeBodyKind::Docx => fork::diff(
@@ -831,6 +917,7 @@ fn three_way(
             &xlsx::read(proposal)?,
             frontiers,
         ),
+        OfficeBodyKind::Pptx => return Err(invalid("a deck body is not a Loro document")),
     })
 }
 
@@ -850,11 +937,15 @@ fn recalc_xlsx(
     match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {
         Ok(report) => Ok((
             report.bytes,
-            Some(format!("{} {}", report.engine.engine, report.engine.version)),
+            Some(format!(
+                "{} {}",
+                report.engine.engine, report.engine.version
+            )),
         )),
         Err(_) => Ok((
-            mark_full_calc(bytes, limits)
-                .map_err(|_| invalid("the projected workbook could not be marked to recalculate"))?,
+            mark_full_calc(bytes, limits).map_err(|_| {
+                invalid("the projected workbook could not be marked to recalculate")
+            })?,
             None,
         )),
     }
@@ -865,12 +956,6 @@ fn timestamp(at: u64) -> Result<chrono::DateTime<chrono::Utc>> {
         .ok()
         .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
         .ok_or_else(|| invalid("office body export time"))
-}
-
-fn fork_at(doc: &LoroDoc, frontier: &[u8]) -> Result<LoroDoc> {
-    let frontier = Frontiers::decode(frontier).map_err(|_| invalid("invalid body frontier"))?;
-    doc.fork_at(&frontier)
-        .map_err(|_| invalid("unknown body frontier"))
 }
 
 fn bounded_ops(count: usize) -> Result<()> {
