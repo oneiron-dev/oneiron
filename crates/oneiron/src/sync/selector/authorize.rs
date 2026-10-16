@@ -262,10 +262,13 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
 }
 
 fn guest_share_metadata_blob(blob: &[u8]) -> bool {
+    // A world key pad is half of a world's key: a guest never holds one.
     EntityMetadataHeader::parse(blob).is_some_and(|header| {
         matches!(
             header.entity_type,
-            ENTITY_TYPE_FEDERATION_GRANT | ENTITY_TYPE_AUTHORITY_LOG
+            ENTITY_TYPE_FEDERATION_GRANT
+                | ENTITY_TYPE_AUTHORITY_LOG
+                | crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
         )
     })
 }

@@ -105,8 +105,13 @@ pub(super) fn scrub_local_only_carriers(
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
     let mut malformed_key_carriers: Vec<String> = Vec::new();
+    let mut pad_carriers: Vec<(String, Vec<u8>)> = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
+        if crate::world_keys::pad_body_world(blob).is_some() {
+            pad_carriers.push((raw_key.to_owned(), blob.to_vec()));
+            return;
+        }
         let lfs_chunk = EntityId::from_hex(raw_key)
             .ok()
             .is_some_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob));
@@ -127,6 +132,22 @@ pub(super) fn scrub_local_only_carriers(
             _ => malformed_key_carriers.push(raw_key.to_owned()),
         }
     });
+    // A destroyed world's pad that landed late leaves the window whatever its
+    // key; a live world's pad keeps replicating with the base rows.
+    if !pad_carriers.is_empty() {
+        let txn = vault.store.env.read_txn()?;
+        for (raw_key, blob) in pad_carriers {
+            if !crate::world_keys::late_pad_in_txn(&vault.store, &txn, &blob)? {
+                continue;
+            }
+            match EntityId::from_hex(&raw_key) {
+                Ok(id) if id.to_hex() == raw_key => {
+                    custody_ids.insert(id);
+                }
+                _ => malformed_key_carriers.push(raw_key),
+            }
+        }
+    }
     // Pin before touching the live map. If storage fails, the carrier stays
     // visible to the next scrub instead of leaving unpinned private history.
     if !custody_ids.is_empty() || !malformed_key_carriers.is_empty() {
@@ -145,6 +166,8 @@ pub(super) fn scrub_local_only_carriers(
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
         {
             Error::InvalidKey
+        } else if crate::world_keys::pad_body_world(&blob).is_some() {
+            Error::InvalidConfig("a destroyed world's key pad cannot rejoin a window".into())
         } else {
             crate::secret_custody::reject_secret_custody_byte()
         };
