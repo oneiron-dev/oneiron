@@ -63,6 +63,16 @@ pub struct ServeArgs {
     #[arg(long = "derivation-owner")]
     pub derivation_owner: Option<String>,
 
+    /// Trusted organization hosting id (32 bytes in hexadecimal). With no
+    /// --member-vault, this is also the shared vault's derivation owner.
+    #[arg(long = "organization-owner", requires = "managed_by_hypnos")]
+    pub organization_owner: Option<String>,
+
+    /// This organization's member vault, sealed to --derivation-owner rather
+    /// than to the organization. The personal vault can leave with its member.
+    #[arg(long = "member-vault", requires = "organization_owner")]
+    pub member_vault: bool,
+
     /// Vault data directory. Managed mode's spelling of `--vault-path`, which
     /// stays available as the alias; unmanaged serve keeps using either.
     #[arg(long = "data-dir")]
@@ -321,6 +331,8 @@ impl fmt::Debug for ServeArgs {
             .field("managed_by_hypnos", &self.managed_by_hypnos)
             .field("contract_version", &self.contract_version)
             .field("vault_name", &self.vault_name)
+            .field("organization_owner", &self.organization_owner)
+            .field("member_vault", &self.member_vault)
             .field("data_dir", &self.data_dir)
             .field("http_socket", &self.http_socket)
             .field("ctl_socket", &self.ctl_socket)

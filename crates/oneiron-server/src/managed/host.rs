@@ -8,6 +8,7 @@ use super::{
 use oneiron_vault_contract::{
     Credentials,
     host::{Host, HostFuture, HostLimits},
+    tenancy::VaultHost,
 };
 use std::time::SystemTime;
 use zeroize::Zeroizing;
@@ -16,9 +17,9 @@ use zeroize::Zeroizing;
 /// order: resolve the listener, consume credentials, pass vault gates, bind,
 /// ready.
 pub(super) enum ManagedHost {
-    Process(ProcessHost),
+    Process(VaultHost<ProcessHost>),
     #[cfg(target_os = "linux")]
-    Vm(super::vm_guest::VmGuestHost),
+    Vm(VaultHost<super::vm_guest::VmGuestHost>),
 }
 impl ManagedHost {
     pub(super) fn new(
@@ -26,19 +27,26 @@ impl ManagedHost {
         limits: HostLimits,
         shutdown: ManagedShutdown,
     ) -> anyhow::Result<Self> {
+        let binding = args.vault_binding()?;
         if args.vsock_guest {
             #[cfg(target_os = "linux")]
-            return Ok(Self::Vm(super::vm_guest::VmGuestHost::new(args, shutdown)));
+            return Ok(Self::Vm(VaultHost::new(
+                binding,
+                super::vm_guest::VmGuestHost::new(args, shutdown),
+            )?));
             #[cfg(not(target_os = "linux"))]
             anyhow::bail!("--vsock-guest runs only inside a Linux vault VM");
         }
-        Ok(Self::Process(ProcessHost::new(args, limits, shutdown)?))
+        Ok(Self::Process(VaultHost::new(
+            binding,
+            ProcessHost::new(args, limits, shutdown)?,
+        )?))
     }
     pub(super) fn clear_secrets(&mut self) {
         match self {
-            Self::Process(host) => host.clear_secrets(),
+            Self::Process(host) => host.adapter_mut().clear_secrets(),
             #[cfg(target_os = "linux")]
-            Self::Vm(host) => host.clear_secrets(),
+            Self::Vm(host) => host.adapter_mut().clear_secrets(),
         }
     }
     /// The boot channel a vault VM answers sleep and stop requests on.
@@ -46,7 +54,7 @@ impl ManagedHost {
     pub(super) fn vm_link(&self) -> Option<oneiron_vault_contract::host_adapters::GuestLink> {
         match self {
             Self::Process(_) => None,
-            Self::Vm(host) => host.link(),
+            Self::Vm(host) => host.adapter().link(),
         }
     }
 }

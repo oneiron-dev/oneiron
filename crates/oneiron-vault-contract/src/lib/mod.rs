@@ -15,6 +15,8 @@ mod ctl;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
+/// Account and organization vault bindings with per-vault lifecycle hooks.
+pub mod tenancy;
 mod ledger;
 mod limits;
 mod managed_holder;
