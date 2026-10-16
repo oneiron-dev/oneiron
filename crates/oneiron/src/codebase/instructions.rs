@@ -95,15 +95,15 @@ impl Vault {
                 };
                 let content_hash =
                     crate::entity_id::bytes_to_hex_lower(&snapshot.files[index].content_hash);
-                let handle = handles
-                    .entry((artifact, path.clone()))
-                    .or_insert_with(|| CodeInstructionHandle {
+                let handle = handles.entry((artifact, path.clone())).or_insert_with(|| {
+                    CodeInstructionHandle {
                         code_artifact_id: artifact,
                         repo_ref: snapshot.repo_ref.canonical(),
                         path,
                         content_hash,
                         units: Vec::new(),
-                    });
+                    }
+                });
                 if !handle.units.contains(&unit) {
                     handle.units.push(unit);
                 }

@@ -1,7 +1,7 @@
 //! The inputs of the verb-table rows a code run answers itself
 //! (`context: "run"` in `scripts/sdk/agent-verbs.json`).
 //!
-//! Each is the object code mode's `self.memory.<row>(input)` takes. The guest
+//! Each is the object code mode's `vault.<row>(input)` takes. The guest
 //! bridge decodes it into the run's own typed `self.*` call, so a row keeps the
 //! effect, gate and replay row it had as a hand-written import. Each input is
 //! closed: a field it does not list is refused, as on every other row.
@@ -15,7 +15,7 @@ pub const JS_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 use serde::Deserialize;
 
-/// `self.memory.search`: a bounded text search over the run's storage route.
+/// `vault.search`: a bounded text search over the run's storage route.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemorySearchInput {
@@ -24,7 +24,7 @@ pub struct MemorySearchInput {
     pub limit: Option<u32>,
 }
 
-/// `self.memory.put_claim`: one claim candidate through the run's gate.
+/// `vault.claims.put`: one claim candidate through the run's gate.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MemoryClaimInput {
@@ -54,7 +54,7 @@ pub struct MemoryTimeRange {
     pub end: u64,
 }
 
-/// `self.memory.supersede_claim`: closes `oldId` in favour of `newId`.
+/// `vault.claims.supersede`: closes `oldId` in favour of `newId`.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MemorySupersedeInput {
@@ -64,7 +64,7 @@ pub struct MemorySupersedeInput {
     pub now: u64,
 }
 
-/// `self.memory.put_edge`: one typed edge through the run's edge gate.
+/// `vault.edges.put`: one typed edge through the run's edge gate.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryEdgeInput {
