@@ -268,6 +268,7 @@ fn public_http_transport_context(
     Ok(BookingTransportContext {
         source_ip,
         authenticated_actor_ref: None,
+        credential: None,
         transport: BookingTransport::AnonymousHttp,
     })
 }

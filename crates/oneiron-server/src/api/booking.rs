@@ -64,6 +64,7 @@ mod public;
 mod public_availability;
 mod subject;
 mod transport;
+mod turn;
 mod validate;
 
 use self::admission::{admission_facts, admission_short_circuit};
@@ -77,6 +78,8 @@ use self::lifecycle::{booking_oracle, run_booking_verb};
 use self::offerability::unoffered_slot_answer;
 pub(crate) use self::page_token::{booking_page_token, resolve_booking_page};
 pub(super) use self::public::public_booking_router;
+#[cfg(test)]
+pub(crate) use self::public::turn_tests::cross_the_booking_windows;
 use self::subject::{resolve_booker_contact, session_key};
 use self::transport::http_transport_context;
 use self::validate::validate_operation_shape;
@@ -122,6 +125,9 @@ impl BookingTransport {
 pub(crate) struct BookingTransportContext {
     pub(crate) source_ip: IpAddr,
     pub(crate) authenticated_actor_ref: Option<EntityId>,
+    /// The verified credential an authenticated request came under; `None`
+    /// for an anonymous visitor. Past a window it waits on this key's turn.
+    pub(crate) credential: Option<String>,
     pub(crate) transport: BookingTransport,
 }
 
@@ -427,30 +433,39 @@ pub(crate) async fn execute_booking_operation(
     }
     validate_operation_shape(&request)?;
     check_action_token_page(&server.vault, page_ref, &request)?;
-    let now = now_secs()?;
 
     // ── 2. the one admission call ───────────────────────────────────────
-    let facts = admission_facts(server, page_ref, &request, transport, now)?;
     let cache = public_availability::cached_response(
         server,
         page_ref,
         &request,
         public_authority.as_ref(),
     )?;
-    let disposition = match &request {
-        BookingOperationRequest::Availability(_) => {
-            enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
-        }
-        BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
-            enforce_hold(State(Arc::clone(server)), facts).await?
-        }
-        BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => {
-            enforce_book(State(Arc::clone(server)), facts).await?
-        }
-        BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
-            enforce_amend(State(Arc::clone(server)), facts).await?
+    // An authenticated caller past a window waits for it and is admitted
+    // again (`turn::Turn`), so the clock and the facts are read each time.
+    let mut turn = turn::Turn::new(server, transport);
+    let (now, disposition) = loop {
+        let now = now_secs()?;
+        let facts = admission_facts(server, page_ref, &request, transport, now)?;
+        let disposition = match &request {
+            BookingOperationRequest::Availability(_) => {
+                enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
+            }
+            BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
+                enforce_hold(State(Arc::clone(server)), facts).await?
+            }
+            BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => {
+                enforce_book(State(Arc::clone(server)), facts).await?
+            }
+            BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
+                enforce_amend(State(Arc::clone(server)), facts).await?
+            }
+        };
+        if let Some(disposition) = turn.after(disposition).await? {
+            break (now, disposition);
         }
     };
+    drop(turn);
     if let Some(response) = admission_short_circuit(&request, disposition)? {
         tracing::debug!(
             transport = transport.transport.as_str(),

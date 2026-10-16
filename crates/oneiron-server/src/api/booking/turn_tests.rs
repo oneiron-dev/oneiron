@@ -6,6 +6,7 @@ use axum::http::header::AUTHORIZATION;
 
 use super::fixture::*;
 use super::*;
+use crate::wire_telemetry::LimitRow;
 
 fn install(fixture: &Fixture, rule: BookingAntiAbuseRule) {
     let scope = BookingRuleScope {
@@ -93,6 +94,15 @@ fn listing(nth: u64) -> BookingAvailabilityInput {
     }
 }
 
+fn asked(fixture: &Fixture) -> bool {
+    fixture
+        .server
+        .wire_telemetry
+        .limit_questions()
+        .latest(LimitRow::BookingWindows)
+        .is_some()
+}
+
 fn book_input(request: BookingOperationRequest) -> BookingBookInput {
     let BookingOperationRequest::Book(input) = request else {
         panic!("a book request")
@@ -154,4 +164,37 @@ async fn an_authenticated_caller_past_each_booking_window_waits_and_is_served() 
             "confirmed, got {confirmed:?}"
         );
     }
+    assert!(asked(&fixture), "each window's crossing asks");
+}
+
+/// Rule five at the booking windows row: `callers` listings on one
+/// credential, past a window of half as many a minute, all complete and the
+/// row asks. It runs on a paused runtime of its own.
+pub(crate) fn cross_the_booking_windows(callers: usize) -> crate::admission::Crossing {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let fixture = fixture_on_the_runtime_clock();
+        install(
+            &fixture,
+            BookingAntiAbuseRule::SlotListRate {
+                per_minute_per_ip: per_minute(u32::try_from(callers / 2).expect("callers")),
+                cache_ttl_secs: std::num::NonZeroU64::new(30).expect("TTL"),
+            },
+        );
+        let listings = (0_u64..)
+            .take(callers)
+            .map(|nth| owner(&fixture, "agent", "availability", listing(nth)));
+        let responses = futures_util::future::join_all(listings).await;
+        crate::admission::Crossing {
+            refused: responses
+                .iter()
+                .filter(|response| response.status() != StatusCode::OK)
+                .count(),
+            asked: asked(&fixture),
+        }
+    })
 }
