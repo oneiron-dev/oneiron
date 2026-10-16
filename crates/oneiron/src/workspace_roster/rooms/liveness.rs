@@ -11,6 +11,8 @@ pub(crate) struct RoomThreadTask {
     pub(crate) open: bool,
     pub(crate) wait: Option<RoomThreadWait>,
     pub(crate) delivered: Option<(EntityId, u64)>,
+    /// A visible completion folds the thread even if its result is withheld.
+    pub(crate) completed_at: Option<u64>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RoomWaitKind {
@@ -34,6 +36,8 @@ pub struct RoomThreadWait {
     pub who: EntityId,
     pub since: u64,
     pub next_nudge: Option<u64>,
+    /// Absolute TASK cutoff; follow-up never extends it.
+    pub until: Option<u64>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomThread {
@@ -46,6 +50,8 @@ pub struct RoomThread {
     pub wait_render_limit: usize,
     /// Result pointer projected beside its trunk anchor; never a copied result body.
     pub result_header: Option<EntityId>,
+    /// The origin card replaces this thread after conversion.
+    pub converted_project: Option<EntityId>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomThreadList {
@@ -88,12 +94,14 @@ impl RoomThread {
         // waits. The typed get returns the complete wait set.
         for wait in self.waits.iter().take(self.wait_render_limit) {
             row.push_str(&format!(
-                " wait={} kind={} who={} since={} next={}",
+                " wait={} kind={} who={} since={} next={} until={}",
                 wait.task.to_hex(),
                 wait.kind.as_str(),
                 wait.who.to_hex(),
                 wait.since,
                 wait.next_nudge
+                    .map_or_else(|| "none".to_owned(), |at| at.to_string()),
+                wait.until
                     .map_or_else(|| "none".to_owned(), |at| at.to_string())
             ));
         }
@@ -105,6 +113,9 @@ impl RoomThread {
         }
         if let Some(header) = self.result_header {
             row.push_str(&format!(" result_header={}", header.to_hex()));
+        }
+        if let Some(project) = self.converted_project {
+            row.push_str(&format!(" project={}", project.to_hex()));
         }
         row
     }
@@ -152,7 +163,9 @@ pub(super) fn is_thread_root(turn: &RoomTurn) -> bool {
 
 /// Validated, memoized room-turn → thread-root map. Trunk turns have no
 /// entry; every reply within a thread resolves to the same root as its parent.
-pub(super) fn thread_root_map(turns: &[RoomTurn]) -> Result<BTreeMap<EntityId, EntityId>> {
+pub(in crate::workspace_roster) fn thread_root_map(
+    turns: &[RoomTurn],
+) -> Result<BTreeMap<EntityId, EntityId>> {
     let mut by_id = BTreeMap::new();
     let mut roots = BTreeSet::new();
     for turn in turns {
@@ -209,6 +222,31 @@ pub(super) fn thread_root_map(turns: &[RoomTurn]) -> Result<BTreeMap<EntityId, E
         }
     }
     Ok(result)
+}
+
+/// Explicit task context follows replies to their root. A task cannot belong
+/// to two different threads in the same room.
+pub(in crate::workspace_roster) fn thread_task_bindings(
+    turns: &[RoomTurn],
+    roots: &BTreeMap<EntityId, EntityId>,
+) -> Result<BTreeMap<EntityId, EntityId>> {
+    let mut bindings = BTreeMap::new();
+    for turn in turns {
+        let id = EntityId::from_hex(&turn.turn_id)?;
+        let Some(&root) = roots.get(&id) else {
+            continue;
+        };
+        for task in &turn.task_ids {
+            let task = EntityId::from_hex(task)?;
+            if bindings
+                .insert(task, root)
+                .is_some_and(|prior| prior != root)
+            {
+                return Err(invalid());
+            }
+        }
+    }
+    Ok(bindings)
 }
 
 impl RoomThreadPolicy {
@@ -270,9 +308,7 @@ fn project_inner(
     room_hex: &str,
 ) -> Result<RoomThreads> {
     const MAX_ROWS: usize = 100_000;
-    if turns.len() > MAX_ROWS
-        || tasks.len() > MAX_ROWS
-        || policy.rows_per_list > MAX_ROWS && policy.rows_per_list != usize::MAX
+    if policy.rows_per_list > MAX_ROWS && policy.rows_per_list != usize::MAX
         || policy.tokens_per_list == 0
         || policy.tokens_per_list > 1_000_000
         || policy.waits_per_thread == 0
@@ -315,6 +351,11 @@ fn project_inner(
                     waits: Vec::new(),
                     wait_render_limit: policy.waits_per_thread,
                     result_header: None,
+                    converted_project: turn
+                        .converted_project
+                        .as_deref()
+                        .map(EntityId::from_hex)
+                        .transpose()?,
                 },
             );
         }
@@ -338,6 +379,7 @@ fn project_inner(
         }
     }
     let mut delivered = BTreeMap::new();
+    let mut completed = BTreeMap::new();
     let mut seen_tasks = BTreeSet::new();
     for fact in tasks {
         if !seen_tasks.insert(fact.task) {
@@ -351,6 +393,15 @@ fn project_inner(
             }
         } else if fact.wait.is_some() {
             return Err(invalid());
+        }
+        if let Some(at) = fact.completed_at {
+            if fact.open {
+                return Err(invalid());
+            }
+            completed
+                .entry(fact.thread)
+                .and_modify(|prior: &mut u64| *prior = (*prior).max(at))
+                .or_insert(at);
         }
         if let Some((result, at)) = fact.delivered {
             if fact.open {
@@ -370,8 +421,8 @@ fn project_inner(
     for (id, mut row) in roots {
         row.waits
             .sort_by_key(|wait| (wait.next_nudge.unwrap_or(u64::MAX), wait.since, wait.task));
-        if let Some((result, at, _)) = delivered.get(&id).copied() {
-            row.result_header = Some(result);
+        row.result_header = delivered.get(&id).map(|(result, _, _)| *result);
+        if let Some(at) = completed.get(&id).copied() {
             // A later reply relists a delivered, formerly folded thread.
             if last_reply.get(&id).is_none_or(|reply| *reply <= at)
                 && row.open_tasks == 0
@@ -381,12 +432,20 @@ fn project_inner(
                 continue;
             }
         }
+        // The task identities still live in the new project. Their work
+        // and waits cannot reopen its folded origin in the source room.
+        if row.converted_project.is_some() {
+            row.open_tasks = 0;
+            row.waits.clear();
+            quiet.push(row);
+            continue;
+        }
         if row.open_tasks > row.waits.len()
             || (row.last_message_at.saturating_add(policy.fresh_for) >= policy.now
                 && (row.waits.is_empty()
                     || last_reply.get(&id).is_some_and(|reply| {
                         let since = row.waits.iter().map(|wait| wait.since).max().unwrap_or(0);
-                        *reply > since.max(delivered.get(&id).map_or(0, |v| v.1))
+                        *reply > since.max(completed.get(&id).copied().unwrap_or(0))
                     })))
         {
             active.push(row);

@@ -81,6 +81,7 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
     }
     let turns = history::answer_closed(turns);
     let roots = liveness::thread_root_map(&turns)?;
+    let bindings = liveness::thread_task_bindings(&turns, &roots)?;
     let mut census = crate::scan_check::ScanCount::start(
         &vault.store,
         &txn,
@@ -91,6 +92,7 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
         vault,
         &txn,
         &roots,
+        &bindings,
         &members,
         now,
         &mut census,
@@ -119,6 +121,7 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
     }
     for (task, thread) in open {
         if let Some(row) = threads.get_mut(&thread)
+            && vault.thread_project_in_txn(&txn, room, thread)?.is_none()
             && read.is_ref_readable_with_policy_in(&txn, &policy, &task)?
         {
             row.open_tasks.push(task);
