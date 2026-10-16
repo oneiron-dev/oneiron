@@ -782,6 +782,29 @@ fn world_share_selects_base_claims_ranked_below_fiction() -> Result<()> {
     Ok(())
 }
 
+/// A pack whose only match is a fiction claim the world share keeps out
+/// lost it to policy, not to a threshold, so it carries no hint to lower one.
+#[test]
+fn a_pack_the_world_share_empties_reports_no_threshold_miss() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let world_w = EntityId::from_bytes([0x5E; 16])?;
+    let fiction = EntityId::from_bytes([0x75; 16])?;
+    put_world_claim(&vault, fiction, [1.0, 0.0, 0.0, 0.0], Some(world_w))?;
+
+    let pack = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .limit(1)
+        .run()?;
+    assert!(
+        pack.results.is_empty(),
+        "the share keeps a lone fiction claim out"
+    );
+    let empty = pack.empty.as_ref().expect("empty context");
+    assert_eq!(empty.reason, EmptyReason::FilterMatchedNone);
+    Ok(())
+}
+
 // ── RET-005 pre-assembly pack validation ───────────────────────
 
 #[test]
