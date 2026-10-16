@@ -7,13 +7,16 @@
 //! `dreamer_tournament`) and the OF-360 AR-3 metric tier
 //! (`extraction_eval::of360_ar3_metric_tier`).
 //!
-//! It owns no storage, mints no entity, and performs no writes. Every report
+//! The reports own no storage, mint no entity, and perform no writes. Every report
 //! metric is produced by the landed OF-360 evaluator and carried verbatim;
 //! every admission decision is produced by the landed OF-366 gate. The
 //! report's held-out comparison scalars are recomputed rather than trusted on
 //! input, so a deserialized report cannot smuggle a fabricated verdict past
 //! [`CampaignComparisonReport::validate`]. The independent [`selection`] floor
 //! scores measured run-tree branches but does not admit or launch a candidate.
+//! The [`research`] loop records a campaign's experiment tree, selection
+//! rounds, promotions and RSI reservations over the existing run tree; it
+//! runs no experiment either.
 //!
 //! A third arm (`strong critic`) is declared but design-only: the executable
 //! boundary is a separate type ([`CampaignExecutableArm`]) that has no
@@ -28,6 +31,7 @@ pub mod coverage;
 pub mod general;
 mod judge;
 mod report;
+pub mod research;
 pub mod selection;
 mod verdict;
 

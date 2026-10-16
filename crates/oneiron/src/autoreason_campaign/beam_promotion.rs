@@ -108,6 +108,19 @@ impl SealedRefereeMeasurement {
             referee_pin: referee_pin.into(),
         })
     }
+
+    /// The strict-win bit, for a campaign's promotion receipt.
+    pub(super) fn won(&self) -> bool {
+        self.won
+    }
+
+    pub(super) fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub(super) fn referee_pin(&self) -> &str {
+        &self.referee_pin
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
