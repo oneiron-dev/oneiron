@@ -208,7 +208,7 @@ impl Vault {
     }
     /// Why the current authority refuses this publication, or `None` when it
     /// permits it. A read failure is an error, never a refusal.
-    fn origin_authority_refusal(
+    pub(in crate::origin) fn origin_authority_refusal(
         &self,
         repo: &GitWireRepo,
         publication: EntityId,
@@ -231,40 +231,6 @@ impl Vault {
             )));
         }
         Ok(None)
-    }
-    /// Whether a saved GitWire effect would move a ref that an origin
-    /// publication owns without that publication's current authority. GitWire
-    /// asks this at the effect itself, so no door to a saved effect re-applies
-    /// one the origin no longer permits. A move no publication owns is not
-    /// the origin's to judge.
-    pub(crate) fn origin_effect_unauthorized(
-        &self,
-        repo: &GitWireRepo,
-        publications: &[GitRefPublication],
-    ) -> Result<bool> {
-        let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
-        for publication in publications {
-            let Some(next) = publication.next() else {
-                continue;
-            };
-            let expected = match publication.expected() {
-                GitRefExpectation::Absent => None,
-                GitRefExpectation::Value(oid) => Some(oid),
-                GitRefExpectation::Any => continue,
-            };
-            let Some(owner) =
-                self.origin_move_owner(repo_id, publication.name(), expected, next)?
-            else {
-                continue;
-            };
-            if self
-                .origin_authority_refusal(repo, owner.publication_id)?
-                .is_some()
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
     /// Admission has no commit pin yet, including an empty first-push origin.
     /// Resolve the canonical object-store identity without inventing a commit.

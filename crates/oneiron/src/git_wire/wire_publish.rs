@@ -260,14 +260,14 @@ impl GitWire<'_> {
         if !publications_expected(&publications, &observed) {
             return self.reject(repo, record, GitWireRejection::RefMoved, now);
         }
+        if !self.publication_objects_available(repo, &publications)? {
+            return self.reject(repo, record, GitWireRejection::ObjectsUnavailable, now);
+        }
         // Every door to a saved effect passes here -- a first attempt, an
         // interrupted one finished again, a staged commit, generic recovery --
         // so the origin judges a move it owns here, at the effect itself.
-        if self.vault.origin_effect_unauthorized(repo, &publications)? {
+        if !self.vault.admit_origin_ref_effect(repo, &publications)? {
             return self.reject(repo, record, GitWireRejection::Unauthorized, now);
-        }
-        if !self.publication_objects_available(repo, &publications)? {
-            return self.reject(repo, record, GitWireRejection::ObjectsUnavailable, now);
         }
         self.apply_publication(repo, record, &publications, now)
     }
