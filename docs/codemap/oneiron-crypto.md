@@ -25,7 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 3 const · 1 mod · 7 re-export | — | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… |
 | `src/nonce.rs` | src | s | 1 struct · 2 fn | NonceLedger | Duplicate-nonce detection where the caller can see it |
 | `src/record/mod.rs` | src | m | 3 struct · 2 enum · 8 fn · 1 re-export · 1 crate-vis | CheckpointRef, RecordBody, SigPurpose, SignatureEntry, SignatureRecord | Signature records: the canonical encoding, the strict parser and the roster rules |
-| `src/record/sign.rs` | src | m | 1 struct · 2 enum · 8 fn | SigningKey, VerifyPolicy, VerifyingKey | Signing and verifying records |
+| `src/record/sign.rs` | src | m | 1 struct · 2 enum · 11 fn | SigningKey, VerifyPolicy, VerifyingKey | Signing and verifying records |
 | `src/record/sign/tests.rs` | test | s | — | — | Record signing's stack wipe (RustCrypto/meta#38): the bare SLH-DSA signer leaves its secrets below its… |
 | `src/stack_probe.rs` | src | s | 1 struct · 3 fn | Below | Test-only stack probe |
 | `src/stretch.rs` | src | s | 1 fn | — | A stretched passphrase as raw key material, for constructions that are not envelope wraps: the recovery kit… |
