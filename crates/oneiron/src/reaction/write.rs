@@ -248,7 +248,11 @@ impl Vault {
             }
             let envelope = first_party_envelope(input.actor)?;
             let id = write_reaction_in_txn(self, txn, input.message, &value, envelope, now)?;
-            super::outbound::enqueue_in_txn(self, txn, id, room, false)?;
+            // A reaction awaiting its owner's critical confirmation is held,
+            // not mirrored; the Clear sends it (`release_cleared_reaction_in_txn`).
+            if crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)? {
+                super::outbound::enqueue_in_txn(self, txn, id, room, false)?;
+            }
             Ok(ReactionChange {
                 id,
                 state: ReactionState::Put,

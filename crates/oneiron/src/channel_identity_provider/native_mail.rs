@@ -671,7 +671,10 @@ pub(crate) fn native_mail_reputation_earned(
         if !safe {
             return Ok(false);
         }
-        seen[index] = true;
+        // An unsafe value vetoes held or not; held evidence never earns.
+        if crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)? {
+            seen[index] = true;
+        }
     }
     Ok(seen.into_iter().all(|present| present))
 }

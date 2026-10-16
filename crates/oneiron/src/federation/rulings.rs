@@ -25,7 +25,7 @@ pub struct AdminRulingReceipt {
     pub previous_holder: Option<String>,
     pub previous_value: Option<Value>,
 }
-pub(super) const RULING_PREDICATE: &str = "federation.admin_ruling";
+pub(crate) const RULING_PREDICATE: &str = "federation.admin_ruling";
 pub(super) fn ruling_anchor_id(vault_id: u64) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(
         b"oneiron.shared-ruling.anchor.v1",

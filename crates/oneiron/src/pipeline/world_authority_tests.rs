@@ -332,3 +332,56 @@ fn a_dropped_edge_or_a_fenced_grant_never_widens_the_world_fold() -> Result<()> 
     );
     Ok(())
 }
+
+/// A world-access row awaiting its owner's confirm still narrows: a held grant
+/// joins the ALLOWED-SET intersection and a held newer default narrows the
+/// settled one. It never widens: a held grant alone grants nothing, and a
+/// held wider default reads as the settled one.
+#[test]
+fn a_held_world_access_row_narrows_but_never_widens() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fixture = world_access_fixture(&vault)?;
+    let (agent, w, v) = (fixture.agent, fixture.world_w, fixture.world_v);
+    let resolve = || -> Result<ResolvedWorldAuthority> {
+        let rtxn = vault.store.env.read_txn()?;
+        resolve_world_authority(
+            &vault.store,
+            &rtxn,
+            &ActiveWorldSelection {
+                agent_ref: agent,
+                selected: None,
+            },
+            WORLD_ACCESS_NOW,
+        )
+    };
+    let held_wide = entity_id(0xB4);
+    WorldAccessRowSpec::owner_grant(held_wide, agent, true, &[w, v]).put(&vault)?;
+    crate::test_util::hold_claim_for_critical_confirm(&vault, held_wide, 0x71);
+    assert_eq!(resolve()?.allowed_set, WorldAuthoritySet::default());
+    WorldAccessRowSpec::owner_grant(entity_id(0xB0), agent, true, &[w, v]).put(&vault)?;
+    let held_narrow = entity_id(0xB5);
+    WorldAccessRowSpec::owner_grant(held_narrow, agent, false, &[w, v]).put(&vault)?;
+    crate::test_util::hold_claim_for_critical_confirm(&vault, held_narrow, 0x72);
+    assert_eq!(
+        resolve()?.allowed_set,
+        WorldAuthoritySet::new(false, [w, v])?
+    );
+    // One valid time and one learned-at, so the id decides default precedence.
+    for (settled, settled_set, held, held_set, seed, read) in [
+        (0xB1, vec![w], 0xB6, vec![w, v], 0x73, vec![w]),
+        (0xB7, vec![w, v], 0xB8, vec![v], 0x74, vec![v]),
+    ] {
+        WorldAccessRowSpec::agent_default(entity_id(settled), agent, false, &settled_set)
+            .put(&vault)?;
+        let held = entity_id(held);
+        WorldAccessRowSpec::agent_default(held, agent, false, &held_set).put(&vault)?;
+        crate::test_util::hold_claim_for_critical_confirm(&vault, held, seed);
+        let resolved = resolve()?;
+        assert_eq!(
+            resolved.default_subset,
+            WorldAuthoritySet::new(false, read)?
+        );
+        assert_eq!(resolved.default_claim_id, Some(held));
+    }
+    Ok(())
+}

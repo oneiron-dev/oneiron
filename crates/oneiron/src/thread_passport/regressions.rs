@@ -218,7 +218,7 @@ fn generic_thread_claim_ownership_and_reference_proof_are_checked() {
 
 #[test]
 fn unknown_owner_and_alias_evidence_are_reconsidered_on_arrival() {
-    let (_dir, vault) = test_vault();
+    let (_dir, vault) = replicating_test_vault();
     let identity = entity(0x61);
     let body = passport_body(identity, "root@x");
     let id = EntityId::now();
@@ -327,8 +327,8 @@ fn unknown_parent_arrival_and_replay_preserve_passport_and_mask() {
 
 #[test]
 fn valid_offline_alias_forks_and_duplicate_passports_converge_in_both_orders() {
-    let (_a_dir, a) = test_vault();
-    let (_b_dir, b) = test_vault();
+    let (_a_dir, a) = replicating_test_vault();
+    let (_b_dir, b) = replicating_test_vault();
     let identity = entity(0x61);
     for vault in [&a, &b] {
         seed_identity(vault, identity, "agent@example.com");

@@ -99,6 +99,9 @@ pub(super) fn mail_reputation() -> Result<Case> {
     let (dir, vault) = open_vault();
     let sender = entity(0x3A);
     crate::test_util::put_native_mail_sender(&vault, sender, entity(0x3B), &[])?;
+    // With no rule naming them, the reputation heads resolve critical and wait
+    // for the owner's confirmation, so no head would earn the offer either side.
+    crate::test_util::declare_predicates_normal(&vault, &["channel_identity.reputation."])?;
     let healthy = IdentityReputation {
         complaint_rate: 0.0,
         bounce_rate: 0.0,

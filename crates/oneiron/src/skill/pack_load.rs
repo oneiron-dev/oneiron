@@ -289,6 +289,7 @@ impl Vault {
             }
             if !body.predicate.starts_with("actor.")
                 || !claim_surfaceable(&body)
+                || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, claim)?
                 || body.valid_from.is_some_and(|start| start > at)
                 || body.valid_to.is_some_and(|end| end <= at)
             {

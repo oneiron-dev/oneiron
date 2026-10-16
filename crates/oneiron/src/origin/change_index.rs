@@ -173,7 +173,7 @@ impl Vault {
             Value::from("sensitivity"),
             Value::from("public"),
         )]));
-        self.put_claim_in_txn(txn, &id, &body, record.occurred, now)?;
+        self.put_reserved_claim_in_txn(txn, &id, &body, record.occurred, now)?;
         CHANGE_RECEIPTS.put(
             &self.store,
             txn,

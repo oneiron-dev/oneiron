@@ -21,7 +21,7 @@
 //! an expansion failure must never degrade to a silently empty union.
 
 use super::query::{
-    CalendarRead, CalendarSel, matches_selectors, validate_selectors, visit_calendar_events,
+    CalendarRead, CalendarSel, matches_selectors, validate_selectors, visit_calendar_events_busy,
 };
 use crate::claim::{ScopedRead, ScopedReadResult};
 use crate::entity_id::EntityId;
@@ -78,35 +78,48 @@ fn freebusy_in(
     validate_selectors(calendars)?;
 
     let bounds = ordered(range);
-    let mut rows = Vec::new();
-    visit_calendar_events(read, |row| {
-        rows.push(row);
+    // A held claim may keep a slot busy and never frees one: every EVENT is
+    // read as written and as its held claims keep it busy, and a slot either
+    // read finds busy is busy.
+    let mut written = Vec::new();
+    let mut held = Vec::new();
+    visit_calendar_events_busy(read, |row, busy| {
+        written.push(row);
+        held.extend(busy);
         Ok(())
     })?;
-    let exceptions: Vec<_> = rows
+    let withheld = read.withheld_exception_series()?;
+    let settled: std::collections::BTreeSet<_> = withheld
         .iter()
-        .filter_map(|row| row.facts.exception().cloned())
+        .filter(|(_, is_held)| !**is_held)
+        .map(|(key, _)| key.clone())
         .collect();
-    let withheld_exception = read.withheld_exception_series()?;
+    let all: std::collections::BTreeSet<_> = withheld.into_keys().collect();
     let mut intervals = Vec::new();
-    for row in rows {
-        if !matches_selectors(row.facts.systems(), calendars)
-            || !row.facts.blocks_time()
-            || row.facts.is_cancelled()
-            || row.facts.series_withheld()
-        {
-            continue;
-        }
-        let occurrences =
-            super::query::occurrences(&row, bounds, &exceptions, &withheld_exception)?;
-        for occurrence in occurrences {
-            if let Some(clipped) = clip(occurrence, bounds) {
-                let (start_utc, end_utc) = half_open(clipped)?;
-                intervals.push(BusyInterval {
-                    start_utc,
-                    end_utc,
-                    source: row.id,
-                });
+    for (rows, withheld_exception) in [(written, &all), (held, &settled)] {
+        let exceptions: Vec<_> = rows
+            .iter()
+            .filter_map(|row| row.facts.exception().cloned())
+            .collect();
+        for row in rows {
+            if !matches_selectors(row.facts.systems(), calendars)
+                || !row.facts.blocks_time()
+                || row.facts.is_cancelled()
+                || row.facts.series_withheld()
+            {
+                continue;
+            }
+            let occurrences =
+                super::query::occurrences(&row, bounds, &exceptions, withheld_exception)?;
+            for occurrence in occurrences {
+                if let Some(clipped) = clip(occurrence, bounds) {
+                    let (start_utc, end_utc) = half_open(clipped)?;
+                    intervals.push(BusyInterval {
+                        start_utc,
+                        end_utc,
+                        source: row.id,
+                    });
+                }
             }
         }
     }

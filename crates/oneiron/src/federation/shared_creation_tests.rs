@@ -2,6 +2,10 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
+
+/// A write door under test: it tries the forged ruling at an id and answers
+/// whether the door refused it.
+type RefusingDoor<'a> = Box<dyn Fn(EntityId) -> bool + 'a>;
 fn fixture() -> (
     tempfile::TempDir,
     Vault,
@@ -150,6 +154,10 @@ fn concurrent_admin_rulings_merge_through_replicated_claims() -> Result<()> {
     let (_dir, left, owner, admin) = fixture();
     let (_other_dir, right) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    // Left keeps the seeded manifest, whose rule names rulings normal. Without
+    // that rule here, left's replicated ruling waits for right's owner to
+    // confirm it, and right acts on its own ruling alone.
+    crate::test_util::declare_predicates_normal(&right, &[super::rulings::RULING_PREDICATE])?;
     let creation = left.initialize_shared_vault(
         &owner,
         42,
@@ -434,6 +442,108 @@ fn ask_guest_does_not_count_as_existing_shared_membership() -> Result<()> {
     )?;
     assert_eq!(creation.grant_refs.len(), 1);
     assert_ne!(creation.grant_refs[0], id.to_hex());
+    Ok(())
+}
+
+/// `federation.admin_ruling` is normal in the shipped policy because its own
+/// ruling law decides it, and every generic claim door meets that law at the
+/// put seam. A ruling written without a live admin grant and its holder's
+/// human envelope is refused and stores nothing; the ruling door still lands.
+#[test]
+fn every_generic_door_meets_the_ruling_law() -> Result<()> {
+    let (_dir, vault, owner, member) = fixture();
+    vault.initialize_shared_vault(
+        &owner,
+        42,
+        None,
+        &[
+            InitialSharedMember {
+                member_ref: owner.actor(),
+                role: Some(FederationGrantRole::Admin),
+            },
+            InitialSharedMember {
+                member_ref: member.actor(),
+                role: Some(FederationGrantRole::Member),
+            },
+        ],
+        1,
+    )?;
+    let landed = vault.append_admin_ruling(&owner, 42, "setting", serde_json::json!("kept"), 2)?;
+    // Normal in the shipped policy: the ruling takes effect at once, with no
+    // confirm left for the owner to answer.
+    assert_eq!(
+        vault
+            .live_admin_ruling(42, "setting")?
+            .map(|ruling| ruling.id),
+        Some(landed.ruling.id.clone()),
+        "the ruling door's ruling waits for a confirm"
+    );
+    let landed_id = EntityId::from_hex(&landed.ruling.id)?;
+    let mut forged = vault.get_claim(&landed_id)?.expect("the ruling door lands");
+    forged.value = rmpv::Value::from("forged");
+    let anchor = super::rulings::ruling_anchor_id(42)?;
+    let at = TimeRange { start: 3, end: 3 };
+    let input = serde_json::json!({
+        "predicate": super::rulings::RULING_PREDICATE,
+        "subject_ref": anchor.to_hex(),
+        "value": "forged",
+        "confidence": 1.0,
+        "source": "user_stated",
+    });
+    let doors: [(&str, RefusingDoor<'_>); 4] = [
+        (
+            "put_claim",
+            Box::new(|id| vault.put_claim(&id, &forged, at, 3).is_err()),
+        ),
+        (
+            "core batch",
+            Box::new(|id| {
+                vault
+                    .batch()
+                    .put(
+                        &id,
+                        crate::registry::ENTITY_TYPE_CLAIM,
+                        at,
+                        3,
+                        &crate::claim::encode_claim_body(&forged).expect("ruling body"),
+                    )
+                    .commit()
+                    .is_err()
+            }),
+        ),
+        (
+            "member claim_upsert",
+            Box::new(|id| {
+                let mut input = input.clone();
+                input["id"] = serde_json::Value::from(id.to_hex());
+                let input = serde_json::from_value(input).expect("claim input");
+                vault
+                    .memory(member.actor(), crate::EdgeActorClass::Human)
+                    .claim_upsert(&input)
+                    .is_err()
+            }),
+        ),
+        (
+            "admin claim_upsert",
+            Box::new(|id| {
+                let mut input = input.clone();
+                input["id"] = serde_json::Value::from(id.to_hex());
+                let input = serde_json::from_value(input).expect("claim input");
+                vault
+                    .memory(owner.actor(), crate::EdgeActorClass::Human)
+                    .claim_upsert(&input)
+                    .is_err()
+            }),
+        ),
+    ];
+    for (door, write) in doors {
+        let id = EntityId::now();
+        assert!(write(id), "{door}: a ruling outside the ruling law landed");
+        assert!(
+            vault.get_raw(&id)?.is_none(),
+            "{door}: stored a refused ruling"
+        );
+    }
     Ok(())
 }
 

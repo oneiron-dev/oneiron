@@ -4,7 +4,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::claim::{
-    calendar_status_value, encode_event_body, read_booking_facts, supersede_exact_claim,
+    calendar_status_value, encode_event_body, read_booking_facts, read_booking_facts_to_cancel,
+    supersede_exact_claim,
 };
 use super::door::BookingLifecycleConsumerInput;
 use super::occurrence::{inclusive_occurrence, offers_slot};
@@ -124,7 +125,12 @@ pub(in crate::booking) fn commit_emergency_item(
             return Ok(item);
         }
         let event = plan.booking.calendar.event_ref;
-        let booking = read_booking_facts(vault, &*txn, &event)?;
+        // A Cancel only restricts, so it reads held heads as they stand.
+        let booking = if plan.request.action_policy == EmergencyActionPolicy::Cancel {
+            read_booking_facts_to_cancel(vault, &*txn, &event)?
+        } else {
+            read_booking_facts(vault, &*txn, &event)?
+        };
         if booking.status != BookingStatus::Confirmed
             || booking.slot != plan.booking.occurrence
             || booking.page_ref != plan.booking.page_ref

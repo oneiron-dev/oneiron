@@ -33,6 +33,7 @@ pub(crate) use erase::{
 };
 pub(crate) use mirror::ensure_conversation_mirror_actor;
 pub use mirror::{ReactionIngress, conversation_mirror_actor_id};
+pub(crate) use outbound::release_cleared_reaction_in_txn;
 pub use outbound::{
     REACTION_OUTBOUND_ATTEMPT_KIND, ReactionOutboundAttempt, connector_declares_reaction_target,
 };

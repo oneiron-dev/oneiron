@@ -6,7 +6,7 @@ use std::path::Path;
 use super::owner_routes::{call, owner_recipe, refused_recipes};
 use super::*;
 use oneiron::git_wire::{GitOid, GitRefName, GitWire};
-use oneiron::origin::publication::{OriginPublicationRequest, origin_publication_intent_claim};
+use oneiron::origin::publication::OriginPublicationRequest;
 use oneiron::origin::secret_manifest::SECRET_MANIFEST_PATH;
 
 const MANIFEST: &str = r#"schema_version = 1
@@ -84,14 +84,8 @@ fn publish_manifest(vault: &oneiron::Vault, repo: &str) -> String {
         occurred: oneiron::TimeRange { start: 1, end: 1 },
         learned_at: 1,
     };
-    let intent = origin_publication_intent_claim(&request).expect("intent");
     vault
-        .put_claim(
-            &request.provenance_claim_id,
-            &intent,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_origin_publication_intent(&request)
         .expect("provenance");
     vault.publish_origin_ref(&wire, request).expect("published");
     commit

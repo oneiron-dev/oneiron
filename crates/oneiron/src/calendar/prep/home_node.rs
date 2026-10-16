@@ -156,7 +156,11 @@ fn live_event_facts(vault: &Vault, event_ref: &EntityId) -> Result<LiveEventFact
         else {
             continue;
         };
-        if body.predicate == PREDICATE_CALENDAR_ATTENDEE {
+        // An attendee awaiting its owner's critical confirm adds nothing to a
+        // card; a cancellation is a restriction and lands held or not.
+        if body.predicate == PREDICATE_CALENDAR_ATTENDEE
+            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &claim_id)?
+        {
             // Decoded, not just counted: a row that is not a well-formed
             // attendee line is a claim-body error, never a silent head count.
             decode_attendee_value(&body.value)?;

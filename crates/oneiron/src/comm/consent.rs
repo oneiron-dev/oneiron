@@ -551,6 +551,7 @@ pub(crate) fn send_override_for_send_in_txn(
         // owner's ruling.
         if body.predicate != PREDICATE_COMM_SEND_OVERRIDE
             || body.source == Some(crate::claim::ClaimSource::Imported)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &claim_id)?
         {
             continue;
         }

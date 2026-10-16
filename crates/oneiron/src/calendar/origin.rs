@@ -567,8 +567,16 @@ pub(crate) fn invalidate_dependents(
 }
 pub(in crate::calendar) fn invalidated(vault: &Vault, event: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    Ok(!replay_origin_bound(&vault.store, &txn, event)?
-        || INVALIDATED_EVENT.contains(&vault.store, &txn, &event)?)
+    invalidated_in_txn(vault, &txn, event)
+}
+
+pub(in crate::calendar) fn invalidated_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: EntityId,
+) -> Result<bool> {
+    Ok(!replay_origin_bound(&vault.store, txn, event)?
+        || INVALIDATED_EVENT.contains(&vault.store, txn, &event)?)
 }
 
 #[cfg(test)]

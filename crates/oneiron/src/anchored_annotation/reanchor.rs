@@ -351,10 +351,10 @@ impl Vault {
     ) -> Result<ReanchorSummary> {
         self.require_anchor_version(artifact_id, to_version)?;
         let mut summary = ReanchorSummary::default();
-        let threads = self.annotation_threads_for_artifact(artifact_id)?;
-        let pptx = {
+        let (threads, pptx) = {
             let rtxn = self.store.env.read_txn()?;
-            super::pptx_reanchor::PptxReanchor::load(
+            let threads = self.effect_annotation_threads_for_artifact_in_txn(&rtxn, artifact_id)?;
+            let pptx = super::pptx_reanchor::PptxReanchor::load(
                 self,
                 &rtxn,
                 artifact_id,
@@ -362,7 +362,8 @@ impl Vault {
                 to_version,
                 &threads,
                 ops,
-            )?
+            )?;
+            (threads, pptx)
         };
         for thread in threads {
             if thread.is_drifted() || thread.anchor.version != from_version {
@@ -374,6 +375,12 @@ impl Vault {
             // rejected supersede leaves that thread's original head live.
             let new_head_id = self.with_write_txn_grouped(|wtxn| {
                 self.require_anchor_version_in_txn(&*wtxn, artifact_id, to_version)?;
+                if self
+                    .annotation_thread_in_txn(wtxn, artifact_id, &thread.thread_id, true)?
+                    .is_none_or(|current| current.head_claim_id != thread.head_claim_id)
+                {
+                    return Ok(None);
+                }
                 self.apply_reanchor_head_in_txn(
                     wtxn,
                     artifact_id,
@@ -383,7 +390,11 @@ impl Vault {
                     occurred,
                     learned_at,
                 )
+                .map(Some)
             })?;
+            let Some(new_head_id) = new_head_id else {
+                continue;
+            };
             push_reanchor_result(
                 &mut summary,
                 thread_from_head(*artifact_id, new_head_id, head),
@@ -414,7 +425,7 @@ impl Vault {
     ) -> Result<ReanchorSummary> {
         self.require_anchor_version_in_txn(&*wtxn, artifact_id, to_version)?;
         let mut summary = ReanchorSummary::default();
-        let threads = self.annotation_threads_for_artifact_in_txn(&*wtxn, artifact_id)?;
+        let threads = self.effect_annotation_threads_for_artifact_in_txn(&*wtxn, artifact_id)?;
         let pptx = super::pptx_reanchor::PptxReanchor::load(
             self,
             wtxn,

@@ -42,7 +42,7 @@ impl crate::Vault {
             .ok_or(Error::EntityNotFound)?;
         let inspection = inspect_pptx_with_limits(&bytes, &limits).map_err(|_| invalid_anchor())?;
         let mut threads: BTreeMap<_, _> = self
-            .annotation_threads_for_artifact_in_txn(txn, artifact)?
+            .effect_annotation_threads_for_artifact_in_txn(txn, artifact)?
             .into_iter()
             .map(|t| (t.thread_id, t))
             .collect();
@@ -119,10 +119,10 @@ impl crate::Vault {
                     )?;
                 }
                 PptxCommentAction::Resolve { resolved } => {
-                    let thread = threads
-                        .get(&patch.thread_id)
+                    let thread = self
+                        .annotation_thread_in_txn(txn, artifact, &patch.thread_id, !*resolved)?
                         .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
-                    if self.pptx_thread_author_in_txn(txn, artifact, patch.thread_id)?
+                    if self.pptx_thread_author_in_txn(txn, artifact, patch.thread_id, !*resolved)?
                         != Some(actor.entity_ref())
                     {
                         return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
@@ -196,6 +196,7 @@ impl crate::Vault {
         txn: &heed::RoTxn<'_>,
         artifact: &EntityId,
         thread: EntityId,
+        for_effects: bool,
     ) -> Result<Option<EntityId>> {
         let mut first: Option<(EntityId, EntityId)> = None;
         for id in self.claims_for_subject_in_txn(txn, artifact)? {
@@ -210,7 +211,17 @@ impl crate::Vault {
                 first = Some((id, comment.author));
             }
         }
-        Ok(first.map(|(_, author)| author))
+        let Some((id, author)) = first else {
+            return Ok(None);
+        };
+        // An opening comment awaiting its owner's critical confirm lends no
+        // authority yet, and the next reply's author never takes its place.
+        if for_effects
+            && !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(author))
     }
 }
 fn locator_for_target(target: &PptxCommentTarget, inspection: &PptxInspection) -> Result<Locator> {

@@ -111,6 +111,7 @@ fn resolve_world_authority_admitting(
     let rows = world_access_rows(store, rtxn, &selection.agent_ref, at, admit)?;
 
     let mut folded_allowed: Option<WorldAuthoritySet> = None;
+    let mut held_allowed: Option<WorldAuthoritySet> = None;
     let mut allowed_claim_ids = Vec::new();
     for row in &rows {
         if row.body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
@@ -119,16 +120,30 @@ fn resolve_world_authority_admitting(
             continue;
         }
         let granted = decode_world_access_claim_value(&row.body)?;
-        folded_allowed = Some(match folded_allowed {
+        let fold = if row.held {
+            &mut held_allowed
+        } else {
+            &mut folded_allowed
+        };
+        *fold = Some(match fold.take() {
             None => granted,
             Some(folded) => folded.intersect(&granted),
         });
         allowed_claim_ids.push(row.id);
     }
-    // No qualifying owner row is the EMPTY authority, never `All`.
-    let allowed_set = folded_allowed.unwrap_or_default();
+    // No qualifying owner row is the EMPTY authority, never `All`. A held
+    // grant only narrows a settled one; alone it grants nothing.
+    let allowed_set = match (folded_allowed, held_allowed) {
+        (Some(settled), Some(held)) => settled.intersect(&held),
+        (Some(settled), None) => settled,
+        (None, _) => {
+            allowed_claim_ids.clear();
+            WorldAuthoritySet::default()
+        }
+    };
 
     let mut newest_default: Option<(&WorldAccessRow, WorldAuthoritySet)> = None;
+    let mut newest_settled_default: Option<(&WorldAccessRow, WorldAuthoritySet)> = None;
     for row in &rows {
         if row.body.predicate != PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET {
             continue;
@@ -136,13 +151,22 @@ fn resolve_world_authority_admitting(
         // Closed rows were removed before this loop. Every remaining default
         // must decode, even when a newer active row wins precedence.
         let subset = decode_world_access_claim_value(&row.body)?;
-        if newest_default.as_ref().is_none_or(|(current, _)| {
-            default_row_precedence(row) > default_row_precedence(current)
-        }) {
+        if !row.held && newer_default(row, newest_settled_default.as_ref()) {
+            newest_settled_default = Some((row, subset.clone()));
+        }
+        if newer_default(row, newest_default.as_ref()) {
             newest_default = Some((row, subset));
         }
     }
+    // A held newest default only narrows the settled one, and with no settled
+    // default it leaves nothing to read.
     let (default_subset, default_claim_id) = match newest_default {
+        Some((row, held)) if row.held => (
+            newest_settled_default.map_or_else(WorldAuthoritySet::default, |(_, settled)| {
+                settled.intersect(&held)
+            }),
+            Some(row.id),
+        ),
         Some((row, subset)) => (subset, Some(row.id)),
         None => (WorldAuthoritySet::default(), None),
     };
@@ -293,6 +317,8 @@ struct WorldAccessRow {
     id: EntityId,
     body: ClaimBody,
     learned_at: u64,
+    /// Awaiting its owner's critical confirm: it may narrow, never widen.
+    held: bool,
 }
 
 /// Bitemporal precedence key for DEFAULT-SUBSET rows: valid-time first, then
@@ -300,6 +326,14 @@ struct WorldAccessRow {
 /// two rows can never tie and the winner does not depend on scan order.
 fn default_row_precedence(row: &WorldAccessRow) -> (u64, u64, EntityId) {
     (row.body.valid_from.unwrap_or(0), row.learned_at, row.id)
+}
+
+/// Whether `row` wins DEFAULT-SUBSET precedence over `current`.
+fn newer_default(
+    row: &WorldAccessRow,
+    current: Option<&(&WorldAccessRow, WorldAuthoritySet)>,
+) -> bool {
+    current.is_none_or(|(prior, _)| default_row_precedence(row) > default_row_precedence(prior))
 }
 
 /// The owner tier's extra bar on top of [`claim_surfaceable`]: a grant counts
@@ -372,10 +406,12 @@ fn world_access_rows(
             if !admit(&claim_id, &body)? {
                 continue;
             }
+            let held = !crate::gate::claim_critical_confirm_settled_in_txn(store, rtxn, &claim_id)?;
             rows.push(WorldAccessRow {
                 id: claim_id,
                 body,
                 learned_at: raw.learned_at,
+                held,
             });
         }
     }

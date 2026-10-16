@@ -2223,7 +2223,7 @@ fn engine_commit_export_stock_clone_fetch_and_hash_keyed_change_index() {
 #[test]
 fn origin_epoch_cutover_refuses_stale_hosts_and_mirror_writes() {
     use crate::git_wire::{GitOid, GitRefName, GitWire};
-    use crate::origin::publication::{OriginPublicationRequest, origin_publication_intent_claim};
+    use crate::origin::publication::OriginPublicationRequest;
     use crate::origin::residence::OriginResidence;
     let (_dir, vault) = open_test_vault();
     let repo = init_repo();
@@ -2260,14 +2260,7 @@ fn origin_epoch_cutover_refuses_stale_hosts_and_mirror_writes() {
         occurred: TimeRange { start: 1, end: 1 },
         learned_at: 1,
     };
-    vault
-        .put_claim(
-            &request.provenance_claim_id,
-            &origin_publication_intent_claim(&request).unwrap(),
-            request.occurred,
-            1,
-        )
-        .unwrap();
+    vault.put_origin_publication_intent(&request).unwrap();
     assert!(
         vault
             .publish_origin_ref_authorized(&git, request.clone(), &lease)

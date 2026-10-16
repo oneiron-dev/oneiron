@@ -143,6 +143,7 @@ pub(super) fn run(
             )
             || now.saturating_sub(header.learned_at) < rubric.minimum_age_secs
             || !owned_consolidation(&body, actor)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &txn, &id)?
         {
             continue;
         }

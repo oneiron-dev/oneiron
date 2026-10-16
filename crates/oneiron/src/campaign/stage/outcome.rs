@@ -206,7 +206,7 @@ fn live_event_outcome_claim(
     let rtxn = vault.store.env.read_txn()?;
     let mut carrying: Vec<EntityId> = Vec::new();
     for id in vault.claims_for_subject_in_txn(&rtxn, event_ref)? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(&rtxn, &id)? else {
             continue;
         };
         if body.predicate != PREDICATE_CALENDAR_EVENT_OUTCOME || !claim_surfaceable(&body) {

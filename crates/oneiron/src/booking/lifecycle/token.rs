@@ -4,7 +4,7 @@
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use super::claim::{booking_event_type_in, read_booking_facts};
+use super::claim::{booking_event_type_in, read_booking_facts_to_cancel};
 use super::storage::{HOLD, confirm_receipt_key, engine_failure, read_receipt, read_txn, refused};
 use super::types::{LifecycleTokenScope, SoftHoldRow};
 use super::{LifecycleTokenRow, TOKEN};
@@ -229,7 +229,9 @@ pub fn token_page_ref(
     let Some(row) = read_token_row(vault, &rtxn, token)? else {
         return Ok(None);
     };
-    Ok(read_booking_facts(vault, &rtxn, &row.event_ref)
+    // Binding a token to its page enables nothing: every writer re-reads with
+    // its own rule, and reschedule and confirm still refuse a held head.
+    Ok(read_booking_facts_to_cancel(vault, &rtxn, &row.event_ref)
         .ok()
         .map(|facts| facts.page_ref))
 }

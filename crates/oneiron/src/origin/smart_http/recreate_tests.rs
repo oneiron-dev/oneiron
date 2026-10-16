@@ -9,7 +9,7 @@ use super::tests::{
 use super::*;
 use crate::config::VaultConfig;
 use crate::git_wire::GitWireRepo;
-use crate::origin::publication::{OriginPublicationRecord, origin_publication_intent_claim};
+use crate::origin::publication::OriginPublicationRecord;
 
 const TOPIC: &str = "refs/heads/topic";
 
@@ -67,12 +67,7 @@ fn engine_request_needing(
         learned_at: landing_time().start,
     };
     vault
-        .put_claim(
-            &request.provenance_claim_id,
-            &origin_publication_intent_claim(&request).expect("intent claim"),
-            request.occurred,
-            request.learned_at,
-        )
+        .put_origin_publication_intent(&request)
         .expect("durable source");
     (handle, request)
 }
@@ -215,12 +210,7 @@ fn a_recreation_needing_less_than_its_owner_certified_lands() {
         learned_at: landing_time().start,
     };
     vault
-        .put_claim(
-            &request.provenance_claim_id,
-            &origin_publication_intent_claim(&request).expect("intent claim"),
-            request.occurred,
-            request.learned_at,
-        )
+        .put_origin_publication_intent(&request)
         .expect("durable source");
     let owner = vault
         .publish_origin_ref(&wire, request)

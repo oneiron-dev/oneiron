@@ -246,7 +246,7 @@ impl Vault {
                     "evidence id already exists",
                 ));
             }
-            self.put_claim_in_txn(wtxn, &id, body, TimeRange { start: at, end: at }, at)?;
+            self.put_reserved_claim_in_txn(wtxn, &id, body, TimeRange { start: at, end: at }, at)?;
             EVIDENCE.put(&self.store, wtxn, &id, &encoded)?;
             Ok(())
         })

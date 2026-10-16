@@ -173,6 +173,59 @@ fn applying_a_ruling_writes_only_reversible_records() {
     assert_eq!(open_conflict_count(&vault) - conflicts_before, 1);
 }
 
+/// A held row never enables and a held restriction always restricts: a
+/// selected delta awaiting its owner's critical confirm never supersedes the
+/// contested head, while a held competitor still opens the conflict.
+#[test]
+fn a_held_selection_never_supersedes_and_a_held_competitor_still_contests() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let subject = other_actor(&vault);
+    let state = ladder_id(0x9A);
+    let selected = ladder_id(0x9B);
+    let competing = ladder_id(0x9C);
+    for claim_ref in [state, selected, competing] {
+        put_envelope_claim(
+            &vault,
+            claim_ref,
+            subject,
+            actor,
+            EdgeActorClass::Agent,
+            agent_provenance(),
+        );
+    }
+    crate::test_util::hold_claim_for_critical_confirm(&vault, selected, 0x61);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, competing, 0x62);
+    let mut case = magistrate_case(state, selected, CaseCriticality::Normal);
+    case.candidate_delta_refs = vec![selected, competing];
+
+    let conflicts_before = open_conflict_count(&vault);
+    let verdict = decide_magistrate(&vault, &case).expect("verdict");
+    assert!(matches!(verdict, MagistrateVerdict::Rule { .. }));
+    apply_magistrate_verdict(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        &case,
+        &verdict,
+    )
+    .expect("ruling applies");
+
+    assert_eq!(
+        vault
+            .get_claim(&state)
+            .expect("state claim")
+            .expect("stored")
+            .lifecycle,
+        ClaimLifecycleStatus::Active,
+        "a held selection must not supersede the contested head"
+    );
+    assert_eq!(
+        open_conflict_count(&vault) - conflicts_before,
+        1,
+        "a held competitor still opens the conflict"
+    );
+}
+
 /// Advice is receipted but never applied: a critical case leaves the
 /// contested head exactly where it was.
 #[test]

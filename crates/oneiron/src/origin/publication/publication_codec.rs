@@ -401,8 +401,10 @@ pub(super) fn publication_claim_body(record: &OriginPublicationRecord) -> Result
 }
 
 /// Builds the exact source statement required by the generic publication door.
-/// The caller must durably write this claim before requesting publication.
-/// A generic active claim, or a statement about a different target, is not authority.
+/// [`Vault::put_origin_publication_intent`](crate::Vault::put_origin_publication_intent)
+/// writes it: `repo.*` is engine-owned, so the generic claim API refuses it. A
+/// generic active claim, or a statement about a different target, is not
+/// authority.
 pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> Result<ClaimBody> {
     let fields = vec![
         ("repo_id", Value::from(request.repo_id.to_hex())),

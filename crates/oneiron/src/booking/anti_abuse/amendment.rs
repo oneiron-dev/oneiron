@@ -347,7 +347,7 @@ fn validate_rule_scope_in_txn(
     claims.sort_unstable();
     for id in claims {
         let Some(body) = vault
-            .get_claim_in_txn(rtxn, &id)
+            .get_claim_for_effect_in_txn(rtxn, &id)
             .map_err(|error| engine_failure("booking event configuration read", error))?
         else {
             continue;
