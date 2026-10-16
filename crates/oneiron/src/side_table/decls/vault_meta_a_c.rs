@@ -11,8 +11,12 @@ side_tables! {
     /// Rotation cursor (last session id served) for the bounded session-end distill drain pump, so
     /// one budget-limited pass cannot starve later jobs. Key: ().
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
+    /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
+    AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson;
+    /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
+    AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson;
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
     AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson;
@@ -74,6 +78,9 @@ side_tables! {
     /// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map), keyed by its
     /// content hash. Key: hash32.
     AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
+    /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
+    /// it. Key: string (signer suite ":" key hex).
+    AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
     /// Born-from projection: one row per version whose made_by names a trigger (task or ask) or

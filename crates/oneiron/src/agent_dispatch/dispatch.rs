@@ -33,6 +33,8 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.depth_remaining,
         &spawn.project_ref,
         &spawn.scope,
+        &spawn.budget,
+        &spawn.spend,
     ))
     .map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -201,7 +203,22 @@ impl<'a> AgentDispatcher<'a> {
             return Ok(existing);
         }
         let requested_parent = input.parent_attempt;
-        let dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
+        let requested_ref = input.target.agent_definition_ref()?;
+        let spend = spawn.spend.clone();
+        let budget = spawn.budget;
+        let mut dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
+        // OF-532: state the launch (count, expected spend, cap) in this
+        // transaction and freeze it into the payload; the scope is reserved
+        // below, once the attempt id exists, in the same transaction.
+        let launch = self.admit_launch_in_txn(
+            wtxn,
+            requested_parent,
+            spend.as_ref(),
+            budget,
+            &input.target,
+            input.now,
+        )?;
+        dispatch_input.launch = Some(launch.statement.clone());
         let encoded = encode_agent_dispatch_input(&dispatch_input)?;
         let outcome = self.runner.enqueue_with_task_ref_in_txn(
             wtxn,
@@ -220,6 +237,15 @@ impl<'a> AgentDispatcher<'a> {
 
         Ok(match outcome {
             EnqueueDreamerAttemptOutcome::Enqueued(status) => {
+                // A carve the cap cannot cover refuses here, and the caller's
+                // transaction (with this enqueue) aborts. Nothing else does.
+                launch.reserve_in_txn(
+                    self,
+                    wtxn,
+                    status.attempt.id,
+                    Some(requested_ref),
+                    input.now,
+                )?;
                 if let Some(case) = &dispatch_input.healer_case {
                     crate::failure_ladder::oversight::proposed_in_txn(
                         self.vault,
@@ -365,6 +391,8 @@ impl<'a> AgentDispatcher<'a> {
             project_ref: Some(project_ref),
             spawn_intent: Some(spawn_intent),
             scope,
+            budget: spawn.budget,
+            launch: None,
         })
     }
 
