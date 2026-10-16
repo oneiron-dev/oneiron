@@ -1,5 +1,5 @@
 //! Generic Git/HTTP source fetch composes with the post-fit pack install door.
-use super::{PackFitPolicy, PackInstallDisposition, PackSource, invalid};
+use super::{PackFitPolicy, PackInstallDisposition, PackSource, PackTree, invalid};
 use crate::{
     Vault,
     entity_id::EntityId,
@@ -14,6 +14,11 @@ pub(super) const SOURCE_HUB_ALIAS: SideTable<(EntityId, [u8; 32]), (String, Stri
 
 pub trait PackSourceAdapter: SkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<PackSource>;
+    /// The source with the organ builds its tree carries (OF-575). An
+    /// adapter that fetches text only carries none.
+    fn fetch_pack_tree(&self, reference: &HubRef) -> Result<PackTree> {
+        self.fetch_pack_source(reference).map(PackTree::from)
+    }
 }
 impl Vault {
     /// The returned byte-pinned reference is ready for the post-fit install.
@@ -44,23 +49,25 @@ impl Vault {
         if matches!(reference.pin, HubPin::None) {
             return Err(invalid("pack fetch requires a pinned hub reference"));
         }
-        let source = adapter.fetch_pack_source(reference)?;
+        let tree = adapter.fetch_pack_tree(reference)?;
+        let source = &tree.source;
         if let HubPin::ContentHash(requested) = &reference.pin
-            && *requested != source.content_hash().to_hex()
+            && *requested != tree.tree_hash.to_hex()
         {
             return Err(invalid("requested pack content hash drift"));
         }
-        let advisories = self.pack_advisories(&source, true, learned_at)?;
+        let advisories = self.pack_advisories(source, true, learned_at)?;
         let pinned = reference.clone();
         self.with_write_txn_grouped(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &reference.hub_id)? != configuration {
                 return Err(invalid("hub changed during pack fetch"));
             }
-            let id = self.stage_pack_source_in_txn(txn, &source, occurred, learned_at)?;
+            let id = self.stage_pack_source_in_txn(txn, source, occurred, learned_at)?;
+            self.hold_organ_builds_in_txn(txn, &id, &tree, occurred, learned_at)?;
             // The hub path's scan evidence lands with the bytes, before any fit
             // ask reads it; skill-less packs get the same hash-bound ledger.
-            self.scan_and_ingest_pack_source_in_txn(txn, &source, occurred, learned_at)?;
+            self.scan_and_ingest_pack_source_in_txn(txn, source, occurred, learned_at)?;
             self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, learned_at)?;
             self.record_pack_fetch_in_txn(txn, &id, &pinned, publisher)?;
             Ok((id, pinned))

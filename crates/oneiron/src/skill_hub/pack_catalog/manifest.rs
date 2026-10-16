@@ -45,6 +45,9 @@ pub struct PackManifest {
     /// Hook folders under `hooks/`, by name (ARCH-0053 §7, PACK-HOOKS = A).
     /// Install binds each one; the runner is L11's.
     pub hooks: BTreeSet<String>,
+    /// Organ folders under `organs/`, by name (ARCH-0075 §9, OF-575). Each
+    /// pins its builds by platform; the builds travel as blob assets.
+    pub organs: BTreeSet<String>,
     /// Predicate migration maps this source ships for moves from earlier
     /// sources of the pack (ARCH-0059 §4, rung 1).
     pub migrations: Vec<PackMigration>,
@@ -173,6 +176,7 @@ impl PackManifest {
                     "grants",
                     "wakes",
                     "hooks",
+                    "organs",
                     "migrations",
                 ]
                 .iter()
@@ -211,6 +215,13 @@ impl PackManifest {
         for hook in &hooks {
             super::hooks::validate_hook_name(hook)?;
         }
+        let organs = list("organs")?;
+        if organs.len() > 32 {
+            return Err(invalid("too many organs"));
+        }
+        for organ in &organs {
+            super::organs::validate_organ_name(organ)?;
+        }
         let migrations = fields
             .get("migrations")
             .map(|line| super::migrations::parse(line, &name, &version, &predicates))
@@ -233,6 +244,7 @@ impl PackManifest {
             requested_grants: list("grants")?,
             wake_subscriptions: list("wakes")?,
             hooks,
+            organs,
             migrations,
         })
     }
@@ -266,6 +278,7 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "grants"
                 | "wakes"
                 | "hooks"
+                | "organs"
                 | "facets"
                 | "migrations"
         ) {
