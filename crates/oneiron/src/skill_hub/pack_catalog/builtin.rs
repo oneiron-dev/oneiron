@@ -34,9 +34,15 @@ fn engine_hub_id() -> Result<EntityId> {
     )
 }
 
+/// The publisher an engine-seeded receipt names.
+const ENGINE_PUBLISHER: &str = "oneiron-engine";
+
 pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
+    super::local::seed_local_pack(vault)?;
+    let version = env!("CARGO_PKG_VERSION").to_owned();
     let rtxn = vault.store.env.read_txn()?;
-    if SEEDED.contains(&vault.store, &rtxn, &())? {
+    // Built-in packs version with the engine: a new engine reseeds them.
+    if SEEDED.get(&vault.store, &rtxn, &())?.as_ref() == Some(&version) {
         return Ok(());
     }
     drop(rtxn);
@@ -48,7 +54,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     let mut txn = vault.store.env.write_txn()?;
-    if SEEDED.contains(&vault.store, &txn, &())? {
+    if SEEDED.get(&vault.store, &txn, &())?.as_ref() == Some(&version) {
         return Ok(());
     }
     for (name, markdown) in PACKS {
@@ -62,8 +68,13 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             ));
         }
         // A prior locally installed pack owns its name. Never overwrite an owner's
-        // installation (including one imported before this bootstrap pass).
-        if admission::PACK_INSTALL.contains(&vault.store, &txn, &source.manifest.name)? {
+        // installation (including one imported before this bootstrap pass); an
+        // engine-seeded receipt follows the engine's own source.
+        if let Some(installed) =
+            admission::PACK_INSTALL.get(&vault.store, &txn, &source.manifest.name)?
+            && (installed.publisher != ENGINE_PUBLISHER
+                || installed.content_hash == source.content_hash().to_hex())
+        {
             continue;
         }
         // A prior source or tombstone at the deterministic hash owns this ID.
@@ -95,7 +106,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             hub_ref: format!("built-in:{name}"),
             pin_type: "engine_version".to_owned(),
             pin_value: env!("CARGO_PKG_VERSION").to_owned(),
-            publisher: "oneiron-engine".to_owned(),
+            publisher: ENGINE_PUBLISHER.to_owned(),
             permissions: admission::pack_permissions(&source, None)?,
             qualification_report_hash: None,
             runtime: None,
@@ -107,14 +118,34 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         };
         admission::PACK_INSTALL.put(&vault.store, &mut txn, &receipt.pack_name, &receipt)?;
     }
-    SEEDED.put(
-        &vault.store,
-        &mut txn,
-        &(),
-        &env!("CARGO_PKG_VERSION").to_owned(),
-    )?;
+    SEEDED.put(&vault.store, &mut txn, &(), &version)?;
     txn.commit()?;
     Ok(())
+}
+
+impl Vault {
+    /// A built-in channel runs as its engine pack (OF-519): once the vault
+    /// is seeded, a send on it needs `oneiron.<channel>` installed Active
+    /// with the built-in adapter. An owner who removed or replaced the pack
+    /// has no such channel. A channel no built-in pack names passes.
+    pub fn require_builtin_channel_pack(&self, channel: &str) -> Result<()> {
+        let Some((name, _)) = PACKS.iter().find(|(name, _)| *name == channel) else {
+            return Ok(());
+        };
+        let txn = self.store.env.read_txn()?;
+        if !SEEDED.contains(&self.store, &txn, &())? {
+            return Ok(());
+        }
+        match admission::PACK_INSTALL.get(&self.store, &txn, &format!("oneiron.{name}"))? {
+            Some(receipt)
+                if receipt.status == PackInstallStatus::Active
+                    && receipt.adapter == Some(PackAdapter::Builtin((*name).to_owned())) =>
+            {
+                Ok(())
+            }
+            _ => Err(super::invalid("the channel's built-in pack is not installed")),
+        }
+    }
 }
 
 #[cfg(test)]
