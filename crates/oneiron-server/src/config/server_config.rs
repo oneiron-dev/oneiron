@@ -13,6 +13,7 @@ use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
+use super::skills::SkillsConfig;
 use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
@@ -278,6 +279,8 @@ pub struct ServeConfig {
     pub feedback: FeedbackConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
+    /// The `[skills]` section: the skill-edit gate's live pull budget.
+    pub skills: SkillsConfig,
     /// The `[keystore]` section: this install's this-device-only key slots.
     pub keystore: KeystoreConfig,
     /// The `[limits]` section: the bounds on work a remote caller can start.
@@ -353,6 +356,7 @@ impl Default for ServeConfig {
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
             recall: RecallConfig::default(),
+            skills: SkillsConfig::default(),
             keystore: KeystoreConfig::default(),
             limits: LimitsConfig::default(),
             import: super::ImportConfig::default(),
@@ -421,6 +425,7 @@ impl fmt::Debug for ServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("skills", &self.skills)
             .field("keystore", &self.keystore)
             .field("limits", &self.limits)
             .field("import", &self.import)

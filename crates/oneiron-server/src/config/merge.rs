@@ -22,6 +22,7 @@ use super::lookup::{
 use super::models::{ModelsConfig, ModelsFile};
 use super::oneironer::{OneironerConfig, OneironerConfigOverride, lookup_oneironer_override};
 use super::recall::{RecallConfigOverride, lookup_recall_override};
+use super::skills::{SkillsConfigOverride, lookup_skills_override};
 use super::serve_args::{ServeArgs, runtime_override_from_args};
 use super::server_config::ServeConfig;
 use super::trusted_proxy::parse_trusted_proxies;
@@ -120,6 +121,7 @@ impl EnvConfig {
         values.backup = lookup_backup_override(&mut lookup)?;
         values.feedback = lookup_feedback_override(&mut lookup)?;
         values.recall = lookup_recall_override(&mut lookup)?;
+        values.skills = lookup_skills_override(&mut lookup)?;
         values.keystore = lookup_keystore_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
@@ -285,6 +287,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.recall.validate()?;
+    config.skills.validate()?;
     config.keystore.validate()?;
     config.limits.validate()?;
     config.import.validate(&config.vault_path)?;
@@ -496,6 +499,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
@@ -550,6 +554,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             recall: value.recall,
+            skills: value.skills,
             keystore: value.keystore,
             limits: value.limits,
             import: value.import,
@@ -605,6 +610,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
@@ -674,6 +680,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("skills", &self.skills)
             .field("keystore", &self.keystore)
             .field("limits", &self.limits)
             .field("import", &self.import)
@@ -824,6 +831,9 @@ impl PartialServeConfig {
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
         }
+        if let Some(value) = self.skills {
+            resolved.skills.apply_override(value);
+        }
         if let Some(value) = self.limits {
             resolved.limits.apply_override(value);
         }
@@ -903,6 +913,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             recall: None,
+            skills: None,
             keystore: value
                 .keystore_dir
                 .clone()

@@ -238,6 +238,9 @@ fn rule_on_proposal(
         instructions: &inputs.proposal.desc,
         held_out_receipts: &inputs.held_out,
     };
+    // A project goal's measured axes come from its bound live report, read
+    // before any judgment so a missing one retries without spending them.
+    let measured = live::live_axes(vault, proposal, &inputs.basis, &inputs.goal_definition)?;
     // Freeze the response-only preference before ANY rubric-aware callback.
     // The same frozen sample is used to measure both instruction versions.
     let blind = scorer.blind_preference(current_case.skill_id, &inputs.held_out)?;
@@ -253,14 +256,7 @@ fn rule_on_proposal(
         &current_case,
         &proposed_case,
         &inputs.goal_definition,
-    )?;
-    // A project goal's primary axes are measured online, not replayed.
-    let goal_axes = live::overlay_live_axes(
-        vault,
-        proposal,
-        &inputs.basis,
-        &inputs.goal_definition,
-        goal_axes,
+        measured,
     )?;
     if scorer.judge_revision() != judge_revision {
         return Err(retry("candidate judge revision moved during scoring"));

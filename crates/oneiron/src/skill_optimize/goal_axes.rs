@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::learning::honesty::HONESTY_AXIS;
 use crate::skill::SkillRecord;
 
 use super::gate::{HeldOutReplayCase, held_out_receipts, skill_body_binding_digest};
@@ -44,8 +45,11 @@ pub struct ConfidenceInterval {
 /// One attributed live observation, including the person's time spent on it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OnlineAxisSample {
+    /// Whether the run met the pulled axis, never one signal for every axis.
     pub success: bool,
-    pub human_minutes: f64,
+    /// The person-time recorded on the run, in minutes. `None` when none is:
+    /// unknown time, never zero.
+    pub human_minutes: Option<f64>,
 }
 
 /// Host-backed live samples and confidence bounds. No invented default: the
@@ -63,6 +67,14 @@ pub trait GoalAxisBandit {
     ) -> Result<ConfidenceInterval>;
 }
 
+/// A host's live slices: the bandit for one open optimizer proposal, whose
+/// arms are the skill it revises and the proposal itself.
+pub trait GoalAxisBandits {
+    /// # Errors
+    /// A proposal that names no skill it revises, or storage errors.
+    fn for_proposal(&self, proposal: &EntityId) -> Result<Box<dyn GoalAxisBandit + '_>>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnlineAxisOutcome {
@@ -78,8 +90,11 @@ pub struct OnlineAxisMeasurement {
     pub after_pulls: u32,
     pub before: ConfidenceInterval,
     pub after: ConfidenceInterval,
-    /// Actual human time spent in the live slice, by arm.
+    /// Person-time recorded on the slice's runs, by arm, in minutes.
     pub human_minutes: AxisScores,
+    /// The pulls of each arm whose run carried recorded person-time.
+    pub before_timed: u32,
+    pub after_timed: u32,
     pub outcome: OnlineAxisOutcome,
 }
 
@@ -88,8 +103,10 @@ pub struct GoalAxisReport {
     pub held_out_receipts: Vec<String>,
     pub offline: Vec<(String, AxisScores)>,
     pub online: Vec<OnlineAxisMeasurement>,
-    /// Mandatory cost axis, in minutes; never included in an online success rate.
-    pub human_minutes: AxisScores,
+    /// Mandatory cost axis: the mean person-time of one timed live run, by
+    /// arm, in minutes. `None` while either arm has no timed run. Never
+    /// included in an online success rate.
+    pub human_minutes: Option<AxisScores>,
 }
 
 fn invalid(reason: &str) -> Error {
@@ -133,6 +150,7 @@ fn online_axis(axis: &str, cap: u32, bandit: &dyn GoalAxisBandit) -> Result<Onli
     let mut wins = [0u32; 2];
     let mut pulls = [0u32; 2];
     let mut human_minutes = [0.0f64; 2];
+    let mut timed = [0u32; 2];
     let mut intervals = [ConfidenceInterval {
         lower: 0.0,
         upper: 1.0,
@@ -152,7 +170,10 @@ fn online_axis(axis: &str, cap: u32, bandit: &dyn GoalAxisBandit) -> Result<Onli
         };
         let arm = arms[chosen];
         let sample = bandit.pull(axis, arm)?;
-        human_minutes[chosen] = minutes(human_minutes[chosen] + minutes(sample.human_minutes)?)?;
+        if let Some(spent) = sample.human_minutes {
+            human_minutes[chosen] = minutes(human_minutes[chosen] + minutes(spent)?)?;
+            timed[chosen] += 1;
+        }
         wins[chosen] += u32::from(sample.success);
         pulls[chosen] += 1;
         intervals[chosen] = interval(bandit, axis, arm, wins[chosen], pulls[chosen])?;
@@ -180,6 +201,8 @@ fn online_axis(axis: &str, cap: u32, bandit: &dyn GoalAxisBandit) -> Result<Onli
             before: human_minutes[0],
             after: human_minutes[1],
         },
+        before_timed: timed[0],
+        after_timed: timed[1],
         outcome,
     })
 }
@@ -199,14 +222,17 @@ fn replay_case<'a>(
 }
 
 /// Measure offline axes on the vault's held-out evidence FIRST. Only after
-/// every offline score and both human-minutes costs validate may a live pull
-/// occur. The bandit observes a caller-funded, capped slice per online axis;
-/// overlapping intervals are inconclusive, never promoted as an improvement.
+/// every offline score validates may a live pull occur. The bandit observes a
+/// caller-funded, capped slice per online axis; overlapping intervals are
+/// inconclusive, never promoted as an improvement. Human minutes are the live
+/// runs' recorded person-time, per arm: the reserved runs all ran the
+/// incumbent, so they cannot tell the two arms' costs apart.
 ///
 /// No axis from this report alone authorizes admission. The gate's door for
 /// it is `measure_skill_edit_goal_axes`, which binds the report to the bodies,
-/// evidence and plan, and lets a project goal's vector take its primary axes
-/// from it; floors, preferences and the responsible role still rule there.
+/// evidence and plan, and lets a project goal's vector take its measured axes
+/// from it; the honesty audit, floors, preferences and the responsible role
+/// still rule there.
 ///
 /// # Errors
 ///
@@ -221,16 +247,23 @@ pub fn measure_goal_axes(
     replay: &dyn super::HeldOutReplayNotes,
     bandit: &dyn GoalAxisBandit,
 ) -> Result<GoalAxisReport> {
-    if plan.offline.is_empty() || (!plan.online.is_empty() && plan.pulls_per_axis < 2) {
+    if (plan.offline.is_empty() && plan.online.is_empty())
+        || (!plan.online.is_empty() && plan.pulls_per_axis < 2)
+    {
         return Err(invalid(
-            "goal-axis plan needs offline axes and at least two pulls per online axis",
+            "goal-axis plan needs an axis and at least two pulls per online axis",
         ));
     }
+    // Honesty is the gate's own audit, never a named score.
     let mut names = HashSet::new();
     for name in plan.offline.iter().chain(&plan.online) {
-        if name.trim().is_empty() || name == "human_minutes" || !names.insert(name) {
+        if name.trim().is_empty()
+            || name == "human_minutes"
+            || name == HONESTY_AXIS
+            || !names.insert(name)
+        {
             return Err(invalid(
-                "goal-axis names must be unique, nonempty and not human_minutes",
+                "goal-axis names must be unique, nonempty and not human_minutes or honesty",
             ));
         }
     }
@@ -265,17 +298,21 @@ pub fn measure_goal_axes(
             },
         ));
     }
-    let mut human_minutes = AxisScores {
-        before: minutes(replay.human_minutes(&before_case)?)?,
-        after: minutes(replay.human_minutes(&after_case)?)?,
-    };
+    let mut spent = [0.0f64; 2];
+    let mut timed = [0u32; 2];
     let mut online = Vec::with_capacity(plan.online.len());
     for axis in &plan.online {
         let measured = online_axis(axis, plan.pulls_per_axis, bandit)?;
-        human_minutes.before = minutes(human_minutes.before + measured.human_minutes.before)?;
-        human_minutes.after = minutes(human_minutes.after + measured.human_minutes.after)?;
+        spent[0] = minutes(spent[0] + measured.human_minutes.before)?;
+        spent[1] = minutes(spent[1] + measured.human_minutes.after)?;
+        timed[0] += measured.before_timed;
+        timed[1] += measured.after_timed;
         online.push(measured);
     }
+    let human_minutes = (timed[0] > 0 && timed[1] > 0).then(|| AxisScores {
+        before: spent[0] / f64::from(timed[0]),
+        after: spent[1] / f64::from(timed[1]),
+    });
     Ok(GoalAxisReport {
         held_out_receipts: held_out,
         offline,

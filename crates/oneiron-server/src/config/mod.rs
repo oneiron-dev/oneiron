@@ -17,6 +17,7 @@ mod recall;
 pub mod remote_embedder;
 pub mod serve_args;
 pub mod server_config;
+mod skills;
 mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
@@ -42,6 +43,7 @@ pub use oneironer::{
 pub use recall::RecallConfig;
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
+pub use skills::SkillsConfig;
 pub use trusted_proxy::TrustedProxy;
 
 #[cfg(test)]

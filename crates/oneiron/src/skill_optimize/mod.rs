@@ -166,8 +166,8 @@ pub use self::eval_set::{
     WaitingDecision, sufficiency_card,
 };
 pub use self::goal_axes::{
-    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
-    OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
+    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,
+    GoalAxisReport, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
 };
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,
@@ -211,7 +211,7 @@ pub use gate::{
     settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest, skill_edit_cycle_cap,
     skill_edit_goal, skill_edit_goal_axis_report, skill_edit_score_call_purpose,
     skill_edit_verdict, skill_edit_verdicts, skill_edit_verdicts_for_proposal,
-    skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for,
+    skill_edit_needs_goal_axis_report, skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for,
     skill_tradeoff_preferences, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{

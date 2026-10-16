@@ -3,8 +3,8 @@
 //! ladder (`SyncServer::decision_ladder()`, one `.ladder()` per decision), the
 //! replays come from the reserved receipts' attempts, and each typed question
 //! lands in the judge's decision journal. Beside it: person-time on receipts,
-//! which `human_minutes` reads, and the goal-axis bandit's live arm
-//! attribution for one open proposal.
+//! which `human_minutes` and the live slice read, and the goal-axis bandit's
+//! live arm attribution for one open proposal, judged per axis.
 //!
 //! A plain inner scorer: a decorator (the archive coverage floor) wraps it
 //! before registration when one is built.
@@ -16,6 +16,7 @@ use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::{OutputRef, restore_output};
 use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
+use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
 use oneiron::learning::honesty::HONESTY_AXIS;
 use oneiron::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, TypedDecision,
@@ -25,10 +26,11 @@ use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
-    AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisSpec, HeldOutReplayCase,
+    AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     SkillOptimizeDecisions, SkillReplayPair, register_held_out_replay_scorer, skill_edit_goal,
 };
+use oneiron::skill::SkillRecord;
 use oneiron::skill_reliability::SkillReliabilityPosterior;
 use oneiron::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -93,6 +95,10 @@ const WORDING: &[(&str, &str)] = &[
     (
         "tradeoff",
         "Should this skill edit be approved, rejected, or asked up to the goal's responsible role?",
+    ),
+    (
+        "live_axis",
+        "Under these instructions, did this run meet the goal axis the state names, judged by that axis's measure and bound where it gives them?",
     ),
 ];
 
@@ -255,13 +261,15 @@ pub struct ServeReplayJudge {
     clock: Mutex<Option<&'static RetrievalDeadline>>,
     /// The wording, with a key for every axis a goal has named so far.
     wording: Mutex<&'static BTreeMap<String, String>>,
+    /// `[skills] live_pulls_per_axis`: the live slice's configured budget.
+    live_pulls_per_axis: Option<u32>,
 }
 
 impl ServeReplayJudge {
     /// The judge over `server`'s ladder, asking for the vault owner role. The
     /// skill judgments stop at the big model: the tradeoff job owns the one
     /// durable role ask.
-    pub fn new(server: &SyncServer) -> Result<Self> {
+    pub fn new(server: &SyncServer, live_pulls_per_axis: Option<u32>) -> Result<Self> {
         let host = server.decision_host();
         let principal = server
             .vault()
@@ -279,6 +287,7 @@ impl ServeReplayJudge {
             bands: host.bands(),
             clock: Mutex::new(None),
             wording: Mutex::new(Box::leak(Box::new(wording))),
+            live_pulls_per_axis,
         })
     }
 
@@ -473,9 +482,10 @@ impl HeldOutReplayNotes for ServeReplayJudge {
 static JUDGE: OnceLock<&'static ServeReplayJudge> = OnceLock::new();
 
 /// Builds the judge on `server` and registers it with the skill-edit gate,
-/// once per process.
-pub fn register(server: &SyncServer) {
-    let judge = match ServeReplayJudge::new(server) {
+/// once per process. `live_pulls_per_axis` is `[skills]
+/// live_pulls_per_axis`.
+pub fn register(server: &SyncServer, live_pulls_per_axis: Option<u32>) {
+    let judge = match ServeReplayJudge::new(server, live_pulls_per_axis) {
         Ok(judge) => &*Box::leak(Box::new(judge)),
         Err(error) => {
             tracing::warn!(%error, "the skill judge is not registered");
@@ -491,13 +501,28 @@ pub fn register(server: &SyncServer) {
 }
 
 impl ServeReplayJudge {
-    /// Words every axis of `skill`'s goal before a measurement asks about
-    /// them, so a standalone measure in a fresh process asks worded questions.
-    /// # Errors
-    /// An unreadable goal.
-    pub fn word_skill_axes(&self, skill: &EntityId) -> Result<()> {
-        self.word_axes(&skill_edit_goal(&self.vault, skill)?.axes);
-        Ok(())
+    /// The configured live pulls per online axis, across both arms; `None`
+    /// when `[skills] live_pulls_per_axis` is unset.
+    #[must_use]
+    pub fn live_pulls_per_axis(&self) -> Option<u32> {
+        self.live_pulls_per_axis
+    }
+
+    /// The Coach's live slice on this judge's arms and configured budget;
+    /// `None` while no budget is configured, so the Coach takes no slice.
+    #[must_use]
+    pub fn coach_live_slice(&self) -> Option<CoachLiveSlice<'_>> {
+        self.live_pulls_per_axis
+            .map(|pulls_per_axis| CoachLiveSlice {
+                bandits: self,
+                pulls_per_axis,
+            })
+    }
+}
+
+impl GoalAxisBandits for ServeReplayJudge {
+    fn for_proposal(&self, proposal: &EntityId) -> Result<Box<dyn GoalAxisBandit + '_>> {
+        Ok(Box::new(ServeAxisBandit::for_proposal(self, proposal)?))
     }
 }
 
@@ -506,21 +531,29 @@ pub fn registered() -> Option<&'static ServeReplayJudge> {
     JUDGE.get().copied()
 }
 
-/// One arm of a live slice: the skill version its runs loaded.
+/// One arm of a live slice: the skill version its runs loaded, and the
+/// record whose instructions an axis question reads beside each of them.
 struct Arm {
-    skill: EntityId,
     loaded: String,
+    skill: EntityId,
+    record: SkillRecord,
 }
 
 /// Live arm attribution for one open optimizer proposal: the incumbent arm
 /// is the skill version it revises, the candidate arm the proposal. A pull
-/// takes the newest run not taken yet that loaded the arm's version. It
-/// succeeded when it completed and no skill-defect judgment names it; its
-/// person-time is what is recorded on its receipt.
-pub struct ServeAxisBandit {
-    vault: Arc<Vault>,
+/// takes the newest run not taken yet that loaded the arm's version. It met
+/// the pulled axis when it completed, no skill-defect judgment names it, and
+/// the judge decides it met that axis by the axis's measure and bound. Its
+/// person-time is what is recorded on its receipt, unknown when none is.
+pub struct ServeAxisBandit<'a> {
+    judge: &'a ServeReplayJudge,
+    /// The active skill the proposal revises, whose goal it is measured on.
+    target: EntityId,
     incumbent: Arm,
     candidate: Arm,
+    /// Each axis of the goal, with its measure and bound where the joined
+    /// project's goal record states them.
+    criteria: BTreeMap<String, Value>,
     taken: Mutex<BTreeSet<String>>,
 }
 
@@ -534,8 +567,14 @@ fn provenance_str(provenance: &rmpv::Value, key: &str) -> Option<String> {
         .and_then(|(_, value)| value.as_str().map(str::to_owned))
 }
 
-impl ServeAxisBandit {
-    pub fn for_proposal(vault: Arc<Vault>, proposal: &EntityId) -> Result<Self> {
+impl<'a> ServeAxisBandit<'a> {
+    /// The slice of `proposal` on `judge`. It words the goal's axes first, so
+    /// a measure in a fresh process asks worded questions.
+    /// # Errors
+    /// A proposal that names no skill it revises, an unreadable goal or
+    /// project goal record, or storage errors.
+    pub fn for_proposal(judge: &'a ServeReplayJudge, proposal: &EntityId) -> Result<Self> {
+        let vault = &judge.vault;
         let staged = vault
             .get_skill_record(proposal)?
             .ok_or(Error::EntityNotFound)?;
@@ -545,36 +584,71 @@ impl ServeAxisBandit {
         let current = vault
             .get_skill_record(&target)?
             .ok_or(Error::EntityNotFound)?;
+        let goal = skill_edit_goal(vault, &target)?;
+        judge.word_axes(&goal.axes);
+        let mut criteria: BTreeMap<String, Value> = goal
+            .axes
+            .iter()
+            .map(|axis| (axis.name.clone(), json!({"name": axis.name})))
+            .collect();
+        if let Some((project, _)) = goal.project
+            && let Some(record) = vault.project_intake_goal(project)?
+        {
+            for axis in record
+                .primary_axes
+                .iter()
+                .chain(&record.floor_axes)
+                .chain(&record.cost_axes)
+            {
+                if let Some(criterion) = criteria.get_mut(&axis.name) {
+                    *criterion = json!({
+                        "name": axis.name, "measure": axis.measure, "bound": axis.bound,
+                    });
+                }
+            }
+        }
         Ok(Self {
+            judge,
+            target,
             incumbent: Arm {
-                skill: target,
                 loaded: format!("{}@{}", current.skill_id, current.version),
+                skill: target,
+                record: current,
             },
             candidate: Arm {
-                skill: *proposal,
                 loaded: format!("{}@{}", staged.skill_id, staged.version),
+                skill: *proposal,
+                record: staged,
             },
-            vault,
+            criteria,
             taken: Mutex::new(BTreeSet::new()),
         })
     }
 
-    /// The active skill the proposal revises, whose goal it is measured on.
-    #[must_use]
-    pub fn incumbent_skill(&self) -> EntityId {
-        self.incumbent.skill
+    /// Whether `receipt`'s run met `criterion` under `arm`'s instructions.
+    fn met(&self, arm: &Arm, receipt: &str, criterion: &Value) -> Result<bool> {
+        (self.judge as &dyn HeldOutReplayNotes).live_axis_met(
+            self.target,
+            &arm.record,
+            receipt,
+            criterion,
+        )
     }
 }
 
-impl GoalAxisBandit for ServeAxisBandit {
-    fn pull(&self, _axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
+impl GoalAxisBandit for ServeAxisBandit<'_> {
+    fn pull(&self, axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
+        let criterion = self
+            .criteria
+            .get(axis)
+            .ok_or_else(|| invalid(format!("the goal names no {axis} axis")))?;
         let arm = match arm {
             AxisArm::Incumbent => &self.incumbent,
             AxisArm::Candidate => &self.candidate,
         };
+        let vault = &self.judge.vault;
         let since = now().saturating_sub(LIVE_WINDOW_SECS);
-        let mut scan = self
-            .vault
+        let mut scan = vault
             .scan_receipts(
                 ReceiptQuery::new(LIVE_SCAN_LIMIT)
                     .with_kind(ReceiptKind::Outbound)
@@ -595,16 +669,18 @@ impl GoalAxisBandit for ServeAxisBandit {
             .ok_or_else(|| invalid(format!("no live run of {} is left to pull", arm.loaded)))?;
         taken.insert(run.receipt_id.clone());
         drop(taken);
-        let defect = attribution_judgments(&self.vault)?
-            .into_iter()
-            .any(|judgment| {
-                judgment.verdict == AttributionVerdict::SkillDefect
-                    && judgment.subject == arm.skill
-                    && judgment.evidence_receipts.contains(&run.receipt_id)
-            });
+        let defect = attribution_judgments(vault)?.into_iter().any(|judgment| {
+            judgment.verdict == AttributionVerdict::SkillDefect
+                && judgment.subject == arm.skill
+                && judgment.evidence_receipts.contains(&run.receipt_id)
+        });
+        // A run that failed or carries a defect misses every axis; only a
+        // clean run is put to the axis question.
+        let success =
+            run.outcome == COMPLETED && !defect && self.met(arm, &run.receipt_id, criterion)?;
         Ok(OnlineAxisSample {
-            success: run.outcome == COMPLETED && !defect,
-            human_minutes: person_minutes(&self.vault, &run.receipt_id)?.unwrap_or(0.0),
+            success,
+            human_minutes: person_minutes(vault, &run.receipt_id)?,
         })
     }
 
