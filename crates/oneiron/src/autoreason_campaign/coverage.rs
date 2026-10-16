@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::llm::decision::{DecisionQuestion, TypedDecision};
 use crate::skill_optimize::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayScorer,
     SkillOptimizeDecisions, SkillReplayPair,
@@ -207,16 +208,14 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
 
     fn record_decision(
         &self,
-        question: &crate::llm::decision::DecisionQuestion,
-        decision: &crate::llm::decision::TypedDecision,
+        question: &DecisionQuestion,
+        decision: &TypedDecision,
         state: &serde_json::Value,
     ) -> Result<()> {
         self.inner.record_decision(question, decision, state)
     }
 
-    fn coverage_floor(
-        &self,
-    ) -> Option<&crate::autoreason_campaign::coverage::CoverageFloorComparison> {
+    fn coverage_floor(&self) -> Option<&CoverageFloorComparison> {
         Some(self.comparison)
     }
 

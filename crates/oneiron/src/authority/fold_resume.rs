@@ -77,9 +77,6 @@ struct Settlement {
     /// The valid machine profiles heading their own roster chain under an
     /// owner-held key, with that key: the marks before custody is judged.
     marks: Vec<(AuthorityEntryHash, AuthorityKey)>,
-    /// The tier floors the surviving rows set. No chain row sets one, so
-    /// these are the floors a chain row is judged against in settlement.
-    floors: Vec<super::tier_floor::ConcurrentFloor>,
 }
 
 /// One settled once fold, and what its projection read of each row's state.
@@ -209,7 +206,6 @@ impl Once {
                 issues,
                 missing_parents,
                 marks,
-                floors: super::tier_floor::concurrent_tier_floors(states, by_hash, &|_| true),
             }),
             pairs: entry_ancestors.values().map(|past| past.len() as u64).sum(),
             counted_pairs: counted_ancestor_pairs,
@@ -509,9 +505,6 @@ impl FoldBase {
             pin: inputs.pin.as_ref(),
         };
         let mut states = BTreeMap::from([(once.head, once.head_state.clone())]);
-        // No stored row's claimed ancestry holds a chain row, so no floor
-        // follows one: an empty index answers as the whole log's would.
-        let no_ancestors = BTreeMap::new();
         for hash in &chain {
             let entry = new_rows[hash];
             let EntryFold::Ready(state) =
@@ -519,19 +512,7 @@ impl FoldBase {
             else {
                 return None;
             };
-            // Settlement's judgment of a concurrent floor (H411): a chain row
-            // under a floor it did not see softened loses there.
-            let below = super::tier_floor::below_a_concurrent_floor(
-                hash,
-                &state,
-                &by_hash,
-                &no_ancestors,
-                &settlement.floors,
-                &|floor| {
-                    super::tier_floor::participants_under_floor(entry, &states, floor, context)
-                },
-            );
-            if below.is_some() || state.federation_pacts != once.merged.federation_pacts {
+            if state.federation_pacts != once.merged.federation_pacts {
                 return None;
             }
             states.insert(*hash, state);
