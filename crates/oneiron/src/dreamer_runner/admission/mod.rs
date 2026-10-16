@@ -23,8 +23,9 @@ use super::codec::{
 };
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
-    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -128,6 +129,9 @@ impl DreamerRunnerStore<'_> {
             HOME_NODE.delete(&self.vault.store, &mut wtxn, &())?;
         }
         wtxn.commit()?;
+        // The deadline lane re-reads at once: a node that gained the home
+        // arms its queued Macro work, and one that lost it stops arming.
+        self.vault.store.notify_proactivity_changes();
         Ok(designation)
     }
 
@@ -175,6 +179,15 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, input)
+    }
+
+    /// Admits the next wake-policy recipe receipt. Vault-local, like
+    /// maintenance: any pass admits it, after cleanup and maintenance.
+    pub fn admit_next_recipe_wake(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_RECIPE_WAKE_ATTEMPT_KIND, input)
     }
 
     /// Atomically admits the next queued SKILL-OPT attempt (ONE-1448).
