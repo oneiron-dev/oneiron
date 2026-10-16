@@ -44,6 +44,35 @@ impl SkillsSection {
         }
     }
 
+    /// [`Self::project`] with the learning view on each found row: the
+    /// skill's reliability posterior mean as `rel=` and, for a caller with an
+    /// entity principal, its newest fit estimate for that actor as `fit=`,
+    /// both to two places. A value the vault does not hold adds no token.
+    pub fn project_with_learning(
+        hits: &[CapabilityHit],
+        session: &SessionReadSet,
+        vault: &crate::Vault,
+        actor: Option<EntityId>,
+    ) -> crate::Result<Self> {
+        let mut section = Self::project(hits, session);
+        let skills = hits
+            .iter()
+            .filter(|hit| hit.entity_type == ENTITY_TYPE_SKILL);
+        for (row, hit) in section.found.iter_mut().zip(skills) {
+            if let Some(posterior) =
+                crate::skill_reliability::skill_reliability_posterior(vault, &hit.id)?
+            {
+                row.push_str(&format!(" rel={:.2}", posterior.mean()));
+            }
+            if let Some(actor) = actor
+                && let Some(fit) = crate::actor_claims::skill_fit_for(vault, &actor, &hit.id)?
+            {
+                row.push_str(&format!(" fit={fit:.2}"));
+            }
+        }
+        Ok(section)
+    }
+
     pub fn board_section(&self) -> Result<BoardSection, BoardFrameError> {
         BoardSection::new(
             "SKILLS",

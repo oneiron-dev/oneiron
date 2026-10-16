@@ -28,7 +28,9 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+selfMemoryDiary(input: unknown): unknown
 cancel(input: unknown): unknown
+steer(input: unknown): unknown
 describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
@@ -42,6 +44,16 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultPacksPut(input: unknown): unknown
+vaultArtifactsView(requestJson: string): string
+vaultArtifactsExport(requestJson: string): string
+vaultArtifactsBornFrom(requestJson: string): string
+vaultArtifactsProposals(requestJson: string): string
+vaultArtifactsProposeDeck(requestJson: string): string
+vaultArtifactsProposeOutput(requestJson: string): string
+vaultArtifactsKeep(requestJson: string): string
+vaultArtifactsDiscard(requestJson: string): string
+vaultArtifactsUndo(requestJson: string): string
 can(requestJson: string): string
 peek(requestJson: string): string
 ask(input: unknown): unknown
@@ -56,6 +68,27 @@ vaultRoomsGet(input: unknown): unknown
 vaultRoomsTrunk(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
+vaultConversationsTurnContinue(input: unknown): unknown
+vaultConversationsTurnRetry(input: unknown): unknown
+vaultRoomsHost(input: unknown): unknown
+vaultRoomsSharing(input: unknown): unknown
+vaultCompanionsSharingGet(input: unknown): unknown
+vaultWorkspaceWorkCompanionGet(input: unknown): unknown
+vaultWorkspaceWorkCompanionSet(input: unknown): unknown
+selfSkillsSave(input: unknown): unknown
+selfSkillsFork(input: unknown): unknown
+selfSkillsCallables(input: unknown): unknown
+aiOptions(input: unknown): unknown
+aiImage(input: unknown): unknown
+aiSpeech(input: unknown): unknown
+aiTranscribe(input: unknown): unknown
+aiEmbed(input: unknown): unknown
+aiVideo(input: unknown): unknown
+aiVideoPoll(input: unknown): unknown
+aiVideoCancel(input: unknown): unknown
+connectorList(input: unknown): unknown
+connectorStatus(input: unknown): unknown
+connectorOutboundSchedule(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

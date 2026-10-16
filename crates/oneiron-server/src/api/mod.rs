@@ -58,7 +58,7 @@ use crate::runtime::RuntimeRole;
 #[cfg(test)]
 use axum::http::HeaderMap;
 
-mod ai;
+pub(crate) mod ai;
 mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
@@ -120,6 +120,7 @@ mod openapi_registry;
 // scan switch, whole-batch import consent and whole-run agent consent.
 mod owner_origin;
 mod owner_routes;
+mod packs;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
@@ -260,6 +261,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/context-board/turns/{turn}",
             get(context_board_turn_history),
         )
+        .route("/context-board/scratchpad", post(context_board_scratchpad))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
@@ -342,7 +344,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/personas", get(list_personas))
         .route("/personas/access-requests", get(list_access_requests))
         .route(
-            "/profiles/{persona_ref}",
+            "/profiles/{person_ref}",
             get(get_companion_profile).post(refresh_companion_profile),
         )
         // ONE-207: the depth-dialed reasoning read. A POST that WRITES

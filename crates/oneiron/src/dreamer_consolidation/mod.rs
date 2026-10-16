@@ -16,20 +16,13 @@
 //! landed offset pager and every `ledger_revision` hint are efficiency
 //! devices only, never authority (1184-D1).
 //!
-//! Temporal-key writer contract, stated here as the CONSUMER-side assumption
-//! of the cursor that depends on it: the watermark is a POSITION in the
-//! `learned_at` temporal index, so an entity that must be re-consolidated is
-//! re-stamped with a `learned_at` AHEAD of the cursor — never backdated behind
-//! it. A caller-supplied `learned_at` that lands behind the cursor is simply
-//! never selected again, exactly as it is under a seconds-only watermark: the
-//! temporal-index writers (the batch layer) own that contract; this module only
-//! reads the index and cannot enforce it. A TURN whose final words changed
-//! (a finalized stream continuation, a new MESSAGE sibling) is also re-dirtied
-//! through `redirty`: a carrier pending for each scope until a round of that
-//! scope consumes it, selected wherever the scope cursor stands and never
-//! moving it. Selection, settlement and the partition-round identity read
-//! its key in place of the row's `learned_at` while it keys the TURN. A
-//! continuation leaves the TURN row itself untouched.
+//! A newly landed or changed TURN behind any scope's compound cursor is
+//! admitted on the shared re-dirty carrier in its put transaction. Late
+//! writes therefore cannot disappear behind a session-close watermark.
+//! Selection is bounded by the store clock: future-dated rows wait without
+//! moving the cursor past ordinary turns. Finalized MESSAGE continuations
+//! also re-dirty their TURN without changing its row. Each scope consumes
+//! exactly the carrier identity its queued round selected.
 
 mod assembly;
 pub(crate) mod branch_scope;
@@ -47,7 +40,10 @@ pub(crate) use failure_rules::{
 mod gap;
 mod judge_context;
 mod neighbourhood;
+pub(crate) mod nightly_merge;
+mod note_review;
 mod open_conflict;
+mod parallel;
 mod partition;
 mod persistence;
 mod provenance;
@@ -58,6 +54,8 @@ mod roles;
 pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;
+mod settle;
+mod sieve_attempt;
 mod step_charge;
 mod support;
 mod turn_text;
@@ -85,6 +83,13 @@ pub use roles::{
     RoleBackend, RoleBackends, RoleCall,
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
+pub use settle::{
+    CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement,
+    OpenConflict, ParkedConflictPass, SettledConflict, settle_parked_conflicts,
+};
+pub(crate) use settle::{
+    apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
+};
 pub use support::*;
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
