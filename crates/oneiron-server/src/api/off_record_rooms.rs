@@ -2,16 +2,19 @@
 //! model, owner ruling 2026-10-10). The owner's own routes stay under
 //! `/v1/owner/off-record`; these serve the room's participants, each acting
 //! as the person or agent their slip names, under the scopes they already
-//! hold: `core:write` to start, speak, save or suggest, `core:read` to read
-//! the room or take an export.
+//! hold: `core:write` to start, speak or save, `core:propose` or
+//! `core:write` to suggest, `core:read` to read the room or take an export.
 //!
 //! - Anyone on the room's roster may start a stretch there.
-//! - Anyone may keep their own copy. A live owner of this vault saves the
-//!   whole talk into it, since it is theirs. This vault is nobody else's, so
-//!   everyone else takes an export file; nothing here writes another vault.
+//! - Anyone may keep their own copy. A holder of this vault's write grant,
+//!   person or agent, saves the whole talk into it, or saves from here on
+//!   (#d5-save-grant, owner ruling 2026-10-16). Everyone else takes an
+//!   export file; nothing here writes another vault.
 //! - Each save or export posts a notice to the room's timeline, naming who
-//!   and what, never the content. Agents may suggest a save, which posts a
-//!   notice and saves nothing; only a person starts, saves or exports.
+//!   and what, never the content. An agent without the grant is told to ask
+//!   a holder: its suggestion posts a notice, saves nothing and waits until
+//!   a holder confirms (their own save) or declines it. Only a person starts
+//!   or exports.
 //!
 //! A stretch is named by its room and the host's `session_ref`; each room
 //! names its own. The owner's routes address it as
@@ -53,7 +56,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/witness", post(witness))
         .route("/save", post(save))
         .route("/export", post(export))
+        .route("/save-from-here", post(save_from_here))
         .route("/suggest-save", post(suggest_save))
+        .route("/confirm-save", post(confirm_save))
+        .route("/decline-save", post(decline_save))
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,11 +106,19 @@ struct Room {
     closing: bool,
     /// The room's timeline of saves, exports and save suggestions.
     notices: Vec<Notice>,
+    /// Agents' save suggestions waiting for a holder's confirm or decline.
+    waiting_suggestions: Vec<Suggestion>,
 }
 
 #[derive(Debug, Serialize)]
 struct Notice {
     act: OffRecordNoticeAct,
+    by: String,
+    at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Suggestion {
     by: String,
     at: String,
 }
@@ -126,6 +140,14 @@ impl Room {
                     act: notice.act,
                     by: hex(notice.by),
                     at: rfc3339_secs(notice.at),
+                })
+                .collect(),
+            waiting_suggestions: record
+                .suggestions
+                .into_iter()
+                .map(|suggestion| Suggestion {
+                    by: hex(suggestion.by),
+                    at: rfc3339_secs(suggestion.at),
                 })
                 .collect(),
         }
@@ -284,26 +306,48 @@ async fn save(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Saved> {
-    auth.require(CoreScope::Write)?;
-    let actor = person(&auth)?;
+    let (actor, class) = holder(&auth)?;
     let request = json(payload)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
     let saved = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
-        // The save names its person in its receipts: on their own slip, or,
+        // The save names its holder in its receipts: on their own slip, or,
         // with no slip (a dev server), on the owner's proof for them.
         match credential {
             Some(slip) => session.save_talk_by(actor, &slip),
-            None => vault
-                .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
-                .and_then(|owner| session.save_talk_as(&owner)),
+            None => owner_proof(vault, actor).and_then(|owner| session.save_talk_as(&owner)),
         }
-        .map_err(|error| engine_error(error, &request.session_ref))
+        .map_err(|error| holder_error(error, class, &request.session_ref))
     })
     .await?;
     Ok(Json(Saved::from(saved)))
+}
+
+/// A holder puts the stretch on record: later turns are saved as they land,
+/// while the holder still holds the grant and stays in the room.
+async fn save_from_here(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Room> {
+    let (actor, class) = holder(&auth)?;
+    let request = json(payload)?;
+    let room = parse_entity_id_param(&request.room, "room")?;
+    let credential = auth.verified_slip().cloned();
+    let view = blocking(move || {
+        let vault = server.vault();
+        let session = bind(vault, room, &request.session_ref, actor)?;
+        match credential {
+            Some(slip) => session.flip_on_record_by(actor, &slip),
+            None => owner_proof(vault, actor).and_then(|owner| session.flip_on_record_as(&owner)),
+        }
+        .map_err(|error| holder_error(error, class, &request.session_ref))?;
+        self::view(&session, &request.session_ref, actor)
+    })
+    .await?;
+    Ok(Json(view))
 }
 
 async fn export(
@@ -344,7 +388,12 @@ async fn suggest_save(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Room> {
-    auth.require(CoreScope::Write)?;
+    // An agent without the write grant may still ask.
+    auth.require(if auth.has_scope(CoreScope::Write) {
+        CoreScope::Write
+    } else {
+        CoreScope::Propose
+    })?;
     let (actor, class) = participant(&auth)?;
     if class != EdgeActorClass::Agent {
         return Err(forbidden("only an agent suggests a save; a person saves or exports").into());
@@ -356,6 +405,59 @@ async fn suggest_save(
         session
             .suggest_save_by(actor)
             .map_err(|error| engine_error(error, &request.session_ref))?;
+        self::view(&session, &request.session_ref, actor)
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+/// A holder confirms the waiting save suggestions: their own save of the
+/// whole talk. 409 when no suggestion waits.
+async fn confirm_save(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Saved> {
+    let (actor, class) = holder(&auth)?;
+    let request = json(payload)?;
+    let room = parse_entity_id_param(&request.room, "room")?;
+    let credential = auth.verified_slip().cloned();
+    let saved = blocking(move || {
+        let vault = server.vault();
+        let session = bind(vault, room, &request.session_ref, actor)?;
+        match credential {
+            Some(slip) => session.confirm_save_by(actor, &slip),
+            None => owner_proof(vault, actor).and_then(|owner| session.confirm_save_as(&owner)),
+        }
+        .map_err(|error| holder_error(error, class, &request.session_ref))?
+        .ok_or_else(nothing_waits)
+    })
+    .await?;
+    Ok(Json(Saved::from(saved)))
+}
+
+/// A holder declines the waiting save suggestions; nothing is saved. 409 when
+/// no suggestion waits.
+async fn decline_save(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Room> {
+    let (actor, class) = holder(&auth)?;
+    let request = json(payload)?;
+    let room = parse_entity_id_param(&request.room, "room")?;
+    let credential = auth.verified_slip().cloned();
+    let view = blocking(move || {
+        let vault = server.vault();
+        let session = bind(vault, room, &request.session_ref, actor)?;
+        let declined = match credential {
+            Some(slip) => session.decline_save_by(actor, &slip),
+            None => owner_proof(vault, actor).and_then(|owner| session.decline_save_as(&owner)),
+        }
+        .map_err(|error| holder_error(error, class, &request.session_ref))?;
+        if !declined {
+            return Err(nothing_waits());
+        }
         self::view(&session, &request.session_ref, actor)
     })
     .await?;
@@ -377,15 +479,65 @@ fn participant(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiError> 
     Ok((actor, class))
 }
 
-/// Starting, saving and exporting are a person's own acts; an agent only
-/// suggests.
+/// Starting and exporting are a person's own acts.
 fn person(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     match participant(auth)? {
         (actor, EdgeActorClass::Human) => Ok(actor),
         _ => Err(forbidden(
-            "only a person starts, saves or exports an off-record stretch",
+            "only a person starts or exports an off-record stretch",
         )),
     }
+}
+
+/// A participant who would save, on a credential that writes; the engine
+/// checks that it carries this vault's write grant. An agent whose
+/// credential cannot write asks a holder instead.
+fn holder(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiError> {
+    let (actor, class) = participant(auth)?;
+    if class == EdgeActorClass::Agent && !auth.has_scope(CoreScope::Write) {
+        return Err(ask_a_holder());
+    }
+    auth.require(CoreScope::Write)?;
+    Ok((actor, class))
+}
+
+/// The owner's proof for `actor`, for a server with no slips (a dev server).
+fn owner_proof(
+    vault: &Vault,
+    actor: EntityId,
+) -> oneiron::Result<oneiron::consent::AuthenticatedOwner> {
+    vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+}
+
+/// An agent's refusal to save is the typed "ask a holder" answer; anyone
+/// else's is the engine's.
+fn holder_error(error: oneiron::Error, class: EdgeActorClass, session_ref: &str) -> ApiError {
+    match error.kind() {
+        ErrorKind::OffRecordPromoteUnauthenticated | ErrorKind::ConsentOwnerNotAuthenticated
+            if class == EdgeActorClass::Agent =>
+        {
+            ask_a_holder()
+        }
+        _ => engine_error(error, session_ref),
+    }
+}
+
+/// An agent without this vault's write grant: it may ask a holder, who
+/// confirms or declines.
+fn ask_a_holder() -> ApiError {
+    ApiError::new(
+        "this agent does not hold this vault's write grant, so it cannot save the talk",
+        ApiErrorDetails::Forbidden {
+            required_scope: Some(CoreScope::Write.as_str().to_owned()),
+        },
+        [
+            "Ask a holder: POST /v1/core/off-record/suggest-save; anyone holding this vault's write grant confirms or declines it.",
+        ],
+    )
+}
+
+fn nothing_waits() -> ApiError {
+    ApiError::invalid_state(Some("no_suggestion"))
 }
 
 /// The stretch `session_ref` in `room`, when `actor` is in that room now. A

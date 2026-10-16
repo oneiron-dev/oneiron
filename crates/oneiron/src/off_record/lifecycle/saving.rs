@@ -28,8 +28,8 @@ impl OffRecordSession<'_> {
     /// Saves the talk so far for `initiator` in ONE transaction that runs
     /// `authority` again and, in a room, checks that they are still there and
     /// see every moment of each turn it keeps. The room hears a `saved_talk`
-    /// notice whether or not there was anything new to keep, and each turn's
-    /// receipt names them.
+    /// notice whether or not there was anything new to keep, each turn's
+    /// receipt names them, and no save suggestion waits any more.
     pub(super) fn save_talk(
         &self,
         initiator: PromoteInitiator,
@@ -114,6 +114,8 @@ impl OffRecordSession<'_> {
                 self.promote_plans(&mut state, plans, &initiator, |wtxn| check(wtxn))?
             };
             post_notice(&mut state, OffRecordNoticeAct::SavedTalk, by, hearing);
+            // The save answers every suggestion that waited for it.
+            state.record.suggestions.clear();
             self.entry.publish_state(&state);
             saved
         };
