@@ -100,6 +100,13 @@ pub const ENTITY_TYPE_RECEIPT_RECORD: u8 = 86;
 /// (DEC-0005 §7): a model substrate is not a device.
 pub const ENTITY_TYPE_MODEL: u8 = 90;
 
+/// A world key's erasable half (world privacy fix 7). Engine-authored
+/// maintenance kind: one immutable row per world key, carrying the 32-byte pad
+/// every wrap of that key is sealed against. It replicates with the base rows
+/// and is hard-deleted with its world; public puts are rejected with
+/// `MaintenanceKindNotWritable`.
+pub const ENTITY_TYPE_WORLD_KEY_PAD: u8 = 70;
+
 /// AUTHORITY_LOG entry (ONE-1324). Engine-authored maintenance kind for the
 /// fold-verified vault authority roster; public puts are rejected with
 /// `MaintenanceKindNotWritable`.
