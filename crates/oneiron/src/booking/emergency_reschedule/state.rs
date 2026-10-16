@@ -65,7 +65,7 @@ pub(super) fn persist_content_in(
             .apply(txn)
             .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
     }
-    vault
+    let version = vault
         .append_blob_artifact_version_in_txn(
             txn,
             &artifact,
@@ -79,7 +79,11 @@ pub(super) fn persist_content_in(
             now,
         )
         .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
-    Ok(format!("blob:{}", artifact.to_hex()))
+    if media_type == crate::calendar::CALENDAR_INVITE_MEDIA_TYPE {
+        Ok(format!("blob:{}@{}", artifact.to_hex(), version.version))
+    } else {
+        Ok(format!("blob:{}", artifact.to_hex()))
+    }
 }
 
 pub(super) fn invite_head_in(
@@ -255,10 +259,22 @@ pub(crate) fn verify_frozen_effect_in(
                     "frozen calendar content differs from its checkpoint",
                 ));
             }
-            verify_content_head_in(vault, txn, &payload.ics_blob_ref)?;
-            let head = invite_head_in(vault, txn, expected)?
-                .ok_or_else(|| refused("calendar effect has no admitted passport"))?;
-            if head.last_sequence != payload.sequence {
+            let bytes = crate::calendar::invite::read_calendar_invite_ics_in_txn(vault, txn, payload)
+                .map_err(storage_failure)?;
+            if payload.blob_version_ref().map_err(storage_failure)?.0 != blob_id(&bytes)? {
+                return Err(refused("calendar effect content differs from its pinned version"));
+            }
+            // Before first publication the checkpoint still has the previous
+            // invite head. Pending publication advances it atomically; retries
+            // then see exactly the frozen revision, never a newer one.
+            let head = invite_head_in(vault, txn, expected)?;
+            let sequence = head.as_ref().map(|head| head.last_sequence);
+            let prior = if lane == "pick" {
+                item.plan.payload.as_ref().map(|payload| payload.sequence)
+            } else {
+                item.plan.invite_before.as_ref().map(|head| head.last_sequence)
+            };
+            if sequence != Some(payload.sequence) && sequence != prior {
                 return Err(refused("calendar effect has a superseded invite sequence"));
             }
         }
