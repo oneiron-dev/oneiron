@@ -249,10 +249,19 @@ pub(crate) fn stamp_put(
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
 /// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
-/// settles them. A later content put recomputes the default and keeps that
-/// settled position.
+/// settles them. An ASSET body never proposes a sensitivity either: a raise
+/// (a secret-bearing ASSET marked Restricted, OF-560) leaves its stamp at a
+/// band at least as sensitive as the default. A later content put recomputes
+/// the default and keeps that settled position.
 fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
     match kind {
+        crate::registry::ENTITY_TYPE_ASSET => {
+            proposed.sensitivity.is_narrowing_of(prior.sensitivity)
+                && Scope {
+                    sensitivity: proposed.sensitivity,
+                    ..prior.clone()
+                } == *proposed
+        }
         crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
             Scope {
                 audience: proposed.audience.clone(),
