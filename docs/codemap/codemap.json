@@ -4437,6 +4437,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/blob_artifact/holders.rs",
+     "purpose": "Which records hold one record's bytes, read for a delete's impact preview",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/blob_artifact/lifecycle.rs",
      "purpose": "Blob artifact delete path: version-chain, head, and asset-ref cleanup",
      "surface": {
@@ -4450,7 +4460,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 4
      }
@@ -4476,7 +4486,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -13855,6 +13865,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HeldBytes",
+      "LfsChunkImpact"
+     ],
+     "path": "src/deletion/delete/impact.rs",
+     "purpose": "Shared-bytes impact for the delete preview: whether the record is the last holder of its bytes or one of…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 8,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/deletion/delete/markers.rs",
      "purpose": "pt:/ac: marker and gate-decision commit helpers plus the cleanup-archive door",
@@ -13869,7 +13894,7 @@
      "path": "src/deletion/delete/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -13896,7 +13921,7 @@
      "purpose": "Snapshot-bound impact preview for the one-action, confirmed delete door",
      "surface": {
       "crate-vis": 3,
-      "fn": 3,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -24145,6 +24170,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EntityEraseOutcome",
+      "EraseOptions",
+      "EraseReason",
+      "SameBytesHold",
+      "SameBytesOutcome"
+     ],
+     "path": "src/memory/entity_erase.rs",
+     "purpose": "Owner erase that can also take every record in this vault holding the same bytes",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -24324,7 +24368,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 2,
-      "re-export": 28
+      "re-export": 29
      }
     },
     {
@@ -24747,6 +24791,14 @@
      "surface": {
       "crate-vis": 26
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/same_bytes_erase.rs",
+     "purpose": "Done-means for the opt-in same-bytes erase and the delete preview's shared-bytes impact (owner ruling…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -26038,13 +26090,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/lfs/lifecycle.rs",
      "purpose": "Last-reference byte reclamation and permanent object deletion markers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 4
      }
     },
@@ -32817,7 +32869,7 @@
      "path": "src/share/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -41411,7 +41463,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41754,7 +41806,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42118,7 +42170,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 117,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42701,8 +42753,8 @@
    },
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2572,
-   "test_files": 865
+   "source_files": 2575,
+   "test_files": 866
   },
   "oneiron-android": {
    "files": [
