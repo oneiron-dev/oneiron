@@ -5,6 +5,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron_contracts::limit_ask::machine_memory_bytes;
+
 use super::held::SpillFloor;
 use crate::error::{Error, Result};
 
@@ -105,22 +107,3 @@ impl Default for ScanBounds {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn machine_memory_bytes() -> Option<u64> {
-    // SAFETY: `sysconf` reads a system constant: it takes no pointer and has
-    // no precondition, and a negative answer is read as unknown below.
-    let (pages, page_bytes) = unsafe {
-        (
-            libc::sysconf(libc::_SC_PHYS_PAGES),
-            libc::sysconf(libc::_SC_PAGESIZE),
-        )
-    };
-    u64::try_from(pages)
-        .ok()?
-        .checked_mul(u64::try_from(page_bytes).ok()?)
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn machine_memory_bytes() -> Option<u64> {
-    None
-}

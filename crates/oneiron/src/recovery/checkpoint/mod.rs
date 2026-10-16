@@ -3,6 +3,13 @@
 //! Images encode raw database keys/values from ONE LMDB read transaction. They
 //! never copy free pages, locks, index pages, telemetry or process leases. This
 //! is distinct from the logical export's entity/claim transformation format.
+//!
+//! A result body kept as a file beside `data.mdb` (OF-597) is not in any row:
+//! the image lists every one its rows name, and the snapshot streams each
+//! into a `bodies/` directory beside the image, shared by the images there and
+//! named by digest, before the image is written. A restore streams them back,
+//! checking each digest, before the rows naming them land. Their line indexes
+//! are rebuilt, never restored.
 mod authority_plane;
 mod decisions;
 mod rebuild;
@@ -40,6 +47,11 @@ struct CheckpointImage {
     version: u16,
     created_at: u64,
     databases: BTreeMap<String, CanonicalRows>,
+    /// Each result body file the rows name: its BLAKE3 and length.
+    bodies: Vec<([u8; 32], u64)>,
+    /// Where the image was read from, for the bodies beside it.
+    #[serde(skip)]
+    source: PathBuf,
 }
 
 impl CheckpointImage {
@@ -171,6 +183,13 @@ pub struct RestoreReport {
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
 }
+/// The directory beside the image at `path` its result bodies are in.
+fn checkpoint_bodies_path(path: &Path) -> PathBuf {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .join("bodies")
+}
 /// Reads and structurally checks one image; returns it with its checkpoint id.
 fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
     let mut file = std::fs::File::open(path)?;
@@ -185,8 +204,10 @@ fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
     if digest.as_bytes() != &header[9..] {
         return Err(codec_error());
     }
-    let image: CheckpointImage = rmp_serde::from_slice(&bytes).map_err(|_| codec_error())?;
-    if image.version != 1
+    let mut image: CheckpointImage =
+        rmp_serde::from_slice(&bytes).map_err(|_| codec_error())?;
+    image.source = path.to_path_buf();
+    if image.version != 2
         || image.databases.len() != DB_MANIFEST.len()
         || DB_MANIFEST
             .iter()
@@ -299,6 +320,7 @@ impl Vault {
             }
         }
         let mut databases = BTreeMap::new();
+        let mut bodies = Vec::new();
         for entry in DB_MANIFEST {
             let db = self
                 .store
@@ -329,6 +351,11 @@ impl Vault {
                 if excluded_row {
                     continue;
                 }
+                if entry.name == "vault_meta"
+                    && let Some(body) = crate::code_run::code_run_body_file_of_row(key, value)
+                {
+                    bodies.push(body);
+                }
                 let value = if entry.name == "job_records" {
                     rebuild::unlease_attempt(key, value)?
                 } else {
@@ -339,10 +366,27 @@ impl Vault {
             databases.insert(entry.name.into(), rows);
         }
         drop(txn);
+        // Body files are immutable once named, so the ones the snapshot's rows
+        // name read the same after its transaction. Each is whole beside the
+        // image before the image exists.
+        #[cfg(unix)]
+        if !bodies.is_empty() {
+            let source = self.store.body_dir()?;
+            let target = crate::store::BodyDir::at_path(&checkpoint_bodies_path(path), true)?
+                .ok_or(Error::InvariantViolation("checkpoint body directory missing"))?;
+            for (digest, len) in &bodies {
+                let mut file = source
+                    .open_body(digest, *len)?
+                    .ok_or(Error::CorruptedIndex("code-run result body file missing"))?;
+                target.import(digest, *len, &mut file)?;
+            }
+        }
         let image = CheckpointImage {
-            version: 1,
+            version: 2,
             created_at,
             databases,
+            bodies,
+            source: PathBuf::new(),
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         let digest = blake3::hash(&bytes);
@@ -640,6 +684,20 @@ impl Vault {
         #[cfg(test)]
         fail_at(RestoreStep::FirstOpen)?;
         made.holds(&vault.store)?;
+        // The bodies land, each checked against its digest, before any row
+        // naming them does.
+        #[cfg(unix)]
+        if !image.bodies.is_empty() {
+            let source = crate::store::BodyDir::at_path(&checkpoint_bodies_path(&image.source), false)?
+                .ok_or(Error::CorruptedIndex("checkpoint result bodies missing"))?;
+            let target = vault.store.body_dir()?;
+            for (digest, len) in &image.bodies {
+                let mut file = source
+                    .open_body(digest, *len)?
+                    .ok_or(Error::CorruptedIndex("checkpoint result body missing"))?;
+                target.import(digest, *len, &mut file)?;
+            }
+        }
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
