@@ -204,8 +204,7 @@ fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
     if digest.as_bytes() != &header[9..] {
         return Err(codec_error());
     }
-    let mut image: CheckpointImage =
-        rmp_serde::from_slice(&bytes).map_err(|_| codec_error())?;
+    let mut image: CheckpointImage = rmp_serde::from_slice(&bytes).map_err(|_| codec_error())?;
     image.source = path.to_path_buf();
     if image.version != 2
         || image.databases.len() != DB_MANIFEST.len()
@@ -373,7 +372,9 @@ impl Vault {
         if !bodies.is_empty() {
             let source = self.store.body_dir()?;
             let target = crate::store::BodyDir::at_path(&checkpoint_bodies_path(path), true)?
-                .ok_or(Error::InvariantViolation("checkpoint body directory missing"))?;
+                .ok_or(Error::InvariantViolation(
+                    "checkpoint body directory missing",
+                ))?;
             for (digest, len) in &bodies {
                 let mut file = source
                     .open_body(digest, *len)?
@@ -688,8 +689,9 @@ impl Vault {
         // naming them does.
         #[cfg(unix)]
         if !image.bodies.is_empty() {
-            let source = crate::store::BodyDir::at_path(&checkpoint_bodies_path(&image.source), false)?
-                .ok_or(Error::CorruptedIndex("checkpoint result bodies missing"))?;
+            let source =
+                crate::store::BodyDir::at_path(&checkpoint_bodies_path(&image.source), false)?
+                    .ok_or(Error::CorruptedIndex("checkpoint result bodies missing"))?;
             let target = vault.store.body_dir()?;
             for (digest, len) in &image.bodies {
                 let mut file = source

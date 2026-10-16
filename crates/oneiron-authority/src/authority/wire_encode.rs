@@ -111,22 +111,6 @@ pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool
             (Value::from(OP_KEY_KIND), Value::from(OP_KIND_REVOKE_DEVICE)),
             (Value::from("revoked_key"), key_value(revoked_key)),
         ]),
-        AuthorityOp::RetiredCeiling {
-            authority_key,
-            actor_class,
-            ceiling,
-        } => Value::Map(vec![
-            (
-                Value::from(OP_KEY_KIND),
-                Value::from(OP_KIND_RETIRED_CEILING),
-            ),
-            (Value::from("authority_key"), key_value(authority_key)),
-            (
-                Value::from("actor_class"),
-                Value::from(actor_class.as_str()),
-            ),
-            (Value::from("ceiling"), Value::from(*ceiling)),
-        ]),
         AuthorityOp::RotateKey {
             old_key,
             new_device,

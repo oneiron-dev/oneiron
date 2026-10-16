@@ -146,7 +146,12 @@ impl ReviewDecisions<'_> {
         let mut receipts = Vec::new();
         for input in inputs {
             let fields: &[Field] = if input.lens.hard_check {
-                &[Field::Verdict, Field::Severity, Field::HardCheck, Field::OutOfScope]
+                &[
+                    Field::Verdict,
+                    Field::Severity,
+                    Field::HardCheck,
+                    Field::OutOfScope,
+                ]
             } else {
                 &[Field::Verdict, Field::Severity, Field::OutOfScope]
             };
@@ -180,7 +185,9 @@ impl ReviewDecisions<'_> {
             None => vec![ReviewNote::default(); findings.len()],
         };
         if notes.len() != findings.len() {
-            return Err(invalid_critic_config("review notes must cover every finding"));
+            return Err(invalid_critic_config(
+                "review notes must cover every finding",
+            ));
         }
         let mut artifacts = Vec::with_capacity(inputs.len());
         for ((finding, note), (id, provenance)) in findings.into_iter().zip(notes).zip(meta) {

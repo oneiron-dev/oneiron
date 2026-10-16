@@ -171,6 +171,7 @@ pub mod dreamer_tournament;
 pub mod dreamer_wake;
 pub mod fanout_auto;
 pub mod inbox;
+pub mod learning;
 pub mod learning_setting;
 pub mod own_rate;
 pub mod posterior;

@@ -391,7 +391,10 @@ impl DecisionLadder<'_> {
         }
         for (index, question) in questions.iter().enumerate() {
             question.validate()?; // Provenance cannot reach any provider or queue.
-            if questions[..index].iter().any(|earlier| earlier.id == question.id) {
+            if questions[..index]
+                .iter()
+                .any(|earlier| earlier.id == question.id)
+            {
                 return Err(invalid("invalid decision pack"));
             }
         }
@@ -427,14 +430,21 @@ impl DecisionLadder<'_> {
         } else {
             // Past the questions-per-call row the pack goes as several requests in turn.
             let per_call = policy.questions_per_call();
-            for (chunk, readings) in questions.chunks(per_call).zip(readings.chunks_mut(per_call)) {
+            for (chunk, readings) in questions
+                .chunks(per_call)
+                .zip(readings.chunks_mut(per_call))
+            {
                 let pack = DecisionPack {
                     questions: chunk,
                     evidence,
                     state,
                     deadline,
                 };
-                first.extend(self.read(dial.first, &pack, person, readings)?.into_iter().map(Some));
+                first.extend(
+                    self.read(dial.first, &pack, person, readings)?
+                        .into_iter()
+                        .map(Some),
+                );
             }
         }
         questions
@@ -674,7 +684,11 @@ impl DecisionLadder<'_> {
         let pin = provider.pin();
         validate_pin(&pin, rung)?;
         let capability = provider.capability();
-        if !pack.questions.iter().all(|question| capability.takes(question)) {
+        if !pack
+            .questions
+            .iter()
+            .all(|question| capability.takes(question))
+        {
             return Err(invalid("decision provider cannot take the question"));
         }
         let count = pack.questions.len();
@@ -720,7 +734,12 @@ fn ask(
         (None, Some(call)) if pack.questions.len() == 1 => vec![provider.decide(&call)?],
         (None, _) => provider.decide_pack(pack)?,
         (Some(person), _) => {
-            let questions = pack.questions.iter().copied().chain([person]).collect::<Vec<_>>();
+            let questions = pack
+                .questions
+                .iter()
+                .copied()
+                .chain([person])
+                .collect::<Vec<_>>();
             let mut answers = provider.decide_pack(&DecisionPack {
                 questions: &questions,
                 ..*pack
