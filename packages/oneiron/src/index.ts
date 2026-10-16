@@ -127,6 +127,7 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  report(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.report(input) as unknown) }
   readonly self = {
     memory: {
       diary: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown),
@@ -221,6 +222,12 @@ export class Oneiron {
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
       host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
+    },
+    conversations: {
+      turn: {
+        continue: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnContinue(input) as unknown),
+        retry: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as unknown),
+      },
     },
     companions: {
       sharing: {

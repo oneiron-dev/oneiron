@@ -2,6 +2,7 @@
 'Generate agent SDK transports from agent-verbs.json; --check never writes.'
 import argparse
 import json
+import keyword
 import re
 import subprocess
 from pathlib import Path
@@ -340,7 +341,9 @@ def python_facade(row, stub=False, method_name=None):
     return signature + '\n        """' + binding['docs']['py'] + '"""\n        return json.loads(_translate(lambda: self._client.' + row['name'].replace('.', '_') + '(' + ', '.join(values) + ')))\n'
 
 def leaf(name):
-    return name.rsplit('.', 1)[-1]
+    'The Python method a row ends in; a keyword (`continue`) takes the trailing underscore PEP 8 gives it.'
+    part = name.rsplit('.', 1)[-1]
+    return part + '_' if keyword.iskeyword(part) else part
 
 def python_handle_verb(row, stub=False, name=None):
     'A facade verb on the generic door, as a method of its namespace.'

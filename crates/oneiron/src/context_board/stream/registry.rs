@@ -144,6 +144,31 @@ impl BoardStreamRegistry {
             .and_then(|state| state.carrier.epoch)
     }
 
+    /// Uses a credential connection's established keyframe epoch for its host
+    /// wake connection. A refresh drops the wake carrier's older deltas; no
+    /// synthetic keyframe or independent epoch is minted for the adapter.
+    #[must_use]
+    pub fn follow_carrier_epoch(
+        &mut self,
+        connection: &StreamConnectionId,
+        baseline: &StreamConnectionId,
+    ) -> bool {
+        let Some(epoch) = self.carrier_epoch(baseline) else {
+            return false;
+        };
+        let Some(state) = self.connections.get_mut(connection) else {
+            return false;
+        };
+        if state.carrier.epoch.is_some_and(|held| held > epoch) {
+            return false;
+        }
+        if state.carrier.epoch != Some(epoch) {
+            state.carrier = CarrierCoalesceBuffer::default();
+            state.carrier.epoch = Some(epoch);
+        }
+        true
+    }
+
     pub fn superseded_intermediate_deltas(&self, c: &StreamConnectionId) -> Option<usize> {
         Some(
             self.connections

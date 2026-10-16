@@ -54,6 +54,20 @@ const DESIGN_SPECS: SideTable<EntityId, DesignSpec, Named> =
 const CREATIONS: SideTable<EntityId, DeckCreationRecord, Named> =
     SideTable::new(&side_table::DECK_CREATION);
 
+/// Removes the deck rows keyed by an erased entity: a note's kept outline and
+/// design spec, an artifact's creation record and native-id history.
+/// Registered in `deletion/derived_rows.rs`.
+pub(crate) fn erase_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    OUTLINE_KEEPS.delete(store, txn, entity)?;
+    DESIGN_SPECS.delete(store, txn, entity)?;
+    CREATIONS.delete(store, txn, entity)?;
+    super::deck::erase_in_txn(store, txn, entity)
+}
+
 /// One blob artifact version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactVersionRef {

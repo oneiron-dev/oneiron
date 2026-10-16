@@ -14,9 +14,9 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
-    SecretScanSwitch, SecretsCommand, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmsCommand, ImportCommand, RecoverClockArgs,
+    RecoverWindowArgs, RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
+    SecretScanArgs, SecretScanSwitch, SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -237,9 +237,15 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .backup
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
+    // A backup opens with this install's keystore, as configured.
+    let keystore = config.keystore.open(&config.vault_path)?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
-        let source = oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
+        let mut source =
+            oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
+        if let Some(keystore) = keystore {
+            source = source.with_keystore(keystore);
+        }
         return emit(&backup::rehearse(
             backup,
             vault_config(&config),
@@ -251,6 +257,7 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         backup,
         &config.vault_path,
         vault_config(&config),
+        keystore,
     )?)
 }
 
@@ -701,6 +708,24 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
     Ok(())
+}
+
+/// The saved fork alarms a held root handoff left, and the owner's
+/// acknowledgement of one; `serve` answers the same at
+/// `/v1/owner/authority/handoff-alarms`.
+pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
+    let serve = match &command {
+        HandoffAlarmsCommand::List(args) => &args.serve,
+        HandoffAlarmsCommand::Acknowledge(args) => &args.serve,
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, "GET /v1/owner/authority/handoff-alarms")?;
+    match command {
+        HandoffAlarmsCommand::List(_) => emit(&vault.authority_handoff_alarms()?),
+        HandoffAlarmsCommand::Acknowledge(args) => {
+            emit(&vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?)
+        }
+    }
 }
 
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {

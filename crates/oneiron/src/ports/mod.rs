@@ -8,6 +8,8 @@ mod lmdb_retrieval;
 mod retrieval;
 pub(crate) use lmdb_retrieval::text_index;
 pub(crate) use retrieval::*;
+mod document_fields;
+pub(crate) use document_fields::{is_metadata_field, is_text_field, validate_metadata};
 mod document_rows;
 mod lmdb_document_rows;
 pub(crate) use document_rows::*;

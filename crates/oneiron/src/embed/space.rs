@@ -4,8 +4,10 @@
 //! Three input kinds — text, image, audio — each bind to a declared space. A space names its
 //! `model@revision@where`, its width, the inputs it accepts and the query towers it has; a
 //! binding is valid only when the space accepts that input, and a query enters a space only
-//! through one of its towers. Text binds to the vault's own vector index; image and audio bind
-//! to a declared media space, one shared space by default.
+//! through one of its towers. Text binds to the vault's own vector index by default; image and
+//! audio bind to a declared media space, one shared space by default. The one-space preset
+//! ([`Vault::bind_one_space_for_all`]) binds text to a declared space too, so text documents
+//! and text queries go through that space's model instead of the vault's index.
 //!
 //! Media vectors live per space: every row is keyed by its space and carries its input kind, so
 //! a search reads exactly one space and two spaces' vectors are never compared. Each space's
@@ -17,6 +19,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::config::VectorEvidenceFloors;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
@@ -73,7 +76,7 @@ impl InputKind {
 }
 
 /// A declared embedding space: its own pin, its own vector rows.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingSpace {
     /// `model@revision@where`: the whole document function this space's vectors come from.
     pub id: String,
@@ -82,11 +85,53 @@ pub struct EmbeddingSpace {
     pub accepts: BTreeSet<InputKind>,
     /// The query kinds the space's model can encode into this space.
     pub query_towers: BTreeSet<InputKind>,
+    /// RET-01's floors for this space's raw cosines (OF-370). A hit at or above `floor` is
+    /// evidence that keeps a context pack from abstaining. `None` judges the space by the
+    /// vault's own floors ([`Vault::vector_evidence`]); a pair a host set for one kind in this
+    /// space ([`Vault::set_vector_evidence_for`]) still takes its place for that kind.
+    #[serde(default, with = "evidence_floors")]
+    pub evidence: Option<VectorEvidenceFloors>,
+}
+
+/// [`VectorEvidenceFloors`] as a space row stores it.
+mod evidence_floors {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::config::VectorEvidenceFloors;
+
+    #[derive(Serialize, Deserialize)]
+    struct Row {
+        floor: f32,
+        strong: f32,
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        floors: &Option<VectorEvidenceFloors>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        floors
+            .map(|floors| Row {
+                floor: floors.floor,
+                strong: floors.strong,
+            })
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<VectorEvidenceFloors>, D::Error> {
+        Ok(
+            Option::<Row>::deserialize(deserializer)?.map(|row| VectorEvidenceFloors {
+                floor: row.floor,
+                strong: row.strong,
+            }),
+        )
+    }
 }
 
 impl EmbeddingSpace {
-    /// Refuses an empty or malformed id, a zero or oversized width, or a space that accepts
-    /// nothing.
+    /// Refuses an empty or malformed id, a zero or oversized width, a space that accepts
+    /// nothing, or floors [`VectorEvidenceFloors::validate`] refuses.
     pub fn validate(&self) -> Result<()> {
         validate_space_id(&self.id)?;
         if self.dimensions == 0 || self.dimensions > EMBEDDING_SPACE_MAX_DIMENSIONS {
@@ -98,6 +143,27 @@ impl EmbeddingSpace {
         if self.accepts.is_empty() {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {} accepts no input kind",
+                self.id
+            )));
+        }
+        if let Some(floors) = &self.evidence {
+            floors.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Refuses a `kind` slot binding this space cannot serve: it must accept that input, and
+    /// the text slot also needs a text query tower, since text queries enter where text binds.
+    fn admit_binding(&self, kind: InputKind) -> Result<()> {
+        if !self.accepts.contains(&kind) {
+            return Err(Error::InvalidConfig(format!(
+                "embedding space {} does not accept {kind:?} input",
+                self.id
+            )));
+        }
+        if kind == InputKind::Text && !self.query_towers.contains(&InputKind::Text) {
+            return Err(Error::InvalidConfig(format!(
+                "embedding space {} has no Text query tower, so text queries could not enter it",
                 self.id
             )));
         }
@@ -129,20 +195,23 @@ impl EmbeddingSpace {
     }
 }
 
-/// Which space each media kind slot binds to. Text always binds to the vault's own vector index
-/// (`VaultConfig::embedding_model`), which is not a row here.
+/// Which declared space each kind slot binds to. An unbound text slot is the vault's own vector
+/// index (`VaultConfig::embedding_model`), which is not a row here; a bound one is the one-space
+/// preset ([`Vault::bind_one_space_for_all`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KindSlotBindings {
+    pub text: Option<String>,
     pub image: Option<String>,
     pub audio: Option<String>,
 }
 
 impl KindSlotBindings {
-    /// The space a media kind binds to.
+    /// The declared space a kind binds to; `None` for an unbound slot, and for text on the
+    /// vault's own index.
     #[must_use]
     pub fn space_for(&self, kind: InputKind) -> Option<&str> {
         match kind {
-            InputKind::Text => None,
+            InputKind::Text => self.text.as_deref(),
             InputKind::Image => self.image.as_deref(),
             InputKind::Audio => self.audio.as_deref(),
         }
@@ -152,37 +221,62 @@ impl KindSlotBindings {
 /// Declared spaces. Key: space id string.
 const EMBEDDING_SPACE: SideTable<String, EmbeddingSpace, Named> =
     SideTable::new(&side_table::EMBEDDING_SPACE);
-/// Media kind slot → space id. Key: one input-kind byte.
+/// Kind slot → space id. Key: one input-kind byte.
 const EMBEDDING_SLOT: SideTable<[u8; 1], String, Named> =
     SideTable::new(&side_table::EMBEDDING_SLOT);
 /// One media vector per (space, entity). Key: space key16 + id16.
 const MEDIA_VECTOR: SideTable<([u8; 16], EntityId), MediaVectorRow, Raw> =
     SideTable::new(&side_table::EMBEDDING_MEDIA_VECTOR);
 
-/// A stored media vector: its input kind byte, then the v1 vector row.
+/// Width of a text row's text hash.
+const TEXT_HASH_LEN: usize = 32;
+
+/// A stored media vector: its input kind byte, for a text row the hash of the text it embeds,
+/// then the v1 vector row.
 struct MediaVectorRow {
     kind: InputKind,
+    /// A text row's text hash, so the backfill embeds a document again once its text moves.
+    text_hash: [u8; TEXT_HASH_LEN],
     row: Vec<u8>,
 }
 
 impl RawValue for MediaVectorRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut out = Vec::with_capacity(self.row.len() + 1);
+        let mut out = Vec::with_capacity(self.row.len() + 1 + TEXT_HASH_LEN);
         out.push(self.kind.byte());
+        if self.kind == InputKind::Text {
+            out.extend_from_slice(&self.text_hash);
+        }
         out.extend_from_slice(&self.row);
         Ok(out)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let (&kind, row) = bytes
+        let (&kind, rest) = bytes
             .split_first()
             .ok_or(Error::CorruptedIndex("media vector row"))?;
         let kind = InputKind::from_byte(kind).ok_or(Error::CorruptedIndex("media vector kind"))?;
+        let mut text_hash = [0_u8; TEXT_HASH_LEN];
+        let row = if kind == InputKind::Text {
+            let (hash, row) = rest
+                .split_first_chunk::<TEXT_HASH_LEN>()
+                .ok_or(Error::CorruptedIndex("media vector text hash"))?;
+            text_hash = *hash;
+            row
+        } else {
+            rest
+        };
         Ok(Self {
             kind,
+            text_hash,
             row: row.to_vec(),
         })
     }
+}
+
+/// The hash a text row keeps of the text it embeds.
+pub(crate) fn text_hash(text: &str) -> [u8; TEXT_HASH_LEN] {
+    *blake3::hash(text.as_bytes()).as_bytes()
 }
 
 fn validate_space_id(id: &str) -> Result<()> {
@@ -219,6 +313,7 @@ pub(crate) fn kind_slot_bindings_in_txn(
     txn: &RoTxn<'_>,
 ) -> Result<KindSlotBindings> {
     Ok(KindSlotBindings {
+        text: EMBEDDING_SLOT.get(store, txn, &[InputKind::Text.byte()])?,
         image: EMBEDDING_SLOT.get(store, txn, &[InputKind::Image.byte()])?,
         audio: EMBEDDING_SLOT.get(store, txn, &[InputKind::Audio.byte()])?,
     })
@@ -233,8 +328,26 @@ pub(crate) fn has_media_vector_in_txn(
     MEDIA_VECTOR.contains(store, txn, &(space.key(), *id))
 }
 
+/// The text hash `id`'s text row in `space` was embedded from; `None` when it has no text row
+/// there.
+pub(crate) fn media_text_hash_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    space: &EmbeddingSpace,
+    id: &EntityId,
+) -> Result<Option<[u8; TEXT_HASH_LEN]>> {
+    Ok(MEDIA_VECTOR
+        .get(store, txn, &(space.key(), *id))?
+        .filter(|row| row.kind == InputKind::Text)
+        .map(|row| row.text_hash))
+}
+
 /// Stages one media vector into `space`: its kind must be one the space accepts and bound to
-/// it, its width the space's own.
+/// it, its width the space's own. A text row carries the hash of the text it embeds.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a staged row names its space, the bindings it is checked against, its entity, kind, text hash and vector"
+)]
 pub(crate) fn put_media_vector_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -242,14 +355,25 @@ pub(crate) fn put_media_vector_in_txn(
     bindings: &KindSlotBindings,
     id: &EntityId,
     kind: InputKind,
+    text_hash: Option<[u8; TEXT_HASH_LEN]>,
     vector: &[f32],
 ) -> Result<()> {
-    if kind == InputKind::Text || bindings.space_for(kind) != Some(space.id.as_str()) {
+    if bindings.space_for(kind) != Some(space.id.as_str()) {
         return Err(Error::InvalidConfig(format!(
             "the {kind:?} slot is not bound to embedding space {}",
             space.id
         )));
     }
+    let text_hash = match (kind, text_hash) {
+        (InputKind::Text, Some(hash)) => hash,
+        (InputKind::Text, None) => {
+            return Err(Error::InvalidConfig(format!(
+                "a text vector in embedding space {} names the text it embeds",
+                space.id
+            )));
+        }
+        _ => [0_u8; TEXT_HASH_LEN],
+    };
     if !space.accepts.contains(&kind) {
         return Err(Error::InvalidConfig(format!(
             "embedding space {} does not accept {kind:?} input",
@@ -264,9 +388,34 @@ pub(crate) fn put_media_vector_in_txn(
     }
     let row = MediaVectorRow {
         kind,
+        text_hash,
         row: encode_vector_row_v1(vector)?,
     };
     MEDIA_VECTOR.put(store, txn, &(space.key(), *id), &row)
+}
+
+/// Removes `id`'s text rows from every declared space, as its text-index vector is dropped: a
+/// vector of words the record no longer holds stops matching at once, and the backfill embeds
+/// what is left. Its image and audio rows stay.
+pub(crate) fn delete_text_media_vectors_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let spaces: Vec<[u8; 16]> = EMBEDDING_SPACE
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(_, space)| space.key())
+        .collect();
+    for key in spaces {
+        if MEDIA_VECTOR
+            .get(store, txn, &(key, *id))?
+            .is_some_and(|row| row.kind == InputKind::Text)
+        {
+            MEDIA_VECTOR.delete(store, txn, &(key, *id))?;
+        }
+    }
+    Ok(())
 }
 
 /// Removes `id`'s media vectors from every declared space; the delete door calls it beside the
@@ -366,40 +515,62 @@ impl Vault {
             dimensions: self.config.dimensions,
             accepts: BTreeSet::from([InputKind::Text]),
             query_towers: BTreeSet::from([InputKind::Text]),
+            evidence: None,
         }
     }
 
-    /// The current media slot bindings.
+    /// The current kind slot bindings.
     pub fn kind_slot_bindings(&self) -> Result<KindSlotBindings> {
         let rtxn = self.store.env.read_txn()?;
         kind_slot_bindings_in_txn(&self.store, &rtxn)
     }
 
-    /// Binds a media kind slot to a declared space that accepts that input. Text is bound to
-    /// the vault's own index and refuses a rebind here.
+    /// Binds a kind slot to a declared space that accepts that input. Binding text moves text
+    /// documents and text queries off the vault's own index onto that space, so the space also
+    /// needs a text query tower ([`Self::bind_one_space_for_all`] binds every slot at once).
     pub fn bind_kind_slot(&self, kind: InputKind, space_id: &str) -> Result<()> {
-        if kind == InputKind::Text {
-            return Err(Error::InvalidConfig(
-                "the text slot binds to the vault's own vector index".into(),
-            ));
-        }
         let mut wtxn = self.store.env.write_txn()?;
         let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {space_id} is not declared"
             )));
         };
-        if !space.accepts.contains(&kind) {
-            return Err(Error::InvalidConfig(format!(
-                "embedding space {space_id} does not accept {kind:?} input"
-            )));
-        }
+        space.admit_binding(kind)?;
         EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
         wtxn.commit()?;
         Ok(())
     }
 
-    /// Clears a media kind slot's binding; its space keeps its rows.
+    /// The one-space preset (OF-370; ARCH-0019 `#default-bindings`): binds every kind slot
+    /// declared space `space_id` accepts to it, text included, in one write. Text documents then
+    /// embed into the space through its media embedder ([`Self::reconcile_media_embeddings`]),
+    /// and a server searches a text query there through the space's text tower, in place of the
+    /// vault's own index. A declaration only: no stored vector moves, and unbinding the text
+    /// slot ([`Self::unbind_kind_slot`]) returns text to the vault's index.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the space is undeclared, does not accept text, or has no
+    /// text query tower.
+    pub fn bind_one_space_for_all(&self, space_id: &str) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
+            return Err(Error::InvalidConfig(format!(
+                "embedding space {space_id} is not declared"
+            )));
+        };
+        space.admit_binding(InputKind::Text)?;
+        for kind in InputKind::ALL {
+            if space.accepts.contains(&kind) {
+                EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
+            }
+        }
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Clears a kind slot's binding; its space keeps its rows. An unbound text slot is the
+    /// vault's own index again.
     pub fn unbind_kind_slot(&self, kind: InputKind) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         EMBEDDING_SLOT.delete(&self.store, &mut wtxn, &[kind.byte()])?;
@@ -407,7 +578,8 @@ impl Vault {
         Ok(())
     }
 
-    /// Stores one host-computed media vector for `id` in `space_id`.
+    /// Stores one host-computed media vector for `id` in `space_id`. A text vector is of the
+    /// record's current text, as the text slot embeds it.
     pub fn put_media_vector(
         &self,
         space_id: &str,
@@ -427,8 +599,28 @@ impl Vault {
         if crate::ports::EntityStoreRead::port_entity_record(&self.store, &wtxn, id)?.is_none() {
             return Err(Error::EntityNotFound);
         }
+        let text_hash = match kind {
+            InputKind::Text => {
+                let Some(text) = super::media::text_document_in_txn(self, &wtxn, id)? else {
+                    return Err(Error::InvalidConfig(
+                        "the record holds no text the text slot embeds".into(),
+                    ));
+                };
+                Some(text_hash(&text))
+            }
+            InputKind::Image | InputKind::Audio => None,
+        };
         let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
-        put_media_vector_in_txn(&self.store, &mut wtxn, &space, &bindings, id, kind, vector)?;
+        put_media_vector_in_txn(
+            &self.store,
+            &mut wtxn,
+            &space,
+            &bindings,
+            id,
+            kind,
+            text_hash,
+            vector,
+        )?;
         wtxn.commit()?;
         Ok(())
     }

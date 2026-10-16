@@ -1,7 +1,12 @@
 //! Private iroh data plane. `Minimal` has no public lookup; relay is disabled
 //! unless the caller supplies an explicit private relay map.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use futures_util::stream::{self, StreamExt};
 use iroh::{
@@ -11,11 +16,12 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_future::boxed::BoxStream;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{Mutex, mpsc};
 
 use crate::{
-    AcceptPolicy, MachineId, MachineRoster, MeshConnection, MeshError, MeshFuture, MeshStream,
-    MeshTransport, transport_key::TransportKey,
+    AcceptPolicy, MachineId, MachineRoster, MeshConnection, MeshDuplex, MeshError, MeshFuture,
+    MeshStream, MeshTransport, transport_key::TransportKey,
 };
 
 const MAX_MESSAGE: usize = 1024 * 1024;
@@ -79,6 +85,21 @@ impl ProtocolHandler for GateHandler {
             .await
             .map_err(AcceptError::from_err)
     }
+}
+
+/// The private relays a configuration names, as the map [`IrohTransport::bind`]
+/// takes; no URL is no relay. A URL that does not parse is refused, never
+/// dropped.
+pub fn private_relay_map(urls: &[String]) -> Result<Option<RelayMap>, MeshError> {
+    if urls.is_empty() {
+        return Ok(None);
+    }
+    let urls = urls
+        .iter()
+        .map(|url| url.parse::<iroh::RelayUrl>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| MeshError::InvalidRoster)?;
+    Ok(Some(urls.into_iter().collect()))
 }
 
 /// Bound endpoint and ALPN router. The supplied secret is the pairing-derived
@@ -304,8 +325,75 @@ impl MeshConnection for IrohConnection {
             }) as Box<dyn MeshStream>)
         })
     }
+    fn endpoint_key(&self) -> [u8; 32] {
+        *self.inner.remote_id().as_bytes()
+    }
+    fn open_duplex(&self) -> MeshFuture<'_, Box<dyn MeshDuplex>> {
+        Box::pin(async move {
+            self.check()?;
+            let (send, recv) = self
+                .inner
+                .open_bi()
+                .await
+                .map_err(|e| MeshError::Io(e.to_string()))?;
+            self.check()?;
+            Ok(Box::new(IrohDuplex {
+                send,
+                recv,
+                _connection: self.inner.clone(),
+            }) as Box<dyn MeshDuplex>)
+        })
+    }
+    fn accept_duplex(&self) -> MeshFuture<'_, Box<dyn MeshDuplex>> {
+        Box::pin(async move {
+            self.check()?;
+            let (send, recv) = self
+                .inner
+                .accept_bi()
+                .await
+                .map_err(|e| MeshError::Io(e.to_string()))?;
+            self.check()?;
+            Ok(Box::new(IrohDuplex {
+                send,
+                recv,
+                _connection: self.inner.clone(),
+            }) as Box<dyn MeshDuplex>)
+        })
+    }
     fn close(&self) {
         self.inner.close(0u32.into(), b"closed");
+    }
+}
+
+/// One bidirectional QUIC stream as a byte pipe. It keeps a handle to its
+/// connection: the last handle dropped closes the connection.
+struct IrohDuplex {
+    send: iroh::endpoint::SendStream,
+    recv: iroh::endpoint::RecvStream,
+    _connection: Connection,
+}
+impl AsyncRead for IrohDuplex {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        AsyncRead::poll_read(Pin::new(&mut self.get_mut().recv), cx, buf)
+    }
+}
+impl AsyncWrite for IrohDuplex {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        AsyncWrite::poll_write(Pin::new(&mut self.get_mut().send), cx, buf)
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        AsyncWrite::poll_flush(Pin::new(&mut self.get_mut().send), cx)
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        AsyncWrite::poll_shutdown(Pin::new(&mut self.get_mut().send), cx)
     }
 }
 #[derive(Debug)]
