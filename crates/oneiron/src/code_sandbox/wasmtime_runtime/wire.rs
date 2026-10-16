@@ -333,7 +333,9 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             if verb == AgentVerb::Describe
                 && let Some(fold) = args.input.get("fold").filter(|fold| !fold.is_null())
             {
-                let fold = fold.as_str().ok_or_else(|| failure("invalid fold handle"))?;
+                let fold = fold
+                    .as_str()
+                    .ok_or_else(|| failure("invalid fold handle"))?;
                 return Ok(SelfCall::Fold(crate::compaction::SelfFoldCall::Describe {
                     fold: crate::compaction::parse_fold_handle(fold)?,
                 }));

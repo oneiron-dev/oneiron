@@ -652,8 +652,8 @@ impl CodeRunReplayRecord {
 /// The served rows of the verb answers among `calls`, as
 /// [`CodeRunReplayRecord::agent_verb_rows`] reads them; `None` when any answer
 /// has no row set or does not decode.
-pub(crate) fn agent_verb_rows_of<'a>(
-    calls: impl IntoIterator<Item = &'a CodeRunBridgeCall>,
+pub(crate) fn agent_verb_rows_of(
+    calls: impl IntoIterator<Item = &CodeRunBridgeCall>,
 ) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
     let verb_calls = calls

@@ -199,7 +199,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// The run's result a reference names, and the live name bound to it.
     /// Only this run's results resolve: a handle names nothing else.
-    fn resolve_result(&self, reference: &JsResultRef) -> Option<(CodeRunRawOutput, Option<String>)> {
+    fn resolve_result(
+        &self,
+        reference: &JsResultRef,
+    ) -> Option<(CodeRunRawOutput, Option<String>)> {
         let live = self.live_bindings();
         let mut held = self.results.iter().chain(&self.captured);
         match reference {

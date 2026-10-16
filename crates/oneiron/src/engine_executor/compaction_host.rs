@@ -111,11 +111,9 @@ impl EngineNativeExecutor<'_> {
         // which `self.folds()` shows.
         if !seat.is_live()
             && (asked.is_some() || !marks.is_empty())
-            && let Err(error) = self
-                .storage
-                .update_code_run_folds(run_id, |ledger| {
-                    ledger.refuse_pending("compaction is off for this run")
-                })
+            && let Err(error) = self.storage.update_code_run_folds(run_id, |ledger| {
+                ledger.refuse_pending("compaction is off for this run")
+            })
         {
             self.compaction = Some(seat);
             return Err(error.into());
@@ -506,7 +504,10 @@ impl EngineNativeExecutor<'_> {
     /// This run's swapped epochs with their summaries' prose, and its fold
     /// ledger, where the run's rows are: base, or its room's overlay over
     /// base.
-    pub(super) fn compaction_epochs(&self, run_id: crate::EntityId) -> EngineExecutorResult<RunFrames> {
+    pub(super) fn compaction_epochs(
+        &self,
+        run_id: crate::EntityId,
+    ) -> EngineExecutorResult<RunFrames> {
         Ok(RunFrames {
             epochs: self.storage.code_run_compaction_epochs(run_id)?,
             folds: self.storage.code_run_folds(run_id)?,
@@ -534,7 +535,12 @@ impl EngineNativeExecutor<'_> {
         };
         let mut messages = Vec::new();
         if !frames.hides(record.run_id, seq) {
-            for append in frames.folds.unfolds.iter().filter(|append| append.at == seq) {
+            for append in frames
+                .folds
+                .unfolds
+                .iter()
+                .filter(|append| append.at == seq)
+            {
                 let Some(fold) = frames.folds.fold(append.fold) else {
                     continue;
                 };

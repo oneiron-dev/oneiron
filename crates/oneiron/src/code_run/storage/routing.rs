@@ -286,13 +286,16 @@ impl SessionBinding<'_> {
         &self,
         output: &CodeRunRawOutput,
     ) -> Result<(ArtifactTaintState, Option<String>)> {
-        if let Some(reason) =
-            self.answered(|| self.session.side_table_get(&RAW_OUTPUT_SECRETS, &output.handle))?
-        {
+        if let Some(reason) = self.answered(|| {
+            self.session
+                .side_table_get(&RAW_OUTPUT_SECRETS, &output.handle)
+        })? {
             return Ok((ArtifactTaintState::TaintedLive, Some(reason)));
         }
-        let refs =
-            self.answered(|| self.session.side_table_get(&RAW_OUTPUT_TAINTS, &output.handle))?;
+        let refs = self.answered(|| {
+            self.session
+                .side_table_get(&RAW_OUTPUT_TAINTS, &output.handle)
+        })?;
         Ok(match refs {
             Some(refs) if !refs.is_empty() => (ArtifactTaintState::TaintedLive, None),
             _ => (ArtifactTaintState::Clean, None),
