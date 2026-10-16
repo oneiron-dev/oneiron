@@ -371,7 +371,8 @@ impl ModelSession {
             })
             .collect::<Vec<_>>()
             .join("");
-        if text.trim().is_empty() {
+        // A capped call may stop before any text; it is still a measured row.
+        if text.trim().is_empty() && !capped {
             return Err(refusal("model returned no text"));
         }
         Ok((text, cost, capped))

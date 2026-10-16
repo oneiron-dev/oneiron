@@ -73,7 +73,9 @@ pub(super) fn paired_rows(
                 .collect();
             for arm in answerers {
                 // Chat is a cheaper reader, so it has no same-reader baseline here.
-                if arm.arm == ArmKind::BackboneSolo || model_params_hash(&arm.model)? != reader {
+                if matches!(arm.arm, ArmKind::BackboneSolo | ArmKind::Chat)
+                    || model_params_hash(&arm.model)? != reader
+                {
                     continue;
                 }
                 let mut families: BTreeMap<&str, Vec<(&ModelRow, &ModelRow)>> = BTreeMap::new();
