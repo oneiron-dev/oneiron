@@ -129,6 +129,10 @@ pub enum AuthorityOp {
     /// One machine's wraps of one world key, signed by that machine's install
     /// key. A side-branch entry of the key's world, like its settings edits.
     WorldKeyWraps(WorldKeyWrapsRecord),
+    /// An Owner handover in a shared vault: an Owner leaving names a
+    /// successor or signs their own removal, signed by an owner roster key
+    /// like any Owner action (ARCH-0043, OF-163).
+    OwnerHandover(OwnerHandover),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -433,6 +437,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerRoot(record) => record.validate(),
         AuthorityOp::WorldPrivacy(edit) => edit.settings.validate(),
         AuthorityOp::WorldKeyWraps(record) => record.validate(),
+        AuthorityOp::OwnerHandover(handover) => handover.validate(),
     }
 }
 

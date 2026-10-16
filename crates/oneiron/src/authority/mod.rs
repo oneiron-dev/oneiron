@@ -113,7 +113,7 @@ pub use oneiron_authority::authority::{
     GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
     MACHINE_SEEN_WORLD_EDITS_MAX, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
     MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, MachineEncryptionKey, MachineOwnership, MachineProfile,
-    MachineRole, ModelOrder, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerHandover, OwnerHandoverCause, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
     ROLE_RECOVERY, ReadLocation, RecoveryRootId, SealedCopies, SlipClaims, SlipMintAction,
     WORLD_MODEL_ROUTE_MAX_BYTES, WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy,
     WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
