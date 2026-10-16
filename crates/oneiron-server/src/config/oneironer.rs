@@ -1,18 +1,20 @@
 //! The `[oneironer]` section: the tagger slot's provider, mode, endpoint
-//! identity and label table.
+//! identity, native runtime and label table.
 //!
 //! Opt-in like `[embedder]`: a server whose configuration never names the
 //! section tags nothing and commits no tagging marker. Naming it selects a
 //! provider, defaulting to the in-process local one (ARCH-0036: extraction
-//! defaults to the device), which this build does not have yet.
+//! defaults to the device). Local models load a hash-bound artifact bundle.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::Args;
 use serde::Deserialize;
 
+use super::EmbedderDevice;
 use super::lookup::lookup_parse;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
@@ -26,7 +28,7 @@ const MAX_LABEL_BYTES: usize = 64;
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum OneironerProvider {
-    /// In-process on this machine. Not built yet: refused at startup.
+    /// In-process on this machine, using the configured native runtime.
     #[default]
     Local,
     /// A tagger server on this machine speaking the slot's contract
@@ -64,6 +66,52 @@ impl FromStr for OneironerProvider {
 impl fmt::Display for OneironerProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// Native inference runtime. Endpoint providers keep their own runtime.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OneironerRuntime {
+    #[default]
+    Candle,
+}
+
+impl OneironerRuntime {
+    pub const fn as_str(self) -> &'static str {
+        "candle"
+    }
+}
+
+impl FromStr for OneironerRuntime {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "candle" => Ok(Self::Candle),
+            _ => Err("oneironer runtime must be candle".to_owned()),
+        }
+    }
+}
+
+/// Architecture selection is checked against the bundle's config.json.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OneironerBackbone {
+    #[default]
+    Auto,
+    Gte,
+    Bert,
+}
+
+impl FromStr for OneironerBackbone {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "auto" => Ok(Self::Auto),
+            "gte" => Ok(Self::Gte),
+            "bert" => Ok(Self::Bert),
+            _ => Err("oneironer backbone must be auto, gte or bert".to_owned()),
+        }
     }
 }
 
@@ -106,6 +154,18 @@ impl FromStr for OneironerMode {
 pub struct OneironerConfig {
     pub provider: OneironerProvider,
     pub mode: OneironerMode,
+    /// Directory containing the native model's oneironer.json artifact manifest.
+    pub model_dir: Option<PathBuf>,
+    pub runtime: OneironerRuntime,
+    pub backbone: OneironerBackbone,
+    /// The local tagger's engine device. `auto`, the default, serves the
+    /// fastest engine this machine runs that clears the bundle's parity bar,
+    /// or the built-in CPU engine when the bundle ships no reference; a named
+    /// device is the user's pick and must run here (`oneironer::engines`).
+    pub device: EmbedderDevice,
+    /// Native window ceiling, including context and special tokens. A current
+    /// turn beyond it fails rather than silently saving a truncated tag set.
+    pub max_input_tokens: usize,
     /// Base URL of the tagger server; the slot appends `/v1/model` and
     /// `/v1/extract`. Loopback only in this build.
     pub url: Option<String>,
@@ -152,6 +212,11 @@ impl Default for OneironerConfig {
         Self {
             provider: OneironerProvider::default(),
             mode: OneironerMode::default(),
+            model_dir: None,
+            runtime: OneironerRuntime::default(),
+            backbone: OneironerBackbone::default(),
+            device: EmbedderDevice::Auto,
+            max_input_tokens: 2048,
             url: None,
             checkpoint_sha16: None,
             stack_sha16: None,
@@ -177,10 +242,9 @@ impl OneironerConfig {
 
     /// The checkpoint a write's marker is committed for, when markers are on.
     ///
-    /// Only an endpoint arms markers in this build: the local provider stops
-    /// `serve` before a write could commit one.
+    /// Both native and endpoint providers arm the same marker/save path.
     pub fn marker_checkpoint(&self) -> Option<&str> {
-        (self.provider == OneironerProvider::Endpoint)
+        self.is_active()
             .then_some(self.checkpoint_sha16.as_deref())
             .flatten()
     }
@@ -226,6 +290,21 @@ impl OneironerConfig {
         if let Some(value) = over.mode {
             self.mode = value;
         }
+        if over.model_dir.is_some() {
+            self.model_dir = over.model_dir;
+        }
+        if let Some(value) = over.runtime {
+            self.runtime = value;
+        }
+        if let Some(value) = over.backbone {
+            self.backbone = value;
+        }
+        if let Some(value) = over.device {
+            self.device = value;
+        }
+        if let Some(value) = over.max_input_tokens {
+            self.max_input_tokens = value;
+        }
         if over.url.is_some() {
             self.url = over.url;
         }
@@ -267,8 +346,7 @@ impl OneironerConfig {
         }
     }
 
-    /// Refuses a section that cannot produce a working slot. The local
-    /// provider passes here and is refused, typed, when the slot is built.
+    /// Refuses a section that cannot produce a working native or endpoint slot.
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.live_window_tokens > oneiron::tagging::MAX_LIVE_WINDOW_TOKENS {
             anyhow::bail!("oneironer.live_window_tokens must be at most 2048");
@@ -292,19 +370,31 @@ impl OneironerConfig {
                 );
             }
         }
-        if self.provider != OneironerProvider::Endpoint {
+        if !self.is_active() {
             return Ok(());
         }
-        if self.url.as_deref().unwrap_or_default().trim().is_empty() {
+        if self.provider == OneironerProvider::Local {
+            if self
+                .model_dir
+                .as_ref()
+                .is_none_or(|dir| dir.as_os_str().is_empty())
+            {
+                anyhow::bail!("local oneironer requires oneironer.model_dir");
+            }
+            if self.max_input_tokens == 0 {
+                anyhow::bail!("oneironer.max_input_tokens must be greater than zero");
+            }
+        }
+        if self.provider == OneironerProvider::Endpoint
+            && self.url.as_deref().unwrap_or_default().trim().is_empty()
+        {
             anyhow::bail!(
                 "oneironer.provider = \"endpoint\" requires oneironer.url (--oneironer-url / ONEIRON_ONEIRONER_URL)"
             );
         }
         let checkpoint = self.checkpoint_sha16.as_deref().unwrap_or_default();
         if oneiron::tagging::TaggingMarkerConfig::new(checkpoint).is_err() {
-            anyhow::bail!(
-                "oneironer.provider = \"endpoint\" requires oneironer.checkpoint_sha16, 16 lowercase hex digits"
-            );
+            anyhow::bail!("oneironer requires oneironer.checkpoint_sha16, 16 lowercase hex digits");
         }
         if self
             .stack_sha16
@@ -315,7 +405,7 @@ impl OneironerConfig {
         }
         if self.label_count.is_none_or(|count| count == 0) {
             anyhow::bail!(
-                "oneironer.provider = \"endpoint\" requires oneironer.label_count, the number of labels the tagger reports"
+                "oneironer requires oneironer.label_count, the number of labels the tagger reports"
             );
         }
         // A zero first retry delay would let one refused answer be claimed
@@ -349,6 +439,11 @@ fn registry_type_byte(kind: &str) -> Option<u8> {
 pub struct OneironerConfigOverride {
     pub provider: Option<OneironerProvider>,
     pub mode: Option<OneironerMode>,
+    pub model_dir: Option<PathBuf>,
+    pub runtime: Option<OneironerRuntime>,
+    pub backbone: Option<OneironerBackbone>,
+    pub device: Option<EmbedderDevice>,
+    pub max_input_tokens: Option<usize>,
     pub url: Option<String>,
     pub checkpoint_sha16: Option<String>,
     pub stack_sha16: Option<String>,
@@ -379,6 +474,21 @@ pub struct OneironerArgs {
     /// `save` (the default) or `shadow`.
     #[arg(long = "oneironer-mode")]
     pub oneironer_mode: Option<OneironerMode>,
+    /// Local artifact bundle directory.
+    #[arg(long = "oneironer-model-dir")]
+    pub oneironer_model_dir: Option<PathBuf>,
+    /// Native runtime: candle.
+    #[arg(long = "oneironer-runtime")]
+    pub oneironer_runtime: Option<OneironerRuntime>,
+    /// Backbone: auto (from config.json), gte or bert.
+    #[arg(long = "oneironer-backbone")]
+    pub oneironer_backbone: Option<OneironerBackbone>,
+    /// Native device: cpu, metal, cuda or auto.
+    #[arg(long = "oneironer-device")]
+    pub oneironer_device: Option<EmbedderDevice>,
+    /// Native window ceiling, including context and special tokens.
+    #[arg(long = "oneironer-max-input-tokens")]
+    pub oneironer_max_input_tokens: Option<usize>,
     /// Base URL of a loopback tagger server.
     #[arg(long = "oneironer-url")]
     pub oneironer_url: Option<String>,
@@ -404,6 +514,11 @@ impl From<&OneironerArgs> for OneironerConfigOverride {
         Self {
             provider: args.oneironer_provider,
             mode: args.oneironer_mode,
+            model_dir: args.oneironer_model_dir.clone(),
+            runtime: args.oneironer_runtime,
+            backbone: args.oneironer_backbone,
+            device: args.oneironer_device,
+            max_input_tokens: args.oneironer_max_input_tokens,
             url: args.oneironer_url.clone(),
             checkpoint_sha16: args.oneironer_checkpoint_sha16.clone(),
             stack_sha16: args.oneironer_stack_sha16.clone(),
@@ -436,6 +551,11 @@ pub(super) fn lookup_oneironer_override(
     let over = OneironerConfigOverride {
         provider: lookup_parse(lookup, "ONEIRON_ONEIRONER_PROVIDER")?,
         mode: lookup_parse(lookup, "ONEIRON_ONEIRONER_MODE")?,
+        model_dir: lookup("ONEIRON_ONEIRONER_MODEL_DIR").map(PathBuf::from),
+        runtime: lookup_parse(lookup, "ONEIRON_ONEIRONER_RUNTIME")?,
+        backbone: lookup_parse(lookup, "ONEIRON_ONEIRONER_BACKBONE")?,
+        device: lookup_parse(lookup, "ONEIRON_ONEIRONER_DEVICE")?,
+        max_input_tokens: lookup_parse(lookup, "ONEIRON_ONEIRONER_MAX_INPUT_TOKENS")?,
         url: lookup("ONEIRON_ONEIRONER_URL"),
         checkpoint_sha16: lookup("ONEIRON_ONEIRONER_CHECKPOINT_SHA16"),
         stack_sha16: lookup("ONEIRON_ONEIRONER_STACK_SHA16"),
