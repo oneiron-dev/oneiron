@@ -28,6 +28,7 @@ use super::connector::{
     ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec, DispatchByoa, MAX_ALLOWED_HOSTS,
     ProtocolAttachSpec, encode_byoa_attempt_payload,
 };
+use super::error::ERR_SEAT_TASK;
 use super::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
     ERR_EXECUTION_CHECKOUT, ERR_EXECUTION_SHAPE, ERR_EXHAUST_TOO_LARGE, ERR_LEASE_EXPIRED,
@@ -41,7 +42,6 @@ use super::exhaust::{
     ensure_byoa_runtime_actor, normalize_capture_reason, union_taint_refs,
     validate_canonical_capture,
 };
-use super::error::ERR_SEAT_TASK;
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{
     LoginPlacement, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, RunnerWork,
@@ -278,7 +278,9 @@ where
                 .flatten()
         });
         if let Some(spent) = &spent {
-            capture.reason.get_or_insert_with(|| spent.reason().to_owned());
+            capture
+                .reason
+                .get_or_insert_with(|| spent.reason().to_owned());
         }
         let now = capture.now;
         self.vault.try_with_write_txn_grouped(|wtxn| {
@@ -303,7 +305,8 @@ where
                     let task = runner_task(&ran).ok_or_else(|| invalid(ERR_SEAT_TASK))?;
                     let parent = *receipt.attempt.id.as_bytes();
                     for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
-                        let connector = next.connector(registry, task.to_owned(), ran.checkout_id)?;
+                        let connector =
+                            next.connector(registry, task.to_owned(), ran.checkout_id)?;
                         if !self.login_admitted(next.logs_in(), &connector) {
                             continue;
                         }

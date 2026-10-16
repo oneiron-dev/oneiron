@@ -511,6 +511,18 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// Whether a result the run retained stays on this device for the door's
+    /// caller now (DEC-0005), re-checked at each read of it: `rows` are the
+    /// rows the run was served producing it, `None` when one of its answers
+    /// was recorded with no row set. A door whose caller sits on this device
+    /// withholds nothing.
+    fn withholds_retained(
+        &self,
+        _rows: Option<&[EntityId]>,
+    ) -> std::result::Result<bool, AgentVerbRefusal> {
+        Ok(false)
+    }
 }
 
 /// One call a run serves itself, as its host door is asked about it.

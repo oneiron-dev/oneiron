@@ -30,6 +30,7 @@ pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
+pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
@@ -183,6 +184,7 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+pub mod training_pack;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
 // ===== Code, artifacts & custody ===== code memory, git wire, build cache, artifacts, secrets
@@ -203,11 +205,10 @@ pub mod conversation_dag;
 pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;
-pub mod office_body;
-pub mod typed_body;
 pub mod edit_settle;
 pub mod git_wire;
 pub mod merge_queue;
+pub mod office_body;
 pub mod origin;
 pub mod repo_mutation;
 pub mod scan_check;
@@ -217,6 +218,7 @@ pub mod secret_lease;
 pub mod secret_manifest;
 pub mod secret_rotation;
 pub mod secret_snapshot;
+pub mod typed_body;
 // ===== Surfaces & hosts ===== memory facade, Context Board wire types, settings, voice
 pub mod agent_inbox_lens;
 pub mod board_verb;
@@ -336,7 +338,7 @@ pub use crate::compaction::{
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
-    CompanionExpression, CompanionRecordKind, CompanionScope, CompanionSubject, CompanionTaskKind,
+    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
     EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
 };
 pub use crate::config::{
@@ -570,6 +572,7 @@ pub use crate::workspace_roster::{
     MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterPreset,
     WorkspaceRosterRole,
 };
+pub use crate::workspace_roster::{CompanionChoice, WorkCompanionPolicy};
 pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
 };
