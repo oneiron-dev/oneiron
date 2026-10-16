@@ -245,6 +245,11 @@ pub enum GateError {
     /// Caller-deserialized actor text and voice booleans are never authority.
     #[error("consent actor is not authenticated: {0}")]
     ConsentUnauthenticatedActor(&'static str),
+    /// A guest's ask-scoped grant was not one a live owner of this vault
+    /// recorded. A guest's consent counts only as the vault's owner records
+    /// it; a grant the guest stamped is no consent. Nothing was written.
+    #[error("consent guest not recorded: {0}")]
+    ConsentGuestNotRecorded(&'static str),
     /// A standing-grant mint named a catastrophe-floor class. The closed floor
     /// is non-rememberable at ANY trust level (DEC-0006 invariant 7): the
     /// owner may approve the op in the moment, but never make it automatic.
@@ -347,6 +352,7 @@ impl GateError {
             Self::InvalidConsentEffectFacts(_) => ErrorKind::InvalidConsentEffectFacts,
             Self::ConsentOwnerNotAuthenticated(_) => ErrorKind::ConsentOwnerNotAuthenticated,
             Self::ConsentUnauthenticatedActor(_) => ErrorKind::ConsentUnauthenticatedActor,
+            Self::ConsentGuestNotRecorded(_) => ErrorKind::ConsentGuestNotRecorded,
             Self::ConsentCatastropheNotRememberable(_) => {
                 ErrorKind::ConsentCatastropheNotRememberable
             }

@@ -9,9 +9,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SideTableRowProblem, StoreError};
+use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
-use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
 use super::{codec::*, types::*};
@@ -305,60 +304,53 @@ pub(in crate::campaign) fn identical_live_head_in_txn(
     Ok(None)
 }
 
-/// Resolves the PERSON a `comm.do_not_contact` claim would be written against
-/// for the external-effect gate's `counterparty` string.
+/// Every PERSON a `comm.do_not_contact` claim for the external-effect gate's
+/// `counterparty` string may sit on: each row whose synced body carries
+/// exactly this `party_key`, whatever its lifecycle.
 ///
-/// INTERIM and deliberately narrow. `ExternalEffectGateInput::counterparty` is
-/// a bare address at HEAD and no existing engine call turns one into an
-/// `EntityId`, so this reads SPINE-COMM's node-local party shortcut (whose
-/// writer stays in `comm.rs` — CA never edits that file) and then re-validates
-/// the hit against synced truth: the row must still be a PERSON carrying
-/// exactly this `party_key`. A stale shortcut therefore resolves to NOTHING
-/// rather than to the wrong person.
-///
-/// `Ok(None)` means the leg contributes nothing — it never clears an opt-out
-/// another source established. ONE-1868 owns the complete resolution (all
-/// contact records matched by `(party_ref, channel_class)`, index repair, and
-/// the full-scan fallback) so no shipping path can answer a false "no".
-fn resolve_do_not_contact_subject_in_txn(
+/// The node-local party shortcut `comm.rs` keeps is only a cache, so this
+/// reads synced truth instead. A missing or stale shortcut, a merge shell and
+/// a same-key twin therefore never hide a restriction: this leg only ever
+/// adds suppression, and a row it should not have read can only add more. An
+/// undecodable or unrelated PERSON body carries no key, exactly as before.
+fn do_not_contact_subjects_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     counterparty: &str,
-) -> Result<Option<EntityId>> {
+) -> Result<Vec<EntityId>> {
     let party_key = counterparty.trim();
     if party_key.is_empty() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let digest = comm_party_digest(party_key);
-    // A malformed shortcut resolves to NOTHING, not an error: it is a
-    // disposable cache `comm.rs` owns and may overwrite at will.
-    let id = match COMM_PARTY_INDEX.get(store, txn, &digest) {
-        Ok(Some(id)) => id,
-        Ok(None) => return Ok(None),
-        Err(Error::Store(StoreError::SideTableRow {
-            problem: SideTableRowProblem::Undecodable,
-            ..
-        })) => return Ok(None),
-        Err(err) => return Err(err),
-    };
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
-        return Ok(None);
-    };
+    let mut subjects = Vec::new();
+    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_PERSON, None)? {
+        let id = entry?;
+        if person_carries_party_key_in_txn(store, txn, &id, party_key)? {
+            subjects.push(id);
+        }
+    }
+    Ok(subjects)
+}
 
+fn person_carries_party_key_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    party_key: &str,
+) -> Result<bool> {
+    let Some(raw) = store.port_entity_record(txn, id)? else {
+        return Ok(false);
+    };
     if raw.entity_type != ENTITY_TYPE_PERSON {
-        return Ok(None);
+        return Ok(false);
     }
     let mut cursor = std::io::Cursor::new(&raw.body);
-    let Ok(body) = rmpv::decode::read_value(&mut cursor) else {
-        return Ok(None);
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(false);
     };
-    let Value::Map(entries) = body else {
-        return Ok(None);
-    };
-    let carries_party_key = entries.iter().any(|(key, value)| {
+    Ok(entries.iter().any(|(key, value)| {
         key.as_str() == Some(COMM_PARTY_KEY_FIELD) && value.as_str() == Some(party_key)
-    });
-    Ok(carries_party_key.then_some(id))
+    }))
 }
 
 /// The external-effect gate's do-not-contact leg.
@@ -374,26 +366,17 @@ pub(crate) fn counterparty_do_not_contact_in_txn(
     channel: Option<&str>,
     scope: &str,
 ) -> Result<bool> {
-    match resolve_do_not_contact_subject_in_txn(store, txn, counterparty)? {
-        Some(person_ref) => matching_do_not_contact_in_txn(store, txn, person_ref, channel, scope),
-        None => Ok(false),
+    for person_ref in do_not_contact_subjects_in_txn(store, txn, counterparty)? {
+        if matching_do_not_contact_in_txn(store, txn, person_ref, channel, scope)? {
+            return Ok(true);
+        }
     }
+    Ok(false)
 }
 
 /// Synced-truth field naming a comm-owned PERSON's party. Mirrors the private
 /// `comm.rs` constant; CA reads it and never writes it.
 const COMM_PARTY_KEY_FIELD: &str = "party_key";
-
-/// Node-local party shortcut owned by `comm.rs`. Read-only mirror; CA never
-/// writes this index — this binding exists only for the read above, `comm`
-/// owns the declaration and its own writes.
-const COMM_PARTY_INDEX: SideTable<[u8; 32], EntityId, Raw> =
-    SideTable::new(&side_table::COMM_PARTY_INDEX);
-
-fn comm_party_digest(party_key: &str) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(party_key.as_bytes()).into()
-}
 
 /// CLAIM ids attached to `subject` through inbound `claim_of` edges.
 fn subject_claim_ids_in_txn(

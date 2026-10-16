@@ -851,16 +851,8 @@ fn erase_a_saved_turns_text(mode: TaggingMode) -> Erased {
     let vault = open_in(dir.path(), mode);
     let mirela = minted(&saved.mentions[0].link);
     let message = saved.mentions[0].message;
-    let writer = speaker(&vault);
-    let actor = WriteActor::new(writer, EdgeActorClass::Human);
-    let owner = vault
-        .authenticate_owner(
-            writer,
-            "principal:tagging-test",
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
     let authorization = DocAuthorization::Owner(&owner);
     vault
         .migrate_entity_text(

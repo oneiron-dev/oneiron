@@ -2120,7 +2120,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 24,
       "struct": 1
      }
@@ -5220,7 +5220,7 @@
      "path": "src/booking/invite_grant/authorization.rs",
      "purpose": "Whether a page's standing grant covers a recipient, read from persisted claims only",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -6092,7 +6092,7 @@
      "path": "src/calendar/ics/parse.rs",
      "purpose": "ICS feed parse half (CAL-02, ONE-1784): RFC 5545 bytes into calendar-owned rows",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 1,
       "struct": 2
@@ -6238,7 +6238,7 @@
      "path": "src/calendar/invite/hygiene.rs",
      "purpose": "Vault-hydrated consent evidence and sending-identity reads",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -6253,7 +6253,7 @@
      "path": "src/calendar/invite/mime.rs",
      "purpose": "iMIP MIME rendering and blob reads",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -7250,7 +7250,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/channel_identity/assignment.rs",
@@ -7464,7 +7464,7 @@
      "path": "src/channel_identity_autonomy/autonomy.rs",
      "purpose": "Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -10223,6 +10223,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "re-export": 7
      }
     },
@@ -10488,7 +10489,7 @@
      "purpose": "Claim family predicates, key vocabulary, typed values, body build/parse/validate",
      "surface": {
       "const": 7,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 5,
       "fn": 8,
       "struct": 2,
@@ -11655,7 +11656,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -11669,8 +11670,8 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19,
-      "fn": 22,
+      "crate-vis": 21,
+      "fn": 24,
       "struct": 2
      }
     },
@@ -11810,11 +11811,19 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/consent/tests/owner_reason.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/tests/owner_tier.rs",
+     "purpose": "A native host's proof shows a live person, not whose vault this is, so an owner door asks for both (F18 tier…",
      "surface": {}
     },
     {
@@ -13304,7 +13313,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -13365,7 +13374,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 1,
       "re-export": 2
      }
@@ -13546,7 +13555,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -13562,7 +13571,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/counterparty_contact/storage.rs",
@@ -13886,6 +13895,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/derived_rows.rs",
+     "purpose": "Rows a record feeds outside the generic index set, torn with the record",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/erase/active_store.rs",
      "purpose": "—",
      "surface": {
@@ -13969,7 +13988,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 6
      }
     },
@@ -15377,7 +15396,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "mod": 2,
       "re-export": 2
@@ -18136,7 +18155,7 @@
      "purpose": "Cross-vault same_as links and per-pact share consent (FED-07)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3
      }
@@ -19059,7 +19078,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 5,
       "struct": 1
      }
@@ -19807,7 +19826,7 @@
       "const": 5,
       "crate-vis": 10,
       "enum": 6,
-      "fn": 10,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -20459,7 +20478,7 @@
      "path": "src/hnsw/one_way.rs",
      "purpose": "Orphan-protection one-way exception index",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -20688,7 +20707,7 @@
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -20807,7 +20826,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 11
      }
     },
@@ -20882,7 +20901,7 @@
      "path": "src/identity_topology/reassignment_map.rs",
      "purpose": "The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -20963,6 +20982,7 @@
      "path": "src/identity_topology/transition_table.rs",
      "purpose": "The (state, op) transition table and the deterministic rejection taxonomy it speaks, plus the proposal…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -23779,7 +23799,7 @@
      "path": "src/m8_forward_oracle/shared.rs",
      "purpose": "Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -26660,7 +26680,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -26991,7 +27011,7 @@
      "path": "src/outbound_chokepoint/admission.rs",
      "purpose": "New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -37265,7 +37285,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_guest.rs",
@@ -38244,7 +38264,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -39765,7 +39785,7 @@
      "path": "src/workspace_roster/codec.rs",
      "purpose": "Roster reads, journal records, and canonical onboarding encodings",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 39
      }
     },
     {
@@ -40161,7 +40181,7 @@
      "purpose": "Resumable onboarding runner, house-name rename, and roster read",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -40701,7 +40721,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/channel_identity_slack_adapter_smoke.rs",
@@ -40781,7 +40801,7 @@
      "path": "tests/it/merge_split_oracle.rs",
      "purpose": "Identity-topology forward test oracle (ARCH-0055, ONE-1742 epic) — authored by the ONE-1743 path opener",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 43
      }
     },
     {
@@ -41555,7 +41575,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41646,7 +41666,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42593,8 +42613,8 @@
    },
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2568,
-   "test_files": 859
+   "source_files": 2569,
+   "test_files": 860
   },
   "oneiron-android": {
    "files": [

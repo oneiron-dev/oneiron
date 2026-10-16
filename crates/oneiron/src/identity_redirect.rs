@@ -166,8 +166,9 @@ fn derive_redirect_row_in_txn(
         _ => return Err(Error::CorruptedIndex("identity redirect shell")),
     }
     // No shell edge. Only the ledger can say whether this is a live entity
-    // or a zero-head split's terminal shell.
-    if zero_head_shells.contains(entity) {
+    // or a zero-head split's terminal shell. A shell its purge removed has
+    // neither, and its row went with it (H173).
+    if zero_head_shells.contains(entity) && store.port_entity_raw(rtxn, entity)?.is_some() {
         return Ok(Some(Vec::new()));
     }
     Ok(None)
@@ -212,6 +213,49 @@ pub(crate) fn maintain_redirect_projection_in_txn(
         }
     }
     Ok(())
+}
+
+/// Drops a physically deleted `id` from the projection, before its shell
+/// edges go: its own row, and its place in the head list of every shell
+/// merged or split into it (H173). A shell left with no head loses its row,
+/// as a rebuild from the remaining edges would.
+pub(crate) fn forget_deleted_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    REDIRECT.delete(store, wtxn, id)?;
+    let mut shells = BTreeSet::new();
+    for kind in SHELL_EDGE_KINDS {
+        for edge in store.port_edges(wtxn, id, crate::ports::EdgeDirection::In, Some(kind), None)? {
+            shells.insert(edge?.target);
+        }
+    }
+    for shell in shells {
+        let Some(RedirectRow(mut heads)) = REDIRECT.get(store, wtxn, &shell)? else {
+            continue;
+        };
+        let before = heads.len();
+        heads.retain(|head| head != id);
+        if heads.len() == before {
+            continue;
+        }
+        if heads.is_empty() {
+            REDIRECT.delete(store, wtxn, &shell)?;
+        } else {
+            REDIRECT.put(store, wtxn, &shell, &RedirectRow(heads))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `id` still holds a projection row: an erase scope of its own.
+pub(crate) fn redirect_row_exists_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(REDIRECT.get(store, rtxn, id)?.is_some())
 }
 
 /// Reads one shell's row: `Ok(None)` when the entity is live (or the

@@ -310,6 +310,13 @@ impl From<Error> for MemoryError {
                     "Acting over another actor's claim needs an active owner binding.",
                 ],
             ),
+            // Only the vault's owner records a guest's consent; no change to
+            // the request makes this ask admissible.
+            ErrorKind::ConsentGuestNotRecorded => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Ask the vault's owner to record this guest's consent, then ask again."],
+            ),
             ErrorKind::FamilyRequiresAutoGrant => Self::new(
                 MEMORY_CODE_FORBIDDEN,
                 message,
