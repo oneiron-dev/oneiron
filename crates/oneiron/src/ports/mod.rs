@@ -47,7 +47,7 @@ pub(crate) use mutation::{
 mod regeneration;
 mod safe_read;
 mod time;
-pub(crate) use safe_read::withdrawn_in_txn;
+pub(crate) use safe_read::{body_is_stale, withdrawn_in_txn};
 pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]
 mod memory;

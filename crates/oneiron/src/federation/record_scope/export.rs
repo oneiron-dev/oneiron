@@ -10,7 +10,7 @@ impl Vault {
     /// Export never has a debug mode and requires the export verb class, and
     /// never carries a SECRET_CUSTODY row or an unpublished LFS chunk.
     /// A row a device-only world keeps on this device is never exported, nor
-    /// a text written from one.
+    /// a text written from one, nor a row whose own words are withdrawn.
     pub fn export_records_in_scope(
         &self,
         selector: &Scope,
@@ -29,7 +29,7 @@ impl Vault {
         let mut out = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (id, raw) = row?;
-            if withheld(&id)? {
+            if withheld(&id)? || crate::ports::withdrawn_in_txn(&self.store, &txn, &id)? {
                 continue;
             }
             let h =

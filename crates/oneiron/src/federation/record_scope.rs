@@ -840,22 +840,34 @@ impl Vault {
                 h.entity_type,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )?;
-            let allowed = scope
-                .as_ref()
-                .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
-                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
-                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "read")?
-                && self.text_fence_in(&txn, id, &raw, [selector, slip, channel], "read", |_| {
-                    Ok(false)
-                })?;
-            if allowed || view == ScopeView::Debug {
-                out.push(ScopedRecord {
-                    id,
-                    bytes: raw,
-                    scope,
-                    suppressed: !allowed,
-                });
+            let fences_pass = |door: [&Scope; 3]| -> Result<bool> {
+                Ok(crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
+                    && self.epoch_fence_in(&txn, id, &raw, door, "read")?
+                    && self.text_fence_in(&txn, id, &raw, door, "read", |_| Ok(false))?)
+            };
+            let withdrawn = crate::ports::withdrawn_in_txn(&self.store, &txn, &id)?;
+            let allowed = !withdrawn
+                && scope
+                    .as_ref()
+                    .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
+                && fences_pass([selector, slip, channel])?;
+            if !allowed && view == ScopeView::Normal {
+                continue;
             }
+            // Debug reveals what the selector suppressed, never words that
+            // are withdrawn or that a fence refuses: such a row keeps only
+            // its header.
+            let words = allowed || (!withdrawn && fences_pass([&Scope::top(), slip, channel])?);
+            let mut bytes = raw;
+            if !words {
+                bytes.truncate(ENTITY_METADATA_HEADER_LEN);
+            }
+            out.push(ScopedRecord {
+                id,
+                bytes,
+                scope,
+                suppressed: !allowed,
+            });
         }
         Ok(out)
     }
