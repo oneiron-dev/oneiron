@@ -1528,6 +1528,35 @@ fn install_healthy_pack(
     })
 }
 
+/// H355: a rejected (or never-approved) skill whose lifecycle stays Active
+/// loads nowhere, so it supplies no mounted lens either.
+#[test]
+fn a_pack_lens_unmounts_when_its_skill_loses_approval() -> Result<()> {
+    use crate::claim::ClaimApprovalStatus;
+    use crate::lens::LensMount;
+    use crate::skill::SkillLifecycle;
+    for approval in [ClaimApprovalStatus::Rejected, ClaimApprovalStatus::Proposed] {
+        let (_dir, vault, lens, _, _healthy) = installed_active_lens()?;
+        let LensMount::Pack { skill_id, .. } = &lens else {
+            panic!("pack binding");
+        };
+        let core = vec![LensMount::Vault, LensMount::Admin];
+        assert_eq!(vault.render_mounted_lens(&lens, || Ok(7))?, Some(7));
+        let mut skill = vault.get_skill_record(skill_id)?.unwrap();
+        skill.approval_status = approval;
+        vault.update_skill_record(skill_id, &skill, TimeRange { start: 30, end: 30 }, 31)?;
+        let skill = vault.get_skill_record(skill_id)?.unwrap();
+        assert_eq!(skill.lifecycle_status, SkillLifecycle::Active);
+        assert_eq!(skill.approval_status, approval);
+        assert_eq!(vault.mounted_lenses(std::slice::from_ref(&lens))?, core);
+        assert_eq!(
+            vault.render_mounted_lens(&lens, || panic!("rejected skill's renderer ran"))?,
+            None::<()>
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn pack_lens_mounts_only_while_its_installed_skill_loads_as_canon() -> Result<()> {
     use crate::lens::LensMount;
