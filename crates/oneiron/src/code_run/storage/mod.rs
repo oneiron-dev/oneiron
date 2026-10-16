@@ -1,13 +1,14 @@
 //! Canonical code-run persistence rows and the executor's storage routing.
 
 mod compaction;
+mod folds;
 mod records;
 mod routing;
 mod speech_identity;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
-pub use self::records::CodeRunModelHealCount;
-pub(crate) use self::records::code_run_body_file_of_row;
+pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
+pub(crate) use self::records::{FinishedOutput, code_run_body_file_of_row};
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;

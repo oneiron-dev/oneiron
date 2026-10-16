@@ -89,6 +89,16 @@ pub(crate) fn request_wake_in_txn(
                 now,
             },
         )?;
+        store.enqueue_skill_optimize_in_txn(
+            txn,
+            crate::dreamer_runner::EnqueueDreamerSkillOptimizeAttempt {
+                input: Value::Nil,
+                parent_attempt: payload.parent_attempt,
+                dedupe_key: dedupe_key.clone(),
+                run_id: run_id.clone(),
+                now,
+            },
+        )?;
         store.enqueue_coach_retrieval_tune_in_txn(
             txn,
             payload.parent_attempt,
@@ -97,6 +107,13 @@ pub(crate) fn request_wake_in_txn(
             now,
         )?;
         store.enqueue_coach_nightly_in_txn(
+            txn,
+            payload.parent_attempt,
+            dedupe_key.as_deref(),
+            run_id.clone(),
+            now,
+        )?;
+        store.enqueue_dreamer_nightly_in_txn(
             txn,
             payload.parent_attempt,
             dedupe_key.as_deref(),

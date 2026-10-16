@@ -11,8 +11,8 @@ use super::super::codec::validate_raw_output;
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    MODEL_HEAL_COUNTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output, load_whole_body,
-    next_additive_heal_count, read_body_row_range, replay_generation_matches,
+    MODEL_HEAL_COUNTS, RAW_OUTPUT_SECRETS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output,
+    load_whole_body, next_additive_heal_count, read_body_row_range, replay_generation_matches,
 };
 use super::speech_identity::{
     canonical_witness_executor_turn, executor_speech_message_id_for_run, executor_speech_turn_id,
@@ -202,27 +202,53 @@ impl SessionBinding<'_> {
         sink: BodySink,
         complete: bool,
     ) -> Result<CodeRunRawOutput> {
-        let (output, body) = finish_output(path, sink, complete, self.session.limit_watch())?;
+        let finished = finish_output(path, sink, complete, self.session.limit_watch())?;
+        self.mark_secret(&finished.output, finished.secret)?;
         self.answered(|| {
-            self.session
-                .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &body)
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUTS,
+                &finished.output.handle,
+                &finished.body,
+            )
         })?;
-        Ok(output)
+        Ok(finished.output)
+    }
+
+    /// Marks a body the secret scan hit, on the session's route, before its
+    /// row is written. An off-record room files no lift proposal: nothing of
+    /// it reaches the base vault.
+    fn mark_secret(&self, output: &CodeRunRawOutput, secret: Option<&'static str>) -> Result<()> {
+        let Some(reason) = secret else {
+            return Ok(());
+        };
+        self.answered(|| {
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUT_SECRETS,
+                &output.handle,
+                &reason.to_owned(),
+            )
+        })
     }
 
     fn put_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let (stored, body) =
-            finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
-        if stored != *output {
+        let finished = finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
+        if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
+        self.mark_secret(output, finished.secret)?;
         self.answered(|| {
-            self.session
-                .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &body)
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUTS,
+                &output.handle,
+                &finished.body,
+            )
         })
     }
 

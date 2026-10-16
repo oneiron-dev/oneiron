@@ -18,7 +18,9 @@ use crate::edit_roundtrip::judgment_cells::verify_sheet_answer_bytes;
 use crate::edit_roundtrip::{EditOp, EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess};
+use crate::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -142,6 +144,16 @@ impl Vault {
                 // Ledger acquisition BEFORE any side effect.
                 if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                     return Err(already_settled(&existing));
+                }
+                // The comment's task waits while its comment is unattached
+                // (OF-368): work answering it keeps until it is reattached.
+                if let Some((_, _, context)) = deck
+                    && let Some(thread) = context.thread
+                    && self.annotation_thread_unattached_in_txn(wtxn, artifact_id, &thread)?
+                {
+                    return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
+                        "the comment this answers is unattached; its task waits until it is reattached",
+                    )));
                 }
                 // The stored artifact format, not public proposal tags, selects the
                 // verifier. Recheck inside the write transaction so a forged XLSX
@@ -557,7 +569,11 @@ impl Vault {
             .any(|grant| grant.bound().contains(&required)))
     }
 
-    pub(super) fn authorize_settle(&self, consent: &SettleConsent, actor: WriteActor) -> Result<()> {
+    pub(super) fn authorize_settle(
+        &self,
+        consent: &SettleConsent,
+        actor: WriteActor,
+    ) -> Result<()> {
         match consent {
             SettleConsent::OwnerConsent { .. } => Ok(()),
             SettleConsent::StandingGrant { brief_ref } => {

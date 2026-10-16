@@ -21,17 +21,17 @@ pub enum SelfCall {
     TasksAsk(Box<crate::task_verb::TaskAskSpec>),
     /// Requests a C9 wait for this handle, only at the caller's idle point.
     TasksWait(crate::task_verb::TaskAskHandle),
-    /// Fixture for `self.memory.search(...)`.
+    /// Fixture for `vault.search(...)`.
     MemorySearch(SelfMemorySearchCall),
     /// Internal fixture proving dispatcher-stamped writes use the batch/gate path.
     ///
-    /// This is not the CODE-007a public `self.memory.put_claim` trap surface.
+    /// This is not the CODE-007a public `vault.claims.put` trap surface.
     MemoryWriteFixture(SelfMemoryWriteFixtureCall),
-    /// Public first-party `self.memory.put_claim(...)` trap.
+    /// Public first-party `vault.claims.put(...)` trap.
     MemoryPutClaim(SelfMemoryPutClaimCall),
-    /// Public first-party `self.memory.supersede_claim(...)` trap.
+    /// Public first-party `vault.claims.supersede(...)` trap.
     MemorySupersedeClaim(SelfMemorySupersedeClaimCall),
-    /// Public first-party `self.memory.put_edge(...)` trap.
+    /// Public first-party `vault.edges.put(...)` trap.
     MemoryPutEdge(SelfMemoryPutEdgeCall),
     /// Fixture for `ask(...)`.
     Ask(SelfAskCall),
@@ -62,8 +62,11 @@ pub enum SelfCall {
     InferenceDefaultsReplace(String),
     /// Host-authorized action; a guest request alone carries no owner proof.
     WakePolicyWrite(SelfWakePolicyWriteCall),
-    /// `self.memory.<verb>(input)`: one row of the SDK verb table.
+    /// A verb at its SDK path (`vault.recall(input)`): one row of the SDK verb table.
     AgentVerb(SelfAgentVerbCall),
+    /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
+    /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
+    Fold(crate::compaction::SelfFoldCall),
 }
 
 impl SelfCall {
@@ -92,6 +95,7 @@ impl SelfCall {
             Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
+            Self::Fold(_) => SelfEffect::Fold,
         }
     }
 
@@ -154,6 +158,8 @@ pub enum SelfEffect {
     WakePolicyWrite,
     /// One SDK verb-table call, run by the host's bound verb door.
     AgentVerb,
+    /// A fold verb on the run's own log, answered by its fold ledger.
+    Fold,
 }
 
 impl SelfEffect {
@@ -183,6 +189,7 @@ impl SelfEffect {
             Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
+            Self::Fold => "self.fold",
         }
     }
 
@@ -215,7 +222,7 @@ impl SelfEffect {
             | Self::ReportBlocked
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
-            Self::WakePolicyWrite | Self::AgentVerb => None,
+            Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
         }
     }
 
@@ -240,7 +247,7 @@ impl SelfWakePolicyWriteCall {
     }
 }
 
-/// Arguments for the `self.memory.search` fixture call.
+/// Arguments for the `vault.search` fixture call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfMemorySearchCall {
     pub query: String,
@@ -283,7 +290,7 @@ impl SelfMemoryWriteFixtureCall {
     }
 }
 
-/// Arguments for the public `self.memory.put_claim` trap.
+/// Arguments for the public `vault.claims.put` trap.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfMemoryPutClaimCall {
     pub id: EntityId,
@@ -309,7 +316,7 @@ impl SelfMemoryPutClaimCall {
     }
 }
 
-/// Arguments for the public `self.memory.supersede_claim` trap.
+/// Arguments for the public `vault.claims.supersede` trap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelfMemorySupersedeClaimCall {
     pub new_id: EntityId,
@@ -328,7 +335,7 @@ impl SelfMemorySupersedeClaimCall {
     }
 }
 
-/// Arguments for the public `self.memory.put_edge` trap.
+/// Arguments for the public `vault.edges.put` trap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelfMemoryPutEdgeCall {
     pub src: EntityId,
@@ -431,7 +438,7 @@ impl SelfFixtureEffectCall {
     }
 }
 
-/// One SDK verb-table call from code mode: `self.memory.<verb>(input)`.
+/// One SDK verb-table call from code mode, at the verb's SDK path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfAgentVerbCall {
     pub verb: crate::task_verb::sdk::AgentVerb,
@@ -501,8 +508,8 @@ pub trait AgentVerbDoor: Send + Sync {
 /// One call a run serves itself, as its host door is asked about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunCall {
-    /// A `self.*` call over the bridge: a run row such as
-    /// `self.memory.search` or `put_claim`, or an import. The run's trailing
+    /// A call over the bridge: a run row such as `vault.search` or
+    /// `vault.claims.put`, or a `self.*` import. The run's trailing
     /// implicit speech is a `self.speak` too.
     Bridge(SelfEffect),
     /// A read of the run's own recorded output: by its context reference, or
@@ -536,6 +543,8 @@ pub enum SelfDispatchOutcome {
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
     /// The verb's answer: its JSON output and the rows that produced it.
     AgentVerb(AgentVerbAnswer),
+    /// A fold verb's answer, as JSON.
+    Fold(String),
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.
@@ -568,7 +577,7 @@ pub struct SelfContextResult {
     pub spec: ContextSpec,
 }
 
-/// Result of a `self.memory.search` fixture dispatch.
+/// Result of a `vault.search` fixture dispatch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfMemorySearchResult {
     pub query: String,
@@ -581,7 +590,7 @@ pub struct SelfMemoryWriteResult {
     pub id: EntityId,
 }
 
-/// Result of a public `self.memory.put_edge` trap.
+/// Result of a public `vault.edges.put` trap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelfMemoryEdgeWriteResult {
     pub src: EntityId,

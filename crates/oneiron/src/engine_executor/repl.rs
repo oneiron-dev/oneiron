@@ -745,12 +745,7 @@ impl EngineNativeExecutor<'_> {
         // rather than trusting a cached flag or any raw-output existence.
         self.output_context = OutputWorkingContext::default();
         self.output_run = Some(record.run_id);
-        let coverage = match &self.storage {
-            crate::code_run::ExecutorStorage::Canonical(vault) => {
-                vault.code_run_compaction_coverage(record.run_id)?
-            }
-            crate::code_run::ExecutorStorage::Session(_) => Vec::new(),
-        };
+        let coverage = self.storage.code_run_compaction_coverage(record.run_id)?;
         let mut steps = HashMap::new();
         for (seq, _, observation) in self.observation_refs(record)? {
             self.output_context
@@ -840,6 +835,7 @@ impl EngineNativeExecutor<'_> {
             self.admit_compaction_read()?;
         }
         for (seq, view) in views.iter().enumerate() {
+            messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
                 Some(Some(frame)) => {
                     messages.push(frame);
@@ -877,6 +873,7 @@ impl EngineNativeExecutor<'_> {
                 }],
             });
         }
+        messages.extend(self.fold_tail(&epochs, record, views.len())?);
 
         if let Some(note) = memory_note {
             messages.push(LlmMessage {

@@ -335,7 +335,13 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 }
             }
         };
-        if verdict != ProjectVerdict::Visible || self.parents == Parents::Skip {
+        if verdict != ProjectVerdict::Visible {
+            return Ok(verdict);
+        }
+        if let Some(verdict) = self.witnessed(authority)? {
+            return Ok(verdict);
+        }
+        if self.parents == Parents::Skip {
             return Ok(verdict);
         }
         for (parent, spawned_under) in read_parents(authority, parent.is_none(), host)? {
@@ -355,6 +361,26 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             }
         }
         Ok(ProjectVerdict::Visible)
+    }
+
+    /// A re-parent's witnesses (ARCH-0079 stacking): every parent head a
+    /// state witnesses must be held here and led by the leader its witness
+    /// seats on the board. A head not yet held waits, so the re-parent
+    /// resumes when it lands. A witness is a fact of the parent's history,
+    /// not its view: the parent's current view still bounds the state.
+    fn witnessed(&self, authority: &ProjectAuthority) -> Result<Option<ProjectVerdict>> {
+        for witness in &authority.parent_heads {
+            match witnessed_leader(self.reader, witness.project, witness.head)? {
+                None => return Ok(Some(ProjectVerdict::Pending(reason::PARENT_HEAD_PENDING))),
+                Some(leader) if leader != witness.leader.to_hex() => {
+                    return Ok(Some(ProjectVerdict::Quarantined(
+                        reason::PARENT_HEAD_LEADER,
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(None)
     }
 
     /// A spawn's own part of main's rule: an attenuated slip whose audience
@@ -696,6 +722,33 @@ pub(super) fn refusal(
     }
 }
 
+/// The leader of `parent`'s state `head`, when this replica holds that
+/// state: a held revision, or the boundary of an unsigned parent's stored
+/// row, which no companion holds.
+fn witnessed_leader(
+    reader: &ProjectReader<'_, '_>,
+    parent: EntityId,
+    head: ProjectRevisionHash,
+) -> Result<Option<String>> {
+    if let Some(row) = reader.held_of(parent)?.get(&head) {
+        return Ok(row
+            .revision
+            .authority()
+            .map(|authority| authority.leader.clone()));
+    }
+    let Some(stored) = reader.stored_row(parent)? else {
+        return Ok(None);
+    };
+    if stored.write_proof.is_some() {
+        return Ok(None);
+    }
+    let boundary = revision::revisions_of(parent, &stored.anchor())?;
+    Ok(boundary
+        .last()
+        .filter(|(hash, _)| *hash == head)
+        .map(|_| stored.leader.clone()))
+}
+
 /// A parent project's effective view, or the verdict its absence gives a child.
 pub(super) fn parent_view(
     reader: &ProjectReader<'_, '_>,
@@ -716,12 +769,15 @@ pub(super) fn parent_view(
 /// The structural gates a stored PROJECT row passes at its door, for an
 /// authority a companion carries, which no body validation saw (Wonder r6
 /// F3): canonical references, no self or repeated parent, no repeated board
-/// holder, depth within its limit, and a v3 roster that seats someone.
+/// holder, depth within its limit, a v3 roster that seats someone, and parent
+/// witnesses that each name one of its parents once and seat that parent's
+/// leader on its board.
 fn well_formed(id: EntityId, authority: &ProjectAuthority) -> bool {
     let canonical =
         |value: &String| EntityId::from_hex(value).is_ok_and(|parsed| parsed.to_hex() == *value);
     let unique = |list: &[String]| list.iter().collect::<BTreeSet<_>>().len() == list.len();
-    authority.depth_remaining <= authority.depth_limit
+    witnesses_fit(authority)
+        && authority.depth_remaining <= authority.depth_limit
         && authority.parents.len() <= 256
         && !authority.parents.contains(&id.to_hex())
         && unique(&authority.parents)
@@ -737,4 +793,17 @@ fn well_formed(id: EntityId, authority: &ProjectAuthority) -> bool {
             .chain(authority.roster.iter().flatten())
             .chain([&authority.leader, &authority.claims_scope_ref])
             .all(canonical)
+}
+
+/// Each parent witness names one of the state's parents, no parent twice,
+/// and a leader the state seats on its board.
+pub(super) fn witnesses_fit(authority: &ProjectAuthority) -> bool {
+    let named: BTreeSet<EntityId> = (authority.parent_heads.iter())
+        .map(|witness| witness.project)
+        .collect();
+    named.len() == authority.parent_heads.len()
+        && authority.parent_heads.iter().all(|witness| {
+            authority.parents.contains(&witness.project.to_hex())
+                && authority.board.contains(&witness.leader.to_hex())
+        })
 }

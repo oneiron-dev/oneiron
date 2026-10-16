@@ -205,14 +205,22 @@ impl NumberFormat {
         let shown = if self.percent { value * 100.0 } else { value };
         let text = format!("{shown:.*}", usize::from(self.decimals));
         let text = if self.grouping { group(&text) } else { text };
-        if self.percent { format!("{text}%") } else { text }
+        if self.percent {
+            format!("{text}%")
+        } else {
+            text
+        }
     }
 }
 
 /// Thousands separators in the whole part of a formatted number.
 fn group(text: &str) -> String {
-    let (sign, rest) = text.strip_prefix('-').map_or(("", text), |rest| ("-", rest));
-    let (whole, fraction) = rest.split_once('.').map_or((rest, None), |(w, f)| (w, Some(f)));
+    let (sign, rest) = text
+        .strip_prefix('-')
+        .map_or(("", text), |rest| ("-", rest));
+    let (whole, fraction) = rest
+        .split_once('.')
+        .map_or((rest, None), |(w, f)| (w, Some(f)));
     let mut grouped = String::new();
     for (index, digit) in whole.chars().enumerate() {
         if index > 0 && (whole.len() - index) % 3 == 0 {
@@ -576,22 +584,20 @@ fn expresses(carrier: Carrier, dataset: &Dataset) -> bool {
     match carrier {
         Carrier::Table => true,
         Carrier::Share => match dataset.columns.as_slice() {
-            [category, part] => {
-                category.kind == ColumnKind::Text
-                    && part.kind == ColumnKind::Number
-                    && dataset.rows.iter().all(|row| {
-                        matches!(row.get(1), Some(Cell::Number(n)) if n.is_finite() && *n >= 0.0)
+            [category, part] => category.kind == ColumnKind::Text
+                && part.kind == ColumnKind::Number
+                && dataset.rows.iter().all(
+                    |row| matches!(row.get(1), Some(Cell::Number(n)) if n.is_finite() && *n >= 0.0),
+                )
+                && dataset
+                    .rows
+                    .iter()
+                    .filter_map(|row| match row.get(1) {
+                        Some(Cell::Number(n)) => Some(*n),
+                        _ => None,
                     })
-                    && dataset
-                        .rows
-                        .iter()
-                        .filter_map(|row| match row.get(1) {
-                            Some(Cell::Number(n)) => Some(*n),
-                            _ => None,
-                        })
-                        .sum::<f64>()
-                        > 0.0
-            }
+                    .sum::<f64>()
+                    > 0.0,
             _ => false,
         },
         Carrier::Chart => match dataset.columns.split_first() {
