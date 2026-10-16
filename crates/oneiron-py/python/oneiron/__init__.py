@@ -682,6 +682,8 @@ class Oneiron:
             self._client = client
         def resolve(self, spec):
             return json.loads(_translate(lambda: self._client.vault_refs_resolve(json.dumps(spec))))
+        def links(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_refs_links(json.dumps(spec))))
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
