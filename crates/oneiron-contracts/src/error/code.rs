@@ -62,6 +62,8 @@ pub enum CodeError {
         backend: &'static str,
         detail: String,
     },
+    #[error("sandbox `{backend}` abandoned after bridge loss")]
+    SandboxAbandoned { backend: &'static str },
     /// The sandbox overlay could not be read, or held an entry that would let
     /// a guest write reach past the proposal channel.
     #[error("microVM overlay error: {detail}")]
@@ -233,7 +235,9 @@ impl CodeError {
             Self::RepoMutationFailed(_) => ErrorKind::RepoMutationFailed,
             Self::RepoMutationRecoveryDiverged { .. } => ErrorKind::RepoMutationRecoveryDiverged,
             Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
-            Self::MicroVmBackendError { .. } => ErrorKind::MicroVmBackendError,
+            Self::MicroVmBackendError { .. } | Self::SandboxAbandoned { .. } => {
+                ErrorKind::MicroVmBackendError
+            }
             Self::MicroVmOverlayError { .. } => ErrorKind::MicroVmOverlayError,
             Self::MicroVmCredentialDestinationDenied { .. } => {
                 ErrorKind::MicroVmCredentialDestinationDenied

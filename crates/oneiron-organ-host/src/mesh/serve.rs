@@ -25,10 +25,17 @@ use crate::spec::{LentInput, OrganCall, OrganInput};
 /// node's host. The transport has already admitted the peer (its MACHINE
 /// row and its grant for this ALPN), and that node read every input under
 /// its own actor's authority before it sent the bytes.
-#[derive(Debug)]
 pub struct OrganService {
     host: Arc<OrganHost>,
     vault: Arc<Vault>,
+}
+
+impl std::fmt::Debug for OrganService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OrganService")
+            .field("host", &self.host)
+            .finish_non_exhaustive()
+    }
 }
 
 impl OrganService {

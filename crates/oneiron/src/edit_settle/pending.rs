@@ -42,7 +42,7 @@ pub const NATIVE_OUTPUT_REPORT_MAX_BYTES: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PendingRow {
+pub(super) struct PendingRow {
     proposal_ref: String,
     retained_by: EntityId,
     retained_at: u64,

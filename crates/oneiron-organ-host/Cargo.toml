@@ -15,6 +15,7 @@ doctest = false
 # (the of060 F4 fence in tests/organ_fence.rs).
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
 # The mesh leg: organ calls to the owner's other nodes (OF-575 MESH).
 oneiron-mesh-transport = { version = "0.1.0", path = "../oneiron-mesh-transport" }
