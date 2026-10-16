@@ -338,7 +338,7 @@ pub(super) fn run(
                     || score_drop > thresholds.manifest_thresholds_score_regression;
                 let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":score_regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score,"thresholds":thresholds});
                 Some(proposals::emit_in_txn(vault, txn, evaluation.artifact,
-                    "dreamer.harness.retune_proposal", &value, &envelope, now)?)
+                    "dreamer.harness.retune_proposal", &value, &[evaluation.artifact], &envelope, now)?)
             } else { None }
         } else { None };
         let baseline = Baseline { version: evaluation.version, score: evaluation.score,

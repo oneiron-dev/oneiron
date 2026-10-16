@@ -21,6 +21,8 @@ const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
 /// Generic proposed claim written through the existing gated agent memory
 /// verb. It changes NO settings until the owner confirms its exact revision.
 pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
+/// Producer name of a delivered digest's inbox NOTIFICATION.
+pub const DIGEST_NOTIFICATION_PRODUCER: &str = "dreamer.digest";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -383,6 +385,33 @@ impl Vault {
                 voice_style: presentation.voice_style,
             };
             DIGEST.put(&self.store, txn, &digest.id, &digest)?;
+            // Delivery is the reader's inbox, in this same write: one
+            // NOTIFICATION per reader, keyed by digest, whose seen and acked
+            // marks are the reader's own and never this digest's `seen`. The
+            // timer digest has no reader of its own, so every owner gets it.
+            let id = crate::entity_id::bytes_to_hex_lower(&digest.id);
+            let readers = match recipient {
+                Some(actor) => vec![actor],
+                None => crate::policy_model::owners_in_txn(self, &*txn)?,
+            };
+            for reader in readers {
+                self.record_notification_in_txn(
+                    txn,
+                    &crate::inbox::NotificationEvent {
+                        kind: crate::inbox::NotificationKind::Digest,
+                        source: crate::inbox::NotificationSource {
+                            producer: DIGEST_NOTIFICATION_PRODUCER.to_owned(),
+                            event: format!("{id}:{}", reader.to_hex()),
+                            result: Some(id.clone()),
+                            ..crate::inbox::NotificationSource::default()
+                        },
+                        subject_refs: Vec::new(),
+                        recipient: Some(reader),
+                        created_at: now,
+                        origin_conversation: None,
+                    },
+                )?;
+            }
             // The vault state and board pointer follow the shared proposals;
             // an asks-only digest is the recipient's and moves only its mark.
             if !digest.groups.is_empty() {
@@ -419,7 +448,8 @@ impl Vault {
     }
 
     /// The latest scheduled or urgent output for the host's inbox/board read
-    /// plane. The ID still verifies the persisted digest on every read.
+    /// plane (`GET /v1/owner/proactivity/digest`). The ID still verifies the
+    /// persisted digest on every read.
     pub fn latest_proactivity_digest(&self) -> Result<Option<ProactivityDigest>> {
         let id = {
             let txn = self.store.env.read_txn()?;

@@ -311,6 +311,7 @@ impl Vault {
                         subject,
                         COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE,
                         value,
+                        &unread.iter().map(|(source, _)| *source).collect::<Vec<_>>(),
                         &envelope,
                         now,
                     )

@@ -2,7 +2,7 @@
 use super::context::{validate_citations, validate_packet};
 use super::{
     PREDICATE, Packet, REPRESENTATION_FACET, RepresentationCitation, RepresentationContext,
-    RepresentationRequest, invalid,
+    RepresentationRequest, RepresentationSource, invalid,
 };
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
@@ -33,6 +33,47 @@ pub struct RepresentationDraft {
 /// and return it here. Queue replay never invokes a model or charges again.
 pub trait RepresentationPlanner {
     fn plan(&mut self, context: &RepresentationContext) -> Result<RepresentationDraft>;
+}
+/// Characters of a source's own text one citation quotes.
+const QUOTE_CHARS: usize = 200;
+/// A host's model answer, cited deterministically: every evidence and voice
+/// source is cited by a bounded prefix of its own text, and an evidence
+/// marker the answer left out is appended on a closing line. The host makes
+/// its budgeted call before scheduling; planning never calls a model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrematerializedDraft {
+    pub text: String,
+}
+impl RepresentationPlanner for PrematerializedDraft {
+    fn plan(&mut self, context: &RepresentationContext) -> Result<RepresentationDraft> {
+        if self.text.trim().is_empty() {
+            return Err(invalid());
+        }
+        let quote = |source: &RepresentationSource| {
+            let text = source.text.trim();
+            let end = text
+                .char_indices()
+                .nth(QUOTE_CHARS)
+                .map_or(text.len(), |(at, _)| at);
+            source.cite(&text[..end])
+        };
+        let evidence: Vec<RepresentationCitation> = context.evidence.iter().map(quote).collect();
+        let mut text = self.text.trim().to_owned();
+        let missing: Vec<String> = evidence
+            .iter()
+            .map(RepresentationCitation::marker)
+            .filter(|marker| !text.contains(marker.as_str()))
+            .collect();
+        if !missing.is_empty() {
+            text.push_str("\n\n");
+            text.push_str(&missing.join(" "));
+        }
+        Ok(RepresentationDraft {
+            text,
+            evidence,
+            voice: context.voice.iter().map(quote).collect(),
+        })
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

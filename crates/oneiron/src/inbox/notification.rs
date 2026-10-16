@@ -65,6 +65,8 @@ pub enum NotificationKind {
     Finding,
     EventReceived,
     ImportFinished,
+    /// A built proactivity digest; `source.result` names its id.
+    Digest,
 }
 
 impl NotificationKind {
