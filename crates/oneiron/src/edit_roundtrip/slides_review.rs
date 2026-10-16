@@ -285,6 +285,7 @@ pub fn review_slides(
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
                         paired: paired[index].clone(),
+                        person: Vec::new(),
                     },
                     human_ask: None,
                 };

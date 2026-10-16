@@ -138,18 +138,21 @@ impl SlideReviewProvider for Provider {
                         answer: DecisionAnswer::Abstain,
                         probability: None,
                         paired: None,
+                        person: None,
                     }
                 } else if self.rung == DecisionRung::Local && matches!(slide, 5 | 11 | 20) {
                     ProviderDecision {
                         answer: DecisionAnswer::Noul(true),
                         probability: Some(0.5),
                         paired: None,
+                        person: None,
                     }
                 } else {
                     ProviderDecision {
                         answer: DecisionAnswer::Noul(slide % 2 == 0),
                         probability: Some(0.9),
                         paired: None,
+                        person: None,
                     }
                 }
             })
@@ -419,6 +422,7 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             answer: DecisionAnswer::Noul(false),
             probability: Some(0.5),
             paired: None,
+            person: None,
         },
     };
     let paired = PairedAnswer {
@@ -432,6 +436,7 @@ fn enforced_band_steps_to_the_house_read_and_settles_with_its_paired_reading() {
             answer: DecisionAnswer::Noul(true),
             probability: Some(0.9),
             paired: Some(paired),
+            person: None,
         },
     };
     let run = review_slides(
@@ -772,6 +777,7 @@ impl SlideReviewProvider for ChangingPin {
                 answer: DecisionAnswer::Noul(true),
                 probability: Some(0.9),
                 paired: None,
+                person: None,
             })
             .collect())
     }

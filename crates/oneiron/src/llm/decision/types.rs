@@ -199,10 +199,14 @@ pub struct DecisionReceipt {
     /// has no row; a missing reading never stands for P(yes) = 0.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paired: Vec<PairedReading>,
+    /// One row per measurement that read the person question ("ask a person?"), kept
+    /// whether or not it routed the decision. A missing reading has no row, as above.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub person: Vec<PairedReading>,
 }
 
-/// The paired "does this need more thinking?" reading, bound by the engine to the
-/// provider that measured it with its answer.
+/// A yes/no reading taken with the answer ("does this need more thinking?" or "ask a
+/// person?"), bound by the engine to the provider that measured it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PairedReading {
@@ -275,6 +279,8 @@ pub enum HumanAskReason {
     Uncertain,
     ProviderUnavailable,
     OwnerSelected,
+    /// The read's P(ask a person) reached the owner's threshold row.
+    NeedsPerson,
 }
 
 pub(super) fn invalid(message: &str) -> Error {

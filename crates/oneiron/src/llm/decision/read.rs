@@ -1,5 +1,6 @@
-//! The escalation rung's decision read: the house model scores the question's labels and
-//! the paired "does this need more thinking?" question in one forward evaluation.
+//! The escalation rung's decision read: the house model scores the question's labels, the
+//! paired "does this need more thinking?" question and, when the host asks it, the person
+//! question ("ask a person?") in one forward evaluation.
 
 use super::ladder::{DecisionProvider, PairedAnswer, ProviderDecision, validate_pin};
 use super::types::invalid;
@@ -29,6 +30,7 @@ pub struct DecisionReadProvider<'a> {
     reader: &'a dyn LabelReadModel,
     guard: &'a BudgetGuard,
     paired: &'a DecisionQuestion,
+    person: Option<&'a DecisionQuestion>,
     call: DecisionReadCall<'a>,
 }
 
@@ -61,8 +63,22 @@ impl<'a> DecisionReadProvider<'a> {
             reader,
             guard,
             paired,
+            person: None,
             call,
         })
+    }
+
+    /// Reads the host's versioned person question in the same evaluation.
+    pub fn with_person(mut self, person: &'a DecisionQuestion) -> Result<Self> {
+        person.validate()?;
+        if person.contract != AnswerContract::Noul
+            || person.id == self.call.question.id
+            || person.id == self.paired.id
+        {
+            return Err(invalid("invalid person question"));
+        }
+        self.person = Some(person);
+        Ok(self)
     }
 }
 
@@ -93,6 +109,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 labels,
             },
             paired: &self.paired.text,
+            person: self.person.map(|person| person.text.as_str()),
         };
         let lease = self
             .guard
@@ -122,6 +139,8 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             || !read.primary.iter().all(unit)
             || (read.primary.iter().sum::<f64>() - 1.0).abs() > DISTRIBUTION_TOLERANCE
             || !unit(&read.paired_yes)
+            || read.person_yes.is_some() != self.person.is_some()
+            || !read.person_yes.iter().all(unit)
         {
             return Err(invalid("malformed decision read"));
         }
@@ -148,6 +167,14 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 question_version: self.paired.version,
                 probability: read.paired_yes,
             }),
+            person: self
+                .person
+                .zip(read.person_yes)
+                .map(|(person, probability)| PairedAnswer {
+                    question: person.id,
+                    question_version: person.version,
+                    probability,
+                }),
         })
     }
 }

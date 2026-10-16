@@ -1,9 +1,10 @@
 //! Label-read seam: a host model scores a closed label set instead of generating text.
 //!
-//! One read evaluates two readouts over the same bounded state in one forward pass: the
-//! caller's question over its labels, and the paired yes/no question ("does this need more
-//! thinking?"). The host owns the tokenizer, the label verbalizers, the read position and
-//! calibration. This seam carries only the probabilities and the usage to settle.
+//! One read evaluates its readouts over the same bounded state in one forward pass: the
+//! caller's question over its labels, the paired yes/no question ("does this need more
+//! thinking?") and, when asked, the person yes/no question ("ask a person?"). The host owns
+//! the tokenizer, the label verbalizers, the read position and calibration. This seam carries
+//! only the probabilities and the usage to settle.
 
 use super::{BudgetLease, LlmResult, LlmUsage};
 use serde_json::Value as JsonValue;
@@ -24,7 +25,7 @@ pub struct LabelReadout<'a> {
     pub labels: LabelSet<'a>,
 }
 
-/// The primary readout and the paired yes/no question, read over one state.
+/// The primary readout and the yes/no questions read with it, over one state.
 #[derive(Debug, Clone, Copy)]
 pub struct LabelReadRequest<'a> {
     /// Caller-scoped, bounded state; never an implicit vault dump.
@@ -32,6 +33,8 @@ pub struct LabelReadRequest<'a> {
     pub primary: LabelReadout<'a>,
     /// The paired yes/no question, read in the same forward evaluation as `primary`.
     pub paired: &'a str,
+    /// The person yes/no question, read in that same evaluation when present.
+    pub person: Option<&'a str>,
 }
 
 /// Probabilities from one forward evaluation.
@@ -41,6 +44,8 @@ pub struct LabelReadResponse {
     pub primary: Vec<f64>,
     /// P(yes) for the paired question.
     pub paired_yes: f64,
+    /// P(yes) for the person question; present exactly when the request asked it.
+    pub person_yes: Option<f64>,
     /// Tokens this read used; settled against its own lease.
     pub usage: LlmUsage,
 }

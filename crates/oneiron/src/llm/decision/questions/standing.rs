@@ -365,6 +365,7 @@ pub fn backfill_standing_answer(
                     evidence_versions: Vec::new(),
                     cost_per_thousand: None,
                     paired: input.paired,
+                    person: Vec::new(),
                 },
                 human_ask: None,
             },

@@ -22,6 +22,7 @@ fn yes(p: f64) -> ProviderDecision {
         answer: DecisionAnswer::Noul(true),
         probability: Some(p),
         paired: None,
+        person: None,
     }
 }
 fn pin(rung: DecisionRung, version: &str) -> ProviderPin {
@@ -123,8 +124,9 @@ struct Reader {
     revision: String,
     primary: Vec<f64>,
     paired_yes: f64,
-    /// Primary text, primary labels and paired text of each read.
-    seen: Mutex<Vec<(String, Vec<String>, String)>>,
+    person_yes: Option<f64>,
+    /// Primary text, primary labels, paired text and person text of each read.
+    seen: Mutex<Vec<(String, Vec<String>, String, Option<String>)>>,
 }
 impl Reader {
     fn new(primary: Vec<f64>, paired_yes: f64) -> Self {
@@ -132,6 +134,7 @@ impl Reader {
             revision: "r1".into(),
             primary,
             paired_yes,
+            person_yes: None,
             seen: Mutex::default(),
         }
     }
@@ -156,12 +159,14 @@ impl LabelReadModel for Reader {
             request.primary.text.to_owned(),
             labels,
             request.paired.to_owned(),
+            request.person.map(str::to_owned),
         ));
         let mut usage = LlmUsage::zero();
         usage.input.total = 3;
         Ok(LabelReadResponse {
             primary: self.primary.clone(),
             paired_yes: self.paired_yes,
+            person_yes: self.person_yes,
             usage,
         })
     }
@@ -208,6 +213,7 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
             answer: DecisionAnswer::Choice("merge".into()),
             probability: Some(0.5),
             paired: None,
+            person: None,
         },
         calls: AtomicUsize::new(0),
     };
@@ -279,7 +285,7 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
     let labels: Vec<String> = vec!["keep".into(), "merge".into(), "split".into()];
     assert_eq!(
         *reader.seen.lock().unwrap(),
-        vec![(q.text.clone(), labels, paired.text.clone())]
+        vec![(q.text.clone(), labels, paired.text.clone(), None)]
     );
     let budget = guard.read();
     assert!(budget.used_units > 0);
@@ -293,6 +299,133 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
     assert!(run(&without).is_err());
     assert_eq!(big.calls.load(Ordering::SeqCst), 0);
     assert!(queue.0.lock().unwrap().is_empty());
+}
+
+/// Q3 acceptance (owner ruling 10-16): when the read's P(ask a person) reaches the owner's
+/// threshold row, the decision goes to the person rung at the start, carrying the read as its
+/// prior. Below the row, with no row, or on a surface whose dial stops short of the person
+/// rung, the answer stands as before. The person reading is on every receipt either way.
+#[test]
+fn person_reading_at_the_threshold_routes_to_the_person_rung_at_the_start() {
+    let q = choice_question();
+    let paired = paired_question();
+    let person = DecisionQuestion {
+        version: 2,
+        text: "Should a person decide this?".into(),
+        ..question(DecisionClass::Judgment)
+    };
+    let reader = Reader {
+        person_yes: Some(0.97),
+        ..Reader::new(vec![0.1, 0.2, 0.7], 0.3)
+    };
+    let guard = read_guard(100);
+    let evidence = vec![EntityId::now()];
+    let state = serde_json::json!({"unit": "bounded"});
+    let call = DecisionReadCall {
+        question: &q,
+        evidence: &evidence,
+        state: &state,
+    };
+    let provider = || {
+        DecisionReadProvider::new(
+            pin(DecisionRung::Escalation, "r1"),
+            &reader,
+            &guard,
+            &paired,
+            call,
+        )
+        .unwrap()
+    };
+    // The person question is neither the answered nor the paired question.
+    assert!(provider().with_person(&paired).is_err());
+    assert!(provider().with_person(&q).is_err());
+    let escalation = provider().with_person(&person).unwrap();
+    let queue = Queue::default();
+    let ladder = DecisionLadder {
+        rule: None,
+        local: None,
+        system_one: None,
+        escalation: Some(&escalation),
+        big: None,
+        human: &queue,
+        human_pin: pin(DecisionRung::Human, "q1"),
+    };
+    let run = |ceiling: DecisionRung, policy: &DecisionBandPolicy| {
+        ladder
+            .run(
+                &q,
+                EntityId::now(),
+                &evidence,
+                dial(DecisionRung::Escalation, ceiling),
+                policy,
+                Reversibility::ReversibleRead,
+            )
+            .unwrap()
+    };
+    let person_row = PairedReading {
+        provider: pin(DecisionRung::Escalation, "r1"),
+        question: person.id,
+        question_version: 2,
+        probability: 0.97,
+    };
+    let mut policy = DecisionBandPolicy::default();
+    policy.set_person_threshold(0.95, 1).unwrap();
+
+    let asked = run(DecisionRung::Human, &policy);
+    assert_eq!(asked.answer, DecisionAnswer::Abstain);
+    assert_eq!(asked.human_ask, Some(HumanAskReason::NeedsPerson));
+    assert_eq!(
+        asked.receipt.providers,
+        vec![
+            pin(DecisionRung::Escalation, "r1"),
+            pin(DecisionRung::Human, "q1")
+        ]
+    );
+    assert_eq!(asked.receipt.person, vec![person_row.clone()]);
+    assert_eq!(asked.receipt.paired.len(), 1);
+    {
+        let queued = queue.0.lock().unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].reason, HumanAskReason::NeedsPerson);
+        let prior = queued[0].prior.as_ref().unwrap();
+        assert_eq!(prior.answer, DecisionAnswer::Choice("split".into()));
+    }
+    assert_eq!(
+        reader.seen.lock().unwrap()[0].3.as_deref(),
+        Some(person.text.as_str())
+    );
+
+    // A surface without a person rung, a row above the reading, and no row at all keep the
+    // read's own answer, and still record the reading.
+    let mut above = DecisionBandPolicy::default();
+    above.set_person_threshold(0.99, 1).unwrap();
+    for (ceiling, policy) in [
+        (DecisionRung::Big, &policy),
+        (DecisionRung::Human, &above),
+        (DecisionRung::Human, &DecisionBandPolicy::default()),
+    ] {
+        let decision = run(ceiling, policy);
+        assert_eq!(decision.answer, DecisionAnswer::Choice("split".into()));
+        assert_eq!(decision.human_ask, None);
+        assert_eq!(decision.receipt.person, vec![person_row.clone()]);
+    }
+    assert_eq!(queue.0.lock().unwrap().len(), 1);
+
+    // The row only moves forward, and a read that drops the asked reading is refused,
+    // never taken as P(yes) = 0.
+    assert!(policy.set_person_threshold(0.9, 1).is_err());
+    let silent = Reader::new(vec![0.1, 0.2, 0.7], 0.3);
+    let dropped = DecisionReadProvider::new(
+        pin(DecisionRung::Escalation, "r1"),
+        &silent,
+        &guard,
+        &paired,
+        call,
+    )
+    .unwrap()
+    .with_person(&person)
+    .unwrap();
+    assert!(dropped.decide(&q, &evidence).is_err());
 }
 
 #[test]
