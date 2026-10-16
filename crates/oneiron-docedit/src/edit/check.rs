@@ -71,7 +71,7 @@ impl Added {
     }
 }
 
-fn outside(part: &str, why: &'static str) -> EditRefusal {
+pub(super) fn outside(part: &str, why: &'static str) -> EditRefusal {
     EditRefusal::WriteOutsideTarget {
         part: part.to_owned(),
         why,
@@ -170,13 +170,13 @@ fn confine(
         .map_err(|why| outside(part, why))
 }
 
-type Side<'a> = (&'a XmlTree, &'a [u8], usize);
+pub(super) type Side<'a> = (&'a XmlTree, &'a [u8], usize);
 
 /// A declared path below an element, and the attribute it ends in, if any.
-type Allowance<'a> = (&'a [(&'a str, &'a str)], Option<(&'a str, &'a str)>);
+pub(super) type Allowance<'a> = (&'a [(&'a str, &'a str)], Option<(&'a str, &'a str)>);
 
 /// The two elements are equal except where `paths` allow.
-fn same_except(
+pub(super) fn same_except(
     (old_tree, old, at_old): Side<'_>,
     (new_tree, new, at_new): Side<'_>,
     paths: &[Allowance<'_>],
@@ -408,7 +408,7 @@ fn identity(shape: &ShapeView) -> Identity<'_> {
 
 /// The index without retained node positions, which a longer text body
 /// shifts.
-fn timing(index: &AnimationIndex) -> impl PartialEq + '_ {
+pub(super) fn timing(index: &AnimationIndex) -> impl PartialEq + '_ {
     let targets: Vec<_> = index
         .targets
         .iter()

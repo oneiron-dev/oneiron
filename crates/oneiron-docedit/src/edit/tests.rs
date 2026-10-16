@@ -11,7 +11,7 @@ use crate::emit::tests::{png, record};
 use crate::graphic::Origin;
 use crate::ooxml::XmlTree;
 
-const SLIDE: &str = "ppt/slides/slide1.xml";
+pub(super) const SLIDE: &str = "ppt/slides/slide1.xml";
 const SECOND: &str = "ppt/slides/slide2.xml";
 const NOTES: &str = "ppt/notesSlides/notesSlide1.xml";
 const OLD_MEDIA: &str = "ppt/media/image1.png";
@@ -262,7 +262,7 @@ fn parts() -> Vec<(&'static str, String)> {
 }
 
 /// The fixture deck, with a real PNG as the existing picture's media.
-fn deck() -> Package {
+pub(super) fn deck() -> Package {
     let mut package = Package::open(&archive(&parts()), limits()).unwrap();
     package
         .add_part(OLD_MEDIA, "image/png", png(4, 2, [10, 20, 30]))
@@ -270,7 +270,7 @@ fn deck() -> Package {
     Package::open(&package.export().unwrap(), limits()).unwrap()
 }
 
-fn target<'a>(package: &Package, slide: &'a str, shape: u32) -> Target<'a> {
+pub(super) fn target<'a>(package: &Package, slide: &'a str, shape: u32) -> Target<'a> {
     let view = DeckView::read(package).unwrap();
     let found = view
         .slides
@@ -312,12 +312,12 @@ fn refuse(op: &ValueEdit<'_>) -> EditRefusal {
     refusal
 }
 
-fn part(package: &Package, name: &str) -> String {
+pub(super) fn part(package: &Package, name: &str) -> String {
     String::from_utf8(package.part(name).unwrap().unwrap()).unwrap()
 }
 
 /// The shape's source XML.
-fn shape_xml(package: &Package, slide: &str, id: u32) -> String {
+pub(super) fn shape_xml(package: &Package, slide: &str, id: u32) -> String {
     let source = part(package, slide);
     let tree = XmlTree::parse(source.as_bytes(), limits().xml).unwrap();
     let at = find_shape(&tree, id).unwrap();

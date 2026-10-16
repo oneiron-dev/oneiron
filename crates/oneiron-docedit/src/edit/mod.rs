@@ -14,11 +14,14 @@
 //! changed text body comes back [`FitUnverified`].
 mod check;
 mod media;
+mod structure;
 #[cfg(test)]
 mod tests;
 mod text;
 mod xfrm;
 pub(crate) mod xml;
+
+pub use structure::{NewShape, Preset, StructureEdit, StructureReport, structure_patch};
 
 use crate::deck::{DeckError, DeckView, ShapeView};
 use crate::design_plan::AssetKind;
@@ -110,6 +113,14 @@ pub enum Effect {
     PreviousMedia { relationship: String },
     /// A new notes slide was created over the notes master.
     NotesCreated { part: String },
+    /// A shape was added with this id and minted `a16:creationId`.
+    ShapeAdded { id: u32, creation_id: String },
+    /// A connector glued to a deleted shape was unglued; its geometry stays.
+    Unglued { connector: Option<u32> },
+    /// Timing removed with a deleted shape: the `p:cTn` ids it held.
+    TimingRemoved { timing_ids: Vec<u32> },
+    /// A relationship only the deleted shape used is kept, unreferenced.
+    Unreferenced { relationship: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +158,14 @@ pub enum EditRefusal {
     TextMapping(&'static str),
     #[error("missing: {0}")]
     Missing(&'static str),
+    /// No native id is left above the high-water mark.
+    #[error("the native id space is exhausted")]
+    IdSpaceExhausted,
+    #[error("reparent unsupported: {0}")]
+    ReparentUnsupported(&'static str),
+    /// A connector is glued to the shape to delete; a cascade unglues it.
+    #[error("a connector is glued to the shape")]
+    GluedConnector(Option<u32>),
     #[error("invalid edit: {0}")]
     Invalid(&'static str),
     #[error("picture: {0}")]

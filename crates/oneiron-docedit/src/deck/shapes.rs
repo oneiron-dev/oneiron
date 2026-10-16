@@ -89,9 +89,8 @@ fn guid(id: &str) -> String {
     format!("{{{}}}", id.trim_matches(['{', '}']).to_ascii_uppercase())
 }
 
-/// Compose the group's child-to-parent matrix with its parent's: scale
-/// `chOff`/`chExt` onto `off`/`ext`, then flip and rotate about the group's
-/// centre. A missing or degenerate transform is refused, not approximated.
+/// Compose the group's child-to-parent matrix with its parent's. A missing
+/// or degenerate transform is refused, not approximated.
 fn group_transform(
     context: &SlideContext<'_>,
     tree: &XmlTree,
@@ -101,10 +100,24 @@ fn group_transform(
     let Some(outer) = parent.value else {
         return parent.clone();
     };
-    let Some(xfrm) = path(tree, group, &[(P, "grpSpPr"), (A, "xfrm")]) else {
-        return Value::unresolved(Refusal::UnrepresentableTransform, None);
-    };
-    let source = Some(resolve::source(context.slide, tree, xfrm, None));
+    let source = path(tree, group, &[(P, "grpSpPr"), (A, "xfrm")])
+        .map(|xfrm| resolve::source(context.slide, tree, xfrm, None));
+    match group_matrix(tree, group) {
+        Ok(inner) => Value {
+            value: Some(Affine::then_outer(inner, outer)),
+            state: State::Explicit,
+            source,
+            inherited: false,
+        },
+        Err(why) => Value::unresolved(why, source),
+    }
+}
+
+/// The group's own child-to-parent matrix: scale `chOff`/`chExt` onto
+/// `off`/`ext`, then flip and rotate about the group's centre.
+pub(crate) fn group_matrix(tree: &XmlTree, group: usize) -> Result<Affine, Refusal> {
+    let xfrm = path(tree, group, &[(P, "grpSpPr"), (A, "xfrm")])
+        .ok_or(Refusal::UnrepresentableTransform)?;
     let pair = |name, x, y| {
         let at = &tree.nodes[child(tree, xfrm, A, name)?];
         Some((
@@ -125,10 +138,10 @@ fn group_transform(
         flag("flipH"),
         flag("flipV"),
     ) else {
-        return Value::unresolved(Refusal::UnrepresentableTransform, source);
+        return Err(Refusal::UnrepresentableTransform);
     };
     if [ext.0, ext.1, ch_ext.0, ch_ext.1].contains(&0.0) {
-        return Value::unresolved(Refusal::NonInvertibleGroupTransform, source);
+        return Err(Refusal::NonInvertibleGroupTransform);
     }
     let (sx, sy) = (ext.0 / ch_ext.0, ext.1 / ch_ext.1);
     let scale = Affine {
@@ -154,12 +167,7 @@ fn group_transform(
         e: cx - (a * cx + c * cy),
         f: cy - (b * cx + d * cy),
     };
-    Value {
-        value: Some(Affine::then_outer(Affine::then_outer(scale, turn), outer)),
-        state: State::Explicit,
-        source,
-        inherited: false,
-    }
+    Ok(Affine::then_outer(scale, turn))
 }
 
 fn text(

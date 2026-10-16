@@ -13,7 +13,7 @@ use std::ops::RangeInclusive;
 const COORDINATE: RangeInclusive<i64> = -27_273_042_329_600..=27_273_042_316_900;
 const POSITIVE: RangeInclusive<i64> = 0..=27_273_042_316_900;
 /// 360° in `ST_Angle` units.
-const TURN: i64 = 21_600_000;
+pub(super) const TURN: i64 = 21_600_000;
 
 /// The path from a shape element to its own transform.
 pub(crate) fn own_path(kind: ShapeKind) -> &'static [(&'static str, &'static str)] {
@@ -120,7 +120,7 @@ pub(super) fn move_in_slide_space(
     Ok(written)
 }
 
-fn check_ranges(xfrm: &Xfrm) -> Result<(), EditRefusal> {
+pub(super) fn check_ranges(xfrm: &Xfrm) -> Result<(), EditRefusal> {
     if let Some((x, y)) = xfrm.offset
         && !(COORDINATE.contains(&x) && COORDINATE.contains(&y))
     {
@@ -149,7 +149,7 @@ fn flag(value: bool) -> &'static str {
 
 /// Splices that write the declared properties into the shape's own
 /// transform; an unchanged or schema-default value adds nothing.
-fn write(
+pub(super) fn write(
     bytes: &[u8],
     tree: &XmlTree,
     shape: usize,
