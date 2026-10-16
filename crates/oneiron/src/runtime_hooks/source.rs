@@ -259,10 +259,6 @@ impl SettledRow {
 
 /// Appends one settlement to the feed, in the settling door's transaction.
 /// The sequence is allocated there, so feed order is commit order.
-#[allow(
-    dead_code,
-    reason = "the gate's settlement doors call this once their seam lands"
-)]
 pub(crate) fn record_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
