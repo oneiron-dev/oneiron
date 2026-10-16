@@ -7,7 +7,6 @@ use super::payload::{
     CalendarInvitePayload,
 };
 use crate::Vault;
-use crate::entity_id::EntityId;
 
 /// The `text/calendar` part one invite send carries beside the ordinary body.
 ///
@@ -58,15 +57,28 @@ pub fn read_calendar_invite_ics(
     vault: &Vault,
     payload: &CalendarInvitePayload,
 ) -> Result<Vec<u8>, CalendarError> {
-    let artifact_id = parse_blob_ref(&payload.ics_blob_ref)?;
-    let head = vault
-        .blob_artifact_head(&artifact_id)
-        .map_err(CalendarError::from)?
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    read_calendar_invite_ics_in_txn(vault, &txn, payload)
+}
+
+pub(crate) fn read_calendar_invite_ics_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &CalendarInvitePayload,
+) -> Result<Vec<u8>, CalendarError> {
+    let (artifact_id, version) = payload.blob_version_ref()?;
+    let record = vault
+        .blob_artifact_version_metadata_in_txn(txn, &artifact_id, version)?
         .ok_or_else(|| refused("ics_blob_ref names no stored blob artifact version"))?;
-    vault
-        .read_blob_artifact_version(&artifact_id, head.version)
-        .map_err(CalendarError::from)?
-        .ok_or_else(|| refused("ics_blob_ref head has no stored bytes"))
+    let bytes = vault
+        .read_blob_artifact_version_in_txn(txn, &artifact_id, version)?
+        .ok_or_else(|| refused("ics_blob_ref version has no stored bytes"))?;
+    if blake3::hash(&bytes).as_bytes() != &record.content_hash {
+        return Err(refused(
+            "ics_blob_ref version content hash does not match its bytes",
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Reads the ICS one invite references and proves it is that invite: its
@@ -77,7 +89,16 @@ pub(super) fn read_checked_invite_ics(
     vault: &Vault,
     payload: &CalendarInvitePayload,
 ) -> Result<(Vec<u8>, super::ics::InviteIcsIdentity), CalendarError> {
-    let ics = read_calendar_invite_ics(vault, payload)?;
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    read_checked_invite_ics_in_txn(vault, &txn, payload)
+}
+
+pub(super) fn read_checked_invite_ics_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &CalendarInvitePayload,
+) -> Result<(Vec<u8>, super::ics::InviteIcsIdentity), CalendarError> {
+    let ics = read_calendar_invite_ics_in_txn(vault, txn, payload)?;
     let identity = super::ics::invite_identity(&ics)?;
     if identity.uid != payload.uid
         || identity.sequence != payload.sequence
@@ -90,30 +111,4 @@ pub(super) fn read_checked_invite_ics(
         ));
     }
     Ok((ics, identity))
-}
-
-/// Resolves `ics_blob_ref` to a real blob artifact head and returns its
-/// content hash.
-///
-/// Two jobs in one read: it proves the frozen reference dereferences (I10's
-/// precondition — the connector must be able to build the MIME part) and it
-/// supplies the passport's content hash, so "same SEQUENCE, drifted content"
-/// is decidable without ever putting `.ics` bytes in the frozen body.
-pub(super) fn ics_blob_content_hash(
-    vault: &Vault,
-    blob_ref: &str,
-) -> Result<[u8; 32], CalendarError> {
-    let artifact_id = parse_blob_ref(blob_ref)?;
-    let head = vault
-        .blob_artifact_head(&artifact_id)
-        .map_err(CalendarError::from)?
-        .ok_or_else(|| refused("ics_blob_ref names no stored blob artifact version"))?;
-    Ok(head.content_hash)
-}
-
-/// Accepts `blob:<32-hex>` and a bare `<32-hex>` entity id.
-fn parse_blob_ref(blob_ref: &str) -> Result<EntityId, CalendarError> {
-    let trimmed = blob_ref.trim();
-    let hex = trimmed.strip_prefix("blob:").unwrap_or(trimmed);
-    EntityId::from_hex(hex).map_err(|_| refused("ics_blob_ref is not a blob artifact entity ref"))
 }

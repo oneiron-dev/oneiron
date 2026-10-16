@@ -57,13 +57,6 @@ pub(crate) enum PreparedAuthorization {
         principal_ref: String,
         prepared: Box<PreparedToolCall>,
     },
-    /// The booking-page grant calendar admission bound to this invite's own
-    /// booking EVENT and recipient, re-checked under the gate's writer.
-    BookingPageInvite {
-        grant_id: EntityId,
-        event_ref: EntityId,
-        recipient: String,
-    },
 }
 
 /// Fully frozen new-effect input. No transport object can change these axes.

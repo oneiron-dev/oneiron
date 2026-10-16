@@ -86,8 +86,8 @@ pub struct CalendarInvitePayload {
     pub uid: String,
     /// iTIP SEQUENCE of this revision. Strictly increasing on the same UID.
     pub sequence: u32,
-    /// Blob-artifact ref of the rendered ICS payload. The bytes stay in the
-    /// blob store; only this reference is ever frozen.
+    /// Immutable `blob:<artifact hex>@<version>` reference to the rendered ICS.
+    /// The bytes stay in the blob store; only this version pin is frozen.
     pub ics_blob_ref: String,
     /// Delivery target.
     pub recipient: String,
@@ -105,7 +105,25 @@ impl CalendarInvitePayload {
                 return Err(refused(format!("{field} must not be blank")));
             }
         }
+        self.blob_version_ref()?;
         Ok(())
+    }
+
+    /// Decodes the immutable version pin; mutable artifact-head refs are not invites.
+    pub(crate) fn blob_version_ref(&self) -> Result<(crate::EntityId, u64), CalendarError> {
+        let (artifact, version) = self
+            .ics_blob_ref
+            .strip_prefix("blob:")
+            .and_then(|reference| reference.split_once('@'))
+            .ok_or_else(|| refused("ics_blob_ref must be blob:<artifact hex>@<version>"))?;
+        let artifact = crate::EntityId::from_hex(artifact)
+            .map_err(|_| refused("ics_blob_ref has an invalid artifact id"))?;
+        let version = version
+            .parse::<u64>()
+            .ok()
+            .filter(|version| *version > 0)
+            .ok_or_else(|| refused("ics_blob_ref must pin a positive blob version"))?;
+        Ok((artifact, version))
     }
 }
 

@@ -176,8 +176,9 @@ pub(in crate::booking) fn commit_emergency_item(
             .payload
             .as_ref()
             .map(|payload| {
-                crate::calendar::admit_calendar_invite(
+                crate::calendar::invite::admit_calendar_invite_in_txn(
                     vault,
+                    txn,
                     plan.request.owner_ref,
                     payload,
                     input.now_utc,
@@ -265,11 +266,6 @@ pub(in crate::booking) fn commit_emergency_item(
             return Err(emergency_refused(
                 "emergency calendar sequence conflicts with the lifecycle revision",
             ));
-        }
-        if let Some(admission) = admission {
-            admission
-                .commit_in_txn(vault, txn, input.now_utc)
-                .map_err(crate::booking::emergency_reschedule::calendar_failure)?;
         }
         if cancel {
             write_receipt(
@@ -554,9 +550,8 @@ pub(in crate::booking) fn pick_emergency_item(
     })
 }
 
-/// CAL reads the committed confirmed booking to verify its existing invite
-/// grant. Commit its passport before dispatch, guarded by the same home writer
-/// and exact pick checkpoint. A refusal leaves the pick pending, not unbound.
+/// Validates the committed pick under its home writer. The outbound writer
+/// later publishes its passport together with Pending, never ahead of dispatch.
 pub(in crate::booking) fn admit_emergency_pick(
     vault: &Vault,
     item: &crate::booking::emergency_reschedule::EmergencyItem,
@@ -604,8 +599,9 @@ pub(in crate::booking) fn admit_emergency_pick(
             ));
         }
         emergency::verify_pick_blob(vault, item, picked)?;
-        let admission = crate::calendar::admit_calendar_invite(
+        let admission = crate::calendar::invite::admit_calendar_invite_in_txn(
             vault,
+            txn,
             item.plan.request.owner_ref,
             &picked.payload,
             input.now_utc,
@@ -614,8 +610,6 @@ pub(in crate::booking) fn admit_emergency_pick(
         if admission.event_ref() != picked.calendar.event_ref {
             return Err(emergency_refused("picked REQUEST names another booking"));
         }
-        admission
-            .commit_in_txn(vault, txn, input.now_utc)
-            .map_err(crate::booking::emergency_reschedule::calendar_failure)
+        Ok(())
     })
 }

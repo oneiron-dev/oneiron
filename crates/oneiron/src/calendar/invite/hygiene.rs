@@ -14,6 +14,7 @@ use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
     standing_outbound_grant_in_txn,
 };
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_OUTBOUND_GRANT};
 use std::collections::BTreeMap;
 
@@ -153,15 +154,16 @@ impl CalendarInviteHygieneContext {
 /// the payload contributes only the recipient and the method.
 pub(super) fn hydrate_calendar_invite_hygiene(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     actor: EntityId,
     event_ref: EntityId,
     payload: &CalendarInvitePayload,
 ) -> Result<CalendarInviteHygieneContext, CalendarError> {
     let recipient = payload.recipient.trim();
-    let consent_basis = resolve_consent_basis(vault, actor, event_ref, recipient)?;
-    let recipient_bound_to_invite = recipient_is_bound_attendee(vault, &event_ref, recipient)?;
-    let sender = sending_identity(vault, actor)?;
-    let primary_domain = primary_calendar_domain(vault, actor)?;
+    let consent_basis = resolve_consent_basis_in_txn(vault, txn, actor, event_ref, recipient)?;
+    let recipient_bound_to_invite = recipient_is_bound_attendee(vault, txn, &event_ref, recipient)?;
+    let sender = sending_identity_in_txn(vault, txn, actor)?;
+    let primary_domain = primary_calendar_domain_in_txn(vault, txn, actor)?;
     let sender_is_shared_presence = sender
         .as_ref()
         .is_some_and(|identity| identity.shape() == ChannelIdentityShape::SharedPresence);
@@ -181,23 +183,39 @@ pub(super) fn hydrate_calendar_invite_hygiene(
 /// Prior thread first, then a verified standing grant that covers THIS
 /// invite: one `actor` holds, and a booking page grant only for the exact
 /// confirmed booking `event_ref` is. Never minted here.
+#[cfg(test)]
 pub(crate) fn resolve_consent_basis(
     vault: &Vault,
     actor: EntityId,
     event_ref: EntityId,
     recipient: &str,
 ) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    resolve_consent_basis_in_txn(vault, &txn, actor, event_ref, recipient)
+}
+
+fn resolve_consent_basis_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    event_ref: EntityId,
+    recipient: &str,
+) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
+    let party = crate::comm::resolve_party_ref_in_txn(vault, txn, recipient)
+        .map_err(|err| ingest_reason(err.to_string()))?;
     consent_basis(
-        |channel_class| {
-            crate::comm::count_active_comm_claims(
+        |channel_class| match party {
+            Some(party) => count_active_party_claims_in_txn(
                 vault,
+                txn,
+                party,
                 PREDICATE_COMM_LAST_TOUCH,
-                recipient,
                 channel_class,
             )
-            .map_err(|err| ingest_reason(err.to_string()))
+            .map_err(|err| ingest_reason(err.to_string())),
+            None => Ok(0),
         },
-        || StandingGrants::read(vault)?.covering_invite(vault, actor, event_ref, recipient, false),
+        || covering_invite_in_txn(vault, txn, actor, event_ref, recipient, false),
     )
 }
 
@@ -205,13 +223,14 @@ pub(crate) fn resolve_consent_basis(
 /// sending `actor`, and bound by the booking layer to the invite's own EVENT
 /// and recipient. The dispatch door names it to the gate, the only way a page
 /// grant ever matches there.
-pub(crate) fn booking_page_grant_for_invite(
+pub(super) fn booking_page_grant_for_invite_in_txn(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     actor: EntityId,
     event_ref: EntityId,
     recipient: &str,
 ) -> Result<Option<EntityId>, CalendarError> {
-    StandingGrants::read(vault)?.covering_invite(vault, actor, event_ref, recipient, true)
+    covering_invite_in_txn(vault, txn, actor, event_ref, recipient, true)
 }
 
 /// The consent basis of one recipient: a prior thread when `touches` counts
@@ -371,48 +390,6 @@ impl StandingGrants {
     }
 
     /// Verifies — never mints — an ACTIVE standing outbound grant that covers
-    /// one invite: held by the sending `actor`, and for a booking page, bound
-    /// to the invite's own EVENT — never a different booking of the same
-    /// recipient on that page, and never another principal's grant.
-    fn covering_invite(
-        &self,
-        vault: &Vault,
-        actor: EntityId,
-        event_ref: EntityId,
-        recipient: &str,
-        pages_only: bool,
-    ) -> Result<Option<EntityId>, CalendarError> {
-        let principal = actor.to_hex();
-        let mut matched: Option<EntityId> = None;
-        for (grant_ref, grant) in &self.grants {
-            if !live(grant) || grant.principal_ref != principal {
-                continue;
-            }
-            let covers = match &grant.scope {
-                StandingOutboundGrantScope::BookingPageInvites { .. } => {
-                    crate::booking::booking_page_invites_authorizes(
-                        vault,
-                        &grant.scope,
-                        &crate::booking::BookingPageInviteContext {
-                            booking_ref: event_ref,
-                            verb_kind: super::payload::CALENDAR_INVITE_VERB,
-                            requested_recipient: recipient,
-                        },
-                    )
-                    .map_err(|err| ingest_reason(err.to_string()))?
-                }
-                _ if pages_only => false,
-                scope => recipient_scope_covers(scope, recipient),
-            };
-            // Converge on one deterministic grant when several cover the same send.
-            if covers && matched.is_none_or(|current| grant_ref.as_bytes() < current.as_bytes()) {
-                matched = Some(*grant_ref);
-            }
-        }
-        Ok(matched)
-    }
-
-    /// Verifies — never mints — an ACTIVE standing outbound grant that covers
     /// invites to this recipient. A recipient-only view for the decision
     /// checkpoint; an invite's own consent is `covering_invite`.
     ///
@@ -450,6 +427,42 @@ impl StandingGrants {
     }
 }
 
+/// Grant coverage from the same snapshot as the invite's passport and intent.
+fn covering_invite_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    event_ref: EntityId,
+    recipient: &str,
+    pages_only: bool,
+) -> Result<Option<EntityId>, CalendarError> {
+    let principal = actor.to_hex();
+    let mut matched: Option<EntityId> = None;
+    for entry in vault.store.port_entity_ids_by_type(txn, ENTITY_TYPE_OUTBOUND_GRANT, None)? {
+        let grant_ref = entry?;
+        let Some(grant) = standing_outbound_grant_in_txn(&vault.store, txn, &grant_ref)? else {
+            continue;
+        };
+        if !live(&grant) || grant.principal_ref != principal {
+            continue;
+        }
+        let covers = match &grant.scope {
+            StandingOutboundGrantScope::BookingPageInvites { .. } => {
+                crate::booking::invite_grant::page_grant_covers_booking_in_txn(
+                    vault, txn, &grant_ref, &event_ref, recipient,
+                )
+                .map_err(|err| ingest_reason(err.to_string()))?
+            }
+            _ if pages_only => false,
+            scope => recipient_scope_covers(scope, recipient),
+        };
+        if covers && matched.is_none_or(|current| grant_ref.as_bytes() < current.as_bytes()) {
+            matched = Some(grant_ref);
+        }
+    }
+    Ok(matched)
+}
+
 /// Whether a recipient-scoped grant (a contact-scoped grant for this exact
 /// recipient, or a channel-scoped grant on the calendar connector) covers an
 /// invite to `recipient`. Every other scope answers `false`.
@@ -473,20 +486,24 @@ fn live(grant: &StandingOutboundGrant) -> bool {
 /// Whether a live `calendar.attendee` claim already binds this recipient.
 fn recipient_is_bound_attendee(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
     recipient: &str,
 ) -> Result<bool, CalendarError> {
-    if crate::booking::lifecycle::booking_invite_identity(vault, event_ref)
+    if crate::booking::lifecycle::booking_invite_identity_in_txn(vault, txn, event_ref)
         .map_err(|error| refused(error.to_string()))?
         .is_some_and(|(_, bound)| attendee_matches(&bound, recipient))
     {
         return Ok(true);
     }
     for claim_id in vault
-        .claims_for_subject(event_ref)
+        .claims_for_subject_in_txn(txn, event_ref)
         .map_err(CalendarError::from)?
     {
-        let Some(body) = vault.get_claim(&claim_id).map_err(CalendarError::from)? else {
+        let Some(body) = vault
+            .get_claim_in_txn(txn, &claim_id)
+            .map_err(CalendarError::from)?
+        else {
             continue;
         };
         if body.predicate != PREDICATE_CALENDAR_ATTENDEE
@@ -523,23 +540,43 @@ fn attendee_matches(who: &str, recipient: &str) -> bool {
 /// the invite rides the ordinary email identity, which is what iMIP is. An
 /// ambiguous pair on the same channel resolves to `None` and therefore refuses:
 /// picking arbitrarily would put a nondeterministic sender on a governed send.
+#[cfg(test)]
 pub(super) fn sending_identity(
     vault: &Vault,
     actor: EntityId,
 ) -> Result<Option<ChannelIdentity>, CalendarError> {
-    if let Some(identity) = active_identity_for_channel(vault, actor, CALENDAR_INVITE_CHANNEL)? {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    sending_identity_in_txn(vault, &txn, actor)
+}
+
+fn sending_identity_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Option<ChannelIdentity>, CalendarError> {
+    if let Some(identity) = active_identity_for_channel(vault, txn, actor, CALENDAR_INVITE_CHANNEL)? {
         return Ok(Some(identity));
     }
-    active_identity_for_channel(vault, actor, "email")
+    active_identity_for_channel(vault, txn, actor, "email")
 }
 
 /// The vault's primary calendar/email domain: the ACTIVE dedicated email
 /// identity bound to this actor.
+#[cfg(test)]
 pub(super) fn primary_calendar_domain(
     vault: &Vault,
     actor: EntityId,
 ) -> Result<Option<String>, CalendarError> {
-    let Some(identity) = active_identity_for_channel(vault, actor, "email")? else {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    primary_calendar_domain_in_txn(vault, &txn, actor)
+}
+
+fn primary_calendar_domain_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Option<String>, CalendarError> {
+    let Some(identity) = active_identity_for_channel(vault, txn, actor, "email")? else {
         return Ok(None);
     };
     if identity.shape() == ChannelIdentityShape::SharedPresence {
@@ -551,17 +588,16 @@ pub(super) fn primary_calendar_domain(
 /// The single ACTIVE identity bound to `actor` on one channel class.
 fn active_identity_for_channel(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     actor: EntityId,
     channel_class: &str,
 ) -> Result<Option<ChannelIdentity>, CalendarError> {
     let wanted = crate::counterparty_contact::normalize_channel_class(channel_class);
     let mut found: Option<ChannelIdentity> = None;
-    for id in vault
-        .entities_by_type(ENTITY_TYPE_CHANNEL_IDENTITY)
-        .map_err(CalendarError::from)?
-    {
+    for entry in vault.store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
+        let id = entry?;
         let Some(identity) = vault
-            .get_channel_identity(&id)
+            .get_channel_identity_in_txn(txn, &id)
             .map_err(CalendarError::from)?
         else {
             continue;

@@ -35,6 +35,7 @@ fn parked_refusal(
     prepared: &PreparedEffect,
 ) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
     let mut wtxn = vault.store.env.write_txn()?;
+    calendar_admission_in_txn(vault, &wtxn, prepared)?;
     let effect = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let (decision_id, decision, _) =
@@ -205,6 +206,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         return replay_record(vault, authority, record, prepared, now_ms, transport);
     }
 
+    let invite_admission = match &command {
+        OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) => {
+            calendar_admission_in_txn(vault, &wtxn, prepared)?
+        }
+        OutboundEffectCommand::Resume(_) => None,
+    };
     let prepared = match command {
         OutboundEffectCommand::New(prepared) => prepared,
         OutboundEffectCommand::Park(prepared) => {
@@ -229,27 +236,6 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
     };
 
-    // CAL-04 (ONE-1786) verb wall. `calendar.invite` is the one verb whose
-    // frozen bytes must carry a payload this lane can vouch for: C7's exact
-    // five-field iMIP body. A call that claims the verb without one is a
-    // hand-rolled draft reaching for the calendar connector past the invite
-    // contract, so the last durable boundary refuses it instead of admitting a
-    // send with no method, no UID, and no SEQUENCE.
-    //
-    // Recognition ONLY. The UID/SEQUENCE transition and the vault-only hygiene
-    // evaluation already ran at the schedule chokepoint, atomically with the
-    // attempt and TASK that produced this call; re-running either here would be
-    // the second state transition per logical mutation the contract forbids,
-    // and a connector retry replays this record without re-entering the branch
-    // at all.
-    if prepared.tool == crate::calendar::CALENDAR_INVITE_VERB
-        && crate::calendar::decode_frozen_calendar_invite(&prepared.payload).is_err()
-    {
-        return Err(IntentLedgerError::InvalidInput(
-            "calendar.invite requires its exact five-field frozen payload",
-        ));
-    }
-
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     enforce_step_failure_policy(
         vault,
@@ -258,7 +244,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         &prepared.payload,
         prepared.gate.provenance.actor_entity_ref,
     )?;
-    let required_grant_id = required_grant_id(vault, &wtxn, &prepared.authorization);
+    let required_grant_id = invite_admission
+        .as_ref()
+        .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
+        .or_else(|| required_grant_id(&prepared.authorization));
     let posting_gate = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let mut governance = gate::evaluate_external_effect_policy(
         &vault.store,
@@ -268,7 +257,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         required_grant_id,
         match &prepared.authorization {
             PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-            PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => None,
+            PreparedAuthorization::None => None,
         },
         gate::ApprovalContext::FirstAdmission,
     )?;
@@ -373,7 +362,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // capability authority this admission may carry forward (ONE-1885).
     let gate_capability = governance.scoped_capability().cloned();
     let (authorization_binding, capability_provenance) = match &prepared.authorization {
-        PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => {
+        PreparedAuthorization::None => {
             if prepared.resolved_endpoint.is_some() || prepared.gate.scoped_mcp_call.is_some() {
                 return Err(IntentLedgerError::InvalidInput(
                     "endpoint effect requires scoped authorization",
@@ -455,6 +444,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     let (decision_id, decision) =
         gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
     insert_pending_in_txn(vault, &mut wtxn, &pending)?;
+    if let Some(admission) = invite_admission {
+        admission
+            .commit_in_txn(vault, &mut wtxn, dedupe_now)
+            .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite publication failed"))?;
+    }
     if let Some(key) = dedupe_key.as_deref() {
         dedupe::reserve(vault, &mut wtxn, key, &pending.id, dedupe_now)?;
     }
@@ -476,6 +470,24 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         .collect();
     result.budget_charge = budget_charge;
     Ok(result)
+}
+
+/// Reads all calendar state under the same writer that publishes Pending.
+/// An exact ledger replay never calls commit_in_txn again.
+pub(super) fn calendar_admission_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+) -> Result<Option<crate::calendar::CalendarInviteAdmission>, IntentLedgerError> {
+    crate::calendar::invite::admit_frozen_calendar_invite_in_txn(
+        vault,
+        txn,
+        &prepared.tool,
+        prepared.gate.provenance.actor_entity_ref,
+        &prepared.payload,
+        vault.store.clock.now_recorded_at(),
+    )
+    .map_err(|_| IntentLedgerError::InvalidInput("calendar.invite failed calendar admission"))
 }
 
 /// An absent binding means an ordinary non-step effect. A present binding is
@@ -616,26 +628,13 @@ fn validate_new_replay(
     Ok(())
 }
 
-/// The grant the gate must consider first. A booking-page grant the dispatch
-/// door named is re-checked here, under this writer: its EVENT must still be a
-/// confirmed booking on the grant's page for the same recipient, or no page
-/// grant is named and none can match. An unreadable binding names none.
+/// Scoped MCP authority prepared outside the writer. Calendar page grants
+/// instead come from calendar admission on this transaction's snapshot.
 pub(super) fn required_grant_id(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
     authorization: &PreparedAuthorization,
 ) -> Option<crate::entity_id::EntityId> {
     match authorization {
         PreparedAuthorization::None => None,
         PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
-        PreparedAuthorization::BookingPageInvite {
-            grant_id,
-            event_ref,
-            recipient,
-        } => crate::booking::invite_grant::page_grant_covers_booking_in_txn(
-            vault, txn, grant_id, event_ref, recipient,
-        )
-        .is_ok_and(|covers| covers)
-        .then_some(*grant_id),
     }
 }

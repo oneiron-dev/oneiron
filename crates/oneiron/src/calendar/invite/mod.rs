@@ -18,8 +18,7 @@
 //!   The state lives in the CAL-00 `calendar.passport` claim
 //!   ([`CalendarPassportValue`](crate::calendar::CalendarPassportValue)) with direction `outbound` — no local passport
 //!   type, no new predicate. A connector retry replays the frozen payload and
-//!   never re-enters [`admit_calendar_invite`], so it can neither mint a UID
-//!   nor bump a sequence.
+//!   never advances the passport a second time.
 //! * **Hygiene from vault evidence only.** [`CalendarInviteHygieneContext`] has
 //!   no public constructor and no public field: it is hydrated at the
 //!   chokepoint from live vault state. A caller cannot hand the engine a
@@ -39,6 +38,7 @@ mod admission;
 mod hygiene;
 mod mime;
 mod payload;
+mod publication;
 
 #[cfg(test)]
 mod tests;
@@ -59,7 +59,10 @@ pub use self::payload::{
 
 #[cfg(test)]
 pub(crate) use self::hygiene::resolve_consent_basis;
-pub(crate) use self::hygiene::{CalendarInviteConsentSnapshot, booking_page_grant_for_invite};
+pub(crate) use self::admission::admit_calendar_invite_in_txn;
+pub(crate) use self::hygiene::CalendarInviteConsentSnapshot;
+pub(crate) use self::mime::read_calendar_invite_ics_in_txn;
+pub(crate) use self::publication::admit_frozen_calendar_invite_in_txn;
 
 use super::CalendarError;
 #[cfg(test)]
