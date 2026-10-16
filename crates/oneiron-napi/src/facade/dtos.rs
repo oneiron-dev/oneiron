@@ -455,6 +455,14 @@ pub struct NapiScopeHonesty {
 /// Retrieval accounting (S6).
 #[napi(object)]
 pub struct NapiRetrievalMeta {
+    /// Execution health, independent of result count.
+    pub quality: String,
+    /// Observed reasons retrieval ran degraded.
+    pub degradation: Vec<String>,
+    /// Presentation adjustment; stored confidence and ranking are unchanged.
+    pub confidence_adjustment: f64,
+    /// The paid rerank stage's model, accounting, or skip reason.
+    pub rerank: Option<serde_json::Value>,
     /// True when only sparse signals ran.
     pub sparse: Option<bool>,
     /// Candidates considered.

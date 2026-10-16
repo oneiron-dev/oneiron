@@ -58,7 +58,7 @@ pub struct ClaimView {
 }
 
 /// Filter for [`Memory::claim_list`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClaimListFilter {
     /// Restrict to claims on this subject (short-id ref or hex).
     pub subject_ref: Option<String>,
@@ -84,7 +84,7 @@ pub struct LexicalHit {
 }
 
 /// Options for [`Memory::neighbors`].
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NeighborOpts {
     /// Restrict to this snake_case `EdgeKind` name.
     pub edge_kind: Option<String>,

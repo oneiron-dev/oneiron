@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 /// Typed read-back view of one entity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntityView {
     /// 32-hex entity id.
     pub id_hex: String,
@@ -21,7 +21,7 @@ pub struct EntityView {
     pub body: Option<serde_json::Value>,
 }
 /// One BM25 text-index field for a structural put.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TextIndexField {
     /// Analyzer field name (e.g. `content`, `name`).
     pub field: String,
@@ -29,7 +29,7 @@ pub struct TextIndexField {
     pub value: String,
 }
 /// One outgoing edge for a structural put.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StructuralEdgeSpec {
     /// snake_case `EdgeKind` name (e.g. `belongs_to`, `attached`).
     pub edge_kind: String,
@@ -39,7 +39,7 @@ pub struct StructuralEdgeSpec {
     pub weight: Option<f32>,
 }
 /// Structural put carrying text-index fields and edges (B2 migrator group).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StructuralPutInput {
     /// Caller-supplied deterministic 32-hex id; `None` ⇒ generated.
     pub id: Option<String>,
@@ -58,7 +58,7 @@ pub struct StructuralPutInput {
     pub learned_at: Option<u64>,
 }
 /// Receipt for a structural write (put/checkin/companion/blob artifact).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntityRefReceipt {
     /// Short-id ref of the written entity (hex fallback).
     pub entity_ref: String,
@@ -69,7 +69,7 @@ pub struct EntityRefReceipt {
     pub receipt_ref: String,
 }
 /// One habit check-in append (B2 migrator group).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HabitCheckinInput {
     /// Habit-role TASK ref (short-id ref or hex); must exist.
     pub habit_ref: String,
@@ -85,7 +85,7 @@ pub struct HabitCheckinInput {
 }
 /// One imported-evidence claim admission (B1a migration-admission verb over
 /// `ingest.rs` `admit_imported_evidence_claim`; the gate still decides).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AdmitImportedClaimInput {
     /// Registered ingest source id; unknown sources fail closed.
     pub source_id: String,
@@ -105,7 +105,7 @@ pub struct AdmitImportedClaimInput {
     pub learned_at: Option<u64>,
 }
 /// One blob artifact registration (B8 blob door).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BlobArtifactInput {
     /// Caller-supplied deterministic 32-hex artifact id; `None` ⇒ generated.
     pub id: Option<String>,
@@ -119,7 +119,7 @@ pub struct BlobArtifactInput {
     pub learned_at: Option<u64>,
 }
 /// View of one appended blob artifact version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BlobVersionView {
     /// 32-hex artifact id.
     pub artifact_ref: String,

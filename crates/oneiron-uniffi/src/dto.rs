@@ -603,9 +603,52 @@ pub struct ScopeHonesty {
     pub out_of_scope_worlds: Vec<String>,
 }
 
+/// Execution health, independent of result count.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RetrievalQuality {
+    Full,
+    Degraded,
+    Passthrough,
+}
+
+/// A cause of degraded retrieval.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RetrievalDegradation {
+    PprCacheMiss,
+    EmbeddingTimeout,
+    Bm25Stale,
+    TemporalSignalSkipped,
+}
+
+/// The paid rerank stage's result.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RerankReport {
+    Applied {
+        model: String,
+        served_model: Option<String>,
+        candidates: u64,
+        calls: u32,
+    },
+    Skipped {
+        reason: RerankSkip,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RerankSkip {
+    NoReranker,
+    NoCandidates,
+    Deadline,
+    DeviceOnly,
+}
+
 /// Retrieval accounting.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct RetrievalMeta {
+    pub quality: RetrievalQuality,
+    pub degradation: Vec<RetrievalDegradation>,
+    pub confidence_adjustment: f64,
+    pub rerank: Option<RerankReport>,
     /// True when only sparse signals ran.
     pub sparse: Option<bool>,
     /// Candidates considered by the pipeline.

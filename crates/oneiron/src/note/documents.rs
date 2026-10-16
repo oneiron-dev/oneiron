@@ -48,25 +48,31 @@ pub(super) const NOTE_HEAD_DOC: SideTable<(EntityId, EntityId), (), Raw> =
 pub(super) const NOTE_PROPOSAL_DOC: SideTable<HexPair, Vec<u8>, Raw> =
     SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteAnchor {
+    #[schemars(with = "String")]
     #[serde(with = "crate::entity_id::serde_hex")]
     pub(super) note: EntityId,
+    #[schemars(with = "String")]
     #[serde(with = "crate::entity_id::serde_hex")]
     pub(super) head: EntityId,
     pub(super) cursor: Vec<u8>,
 }
 
 /// The version against which a writer prepared whole-text output.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteVersion {
+    #[schemars(with = "String")]
     #[serde(with = "crate::entity_id::serde_hex")]
     note: EntityId,
+    #[schemars(with = "String")]
     #[serde(with = "crate::entity_id::serde_hex")]
     head: EntityId,
     frontier: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NoteEdit {
     ReplaceSpan {
         start: NoteAnchor,
@@ -90,7 +96,8 @@ pub enum NoteEdit {
         text: String,
     },
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum NoteEditOutcome {
     Edited {
         head: EntityId,
