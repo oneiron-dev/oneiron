@@ -1,6 +1,20 @@
 {
   "verbs": [
     {
+      "name": "report",
+      "input": "crate::feedback::ReportRequest",
+      "output": "crate::feedback::ReportReceipt",
+      "call": "memory.report(input)?",
+      "scope": "Read",
+      "mcp_scope": "filtered",
+      "section": false,
+      "admission": {
+        "validate": "input.validate().map_err(MemoryError::from)?;",
+        "lane_record_scope": true
+      },
+      "server_door": "report_off_runtime"
+    },
+    {
       "name": "self.focus.refresh",
       "input": "BoardRefreshRequest",
       "output": "crate::board_verb::BoardVerbOutput",
@@ -145,7 +159,7 @@
       "name": "tasks.create",
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
-      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
+      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::msgpack_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
       "scope": "Write",
       "proposes": true,
       "mcp_fields": {
@@ -961,6 +975,30 @@
       "input": "crate::workspace_roster::ConsentAnswer",
       "output": "crate::workspace_roster::JoinOutcome",
       "call": "memory.rooms_consent(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turn.continue",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_continue(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turn.retry",
+      "input": "crate::conversation::TurnActionRequest",
+      "output": "crate::conversation::TurnActionReceipt",
+      "call": "memory.conversations_turn_retry(&input)?",
       "scope": "Write",
       "mcp_fields": {
         "spec": "$"

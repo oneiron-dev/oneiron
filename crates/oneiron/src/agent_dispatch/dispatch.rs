@@ -33,6 +33,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.depth_remaining,
         &spawn.project_ref,
         &spawn.scope,
+        &spawn.type_ref,
         &spawn.budget,
         &spawn.spend,
         &spawn.room,
@@ -417,6 +418,19 @@ impl<'a> AgentDispatcher<'a> {
             }
         };
 
+        // OF-543: placed once, here at spawn. A spawner-supplied stamp is
+        // kept (an empty node is refused); absence is the unsure placement
+        // and lands on the root — never an untyped spawn.
+        let type_ref = match spawn.type_ref {
+            Some(type_ref) if type_ref.node_id.is_empty() => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "task_type_ref node_id must not be empty",
+                )));
+            }
+            Some(type_ref) => type_ref,
+            None => crate::task_type::TaskTypeRef::seeded_root(),
+        };
+
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
@@ -430,6 +444,7 @@ impl<'a> AgentDispatcher<'a> {
             project_ref: Some(project_ref),
             spawn_intent: Some(spawn_intent),
             scope,
+            type_ref,
             budget: spawn.budget,
             launch: None,
             room: spawn.room,

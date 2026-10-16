@@ -3,18 +3,116 @@ use super::{TaskAssignee, wire_decode::task_verb_body_in};
 use crate::memory::{Memory, MemoryResult};
 use crate::workspace_roster::RoomThreadTask;
 use crate::{EntityId, Error};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+fn thread_for_body(
+    body: &super::consult_result::TaskVerbBody,
+    roots: &BTreeMap<EntityId, EntityId>,
+) -> Option<EntityId> {
+    let from_spec = body.spec.as_map().and_then(|fields| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("thread_ref"))
+            .and_then(|(_, value)| value.as_str())
+            .and_then(|value| EntityId::from_hex(value).ok())
+    });
+    let from_consult = body.consult.as_ref().and_then(|consult| {
+        std::iter::once(consult.question_ref)
+            .chain(consult.context_refs.iter().copied())
+            .map(super::ConsultPayloadRef::entity_ref)
+            .find(|id| roots.contains_key(id))
+    });
+    from_spec
+        .and_then(|turn| roots.get(&turn).copied())
+        .or_else(|| from_consult.and_then(|turn| roots.get(&turn).copied()))
+}
+
+/// All TASK identities carried by a thread, including replies and explicit
+/// bindings. Conversion keeps these identities, so existing waits still resume.
+pub(crate) fn task_ids_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    roots: &BTreeMap<EntityId, EntityId>,
+    bindings: &BTreeMap<EntityId, EntityId>,
+    members: &BTreeSet<String>,
+) -> crate::Result<BTreeMap<EntityId, EntityId>> {
+    let mut owned: BTreeSet<_> = bindings.keys().copied().collect();
+    for member in members {
+        owned.extend(super::owner_index::indexed_tasks_of_in(
+            &vault.store,
+            txn,
+            &EntityId::from_hex(member)?,
+        )?);
+    }
+    let mut tasks = BTreeMap::new();
+    for task in owned {
+        let Some(body) = task_verb_body_in(vault, txn, task)? else {
+            continue;
+        };
+        let Some(authority) = vault.task_authority_state_in(txn, task)? else {
+            continue;
+        };
+        if authority.owner_ref.to_hex() != body.owner_ref || !members.contains(&body.owner_ref) {
+            continue;
+        }
+        if let Some(thread) = bindings
+            .get(&task)
+            .copied()
+            .or_else(|| thread_for_body(&body, roots))
+        {
+            tasks.insert(task, thread);
+        }
+    }
+    Ok(tasks)
+}
+
+/// Placement never grants task ownership or adds an executor to a roster.
+/// Consult recipients keep the already-admitted ask route, including guests;
+/// they do not acquire a seat by answering a project's question.
+pub(crate) fn task_roster_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    members: &BTreeSet<String>,
+) -> crate::Result<()> {
+    let body = task_verb_body_in(vault, txn, task)?.ok_or(Error::EntityNotFound)?;
+    let authority = vault
+        .task_authority_state_in(txn, task)?
+        .ok_or(Error::EntityNotFound)?;
+    if authority.owner_ref.to_hex() != body.owner_ref || !members.contains(&body.owner_ref) {
+        return Err(crate::error::RecordError::InvalidTaskBody(
+            "thread task owner is outside the project roster",
+        )
+        .into());
+    }
+    if let Some(assignee) = body.assignee {
+        assignee.validate_in(vault, txn)?;
+        if super::thread_task_is_open_in(vault, txn, task)?
+            && body.task_kind() != super::TaskKind::Consult
+            && assignee
+                .entity_ref()
+                .is_some_and(|id| !members.contains(&id.to_hex()))
+        {
+            return Err(crate::error::RecordError::InvalidTaskBody(
+                "thread task assignee is outside the project roster",
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
 
 /// A read of existing TASK bodies only. `spec.thread_ref` is an optional
 /// existing task-context pointer; consults also carry typed TURN references.
 /// Neither field is inferred from label text or from room membership.
 pub(crate) fn thread_tasks(
     memory: &Memory<'_>,
-    roots: &std::collections::BTreeMap<EntityId, EntityId>,
+    roots: &BTreeMap<EntityId, EntityId>,
+    bindings: &BTreeMap<EntityId, EntityId>,
     members: &BTreeSet<String>,
     now: u64,
 ) -> MemoryResult<Vec<RoomThreadTask>> {
-    if roots.is_empty() {
+    if roots.is_empty() && bindings.is_empty() {
         return Ok(Vec::new());
     }
     let vault = memory.vault();
@@ -43,7 +141,7 @@ pub(crate) fn thread_tasks(
     // Only a TASK a room member owns can match, so the read walks the
     // members' tasks through the owner index, never every TASK in the vault
     // (F13); each one's live authority is rechecked below.
-    let mut owned = BTreeSet::new();
+    let mut owned: BTreeSet<_> = bindings.keys().copied().collect();
     for member in &audience {
         owned.extend(super::owner_index::indexed_tasks_of_in(
             &vault.store,
@@ -60,13 +158,17 @@ pub(crate) fn thread_tasks(
         let Some(body) = task_verb_body_in(vault, &txn, id)? else {
             continue;
         };
-        let Some(thread) = bound_thread(&body.spec, body.consult.as_ref(), roots) else {
+        let Some(thread) = bindings
+            .get(&id)
+            .copied()
+            .or_else(|| thread_for_body(&body, roots))
+        else {
             continue;
         };
         let Some(authority) = vault.task_authority_state_in(&txn, id)? else {
             continue;
         };
-        if !members.contains(&authority.owner_ref.to_hex()) {
+        if authority.owner_ref.to_hex() != body.owner_ref || !members.contains(&body.owner_ref) {
             continue;
         }
         // Exhaust the members' tasks for an exact room-local census.
@@ -144,24 +246,35 @@ pub(crate) fn thread_tasks(
             && !group_settled
             && body.ttl.is_none_or(|ttl| ttl.deadline_at > now);
         let wait = if open {
-            match body.assignee {
-                Some(TaskAssignee::Human { actor_ref }) => {
+            match body.assignee.unwrap_or(TaskAssignee::Dreamer) {
+                TaskAssignee::Human { actor_ref } => {
                     let cursor = crate::human_task::human_followup_record(vault, id)?;
                     Some(crate::workspace_roster::RoomThreadWait {
                         task: id,
                         kind: crate::workspace_roster::RoomWaitKind::HumanTask,
                         who: actor_ref,
                         since: body.created_at,
-                        next_nudge: cursor.and_then(|row| row.next_due_at).filter(|_| !withheld),
+                        next_nudge: cursor
+                            .filter(|row| row.assignee_ref == actor_ref)
+                            .and_then(|row| row.next_due_at)
+                            .filter(|at| {
+                                !withheld && body.ttl.is_none_or(|ttl| *at <= ttl.deadline_at)
+                            }),
+                        until: body.ttl.map(|ttl| ttl.deadline_at),
                     })
                 }
-                Some(TaskAssignee::Peer { actor_ref } | TaskAssignee::Child { actor_ref })
+                assignee
                     if body.task_kind() == super::TaskKind::Consult
                         || matches!(
                             body.state,
                             Some(super::TaskExecutionState::Interrupted { .. })
                         ) =>
                 {
+                    // A local Dreamer task addresses the owning actor's
+                    // executor; it needs no invented Dreamer PERSON row.
+                    let actor_ref = assignee
+                        .entity_ref()
+                        .unwrap_or(EntityId::from_hex(&body.owner_ref)?);
                     Some(crate::workspace_roster::RoomThreadWait {
                         task: id,
                         kind: if matches!(
@@ -184,6 +297,7 @@ pub(crate) fn thread_tasks(
                         // Peer consults use the ask group's existing ladder;
                         // a bare consult has no follow-up promise.
                         next_nudge: ask_due,
+                        until: body.ttl.map(|ttl| ttl.deadline_at),
                     })
                 }
                 _ => None,
@@ -191,6 +305,14 @@ pub(crate) fn thread_tasks(
         } else {
             None
         };
+        if let Some(wait) = &wait
+            && !scoped.is_entity_readable(&wait.who)?
+        {
+            continue;
+        }
+        let completed_at = terminal
+            .filter(|terminal| terminal.disposition == super::TaskTerminalDisposition::Completed)
+            .map(|terminal| terminal.finished_at);
         let delivered = terminal.and_then(|terminal| {
             (terminal.disposition == super::TaskTerminalDisposition::Completed)
                 .then_some(
@@ -219,35 +341,10 @@ pub(crate) fn thread_tasks(
             open,
             wait,
             delivered,
+            completed_at,
         });
     }
     Ok(result)
-}
-
-/// The room thread a TASK body binds to among `roots`: its spec's
-/// `thread_ref`, else the first of its consult's typed turn references that
-/// names a room turn. Never inferred from label text or membership.
-fn bound_thread(
-    spec: &rmpv::Value,
-    consult: Option<&super::ConsultPayload>,
-    roots: &std::collections::BTreeMap<EntityId, EntityId>,
-) -> Option<EntityId> {
-    let from_spec = spec.as_map().and_then(|fields| {
-        fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("thread_ref"))
-            .and_then(|(_, value)| value.as_str())
-            .and_then(|value| EntityId::from_hex(value).ok())
-    });
-    let from_consult = consult.and_then(|consult| {
-        std::iter::once(consult.question_ref)
-            .chain(consult.context_refs.iter().copied())
-            .map(super::ConsultPayloadRef::entity_ref)
-            .find(|id| roots.contains_key(id))
-    });
-    from_spec
-        .or(from_consult)
-        .and_then(|turn| roots.get(&turn).copied())
 }
 
 /// The open TASKs bound to `roots`' threads, each with its thread root, for
@@ -257,18 +354,19 @@ fn bound_thread(
 pub(crate) fn open_thread_tasks_in(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
-    roots: &std::collections::BTreeMap<EntityId, EntityId>,
+    roots: &BTreeMap<EntityId, EntityId>,
+    bindings: &BTreeMap<EntityId, EntityId>,
     members: &[EntityId],
     now: u64,
     count: &mut crate::scan_check::ScanCount,
 ) -> crate::Result<Vec<(EntityId, EntityId)>> {
     let mut open = Vec::new();
-    if roots.is_empty() {
+    if roots.is_empty() && bindings.is_empty() {
         return Ok(open);
     }
-    // Only a TASK a room member owns can match: walk the members' tasks
-    // through the owner index, never every TASK in the vault.
-    let mut owned = BTreeSet::new();
+    // Walk explicit bindings and members' tasks through the owner index,
+    // never every TASK in the vault. Each one's live owner is checked below.
+    let mut owned: BTreeSet<_> = bindings.keys().copied().collect();
     for member in members {
         owned.extend(super::owner_index::indexed_tasks_of_in(
             &vault.store,
@@ -281,13 +379,18 @@ pub(crate) fn open_thread_tasks_in(
         let Some(body) = task_verb_body_in(vault, txn, id)? else {
             continue;
         };
-        let Some(thread) = bound_thread(&body.spec, body.consult.as_ref(), roots) else {
+        let Some(thread) = bindings
+            .get(&id)
+            .copied()
+            .or_else(|| thread_for_body(&body, roots))
+        else {
             continue;
         };
         let Some(authority) = vault.task_authority_state_in(txn, id)? else {
             continue;
         };
-        if !members.contains(&authority.owner_ref)
+        if authority.owner_ref.to_hex() != body.owner_ref
+            || !members.contains(&authority.owner_ref)
             || authority.cancelled
             || body.terminal().is_some()
             || body.ttl.as_ref().is_some_and(|ttl| ttl.deadline_at <= now)

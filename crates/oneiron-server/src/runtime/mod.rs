@@ -8,6 +8,8 @@ pub use gpu_pool::{GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPool, GpuPo
 mod defaults;
 mod mode;
 mod routes;
+mod usage;
+pub use usage::VaultUsage;
 
 pub use self::config::RuntimeConfig;
 pub use self::defaults::{

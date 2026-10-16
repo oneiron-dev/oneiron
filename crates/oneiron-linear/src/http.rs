@@ -48,6 +48,7 @@ pub trait GraphQlExecutor {
 }
 
 /// Production Linear API transport. Keep this on the credential-bearing host.
+#[derive(Clone)]
 pub struct HttpLinearClient {
     client: reqwest::blocking::Client,
 }
@@ -59,6 +60,14 @@ impl HttpLinearClient {
     /// # Errors
     /// Returns a transport error for an empty/invalid token or TLS client setup.
     pub fn new(api_key: &str) -> Result<Self, LinearSyncError> {
+        Self::with_timeout(api_key, Duration::from_secs(30))
+    }
+
+    /// Constructs the same transport with the host's resolved request policy.
+    pub fn with_timeout(api_key: &str, timeout: Duration) -> Result<Self, LinearSyncError> {
+        if timeout.is_zero() {
+            return Err(invalid("Linear request timeout is zero"));
+        }
         if api_key.trim().is_empty() {
             return Err(invalid("Linear API key is empty"));
         }
@@ -70,7 +79,7 @@ impl HttpLinearClient {
         let client = reqwest::blocking::Client::builder()
             .default_headers(headers)
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(30))
+            .timeout(timeout)
             .build()
             .map_err(|_| invalid("Linear HTTP client setup failed"))?;
         Ok(Self { client })

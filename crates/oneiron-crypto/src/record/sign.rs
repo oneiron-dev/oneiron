@@ -72,6 +72,22 @@ impl SigningKey {
         Ok(Self::SlhDsaSha2_256s(Box::new(key)))
     }
 
+    /// The Ed25519 key with this RFC 8032 seed: for a key kept as its seed.
+    pub fn ed25519_from_seed(seed: &[u8; 32]) -> Self {
+        Self::Ed25519(Box::new(ed25519_dalek::SigningKey::from_bytes(seed)))
+    }
+
+    /// The SLH-DSA-SHA2-256s key FIPS 205 slh_keygen_internal makes from these three
+    /// seeds: for a key kept as seeds and remade when it signs, never stored whole.
+    pub fn slhdsa_sha2_256s_from_seeds(
+        sk_seed: &[u8; 32],
+        sk_prf: &[u8; 32],
+        pk_seed: &[u8; 32],
+    ) -> Self {
+        let key = slh_dsa::SigningKey::<Sha2_256s>::slh_keygen_internal(sk_seed, sk_prf, pk_seed);
+        Self::SlhDsaSha2_256s(Box::new(key))
+    }
+
     pub fn suite(&self) -> SuiteId {
         match self {
             Self::Ed25519(_) => SuiteId::SIG_ED25519_V1,
@@ -145,6 +161,14 @@ impl VerifyingKey {
     }
 
     /// Parses a public key of `suite` (Ed25519: 32 bytes; SLH-DSA-SHA2-256s: 64).
+    /// The key's encoding, as [`VerifyingKey::from_bytes`] reads it.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Ed25519(key) => key.to_bytes().to_vec(),
+            Self::SlhDsaSha2_256s(key) => key.to_bytes().to_vec(),
+        }
+    }
+
     pub fn from_bytes(suite: SuiteId, bytes: &[u8]) -> Result<Self> {
         match suite {
             SuiteId::SIG_ED25519_V1 => {
