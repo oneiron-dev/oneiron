@@ -120,13 +120,15 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
     assert!(queue.0.lock().unwrap().is_empty());
 }
 
+/// Primary text, primary labels, paired text and person text of one read.
+type Seen = (String, Vec<String>, String, Option<String>);
+
 struct Reader {
     revision: String,
     primary: Vec<f64>,
     paired_yes: f64,
     person_yes: Option<f64>,
-    /// Primary text, primary labels, paired text and person text of each read.
-    seen: Mutex<Vec<(String, Vec<String>, String, Option<String>)>>,
+    seen: Mutex<Vec<Seen>>,
 }
 impl Reader {
     fn new(primary: Vec<f64>, paired_yes: f64) -> Self {
