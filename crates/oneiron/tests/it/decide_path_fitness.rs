@@ -61,7 +61,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 14;
+const BYPASS_CEILING: usize = 12;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -93,18 +93,6 @@ const fn pin(
 
 /// Typed decisions made outside `decide()`. Each one leaves this list when its surface moves.
 const BYPASSES: &[Pin] = &[
-    pin(
-        "crates/oneiron/src/dreamer_consolidation/executor.rs",
-        "call_as_step",
-        "let outcome = call_as_step(&step_ctx, call.backend, self.guard, request).await;",
-        "consolidation conflict judge: merge, supersede, accumulate or escalate conflicting claims",
-    ),
-    pin(
-        "crates/oneiron/src/dreamer_consolidation/executor.rs",
-        "call_as_step_checked",
-        "let outcome = call_as_step_checked(",
-        "extraction-time supersede: a claim's corrects field supersedes the head it names, skipping the conflict judge",
-    ),
     pin(
         "crates/oneiron/src/saved_query/evaluator.rs",
         "generate",
@@ -348,6 +336,18 @@ const OUTSIDE: &[Pin] = &[
         "generate",
         ".generate(request, lease)",
         "foreign-agent transcript for a dispatched run",
+    ),
+    pin(
+        "crates/oneiron/src/dreamer_consolidation/executor.rs",
+        "call_as_step_checked",
+        "let outcome = call_as_step_checked(",
+        "Dreamer extraction: candidates, values, people and evidence (the claim each corrects is decided after it)",
+    ),
+    pin(
+        "crates/oneiron/src/dreamer_consolidation/executor/merge_resolution.rs",
+        "call_as_step",
+        "let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;",
+        "consolidation merged value: the claim value a decided merge or supersede writes (generation)",
     ),
     pin(
         "crates/oneiron/src/dreamer_consolidation/scope_summary_attempt.rs",

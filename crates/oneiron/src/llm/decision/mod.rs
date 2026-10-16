@@ -2,6 +2,8 @@
 
 pub mod catalogue;
 mod codec;
+mod generated;
+pub use generated::{GeneratedDecisions, GeneratedRung};
 mod held;
 pub use held::HeldLadder;
 pub(crate) use held::{cut_text, fit_state};

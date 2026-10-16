@@ -151,6 +151,19 @@ impl Neighbourhood {
             .any(|known| known.id == claim)
     }
 
+    /// The claims the listing shows about `entity`: each id, predicate and
+    /// value as the listing writes it.
+    pub(super) fn shown_about(
+        &self,
+        entity: EntityId,
+    ) -> impl Iterator<Item = (EntityId, &str, &str)> {
+        self.entities
+            .iter()
+            .filter(move |known| known.id == entity)
+            .flat_map(|known| &known.claims)
+            .map(|claim| (claim.id, claim.predicate.as_str(), claim.value.as_str()))
+    }
+
     fn pins(&self) -> Pins {
         self.entities
             .iter()

@@ -9,9 +9,9 @@ use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{
-    BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationExecutor,
-    ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, LlmBackend, ModelId,
-    Result, WriteActor,
+    BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationDecisions,
+    ConsolidationExecutor, ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy,
+    LlmBackend, ModelId, Result, WriteActor,
 };
 use oneiron::{Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
@@ -103,6 +103,9 @@ pub struct ConsolidationExecutorFactory {
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
     attachment: Option<Box<dyn PassAttachmentSource>>,
+    /// The host's ladder for the Dreamer's typed questions. `None` asks them
+    /// with the shipped wording, the verdict role's read the only rung.
+    decisions: Option<ConsolidationDecisions>,
 }
 
 impl ConsolidationExecutorFactory {
@@ -132,7 +135,17 @@ impl ConsolidationExecutorFactory {
             wave_planner: None,
             wave_dispatch: None,
             attachment: None,
+            decisions: None,
         }
+    }
+
+    /// The host's ladder, dial, bands and wording for the Dreamer's typed
+    /// questions: how a conflict resolves, and which listed claim a candidate
+    /// corrects.
+    #[must_use]
+    pub fn with_decisions(mut self, decisions: ConsolidationDecisions) -> Self {
+        self.decisions = Some(decisions);
+        self
     }
 
     /// Opts into a pass-scoped host attachment (the server's voice host is
@@ -267,6 +280,10 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
             roles: self.roles.clone(),
             sink: self.sink.as_mut(),
             scope: None,
+            decisions: match &self.decisions {
+                Some(decisions) => decisions.clone(),
+                None => ConsolidationDecisions::shipped()?,
+            },
         };
         // The trait-object lifetime is shortened HERE, one reference at a time:
         // `&mut` is invariant in its pointee, so the coercion cannot happen
