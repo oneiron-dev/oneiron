@@ -82,7 +82,10 @@ pub use dormant_magistrate::{
     record_magistrate_overturn,
 };
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
-pub(crate) use room_thread::thread_tasks as room_thread_tasks;
+pub(crate) use room_thread::{
+    task_ids_in as room_thread_task_ids_in, task_roster_in as room_thread_task_roster_in,
+    thread_tasks as room_thread_tasks,
+};
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
     TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
@@ -108,7 +111,27 @@ pub(crate) fn thread_task_is_open_in(
 ) -> crate::Result<bool> {
     let body =
         wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
-    Ok(body.terminal().is_none())
+    if body.terminal().is_some()
+        || body
+            .ttl
+            .is_some_and(|ttl| ttl.deadline_at <= vault.store.clock.now_recorded_at())
+        || vault
+            .task_authority_state_in(txn, task)?
+            .is_none_or(|state| state.cancelled)
+    {
+        return Ok(false);
+    }
+    if let Some(consult) = &body.consult
+        && let Some(group) = ask_record::read_group(vault, txn, consult.correlation_ref)?
+        && group
+            .members
+            .iter()
+            .any(|member| member.task == task.to_hex())
+        && ask_settlement::read_result(vault, txn, consult.correlation_ref)?.is_some()
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// Stored execution holder of a live typed TASK, if one exists.
@@ -120,7 +143,7 @@ pub(crate) fn open_thread_task_holder_in(
 ) -> crate::Result<Option<crate::EntityId>> {
     let body =
         wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
-    if body.terminal().is_some() {
+    if !thread_task_is_open_in(vault, txn, task)? {
         return Ok(None);
     }
     match body.assignee.and_then(TaskAssignee::entity_ref) {
