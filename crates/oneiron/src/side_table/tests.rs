@@ -461,6 +461,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "IDENTITY_TOPOLOGY_SEALED_HERE",
         "INGEST_DOCS_DEEP_CEILING",
         "INGEST_DOCS_DEEP_RECEIPT",
+        "HUMAN_TASK_FOLLOWUP_SWEEP",
         "INGEST_HISTORY_LEDGER",
         "LEARNING_SETTING",
         "LENS_INTENT",

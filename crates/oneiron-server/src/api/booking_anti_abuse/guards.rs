@@ -30,13 +30,14 @@ pub(crate) struct BookingRateKey {
 
 /// How a guard call disposes of the request. Route handlers translate:
 /// `SilentOk` answers exactly like an ordinary 200, `RetryAfter` carries the
-/// `Retry-After` hint, `PromptCorrection` is a 200-class correction body,
-/// and `QuarantineAndAccept` accepts while routing to owner review.
+/// `Retry-After` hint and the bound it is past, `PromptCorrection` is a
+/// 200-class correction body, and `QuarantineAndAccept` accepts while routing
+/// to owner review.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BookingHttpDisposition {
     Continue,
     SilentOk,
-    RetryAfter { seconds: u64 },
+    RetryAfter { seconds: u64, bound: u64 },
     PromptCorrection { body: String },
     QuarantineAndAccept,
 }
@@ -74,6 +75,8 @@ pub(super) fn disposition_from_verdict(
             log_rate_block(endpoint, &facts.ip_hash, retry_after_secs);
             Ok(Some(BookingHttpDisposition::RetryAfter {
                 seconds: retry_after_secs,
+                // The engine's verdict names no bound.
+                bound: 0,
             }))
         }
         BookingAbuseVerdict::Quarantine { .. } => {
@@ -109,6 +112,7 @@ fn spend_book_bucket(
             log_rate_block(endpoint, &key.ip_hash, retry_after_secs);
             Ok(BookingHttpDisposition::RetryAfter {
                 seconds: retry_after_secs,
+                bound: u64::from(per_minute_per_ip.get()),
             })
         }
     }
@@ -152,6 +156,7 @@ pub(crate) async fn enforce_slot_list(
             log_rate_block("slot-list", &facts.ip_hash, retry_after_secs);
             Ok(BookingHttpDisposition::RetryAfter {
                 seconds: retry_after_secs,
+                bound: u64::from(per_minute_per_ip.get()),
             })
         }
     }
@@ -177,7 +182,10 @@ pub(crate) async fn enforce_hold(
         hold_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
         && facts.active_holds_for_session >= max_active_per_session
     {
-        return Ok(BookingHttpDisposition::RetryAfter { seconds: 60 });
+        return Ok(BookingHttpDisposition::RetryAfter {
+            seconds: 60,
+            bound: u64::from(max_active_per_session),
+        });
     }
     let Some((_, per_minute_per_ip)) = hold_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
     else {
@@ -196,6 +204,7 @@ pub(crate) async fn enforce_hold(
             log_rate_block("hold", &facts.ip_hash, retry_after_secs);
             Ok(BookingHttpDisposition::RetryAfter {
                 seconds: retry_after_secs,
+                bound: u64::from(per_minute_per_ip.get()),
             })
         }
     }
@@ -262,6 +271,7 @@ pub(crate) async fn enforce_book(
                 log_rate_block("book", &facts.ip_hash, retry_after_secs);
                 return Ok(BookingHttpDisposition::RetryAfter {
                     seconds: retry_after_secs,
+                    bound: u64::from(per_minute_per_ip.get()),
                 });
             }
         }
