@@ -225,8 +225,14 @@ impl Vault {
         } = cutover;
         let _guard = lock_repository(common_dir)?;
         self.reconcile_receive_pack_operations(repo_root)?;
+        // A re-drive of a Published row runs as its own GitWire attempt, which
+        // the origin rows do not count: any ref effect still prepared holds
+        // the cutover too.
+        let wire = GitWire::new(self)?;
+        let identity = wire.repository_identity(repo_root)?;
         if self.has_pending_receive_pack_operations(repo_root)?
             || self.prepared_origin_publication_count(id)? != 0
+            || wire.has_prepared_ref_effects(identity)?
         {
             return Err(Error::ConcurrentWrite(
                 "origin cutover requires a drained publication census",

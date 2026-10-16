@@ -92,8 +92,8 @@ fn continuous(
 }
 
 /// Nightly: the cadence wake registers the Timer wake's maintenance (the
-/// vault cleanup pass, the Coach's nightly jobs, the Dreamer's curator and
-/// harness audit) as this receipt's children on its run tree, in the commit
+/// vault cleanup pass, the Coach's nightly jobs, the Dreamer's curator,
+/// harness audit and NOTE review) as this receipt's children on its run tree, in the commit
 /// that takes its input. They run on the elected home's next Timer pass.
 fn nightly(
     vault: &Vault,
@@ -131,6 +131,7 @@ fn nightly(
         )?;
         store.enqueue_coach_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_dreamer_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
+        store.enqueue_note_review_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         Ok(true)
     })?;
     if taken {

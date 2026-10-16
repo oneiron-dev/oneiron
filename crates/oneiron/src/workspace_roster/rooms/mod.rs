@@ -6,6 +6,7 @@ mod participants;
 mod participation;
 #[cfg(test)]
 mod tests;
+mod upkeep;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
@@ -30,6 +31,7 @@ pub(crate) use participation::{
 use participation::{Claimant, require_reader};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
