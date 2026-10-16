@@ -398,6 +398,11 @@ impl CoreContextPackRequest {
         (self.limit, max_neighbors)
     }
 
+    /// The room this retrieval is read in, as the caller spelled it.
+    pub(crate) fn conversation_id(&self) -> Option<&str> {
+        self.conversation_id.as_deref()
+    }
+
     /// The rows this request names by ref: its contacts and its reader's
     /// definition. A revoked contact resolves to its stored label and the
     /// reader's profile shapes the pack, so a keyed replay re-admits each of
