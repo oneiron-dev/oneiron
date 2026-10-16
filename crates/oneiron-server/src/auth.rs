@@ -313,6 +313,7 @@ impl CoreAuth {
             verified_slip: None,
             instrument: Some(verified.instrument),
             locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
         }
     }
 
