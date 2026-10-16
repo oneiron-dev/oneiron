@@ -76,3 +76,28 @@ pub struct MemoryEdgeInput {
     #[schemars(range(min = "f32::MIN", max = "f32::MAX"))]
     pub weight: Option<f64>,
 }
+
+/// `tasks.refuse`: the agent's own refusal of the TASK her run realizes,
+/// applied through her refusal dial (OF-533).
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TaskRefuseInput {
+    /// The bound TASK's id, hex; the run's own TASK when absent. Any other
+    /// TASK is refused.
+    pub task_ref: Option<String>,
+    /// What the refusal concerns.
+    pub domain: TaskRefuseDomain,
+    /// Her durable reason: `cl_<hex>` (a claim) or `tn_<hex>` (a turn).
+    pub reason_ref: String,
+    /// When she refused, unix seconds; the run's clock when absent.
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
+    pub at: Option<u64>,
+}
+
+/// The wire name of a refusal domain.
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRefuseDomain {
+    Bond,
+    Logistics,
+}

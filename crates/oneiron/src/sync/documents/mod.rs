@@ -8,7 +8,7 @@ mod destination;
 mod note_requests;
 pub(crate) use destination::text_withheld;
 pub use destination::{
-    admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for_peer,
+    admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for,
 };
 pub(crate) mod storage;
 #[cfg(test)]
@@ -123,20 +123,20 @@ impl DocumentRegistry {
         window: &super::WindowKey,
         scope: crate::FederationGrantScope,
         selector: &super::selector::SyncSelector,
+        withhold: super::window::Withhold<'_>,
         remote_vv: &[u8],
-        peer: crate::authority::PeerMachine,
     ) -> Result<Vec<u8>> {
         // The document's turn comes first: a wait past the row must not
         // outlast the grant and selection that admit the export, so both are
         // read after it.
         let document = self.open_for(id, selector.member_ref.as_bytes())?;
-        let selected = super::selector::filtered_window_doc_for_peer(
+        let selected = super::selector::filtered_window_doc_for(
             &self.vault,
             ledger,
             window,
             scope,
             selector,
-            peer,
+            withhold,
         )?;
         if !super::loro_support::map_contains_binary(&selected.get_map("entities"), &id.to_hex()) {
             return Err(Error::sync_protocol(
@@ -147,7 +147,7 @@ impl DocumentRegistry {
             &super::selector::encode_sync_selector(selector)?,
             remote_vv,
             scope,
-            peer,
+            withhold,
         )
     }
 
@@ -447,10 +447,10 @@ impl EntityDocument {
         admission_key: &[u8],
         remote_vv: &[u8],
         scope: crate::FederationGrantScope,
-        peer: crate::authority::PeerMachine,
+        withhold: super::window::Withhold<'_>,
     ) -> Result<Vec<u8>> {
         self.export_admitted(admission_key, remote_vv, |txn| {
-            admit_document_destination_in_txn(&self.vault, txn, self.id, peer)?;
+            destination::admit_document_withhold_in_txn(&self.vault, txn, self.id, withhold)?;
             let selector = super::selector::decode_sync_selector(admission_key)?;
             super::selector::admit_document_read_in_txn(
                 &self.vault,

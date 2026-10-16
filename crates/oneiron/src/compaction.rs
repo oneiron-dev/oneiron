@@ -61,9 +61,15 @@
 use crate::ports::EntityStoreRead;
 mod driver;
 mod epoch;
+mod folds;
 mod gate;
 pub mod output;
 mod stored_epoch;
+
+pub use folds::{
+    FoldCompactAsk, FoldCompactInput, FoldLedger, FoldMark, FoldMarkInput, FoldRecord, FoldUnfold,
+    FoldUnfoldInput, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
+};
 
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,

@@ -6,8 +6,7 @@ use loro::LoroDoc;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityFold, FederationGrantActivation, PeerMachine, WorldPrivacyView,
-    federation_grant_activation,
+    AuthorityFold, FederationGrantActivation, federation_grant_activation,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
@@ -26,7 +25,7 @@ use crate::sync::loro_support::{
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    apply_pending_window_updates, load_window_from_state, reverse_rematerialize_with,
+    Withhold, apply_pending_window_updates, load_window_from_state, reverse_rematerialize_with,
 };
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
@@ -257,17 +256,22 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    // Its NOTEs already passed the selection that made `source`.
+    // Its NOTEs already passed the selection that made `source`, and so did
+    // the births of the rows it kept.
+    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
     crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
 }
 
 fn guest_share_metadata_blob(blob: &[u8]) -> bool {
+    // A world key pad is half of a world's key: a guest never holds one.
     EntityMetadataHeader::parse(blob).is_some_and(|header| {
         matches!(
             header.entity_type,
-            ENTITY_TYPE_FEDERATION_GRANT | ENTITY_TYPE_AUTHORITY_LOG
+            ENTITY_TYPE_FEDERATION_GRANT
+                | ENTITY_TYPE_AUTHORITY_LOG
+                | crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
         )
     })
 }
@@ -281,7 +285,7 @@ fn authorized_base_edge_endpoints(
     kept: &BTreeSet<EntityId>,
     selector: &SyncSelector,
     position: &Position,
-    destination: Option<PeerMachine>,
+    withhold: Withhold<'_>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -319,11 +323,9 @@ fn authorized_base_edge_endpoints(
                 }
                 Err(error) => return Err(error),
             };
-            // The detached mirror may contain private rows; this selector, not
-            // the unknown-destination packer, decides which ones leave.
-            reverse_rematerialize_with(vault, &base, &base_key, false)?;
+            reverse_rematerialize_with(vault, &base, &base_key, withhold)?;
             let selected =
-                filter_window_doc(vault, &base, &base_key, selector, position, destination)?;
+                filter_window_doc(vault, &base, &base_key, selector, position, withhold)?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -337,15 +339,16 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
-/// A destination applies its current world read settings. `None` is only
-/// the grant-coverage query used by promotion authority; it exports nothing.
+/// `withhold` names the worlds kept off the machine the export serves. Every
+/// export door withholds; promotion authority asks only what the grant
+/// covers.
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
     selector: &SyncSelector,
     position: &Position,
-    destination: Option<PeerMachine>,
+    withhold: Withhold<'_>,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -353,8 +356,19 @@ pub(super) fn filter_window_doc(
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
     crate::sync::note::refresh(vault, &refreshed, key)?;
+    // The canonical window packs nothing an unknown destination may not
+    // read. A proved machine's export packs, into this detached copy, the
+    // private rows that machine may read.
+    if matches!(withhold, Withhold::Worlds(_) | Withhold::Peer(_)) {
+        reverse_rematerialize_with(vault, &refreshed, key, withhold)?;
+    }
     let source = &refreshed;
     let grant_raw = live_federation_grant(vault, &selector.grant_id)?;
+    if withhold.withholds_window(vault, key)? {
+        let out = create_window_doc("selector", key);
+        out.commit();
+        return Ok(out);
+    }
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
     // One read snapshot for the whole export: withheld claims, facet scope, coreference
     // consent, causal admission, and record stamps all read through this
@@ -362,10 +376,7 @@ pub(super) fn filter_window_doc(
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
-    let flagged = match destination {
-        Some(peer) => WorldPrivacyView::load_in(vault, &rtxn)?.withheld_for_peer(peer)?,
-        None => BTreeSet::new(),
-    };
+    let flagged = withhold.worlds_in(vault, &rtxn)?;
     if key.world().is_some_and(|world| flagged.contains(&world)) {
         let out = create_window_doc("selector", key);
         out.commit();
@@ -377,12 +388,13 @@ pub(super) fn filter_window_doc(
         &source.get_map("entities"),
         &source.get_map("edges"),
     )?;
-    claims_withheld.extend(crate::sync::window::ids_withheld_by_worlds(
+    // A withheld world's rows stay here even when packed while portable.
+    claims_withheld.extend(crate::sync::window::device_only_ids(
         vault,
         &rtxn,
+        Withhold::Worlds(&flagged),
         &source.get_map("entities"),
         &source.get_map("edges"),
-        &flagged,
     )?);
     let mut scope_error = None;
     let out = create_window_doc("selector", key);
@@ -690,14 +702,7 @@ pub(super) fn filter_window_doc(
     });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(
-            vault,
-            &source_edges,
-            &kept,
-            selector,
-            position,
-            destination,
-        )?
+        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position, withhold)?
     } else {
         BTreeSet::new()
     };
@@ -740,6 +745,8 @@ pub(super) fn filter_window_doc(
         }
     });
 
+    // Rule A: a birth crosses only beside an owner this filter shipped.
+    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
     crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)

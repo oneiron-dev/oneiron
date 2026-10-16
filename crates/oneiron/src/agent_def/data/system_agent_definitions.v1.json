@@ -177,10 +177,10 @@
       "enabled": true,
       "definition": {
         "agent_id": "sys.team_lead",
-        "desc": "Recursive task lead composed from typed task, consult, spawn, context, and run-tree primitives.",
+        "desc": "Project CEO starter over existing task promises, coordination pattern skills and the team-shape planner.",
         "version": "1",
-        "instructions": "Receive one TASK. Plan in code mode. Create typed subtasks, spawn bounded workers, collect terminal results, and report once on the originating TASK. Use self.context() for narrowed delegation. Use typed ask/consult for panels. Do not invent or require a workflow DSL. Do not expose one panel member's answer to another before judging.",
-        "skills": [],
+        "instructions": "Load the team-lead workflow. Read the existing TASK body and the project's current folded lead, board, goal, budget and asks. Start solo; choose a coordination pattern skill or ask the team-shape planner for its top shapes. A spawn creates only an attempt, never a task promise. Split a promise inside a subproject wrapper so the parent retains one checkbox. Delegate only within the live scope, depth and budget; ask the board for widening. Collect durable results and report once on the originating TASK.",
+        "skills": [{ "skill_id": "team-lead", "min_version": null }],
         "connectors": [],
         "code_mode_mcps": [],
         "model_tier": null,

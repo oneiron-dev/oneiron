@@ -89,6 +89,16 @@ pub(crate) fn request_wake_in_txn(
                 now,
             },
         )?;
+        store.enqueue_skill_optimize_in_txn(
+            txn,
+            crate::dreamer_runner::EnqueueDreamerSkillOptimizeAttempt {
+                input: Value::Nil,
+                parent_attempt: payload.parent_attempt,
+                dedupe_key: dedupe_key.clone(),
+                run_id: run_id.clone(),
+                now,
+            },
+        )?;
         store.enqueue_coach_retrieval_tune_in_txn(
             txn,
             payload.parent_attempt,
@@ -262,6 +272,33 @@ fn turn_wake_due_in_txn(
     })
 }
 
+/// An agent's surprise signal, read from the window's saved tags (OF-138).
+/// A turn whose re-tag moved at least the policy's surprise floor beside the
+/// set it replaced sets it; a first tag set measures nothing. The caller's
+/// own signal stands either way, and the vault's wake takes no signals.
+fn measured_surprise_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    subject: WakeTurnSubject,
+    turns: impl Iterator<Item = EntityId>,
+) -> Result<WakeTurnSubject> {
+    let WakeTurnSubject::Agent { id, mut signals } = subject else {
+        return Ok(subject);
+    };
+    if !signals.surprise {
+        let floor = f32::from(super::policy::policy_in_txn(vault, txn)?.surprise_permille) / 1000.0;
+        for turn in turns {
+            let measured = crate::tagging::tag_set_in_txn(&vault.store, txn, &turn)?
+                .and_then(|tags| tags.surprise);
+            if measured.is_some_and(|surprise| surprise > 0.0 && surprise >= floor) {
+                signals.surprise = true;
+                break;
+            }
+        }
+    }
+    Ok(WakeTurnSubject::Agent { id, signals })
+}
+
 /// Whether a TURN carries an import stamp, read as its import's review reads
 /// it (ARCH-0027).
 fn turn_imported_in_txn(vault: &Vault, txn: &heed::RwTxn<'_>, turn: &EntityId) -> Result<bool> {
@@ -319,6 +356,8 @@ impl Vault {
                     window.push(turn);
                 }
             }
+            let subject =
+                measured_surprise_in_txn(self, txn, subject, window.iter().map(|t| t.turn_id))?;
             let due = !window.is_empty()
                 && turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)?;
             // The watermark settles every turn up to where it moves, so an

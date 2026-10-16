@@ -1,9 +1,10 @@
 //! Destination policy for text-plane admission and release. Machine standing
 //! and world settings are read in the caller's transaction, not a subscription.
 
-use crate::authority::{PeerMachine, WorldPrivacyView};
+use crate::authority::PeerMachine;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::sync::transport::document_sub_tags;
+use crate::sync::window::Withhold;
 use crate::{EntityId, Vault};
 
 /// Refuse a document a peer's physical machine may not read, even when its
@@ -14,7 +15,16 @@ pub fn admit_document_destination_in_txn(
     id: EntityId,
     peer: PeerMachine,
 ) -> Result<()> {
-    if text_withheld_for_peer(vault, txn, id, peer)? {
+    admit_document_withhold_in_txn(vault, txn, id, Withhold::Peer(peer))
+}
+
+pub(super) fn admit_document_withhold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    withhold: Withhold<'_>,
+) -> Result<()> {
+    if text_withheld_for(vault, txn, id, withhold)? {
         return Err(Error::sync_protocol(
             SyncProtocolValidation::DocumentAdmissionDenied,
         ));
@@ -23,16 +33,16 @@ pub fn admit_document_destination_in_txn(
 }
 
 pub(crate) fn text_withheld(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
-    text_withheld_for_peer(vault, txn, id, PeerMachine::Unknown)
+    text_withheld_for(vault, txn, id, Withhold::Unknown)
 }
 
-fn text_withheld_for_peer(
+fn text_withheld_for(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-    peer: PeerMachine,
+    withhold: Withhold<'_>,
 ) -> Result<bool> {
-    let flagged = WorldPrivacyView::load_in(vault, txn)?.withheld_for_peer(peer)?;
+    let flagged = withhold.worlds_in(vault, txn)?;
     if crate::settings::device_only_withholds(&vault.store, txn, &flagged, &id)? {
         return Ok(true);
     }
@@ -48,12 +58,12 @@ fn text_withheld_for_peer(
 
 /// An unproven transport is an unknown destination, never an owned machine.
 pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
-    document_frame_withheld_for_peer(vault, frame, PeerMachine::Unknown)
+    document_frame_withheld_for(vault, PeerMachine::Unknown, frame)
 }
 
 /// Recheck immediately before release. Requests and ACKs carry no text;
 /// every state, update, operation and receipt is subject to the same policy.
-pub fn document_frame_withheld_for_peer(vault: &Vault, frame: &[u8], peer: PeerMachine) -> bool {
+pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8]) -> bool {
     if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
         return false;
     }
@@ -69,7 +79,7 @@ pub fn document_frame_withheld_for_peer(vault: &Vault, frame: &[u8], peer: PeerM
     (|| -> Result<bool> {
         let _accepting = vault.device_only_acceptance();
         let txn = vault.store.env.read_txn()?;
-        text_withheld_for_peer(vault, &txn, document.entity, peer)
+        text_withheld_for(vault, &txn, document.entity, Withhold::Peer(peer))
     })()
     .unwrap_or(true)
 }
