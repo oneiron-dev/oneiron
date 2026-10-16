@@ -839,7 +839,7 @@
      "purpose": "Persistent resident bindings",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -62637,6 +62637,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -63924,6 +63925,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/resident_pump.rs",
+     "purpose": "The resident run pump (OF-533): runs each resident agent's dispatches bound to their own leased attempts, so…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -64787,7 +64798,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64845,7 +64856,7 @@
    },
    "over_bar": 21,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 443,
+   "source_files": 444,
    "test_files": 182
   },
   "oneiron-spawn": {
