@@ -174,6 +174,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_CLEANUP_TASK_RETENTION_DAYS, LIVE),
     (&t::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED, CONTENT),
     (&t::VAULT_IDENTITY_LOCAL, LIVE),
+    // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_STATE, LIVE),
+    (&t::VAULT_KEY_WRAP, LIVE),
     (&t::VOICE_OWNER_REF, LIVE),
     (&t::VOICE_OWNER_REF_OWNER_INDEX, LIVE),
     (&t::VOICE_REF_IDENTITY, LIVE),
@@ -193,7 +196,4 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),
     (&t::WORKSPACE_ONBOARDING, CONTENT),
     (&t::WORKSPACE_ROSTER_PRESET, CONTENT),
-    // A restore never resets how the vault key unlocks.
-    (&t::VAULT_KEY_STATE, LIVE),
-    (&t::VAULT_KEY_WRAP, LIVE),
 ];
