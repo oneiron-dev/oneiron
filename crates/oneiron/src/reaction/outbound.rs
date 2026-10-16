@@ -54,6 +54,46 @@ fn outbound_target_in(
         .then(|| (connector.to_owned(), external.clone())))
 }
 
+/// Mirrors a held reaction once its owner clears it (Engine ruling 4).
+///
+/// A reaction whose write attached a critical confirm is held, not mirrored:
+/// nothing acts on a claim awaiting its owner (ARCH-0026 §G3). The Clear sends
+/// the held put, once, under the reaction's own dedupe key. A decline or a
+/// timeout demotion never reaches here, and a reaction removed meanwhile, or
+/// one whose record has left its room, is not sent. Only a first-party
+/// reaction is ever sent: a mirrored or machine-written one never loops back
+/// to its provider, whoever cleared it.
+pub(crate) fn release_cleared_reaction_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    claim_id: EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Result<()> {
+    if !crate::claim::claim_surfaceable(body)
+        || super::value::machine_written(body)
+        || super::value::decode_reaction(body).is_none_or(|value| value.external_id.is_some())
+    {
+        return Ok(());
+    }
+    let crate::claim::ClaimSubject::Entity(record) = body.subject else {
+        return Ok(());
+    };
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &record)?,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_TURN,
+            ..
+        }
+    ) || vault.archive_tombstone_in_txn(txn, &record)?.is_some()
+    {
+        return Ok(());
+    }
+    let Some(room) = crate::conversation::room_for_record_in(vault, txn, record)? else {
+        return Ok(());
+    };
+    enqueue_in_txn(vault, txn, claim_id, room, false)
+}
+
 pub(super) fn enqueue_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
