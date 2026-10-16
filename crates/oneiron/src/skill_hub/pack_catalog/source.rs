@@ -157,14 +157,11 @@ impl PackSource {
     }
     pub fn has_code(&self) -> bool {
         self.manifest.kind == super::PackKind::Connector
-            || self
-                .files
-                .iter()
-                .any(|file| {
-                    file.path.starts_with("scripts/")
-                        || file.path.contains("/scripts/")
-                        || file.path.starts_with("hooks/")
-                })
+            || self.files.iter().any(|file| {
+                file.path.starts_with("scripts/")
+                    || file.path.contains("/scripts/")
+                    || file.path.starts_with("hooks/")
+            })
     }
     pub fn content_hash(&self) -> SkillContentHash {
         self.hash

@@ -54,10 +54,7 @@ impl Vault {
             let verdict = PackFitVerdict {
                 fits: true,
                 rules_hit: false,
-                code_auto_install: !matches!(
-                    source.manifest.adapter,
-                    Some(PackAdapter::Script(_))
-                ),
+                code_auto_install: !matches!(source.manifest.adapter, Some(PackAdapter::Script(_))),
             };
             let disposition = self.commit_pack_install_in_txn(
                 txn,

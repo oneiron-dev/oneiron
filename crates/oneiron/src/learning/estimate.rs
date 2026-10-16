@@ -485,7 +485,14 @@ pub(crate) fn fold_value(prior: &Prior, own: &OwnTally) -> EstimateValue {
                 beta: ((1.0 - mean) * w + losses).max(MIN_BETA_PARAMETER),
             }
         }
-        (EstimateValue::Mean { mean, spread }, OwnTally::Mean { sum_w, sum_wx, sum_wxx }) => {
+        (
+            EstimateValue::Mean { mean, spread },
+            OwnTally::Mean {
+                sum_w,
+                sum_wx,
+                sum_wxx,
+            },
+        ) => {
             let total = w + sum_w;
             if total <= 0.0 {
                 return EstimateValue::Mean {
@@ -503,9 +510,18 @@ pub(crate) fn fold_value(prior: &Prior, own: &OwnTally) -> EstimateValue {
                 spread: variance.sqrt(),
             }
         }
-        (EstimateValue::Counts { counts: prior_counts }, OwnTally::Counts { counts }) => {
+        (
+            EstimateValue::Counts {
+                counts: prior_counts,
+            },
+            OwnTally::Counts { counts },
+        ) => {
             let prior_total: f64 = prior_counts.values().sum();
-            let scale = if prior_total > 0.0 { w / prior_total } else { 0.0 };
+            let scale = if prior_total > 0.0 {
+                w / prior_total
+            } else {
+                0.0
+            };
             let mut merged: BTreeMap<String, f64> = prior_counts
                 .iter()
                 .map(|(name, n)| (name.clone(), n * scale))

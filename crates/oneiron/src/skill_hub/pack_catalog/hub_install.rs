@@ -3,7 +3,9 @@
 //! run in turn. Everything installs; code lands Candidate until its sandbox
 //! suite qualifies it. Hooks bind only on the owner's own consent
 //! ([`Vault::bind_pack_hooks`]).
-use super::{PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource, invalid};
+use super::{
+    PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource, invalid,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::{
     GitEndpointSkillHubAdapter, HttpEndpointSkillHubAdapter, HubPin, HubRef, SkillHubKind,
@@ -35,7 +37,11 @@ pub fn hub_pin(pin_type: &str, value: &str) -> Result<HubPin> {
         "tag" => HubPin::Tag(value),
         "commit" => HubPin::Commit(value),
         "content_hash" => HubPin::ContentHash(value),
-        _ => return Err(invalid("a hub install needs a semver, tag, commit or content_hash pin")),
+        _ => {
+            return Err(invalid(
+                "a hub install needs a semver, tag, commit or content_hash pin",
+            ));
+        }
     })
 }
 
@@ -81,9 +87,9 @@ impl Vault {
                     at,
                 )
             }
-            SkillHubKind::LocalDir => Err(invalid(
-                "a local folder installs through vault.packs.put",
-            )),
+            SkillHubKind::LocalDir => {
+                Err(invalid("a local folder installs through vault.packs.put"))
+            }
         }
     }
 }
