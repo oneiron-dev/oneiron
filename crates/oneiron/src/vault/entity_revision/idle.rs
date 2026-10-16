@@ -1,6 +1,6 @@
 //! Idle debounce and atomic BM25/vector/frontier publication.
 
-use super::storage::{STATE, put_state, read_entity_revision_in_txn, state, text_fields};
+use super::storage::{STATE, put_state, read_entity_revision_in_txn, revision_text_fields, state};
 use super::vector_refill::{self, REFILL};
 use super::{
     IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput,
@@ -104,7 +104,7 @@ impl Vault {
                     entity: id,
                     entity_type: raw[0],
                     source_revision_ref: current.live,
-                    fields: text_fields(&body),
+                    fields: revision_text_fields(&self.store, &txn, &id, current.live, &body)?,
                     body,
                 });
             }
@@ -342,7 +342,7 @@ impl Vault {
                     entity: id,
                     entity_type: raw[0],
                     source_revision_ref: revision,
-                    fields: text_fields(&body),
+                    fields: revision_text_fields(&self.store, &txn, &id, revision, &body)?,
                     body,
                 });
             }
