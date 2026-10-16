@@ -31,19 +31,36 @@ pub(super) async fn handle_sync_message(
         } => super::documents::handle_document(
             server, conn_id, entity, kind, &payload, direct_tx, conn_state,
         ),
-        SyncMessage::Batch(docs) => {
-            for doc in docs {
-                let SyncMessage::Doc {
-                    entity,
-                    kind,
-                    payload,
-                } = doc
-                else {
-                    return Err(ProtocolError::InvalidPayload("non-document batch member"));
-                };
-                super::documents::handle_document(
-                    server, conn_id, entity, kind, &payload, direct_tx, conn_state,
-                )?;
+        SyncMessage::Batch(members) => {
+            for member in members {
+                match member {
+                    SyncMessage::Doc {
+                        entity,
+                        kind,
+                        payload,
+                    } => {
+                        super::documents::handle_document(
+                            server, conn_id, entity, kind, &payload, direct_tx, conn_state,
+                        )?;
+                    }
+                    SyncMessage::WindowSync {
+                        window_key,
+                        sub_tag,
+                        payload,
+                    } => {
+                        handle_window_sync(
+                            server,
+                            conn_id,
+                            &window_key,
+                            sub_tag,
+                            &payload,
+                            direct_tx,
+                            conn_state,
+                        )
+                        .await?;
+                    }
+                    _ => return Err(ProtocolError::InvalidPayload("invalid node batch member")),
+                }
             }
             Ok(())
         }

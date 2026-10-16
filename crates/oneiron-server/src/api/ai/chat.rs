@@ -30,6 +30,7 @@ use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::conversation::TurnActionAttempt;
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
+use oneiron::session_lifecycle::SessionKey;
 use oneiron::memory::{
     MessageStreamError, MessageStreamHandle, MessageStreamReceipt, MessageWriteMode, StreamCadence,
     StreamCancelReason, StreamSyncVisibility, WitnessAuthor, WitnessMessage, WitnessTurn,
@@ -189,7 +190,10 @@ fn revoked_line() -> Vec<u8> {
 
 /// The writer of the user's turn: the slip's principal, or the vault's own
 /// owner for an owner-grade credential that names none.
-fn principal(auth: &CoreAuth, vault: &Vault) -> Result<(EntityId, EdgeActorClass), Refused> {
+pub(super) fn principal(
+    auth: &CoreAuth,
+    vault: &Vault,
+) -> Result<(EntityId, EdgeActorClass), Refused> {
     let denied = || {
         refused(
             StatusCode::FORBIDDEN,
@@ -304,9 +308,14 @@ pub(crate) fn witness_turn(
 pub(super) async fn chat_turn(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    crate::auth::Locality(locality): crate::auth::Locality,
+    machine: Option<axum::Extension<oneiron::authority::PeerMachine>>,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
 ) -> Response {
-    match start_turn(&auth, &server, payload) {
+    let peer = machine.map_or(oneiron::authority::PeerMachine::Unknown, |machine| {
+        machine.0
+    });
+    match start_turn(&auth, &server, peer, locality, payload) {
         Ok(started) if started.stream => streamed(started),
         Ok(started) => whole(started).await,
         Err(refused) => *refused,
@@ -327,6 +336,8 @@ struct Started {
 fn start_turn(
     auth: &CoreAuth,
     server: &Arc<SyncServer>,
+    peer: oneiron::authority::PeerMachine,
+    locality: oneiron::claim::CallerLocality,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
 ) -> Result<Started, Refused> {
     // A turn reads the agent and the conversation, and writes both turns.
@@ -407,10 +418,12 @@ fn start_turn(
             .map_err(|error| engine(&error))?
             .idle_timeout_ms,
     );
-    server.ai.session_hint(SessionHint::AppOpen);
+    let session_key = super::bound_session_key(server, actor, peer, locality)?;
+    server.ai.session_hint(session_key, SessionHint::AppOpen);
     let at = vault.now_recorded_at();
     let user = vault
         .memory(actor, class)
+        .with_session(session_key)
         .witness(&witness_turn(
             &request.conversation_ref,
             None,
@@ -440,6 +453,7 @@ fn start_turn(
         Answer {
             vault,
             agent,
+            session_key: Some(session_key),
             open: AnswerOpen::Turn(witness_turn(
                 &request.conversation_ref,
                 Some(turn),
@@ -616,6 +630,8 @@ pub(crate) struct Answer {
     pub(crate) vault: Arc<Vault>,
     /// The answering agent definition, which writes the MESSAGE.
     pub(crate) agent: EntityId,
+    /// The authenticated actor/machine sitting of a live chat request.
+    pub(crate) session_key: Option<SessionKey>,
     pub(crate) open: AnswerOpen,
     pub(crate) mode: MessageWriteMode,
     pub(crate) admitted: RoleCall,
@@ -666,6 +682,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     let Answer {
         vault,
         agent,
+        session_key,
         open,
         mode,
         admitted,
@@ -677,7 +694,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
     let begun = crate::server::blocking(|| {
-        let memory = vault.memory(agent, EdgeActorClass::Agent);
+        let memory = answer_memory(&vault, agent, session_key);
         match &open {
             AnswerOpen::Turn(turn) => memory.begin_message_stream(turn, Some(mode)),
             AnswerOpen::Continue(message) => memory.begin_message_continuation(message, Some(mode)),
@@ -714,8 +731,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     let stream = match started {
         Ok(stream) => stream,
         Err(reason) => {
-            let _ = vault
-                .memory(agent, EdgeActorClass::Agent)
+            let _ = answer_memory(&vault, agent, session_key)
                 .cancel_stream(handle, StreamCancelReason::AgentAborted);
             return Err(AnswerRefused::NotAdmitted(reason));
         }
@@ -726,6 +742,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     let mut bus = LlmEventBus::new(Box::new(AssistantMessage {
         vault: Arc::clone(&vault),
         agent,
+        session_key,
         handle,
         credential: credential.clone(),
         streamed: Arc::clone(&streamed),
@@ -741,6 +758,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         stream,
         vault,
         agent,
+        session_key,
         handle,
         credential,
         streamed: Arc::clone(&streamed),
@@ -750,7 +768,9 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     };
     tokio::spawn(async move {
         let result = produce(producer).await;
-        ai.session_hint(SessionHint::Activity);
+        if let Some(session_key) = session_key {
+            ai.session_hint(session_key, SessionHint::Activity);
+        }
         // The answer is the agent's turn, so its own cadence dial counts it.
         ai.turn_landed(
             &landed.0,
@@ -805,10 +825,23 @@ fn message_text(message: &LlmMessage) -> String {
         .collect()
 }
 
+fn answer_memory(
+    vault: &Vault,
+    agent: EntityId,
+    session_key: Option<SessionKey>,
+) -> oneiron::memory::Memory<'_> {
+    let memory = vault.memory(agent, EdgeActorClass::Agent);
+    match session_key {
+        Some(key) => memory.with_session(key),
+        None => memory,
+    }
+}
+
 /// The ledger plane: the one durable write of a chat turn.
 struct AssistantMessage {
     vault: Arc<Vault>,
     agent: EntityId,
+    session_key: Option<SessionKey>,
     handle: MessageStreamHandle,
     credential: TurnCredential,
     /// What the producer appended to the presence plane so far.
@@ -821,7 +854,7 @@ impl TerminalSink for AssistantMessage {
         if !self.credential.live() {
             return Err(oneiron::FatalLlmError::InvalidRequest.into());
         }
-        let memory = self.vault.memory(self.agent, EdgeActorClass::Agent);
+        let memory = answer_memory(&self.vault, self.agent, self.session_key);
         // The stream holds what was appended; a terminal carrying text the
         // deltas never did (a provider that sends it only at the end) is
         // appended before the one commit.
@@ -864,6 +897,7 @@ struct Producer {
     stream: LlmStream<'static>,
     vault: Arc<Vault>,
     agent: EntityId,
+    session_key: Option<SessionKey>,
     handle: MessageStreamHandle,
     credential: TurnCredential,
     streamed: Arc<Mutex<String>>,
@@ -884,6 +918,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         mut stream,
         vault,
         agent,
+        session_key,
         handle,
         credential,
         streamed,
@@ -891,7 +926,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         keepalive,
         mut turn,
     } = producer;
-    let memory = vault.memory(agent, EdgeActorClass::Agent);
+    let memory = answer_memory(&vault, agent, session_key);
     let cancel = |reason: StreamCancelReason| {
         if let Ok(receipt) = memory.cancel_stream(handle, reason)
             && let Ok(mut slot) = saved.lock()
@@ -949,11 +984,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         if let LlmStreamEvent::TextDelta { text, .. } = &event {
             // The stream saves each delta in the vault before it is
             // published, so the append is a write: it runs off the workers.
-            let appended = crate::server::blocking(|| {
-                vault
-                    .memory(agent, EdgeActorClass::Agent)
-                    .append_to_stream(handle, text)
-            });
+            let appended = crate::server::blocking(|| memory.append_to_stream(handle, text));
             if let Err(error) = appended {
                 return fail(format!("message stream refused a delta: {error}"));
             }

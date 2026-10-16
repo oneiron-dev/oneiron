@@ -32,6 +32,7 @@
 
 mod converge;
 mod handshake;
+mod node_batch;
 mod session;
 mod steady;
 mod topology;

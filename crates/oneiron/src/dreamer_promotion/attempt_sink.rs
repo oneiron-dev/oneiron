@@ -26,6 +26,10 @@ impl AttemptPromotionSink {
 }
 
 impl ConsolidationSink for AttemptPromotionSink {
+    fn fork(&self) -> Option<Box<dyn ConsolidationSink>> {
+        Some(Box::new(Self::new(Arc::clone(&self.vault))))
+    }
+
     /// Unsealed candidates carry no run, so this sink refuses them.
     fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> Result<()> {
         Err(Error::InvalidClaimBody(

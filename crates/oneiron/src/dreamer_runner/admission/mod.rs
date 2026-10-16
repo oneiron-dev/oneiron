@@ -3,6 +3,7 @@
 //! Admission is ONE `RwTxn` chain: ready-scan, budget read/top-up, queue
 //! lease, and the optional durable started-milestone claim co-commit.
 
+mod buckets;
 mod settlement;
 mod validation;
 use self::validation::validate_admission_input;
@@ -364,10 +365,13 @@ impl DreamerRunnerStore<'_> {
         queue_kind: &str,
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerKindAdmissionResult> {
-        let Some(candidate_attempt_id) = self
-            .attempts
-            .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
-        else {
+        let candidate = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
+            self.ready_macro_candidate_in_txn(wtxn, &input)?
+        } else {
+            self.attempts
+                .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
+        };
+        let Some(candidate_attempt_id) = candidate else {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,
                 budget_exhausted_candidate: None,
@@ -414,15 +418,20 @@ impl DreamerRunnerStore<'_> {
             });
         }
 
-        let claim = crate::ports::JobQueue::port_job_claim(
-            self.vault,
-            wtxn,
-            Some(queue_kind),
-            ClaimAttempt {
-                lease_owner: input.lease_owner,
-                now: input.now,
-            },
-        )?;
+        let request = ClaimAttempt {
+            lease_owner: input.lease_owner,
+            now: input.now,
+        };
+        let claim = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
+            crate::ports::JobQueue::port_job_claim_id(
+                self.vault,
+                wtxn,
+                candidate_attempt_id,
+                request,
+            )?
+        } else {
+            crate::ports::JobQueue::port_job_claim(self.vault, wtxn, Some(queue_kind), request)?
+        };
         let ClaimOutcome::Claimed(attempt) = claim else {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,

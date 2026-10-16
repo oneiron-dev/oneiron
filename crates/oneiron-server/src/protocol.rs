@@ -189,7 +189,7 @@ pub(crate) enum SyncMessage {
         kind: u8,
         payload: Vec<u8>,
     },
-    /// Non-nesting document batch.
+    /// One node tick: non-nesting document and window-write proposals.
     Batch(Vec<SyncMessage>),
     /// WindowSync (tag 10). Routed to per-window handler.
     WindowSync {
@@ -201,9 +201,7 @@ pub(crate) enum SyncMessage {
 
 /// Parses a raw wire message into a typed SyncMessage.
 pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
-    use oneiron::sync::transport::{
-        TAG_BATCH, TAG_DOCUMENT, decode_document, decode_document_batch,
-    };
+    use oneiron::sync::transport::{TAG_BATCH, TAG_DOCUMENT, decode_document, decode_node_batch};
     if data.is_empty() {
         return Err(ProtocolError::InvalidPayload("empty message"));
     }
@@ -232,17 +230,13 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
             })
         }
         TAG_BATCH => {
-            let docs = decode_document_batch(payload)
+            let members = decode_node_batch(payload)
                 .map_err(|e| ProtocolError::InvalidPayload(transport_err_msg(e)))?;
-            Ok(SyncMessage::Batch(
-                docs.into_iter()
-                    .map(|doc| SyncMessage::Doc {
-                        entity: doc.entity,
-                        kind: doc.kind,
-                        payload: doc.payload.to_vec(),
-                    })
-                    .collect(),
-            ))
+            let messages = members
+                .into_iter()
+                .map(parse_message)
+                .collect::<Result<_, _>>()?;
+            Ok(SyncMessage::Batch(messages))
         }
         TAG_RPC => Ok(SyncMessage::Rpc(payload.to_vec())),
         TAG_SUB => Ok(SyncMessage::Sub(payload.to_vec())),
