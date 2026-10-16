@@ -142,6 +142,17 @@ fn admit(
     admit_owner(server, request)
 }
 
+/// [`admit_owner`] for a connector's call through the OpenAI-compatible
+/// proxy (OF-445): the vault's inference policy for the model, on the raw
+/// routes' meter. The proxy has already authenticated its connector and
+/// narrowed the model to one `[models]` configures.
+pub(super) fn admit_proxied(
+    server: &SyncServer,
+    request: &mut LlmRequest,
+) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
+    admit_owner(server, request)
+}
+
 /// [`admit`] past the owner check: the call is the owner's.
 fn admit_owner(
     server: &SyncServer,
