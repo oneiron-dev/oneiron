@@ -15119,7 +15119,7 @@
      "purpose": "Connector shapes, wire enums, attempt-payload codec, and serde adapters",
      "surface": {
       "const": 6,
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 5,
       "fn": 12,
       "struct": 6
@@ -15139,7 +15139,7 @@
      "purpose": "Dispatcher organ with dispatch, execute, authorize, and capture doors",
      "surface": {
       "crate-vis": 1,
-      "fn": 8,
+      "fn": 10,
       "struct": 2,
       "trait": 3
      }
@@ -15153,7 +15153,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 45,
       "enum": 1,
       "type": 1
      }
@@ -15187,7 +15187,7 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -15204,9 +15204,33 @@
      "path": "src/dispatch_byoa/provider.rs",
      "purpose": "Named propose-only Dreamer runners over the existing foreign CLI sandbox",
      "surface": {
+      "const": 3,
       "fn": 3,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LoginPlacement",
+      "OnSeatSpent",
+      "RunnerSeat",
+      "RunnerSeatPolicy",
+      "RunnerWork",
+      "SeatAuth",
+      "SeatRoute",
+      "SeatSpent"
+     ],
+     "path": "src/dispatch_byoa/seat.rs",
+     "purpose": "Owner-chosen runner seats (OF-137): which named runner takes a Dreamer's work under whose sign-in, and where…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 9,
+      "struct": 4
      }
     },
     {
@@ -16208,8 +16232,8 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 7,
-      "crate-vis": 3,
+      "const": 8,
+      "crate-vis": 4,
       "fn": 5,
       "trait": 1
      }
@@ -36646,7 +36670,7 @@
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
       "crate-vis": 7,
-      "fn": 9,
+      "fn": 10,
       "struct": 5
      }
     },
@@ -44907,7 +44931,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45896,7 +45920,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2756,
+   "source_files": 2757,
    "test_files": 903
   },
   "oneiron-android": {
