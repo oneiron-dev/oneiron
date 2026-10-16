@@ -12,8 +12,7 @@
 use super::*;
 use crate::error::ArtifactError;
 use crate::skill_optimize::{
-    GoalAxisBandit, GoalAxisPlan, GoalAxisReport, GoalAxisScorer, OnlineAxisOutcome,
-    measure_goal_axes,
+    GoalAxisBandit, GoalAxisPlan, GoalAxisReport, OnlineAxisOutcome, measure_goal_axes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -105,7 +104,7 @@ pub fn skill_goal_axis_plan(
 pub fn measure_skill_edit_goal_axes(
     vault: &Vault,
     proposal: &EntityId,
-    scorer: &dyn GoalAxisScorer,
+    scorer: &dyn HeldOutReplayNotes,
     bandit: &dyn GoalAxisBandit,
     pulls_per_axis: u32,
 ) -> Result<GoalAxisReport> {

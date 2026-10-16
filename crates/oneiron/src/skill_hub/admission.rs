@@ -8,7 +8,7 @@ use crate::{
     entity_id::EntityId,
     error::Result,
     skill::SkillLifecycle,
-    skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
+    skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes},
     temporal::TimeRange,
 };
 
@@ -129,7 +129,7 @@ impl Vault {
     pub fn admit_marketplace_skill(
         &self,
         ask: &HubActivationAsk,
-        scorer: &dyn HeldOutReplayScorer,
+        scorer: &dyn HeldOutReplayNotes,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<HubAdmissionDisposition> {
@@ -285,7 +285,7 @@ impl Vault {
     }
 }
 fn score(
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
     ask: &HubActivationAsk,
     snapshot: &AdmissionSnapshot,
     version: &str,

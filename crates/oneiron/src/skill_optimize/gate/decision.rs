@@ -33,7 +33,7 @@ pub fn score_gate_skill_edit(vault: &Vault, proposal: &EntityId) -> Result<HeldO
 /// [`score_gate_skill_edit`] with the judge supplied by the caller.
 ///
 /// The scorer is a required argument here, not a defaulted one: see
-/// [`HeldOutReplayScorer`]. The cycle is still resolved by
+/// [`HeldOutReplayNotes`]. The cycle is still resolved by
 /// [`SkillEditCycle::of_proposal`].
 ///
 /// # Errors
@@ -43,7 +43,7 @@ pub fn score_gate_skill_edit(vault: &Vault, proposal: &EntityId) -> Result<HeldO
 pub fn score_gate_skill_edit_with_scorer(
     vault: &Vault,
     proposal: &EntityId,
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
 ) -> Result<HeldOutVerdict> {
     let cycle = SkillEditCycle::of_proposal(vault, proposal)?;
     rule_on_proposal(
@@ -73,7 +73,7 @@ pub fn score_gate_skill_edit_with_scorer(
 pub fn score_gate_skill_edit_in_cycle(
     vault: &Vault,
     proposal: &EntityId,
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
     attempt: AttemptId,
     at: u64,
 ) -> Result<HeldOutVerdict> {
@@ -128,7 +128,7 @@ pub fn score_gate_skill_edit_in_cycle(
 fn rule_on_proposal(
     vault: &Vault,
     proposal: &EntityId,
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
     cycle: &SkillEditCycle,
     at: u64,
 ) -> Result<HeldOutVerdict> {

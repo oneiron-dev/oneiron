@@ -52,6 +52,7 @@ const SEAM_TRAITS: &[&str] = &[
     "SeatNotes",
     "DescriptionNotes",
     "AutoCheckNotes",
+    "HeldOutReplayNotes",
 ];
 const SEAM_STRUCTS: &[&str] = &[];
 
@@ -61,7 +62,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 7;
+const BYPASS_CEILING: usize = 1;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -93,42 +94,6 @@ const fn pin(
 
 /// Typed decisions made outside `decide()`. Each one leaves this list when its surface moves.
 const BYPASSES: &[Pin] = &[
-    pin(
-        "crates/oneiron/src/llm/routing.rs",
-        "call_as_step",
-        "call_as_step(",
-        "routed verdict: a caller's schema verdict sent through the step seam after a description-judge route",
-    ),
-    pin(
-        "crates/oneiron/src/skill_optimize/gate/basis.rs",
-        "trait HeldOutReplayScorer",
-        "pub trait HeldOutReplayScorer {",
-        "skill-edit gate: held-out replay scores, blind preference, audits and the tradeoff rung",
-    ),
-    pin(
-        "crates/oneiron/src/skill_optimize/goal_axes.rs",
-        "trait GoalAxisScorer",
-        "pub trait GoalAxisScorer {",
-        "skill-edit gate: an offline score per goal axis",
-    ),
-    pin(
-        "crates/oneiron/src/skill_hub/claim_refinement.rs",
-        "trait HeldOutClaimReplayScorer",
-        "pub trait HeldOutClaimReplayScorer {",
-        "claim refinement: held-out replay scores that accept a refinement",
-    ),
-    pin(
-        "crates/oneiron/src/skill_hub/claim_refinement.rs",
-        "trait UsefulUpstreamClaimJudge",
-        "pub trait UsefulUpstreamClaimJudge {",
-        "claim refinement: a useful-upstream noul the host makes, not decide()",
-    ),
-    pin(
-        "crates/oneiron/src/skill_hub/shared_gate.rs",
-        "trait UsefulUpstreamJudge",
-        "pub trait UsefulUpstreamJudge {",
-        "shared skill gate: a useful-upstream noul the host makes, not decide()",
-    ),
     pin(
         "crates/oneiron/src/edit_roundtrip/slides_review.rs",
         "trait SlideReviewProvider",
@@ -420,6 +385,18 @@ const OUTSIDE: &[Pin] = &[
         "trait AutoCheckNotes",
         "pub trait AutoCheckNotes: Send + Sync {",
         "auto-check notes: a decided hold's receipt reasons (generation)",
+    ),
+    pin(
+        "crates/oneiron/src/llm/routing.rs",
+        "call_as_step",
+        "call_as_step(",
+        "routed verdict: a caller's arbitrary schema call through the description route (generation); a typed decision a future caller makes with it is that caller's row",
+    ),
+    pin(
+        "crates/oneiron/src/skill_optimize/gate/basis.rs",
+        "trait HeldOutReplayNotes",
+        "pub trait HeldOutReplayNotes {",
+        "skill replay notes: replays, response pairs, objectives and metered person-time beside decided scores, preferences, findings and tradeoffs (evidence)",
     ),
 ];
 

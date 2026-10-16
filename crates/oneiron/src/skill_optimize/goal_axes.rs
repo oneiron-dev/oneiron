@@ -29,12 +29,6 @@ pub struct AxisScores {
     pub after: f64,
 }
 
-/// The scorer sees the same held-out receipt identities for both versions.
-/// Human minutes are a cost (lower is better), not an inferred quality score.
-pub trait GoalAxisScorer: super::HeldOutReplayScorer {
-    fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64>;
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AxisArm {
     Incumbent,
@@ -224,7 +218,7 @@ pub fn measure_goal_axes(
     incumbent: &SkillRecord,
     candidate: &SkillRecord,
     plan: &GoalAxisPlan,
-    scorer: &dyn GoalAxisScorer,
+    replay: &dyn super::HeldOutReplayNotes,
     bandit: &dyn GoalAxisBandit,
 ) -> Result<GoalAxisReport> {
     if plan.offline.is_empty() || (!plan.online.is_empty() && plan.pulls_per_axis < 2) {
@@ -261,7 +255,6 @@ pub fn measure_goal_axes(
     }
     let before_case = replay_case(skill, incumbent, &held_out);
     let after_case = replay_case(skill, candidate, &held_out);
-    let replay: &dyn super::HeldOutReplayScorer = scorer;
     let mut offline = Vec::with_capacity(plan.offline.len());
     for axis in &plan.offline {
         offline.push((
@@ -273,8 +266,8 @@ pub fn measure_goal_axes(
         ));
     }
     let mut human_minutes = AxisScores {
-        before: minutes(scorer.human_minutes(&before_case)?)?,
-        after: minutes(scorer.human_minutes(&after_case)?)?,
+        before: minutes(replay.human_minutes(&before_case)?)?,
+        after: minutes(replay.human_minutes(&after_case)?)?,
     };
     let mut online = Vec::with_capacity(plan.online.len());
     for axis in &plan.online {
