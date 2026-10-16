@@ -101,6 +101,22 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// The paired yes/no question every decision read asks beside the labels: does this need
+/// more thinking? Keyed by its wording alone.
+pub const THINK_MORE: QuestionFamily = QuestionFamily {
+    name: "decision.think_more",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// The host's person question, asked beside the call's questions when the dial reaches the
+/// person: ask up to the next authorised role? Keyed by its wording alone.
+pub const ASK_UP: QuestionFamily = QuestionFamily {
+    name: "decision.ask_up",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -111,4 +127,6 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    THINK_MORE,
+    ASK_UP,
 ];

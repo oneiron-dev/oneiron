@@ -1,5 +1,7 @@
 //! Typed question records and shared outcome projection.
 
+mod asks;
+pub use asks::{AskAnswer, AskPrior, DecisionAsk, DecisionAsks};
 pub mod catalogue;
 mod codec;
 mod held;

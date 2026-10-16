@@ -60,6 +60,8 @@ oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
 # models/anthropic.rs).
 oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
 oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
+# The System One seat on the host's decision ladder (decision_host.rs).
+oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so

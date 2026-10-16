@@ -130,6 +130,10 @@ pub struct SyncServer {
     pub(crate) decision_read: Option<(crate::models::DecisionReadDoor, oneiron::BudgetGuard)>,
     /// Reads that route holds at once (`limits.decision_reads`).
     pub(crate) decision_reads: crate::admission::Admission<()>,
+    /// The host's decision ladder: the rule table and the owner's ask queue
+    /// on every server, with the rungs `[models]` binds once the AI host
+    /// attaches.
+    pub(crate) decisions: crate::decision_host::DecisionHost,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -310,6 +314,7 @@ impl SyncServer {
             config.limits.decision_reads,
             config.limits.queue_wait(),
         );
+        let decisions = crate::decision_host::DecisionHost::new(&vault);
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
             config.feedback_inbox.notes_per_hour,
@@ -354,6 +359,7 @@ impl SyncServer {
             llm: None,
             decision_read: None,
             decision_reads,
+            decisions,
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
@@ -485,6 +491,10 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
+        self.decisions = self
+            .decisions
+            .clone()
+            .with_house_read(self.decision_read.as_ref());
         self
     }
 
@@ -515,6 +525,11 @@ impl SyncServer {
         if let (Some(door), Some(raw)) = (ai.decision_read(), &self.llm) {
             self.decision_read = Some((door, raw.meter().clone()));
         }
+        // The house read fills the ladder's escalation rung.
+        self.decisions = self
+            .decisions
+            .clone()
+            .with_house_read(self.decision_read.as_ref());
         self.ai = ai;
         self
     }

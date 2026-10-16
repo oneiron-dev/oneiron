@@ -38,6 +38,7 @@ use crate::owner::{
 };
 use crate::server::SyncServer;
 mod cooperative_deletion_routes;
+mod decision_ask_routes;
 mod history_routes;
 mod pack_routes;
 mod peer_confidence_routes;
@@ -79,6 +80,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(history_routes::routes())
         .merge(pack_routes::routes())
         .merge(cooperative_deletion_routes::routes())
+        .merge(decision_ask_routes::routes())
         .merge(peer_confidence_routes::routes())
         .merge(super::owner_origin::routes())
 }
