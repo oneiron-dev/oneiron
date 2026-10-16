@@ -8,7 +8,7 @@
 //! one repository all land, and a slow transfer that keeps moving is never
 //! cut. One push names no limit on its ref count (rule 5): two hundred refs
 //! land in one exchange, and a status report past the memory the bridge holds
-//! is held on disk.
+//! is held on disk. What a push holds on disk keeps the vault's disk reserve.
 
 use super::routes::git_http_routes;
 use crate::config::{LimitsConfig, SyncServerConfig};
@@ -909,16 +909,25 @@ async fn a_200_ref_push_lands() {
 /// One receive-pack request creating `count` branches at the origin's commit,
 /// asking for side-band status, with the empty pack stock git sends for it.
 fn creations(origin: &Origin, count: usize) -> Vec<u8> {
+    creating(
+        origin,
+        (0..count).map(|n| format!("refs/heads/spill-{n:03}")),
+    )
+}
+
+/// One receive-pack request creating each of `names` at the origin's commit,
+/// asking for side-band status, with the empty pack stock git sends for it.
+fn creating(origin: &Origin, names: impl IntoIterator<Item = String>) -> Vec<u8> {
     let zero = "0".repeat(origin.oid.len());
     let mut request = String::new();
-    for n in 0..count {
+    for (n, name) in names.into_iter().enumerate() {
         let capabilities = if n == 0 {
             "\0report-status side-band-64k"
         } else {
             ""
         };
         request.push_str(&pkt(&format!(
-            "{zero} {} refs/heads/spill-{n:03}{capabilities}\n",
+            "{zero} {} {name}{capabilities}\n",
             origin.oid
         )));
     }
@@ -975,4 +984,57 @@ async fn a_push_report_past_the_held_memory_spills_and_lands() {
     assert_eq!(status, 200);
     assert_eq!(count(&advertised, b" refs/heads/spill-"), 300);
     assert_eq!(door_entries(&spilled), before);
+}
+
+/// A push's status report held past memory keeps the vault's disk reserve,
+/// the one refusal rule 5 leaves this path. With the disk shown at its
+/// reserve, a push whose report fits the memory the bridge holds lands as it
+/// would, and one whose report goes past that memory is answered with the
+/// floor's 507, naming `limits.disk_reserve_bytes`. Nothing it held is left
+/// in the door root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_push_report_held_past_memory_keeps_the_disk_reserve() {
+    let in_memory = origin(LimitsConfig::default()).await;
+    let spilled = origin_holding(LimitsConfig::default(), Some(1024)).await;
+    let before = door_entries(&spilled);
+    for origin in [&in_memory, &spilled] {
+        origin.server.transfers.disk.show_free(0);
+    }
+    let request = creations(&in_memory, 100);
+    let mut stream = rpc(&in_memory, "git-receive-pack", request.len(), &request).await;
+    let (status, report) = response_within(&mut stream, LANDING_PATIENCE).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&report));
+    assert!(report.len() > 1024, "{} report bytes", report.len());
+
+    let request = creations(&spilled, 100);
+    let mut stream = rpc(&spilled, "git-receive-pack", request.len(), &request).await;
+    let (status, body) = response_within(&mut stream, LANDING_PATIENCE).await;
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, 507, "{body}");
+    assert!(body.contains("limits.disk_reserve_bytes"), "{body}");
+    assert_eq!(door_entries(&spilled), before);
+}
+
+/// A push's command section held past memory keeps the vault's disk reserve
+/// too. With the disk shown at its reserve, a section past the mebibyte held
+/// in memory (3,699 creations named at the 200-byte ref limit, then a
+/// replacement ref the door refuses, so no ref lands however it ends) is
+/// answered with the floor's 507 before the backend reads it, and nothing it
+/// held is left in the door root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_command_section_held_past_memory_keeps_the_disk_reserve() {
+    let origin = origin(LimitsConfig::default()).await;
+    let before = door_entries(&origin);
+    origin.server.transfers.disk.show_free(0);
+    let names = (0..3_699)
+        .map(|n| format!("refs/heads/{n:04}-{}", "x".repeat(184)))
+        .chain([format!("refs/replace/{}", "y".repeat(187))]);
+    let request = creating(&origin, names);
+    assert!(request.len() > 1 << 20, "{} request bytes", request.len());
+    let mut stream = rpc(&origin, "git-receive-pack", request.len(), &request).await;
+    let (status, body) = response_within(&mut stream, LANDING_PATIENCE).await;
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, 507, "{body}");
+    assert!(body.contains("limits.disk_reserve_bytes"), "{body}");
+    assert_eq!(door_entries(&origin), before);
 }
