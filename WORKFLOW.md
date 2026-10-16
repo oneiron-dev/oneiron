@@ -77,8 +77,9 @@ prints the change's scope (`full`, `packages`, `dependents`, `oneiron`,
 - the sync lane for the touched `oneiron` modules, with its integration tests
   when `it=true`.
 
-A change to a build file, the toolchain or CI makes the scope full, and a full
-scope runs the full gate below.
+A change to the workspace build files (`Cargo.toml`, `Cargo.lock`, `.cargo/`),
+the toolchain (`rust-toolchain.toml`) or the clippy, rustfmt or nextest config
+makes the scope full, and a full scope runs the full gate below.
 
 **Full gate (`main`).** It runs on `main` after PRs merge, at most once an hour
 and only when something new landed (`AGENTS.md`, *CI truth*). A red `main` gate
