@@ -40,7 +40,7 @@ pub(crate) fn withdrawn_in_txn(
         || super::stale_in_txn(store, txn, id)?)
 }
 
-pub(super) fn body_is_stale(bytes: &[u8]) -> bool {
+pub(crate) fn body_is_stale(bytes: &[u8]) -> bool {
     let Ok(body) = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)) else {
         return false;
     };
