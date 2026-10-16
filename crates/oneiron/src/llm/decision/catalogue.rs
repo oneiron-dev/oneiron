@@ -62,6 +62,15 @@ pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which quoted team shape should this spawn run (pattern at a width)?
+/// Keyed by task type. The options are the planner's own ranked shape
+/// tokens, so an answer can only re-rank what the floor already quoted.
+pub const PLANNER_SHAPE: QuestionFamily = QuestionFamily {
+    name: "planner.shape",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which label one changed hunk of an attribution takes (one region for an outcome with no
 /// edit). Keyed by lane and hunk position.
 pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {

@@ -113,6 +113,34 @@ pub const LEARNING_BORROWED_PRIOR_RUNS: SettingSpec = SettingSpec {
     seed: 2.0,
 };
 
+/// The spawn planner's solo-first gate floor (ARCH-0079 #planner, OF-541):
+/// when solo's measured success rate for a task type is at or above this,
+/// a team must clear [`PLANNER_SOLO_MARGIN`] past solo to displace it.
+pub const PLANNER_SOLO_SUCCESS_FLOOR: SettingSpec = SettingSpec {
+    key: "planner_solo_success_floor",
+    min: 0.0,
+    max: 1.0,
+    seed: 0.7,
+};
+
+/// How far past solo's success rate a team shape must project before the
+/// planner prefers it once the solo-first gate is engaged.
+pub const PLANNER_SOLO_MARGIN: SettingSpec = SettingSpec {
+    key: "planner_solo_margin",
+    min: 0.0,
+    max: 1.0,
+    seed: 0.05,
+};
+
+/// The spawn width at which a plan counts as big and the planner ladder
+/// climbs to its strong rung regardless of care.
+pub const PLANNER_BIG_PLAN_WIDTH: SettingSpec = SettingSpec {
+    key: "planner_big_plan_width",
+    min: 1.0,
+    max: 10000.0,
+    seed: 16.0,
+};
+
 /// Every learned knob the engine reads.
 pub const SETTING_CATALOG: &[SettingSpec] = &[
     ATTRIBUTION_UNCLEAR_FLOOR,
@@ -123,6 +151,9 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     LEARNING_WINDOW_HALF_LIFE_DAYS,
     LEARNING_SHIPPED_PRIOR_RUNS,
     LEARNING_BORROWED_PRIOR_RUNS,
+    PLANNER_SOLO_SUCCESS_FLOOR,
+    PLANNER_SOLO_MARGIN,
+    PLANNER_BIG_PLAN_WIDTH,
 ];
 
 /// The catalog row named `key`, if the engine knows it.

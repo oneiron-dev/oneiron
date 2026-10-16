@@ -28,7 +28,9 @@ mod healer_context;
 mod healer_repair;
 pub(crate) use healer_context::validate as validate_healer_case;
 mod kill;
+mod planner;
 mod resident;
+mod team_shape;
 mod types;
 mod widen;
 mod widen_record;
@@ -53,8 +55,18 @@ pub use self::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
     AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput,
     AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext,
-    AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer, HealerSlot,
-    HealerSlotOutcome, KillOutcome, KillProposal, KillerLease, restrict_agent_ceiling,
+    AttenuatedDispatchTarget, CareLevel, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer,
+    HealerSlot, HealerSlotOutcome, KillOutcome, KillProposal, KillerLease, SpawnNeed,
+    SpawnOverride, restrict_agent_ceiling,
+};
+pub use self::planner::{
+    AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,
+    PlannerThresholds, ShapeQuote, SpawnPlanReceipt, TeamPlan, plan_spawn, plan_spawn_routed,
+    planner_rung_for, resolve_care, top_shapes,
+};
+pub use self::team_shape::{
+    CoordinationPattern, PayoffRow, PlannerCard, SEEDED_SHAPES, SeededShape,
+    TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, seeded_shape,
 };
 
 #[cfg(test)]
