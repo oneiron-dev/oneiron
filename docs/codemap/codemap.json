@@ -17275,6 +17275,33 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactVersionRef",
+      "CreatedEstimate",
+      "CreatedSlide",
+      "DeckCreateError",
+      "DeckCreateOutcome",
+      "DeckCreateRequest",
+      "DeckCreationRecord",
+      "DesignDirection",
+      "DesignSpec",
+      "DirectionOutcome",
+      "DirectionSlide",
+      "KeptOutline",
+      "OutlineFreshness"
+     ],
+     "path": "src/edit_roundtrip/deck_create.rs",
+     "purpose": "Deck creation from an approved outline (ARCH-0077, \"Create: an approved argument, then a design\")",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 7,
+      "struct": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -17369,7 +17396,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
       "crate-vis": 3,
-      "mod": 2,
+      "mod": 3,
       "re-export": 11
      }
     },
@@ -43203,7 +43230,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44094,7 +44121,7 @@
    },
    "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2644,
+   "source_files": 2645,
    "test_files": 903
   },
   "oneiron-android": {
@@ -47908,12 +47935,14 @@
      "notable": [
       "LayoutView",
       "MasterView",
+      "Spacing",
       "TemplateView",
       "TextStyle"
      ],
      "path": "src/deck/template.rs",
      "purpose": "The template reader: masters and their layouts, each placeholder with its resolved geometry and the…",
      "surface": {
+      "enum": 1,
       "fn": 1,
       "struct": 4
      }
@@ -47937,7 +47966,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Asset",
@@ -47953,6 +47982,7 @@
       "Communication",
       "Dataset",
       "Division",
+      "NumberFormat",
       "Page",
       "Pin",
       "Priority"
@@ -47960,10 +47990,11 @@
      "path": "src/design_plan/brief.rs",
      "purpose": "The brief: the kept, typed outline a design is compiled from (ARCH-0077, \"Create: an approved argument, then…",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
       "enum": 8,
-      "fn": 3,
-      "struct": 8
+      "fn": 6,
+      "struct": 9
      }
     },
     {
@@ -47973,7 +48004,7 @@
      "path": "src/design_plan/capability.rs",
      "purpose": "Layout capability (ARCH-0077, \"Layout selection\"): each placeholder's role, type and index, effective bounds…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -48024,7 +48055,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 12,
-      "fn": 10,
+      "fn": 11,
       "re-export": 1,
       "struct": 16
      }
@@ -48292,6 +48323,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Face",
+      "FontBook",
+      "FontError"
+     ],
+     "path": "src/fonts.rs",
+     "purpose": "Real font metrics for fit estimates (ARCH-0077, \"Fit estimate\"): a bounded sfnt reader for TrueType and CFF…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -48399,7 +48447,7 @@
      "surface": {
       "enum": 1,
       "fn": 8,
-      "mod": 9,
+      "mod": 10,
       "re-export": 5
      }
     },
@@ -48646,7 +48694,7 @@
     "design_plan": {
      "files": 6,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
     },
@@ -48663,6 +48711,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 \"Creation result and checks\")"
+    },
+    "fonts": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Real font metrics for fit estimates (ARCH-0077, \"Fit estimate\"): a bounded sfnt reader for TrueType and CFF…"
     },
     "graphic": {
      "files": 7,
@@ -48700,9 +48755,9 @@
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     }
    },
-   "over_bar": 2,
+   "over_bar": 3,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 14
   },
   "oneiron-driver": {

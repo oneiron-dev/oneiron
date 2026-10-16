@@ -21,13 +21,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deck/mod.rs` | src | m | 15 struct · 7 enum · 4 fn · 1 const · 3 re-export · 2 crate-vis | Affine, Ambiguity, Autofit, BodyView, Bullet, DeckError, DeckView, Dependency +14 | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
 | `src/deck/resolve.rs` | src | m | 15 crate-vis | — | The four property-specific resolvers (geometry, text body, paragraph, run) |
 | `src/deck/shapes.rs` | src | s | 3 crate-vis | — | The shape walk: every shape in document order with its identity evidence, placeholder, resolved geometry and… |
-| `src/deck/template.rs` | src | s | 4 struct · 1 fn | LayoutView, MasterView, TemplateView, TextStyle | The template reader: masters and their layouts, each placeholder with its resolved geometry and the… |
+| `src/deck/template.rs` | src | s | 4 struct · 1 enum · 1 fn | LayoutView, MasterView, Spacing, TemplateView, TextStyle | The template reader: masters and their layouts, each placeholder with its resolved geometry and the… |
 | `src/deck/tests.rs` | test | m | — | — | ONE-2527 acceptance: the four resolvers in all four states; masters, inheritance, `p:clrMapOvr`, groups and… |
 | `src/design_plan/assembly.rs` | src | s | 3 crate-vis | — | Plan assembly: part names allocated above the template's high-water marks, the package row's parts and… |
-| `src/design_plan/brief.rs` | src | m | 8 struct · 8 enum · 3 fn · 1 crate-vis | Asset, AssetKind, Block, BlockContent, Brief, BriefError, Carrier, Cell +8 | The brief: the kept, typed outline a design is compiled from (ARCH-0077, "Create: an approved argument, then… |
-| `src/design_plan/capability.rs` | src | m | 16 crate-vis | — | Layout capability (ARCH-0077, "Layout selection"): each placeholder's role, type and index, effective bounds… |
+| `src/design_plan/brief.rs` | src | L | 9 struct · 8 enum · 6 fn · 1 const · 1 crate-vis | Asset, AssetKind, Block, BlockContent, Brief, BriefError, Carrier, Cell +9 | The brief: the kept, typed outline a design is compiled from (ARCH-0077, "Create: an approved argument, then… |
+| `src/design_plan/capability.rs` | src | m | 18 crate-vis | — | Layout capability (ARCH-0077, "Layout selection"): each placeholder's role, type and index, effective bounds… |
 | `src/design_plan/ladder.rs` | src | m | 4 crate-vis | — | One page through the ladder (ARCH-0077, "Layout selection"): a layout chosen by capability; then a… |
-| `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 10 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
+| `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 11 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
 | `src/edit/check.rs` | src | m | 15 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/media.rs` | src | s | 5 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
@@ -48,6 +48,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/emit/mod.rs` | src | m | 11 struct · 3 enum · 1 fn · 1 crate-vis | Candidate, CheckFault, ClaimTrace, EmitError, EmitInputs, EmittedSlide, FitTrace, FitUnverified +6 | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
 | `src/emit/slide.rs` | src | s | 7 crate-vis | — | Slide XML for emission: an empty slide whose root binds `p:`, `a:` and `r:`, the shapes placed into its… |
 | `src/emit/tests.rs` | test | m | 3 crate-vis | — | ONE-2536 acceptance: an end-to-end plan over the ONE-2533 template is emitted into a candidate that places… |
+| `src/fonts.rs` | src | m | 2 struct · 1 enum · 10 fn · 2 const | Face, FontBook, FontError | Real font metrics for fit estimates (ARCH-0077, "Fit estimate"): a bounded sfnt reader for TrueType and CFF… |
 | `src/graphic/asset.rs` | src | s | 2 crate-vis | — | Asset admission: the binding, provenance and stored bytes, checked before any byte is interpreted; and… |
 | `src/graphic/drawingml.rs` | src | s | 1 fn | — | A compiled drawing as DrawingML: one `p:grpSp` whose child space is the viewBox, for a slide's `p:spTree` |
 | `src/graphic/geometry.rs` | src | m | 14 crate-vis | — | Geometry for the closed subset: basic shapes as presets under a kept transform, polylines, polygons and… |
@@ -55,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
-| `src/lib.rs` | src | s | 1 enum · 8 fn · 9 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/lib.rs` | src | s | 1 enum · 8 fn · 10 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 2 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |
