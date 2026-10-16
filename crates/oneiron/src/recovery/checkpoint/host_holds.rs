@@ -8,7 +8,8 @@
 //! Oneiron must keep never lapses because content came back from an image. A
 //! restore with no live vault (a clean host, a wake, a migration) has nowhere
 //! to read them: the host carries them itself, from
-//! [`Vault::host_order_holds`] before to [`Vault::install_host_order_holds`]
+//! [`Vault::carried_host_order_holds`] before to
+//! [`Vault::install_carried_host_order_holds`]
 //! after, never inside an owner's artifact.
 //!
 //! A backup holds every record its image carries, so while any hold stands,
@@ -64,7 +65,7 @@ pub(super) fn carry_current(
 impl Vault {
     /// This vault's host-order legal holds, for the host to carry to the vault
     /// a restore with no live source makes.
-    pub fn host_order_holds(&self) -> Result<HostOrderHolds> {
+    pub fn carried_host_order_holds(&self) -> Result<HostOrderHolds> {
         let txn = self.store.env.read_txn()?;
         Ok(HostOrderHolds {
             rows: crate::store::host_hold_rows_in_txn(&self.store, &txn)?,
@@ -73,7 +74,7 @@ impl Vault {
 
     /// Puts `holds`, read from the vault this one was restored from, in place
     /// of this vault's host-order legal holds. Call it before the vault serves.
-    pub fn install_host_order_holds(&self, holds: &HostOrderHolds) -> Result<()> {
+    pub fn install_carried_host_order_holds(&self, holds: &HostOrderHolds) -> Result<()> {
         self.with_write_txn(|txn| {
             crate::store::replace_host_holds_in_txn(&self.store, txn, &holds.rows)
         })

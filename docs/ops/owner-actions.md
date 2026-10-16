@@ -869,4 +869,4 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
   claim keys the old host kept do not come back.
 - Host-order legal holds cross a restore over a vault, a rehearsal and `--activate` from the live
   vault. A restore where no vault is cannot read them; the hosting side carries them
-  (`Vault::host_order_holds`, `Vault::install_host_order_holds`).
+  (`Vault::carried_host_order_holds`, `Vault::install_carried_host_order_holds`).
