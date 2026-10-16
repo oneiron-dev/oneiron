@@ -132,7 +132,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         ))?;
         let mut sink = storage.code_run_output_sink()?;
         write_json(&mut sink, &answer.output)?;
-        let output = storage.publish_code_run_output(bridge_result_output_path(seq), sink, true)?;
+        let output = storage.publish_code_run_output(
+            bridge_result_output_path(seq),
+            sink,
+            true,
+            self.run_id,
+        )?;
         answer.output = result_handle_json(&output);
         self.captured.push(output);
         Ok(SelfDispatchOutcome::AgentVerb(answer))

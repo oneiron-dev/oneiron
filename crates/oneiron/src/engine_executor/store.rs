@@ -45,7 +45,7 @@ pub(super) fn publish_output(
     if record.outputs.iter().any(|output| output.path == path) {
         return Err(Error::InvalidClaimBody("duplicate executor output path").into());
     }
-    let output = storage.publish_code_run_output(path, sink, true)?;
+    let output = storage.publish_code_run_output(path, sink, true, record.run_id)?;
     record.outputs.push(output.clone());
     Ok(output)
 }

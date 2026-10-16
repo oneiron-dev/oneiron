@@ -334,7 +334,7 @@ pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
     let mut sink = vault.code_run_output_sink()?;
     sink.write(bytes)?;
     Ok(vault
-        .publish_code_run_output(CONTEXT_OUTPUT_PATH.to_owned(), sink, true)?
+        .publish_code_run_output(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, None)?
         .output_ref())
 }
 

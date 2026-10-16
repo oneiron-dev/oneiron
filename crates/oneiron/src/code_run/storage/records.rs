@@ -180,16 +180,27 @@ impl Vault {
     }
 
     /// Publishes the body `sink` wrote as the output at `path`: a spilled
-    /// body's file is whole on disk before the row naming it commits.
+    /// body's file is whole on disk before the row naming it commits. With an
+    /// `owner` (the run whose record names it), the same transaction
+    /// registers the body as that owner's occurrence, so erasing the owner
+    /// releases it.
     pub(crate) fn publish_code_run_output(
         &self,
         path: String,
         sink: BodySink,
         complete: bool,
+        owner: Option<EntityId>,
     ) -> Result<CodeRunRawOutput> {
         let (output, body) = finish_output(path, sink, complete, self.limit_watch())?;
         let mut wtxn = self.store.env.write_txn()?;
         RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &body)?;
+        if let Some(owner) = owner {
+            crate::provenance::body::publish_body_in_txn(
+                &self.store,
+                &mut wtxn,
+                &owned_body(owner, &output, &body)?,
+            )?;
+        }
         wtxn.commit()?;
         Ok(output)
     }
@@ -371,6 +382,37 @@ pub(super) fn finish_output(
         }
     };
     Ok((output, body))
+}
+
+/// `output` as an occurrence `owner` holds: one per owner and path.
+fn owned_body(
+    owner: EntityId,
+    output: &CodeRunRawOutput,
+    body: &StoredBody,
+) -> Result<crate::provenance::body::OwnedBody> {
+    use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
+    let body = BodyRef {
+        blake3: output.raw_blake3,
+        bytes: output.raw_len,
+        location: match body {
+            StoredBody::Inline(_) => BodyLocation::Inline,
+            StoredBody::File { .. } => BodyLocation::File,
+        },
+    };
+    Ok(OwnedBody {
+        owner,
+        occurrence: EntityId::derive(
+            b"oneiron:code-run-output-occurrence:v1",
+            &[owner.as_bytes().as_slice(), output.path.as_bytes()],
+        )?,
+        state: if output.complete {
+            BodyState::Complete { body }
+        } else {
+            BodyState::Incomplete {
+                retained: Some(body),
+            }
+        },
+    })
 }
 
 /// The body file of `output` in the first of `dirs` that holds it.
