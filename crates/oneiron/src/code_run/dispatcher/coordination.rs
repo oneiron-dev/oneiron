@@ -1,5 +1,7 @@
 //! Code-mode composition: host-bound agents.spawn / ask / wait.
-use super::HostSelfDispatcher;
+use std::sync::Arc;
+
+use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::EntityId;
 use crate::agent_def::{
     AgentAuthorLease, AgentDefinition, AgentDefinitionPutDisposition, AgentScope,
@@ -8,11 +10,11 @@ use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, DispatchAgent, agent_dispatch_actor,
     decode_agent_dispatch_input,
 };
-use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDispatchOutcome, SelfEffect,
-    SelfFailedResult, SelfTaskRefusalResult, SelfTaskRefuseCall,
+    RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDeniedResult,
+    SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfTaskRefusalResult, SelfTaskRefuseCall,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
@@ -26,6 +28,13 @@ fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
         "code-mode spawn requires its bound parent attempt",
     ))
+}
+
+/// What a run lends one callable skill its program calls (OF-353): the vault
+/// as the host holds it, and the running attempt's lease, read live.
+pub(crate) struct CallableSkillLease {
+    pub(crate) vault: Arc<Vault>,
+    pub(crate) leased: AttemptRecord,
 }
 
 impl<'a> HostSelfDispatcher<'a> {
@@ -77,6 +86,28 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         dispatcher.agent_lease = Some(binding);
         Ok(dispatcher)
+    }
+
+    /// Lends the run's own vault, as the host holds it, to the callable
+    /// skills its program calls (`self.skills.call`, OF-353). A skill runs
+    /// only under a leased agent attempt ([`Self::for_leased_agent_attempt`]);
+    /// any other run's call answers a typed failure.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when `vault` is not the canonical vault this
+    /// dispatcher writes into: an off-record room lends no skill.
+    pub fn with_callable_skills(mut self, vault: Arc<Vault>) -> Result<Self> {
+        match &self.storage {
+            ExecutorStorage::Canonical(bound) if std::ptr::eq(*bound, &*vault) => {}
+            _ => {
+                return Err(Error::InvalidConfig(
+                    "callable skills need the run's own canonical vault".to_owned(),
+                ));
+            }
+        }
+        self.skill_vault = Some(vault);
+        Ok(self)
     }
 
     fn coordination_vault(&self) -> Result<&Vault> {
@@ -238,6 +269,82 @@ impl<'a> HostSelfDispatcher<'a> {
                 replay: receipt.idempotent_replay,
             }),
             Err(error) => failed(SelfEffect::TasksRefuse, error),
+        })
+    }
+
+    /// Admits one `self.skills.call` as every call the run serves itself is
+    /// admitted (the room's participant, the off-record line, a step past a
+    /// write that did not meet its receipt, the bound door), then resolves
+    /// the lease its skill runs under. The skill itself runs on the
+    /// executor's host, which alone holds a runtime to run it on.
+    pub(crate) fn admit_skill_call_for_executor_run(
+        &self,
+        site: ExecutorCallSite<'_>,
+        call: &SelfCall,
+    ) -> Result<std::result::Result<CallableSkillLease, SelfDispatchOutcome>> {
+        let effect = call.effect();
+        self.storage.answered(|| {
+            self.enforce_off_record_effect_policy(effect)?;
+            if let Some(refused) = self.refusal_past_an_unmet_write(site, Some(call))? {
+                return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                    effect,
+                    ..refused
+                })));
+            }
+            if let Err(refusal) = self.admit_run_call(RunCall::Bridge(effect))? {
+                return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                    effect,
+                    outcome: refusal.code,
+                    reason_codes: Vec::new(),
+                })));
+            }
+            self.callable_skill_lease()
+        })
+    }
+
+    /// The running attempt's lease, read live: the attempt this dispatcher
+    /// was bound to, still leased to the same owner in the same generation.
+    /// A run with no leased attempt, or whose host lent no vault, answers a
+    /// typed failure the script can read.
+    fn callable_skill_lease(
+        &self,
+    ) -> Result<std::result::Result<CallableSkillLease, SelfDispatchOutcome>> {
+        let refused = |code: &str| -> std::result::Result<CallableSkillLease, SelfDispatchOutcome> {
+            Err(SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::SkillsCall,
+                error: code.to_owned(),
+            }))
+        };
+        let Some(lease) = &self.agent_lease else {
+            return Ok(refused("skills_call_unleased"));
+        };
+        let Some(vault) = &self.skill_vault else {
+            return Ok(refused("skills_call_unbound"));
+        };
+        let live = AttemptQueue::new(vault)
+            .get(lease.attempt)?
+            .filter(|record| {
+                record.state == AttemptState::Leased
+                    && record.lease_owner.as_deref() == Some(lease.owner.as_str())
+                    && record.attempt_count == lease.generation
+            });
+        let Some(leased) = live else {
+            return Ok(refused("skills_call_lease_lost"));
+        };
+        Ok(Ok(CallableSkillLease {
+            vault: Arc::clone(vault),
+            leased,
+        }))
+    }
+
+    /// A `self.skills.call` dispatched with no runtime to run its skill on.
+    /// The skill runs a step of its own, on a sibling runtime the caller's
+    /// step lends the executor's host while it waits on the call; nothing
+    /// that reaches the dispatcher directly holds one.
+    pub(super) fn dispatch_skills_call_unhosted() -> SelfDispatchOutcome {
+        SelfDispatchOutcome::Failed(SelfFailedResult {
+            effect: SelfEffect::SkillsCall,
+            error: "skills_call_no_runtime".to_owned(),
         })
     }
 

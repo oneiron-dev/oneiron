@@ -72,6 +72,19 @@ pub(crate) struct DagAppendRequest {
     pub learned_at: Option<u64>,
     pub session: Option<String>,
     pub actor: DagActor,
+    /// Quotes a span of one MESSAGE; the record then replies to its TURN.
+    #[serde(default)]
+    pub quote: Option<DagQuoteSpan>,
+}
+
+/// Half-open Unicode scalar indices (not UTF-8 bytes or UTF-16 units) into
+/// the message's current text. The engine turns them into a pinned anchor.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DagQuoteSpan {
+    pub message: String,
+    pub start: u32,
+    pub end: u32,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

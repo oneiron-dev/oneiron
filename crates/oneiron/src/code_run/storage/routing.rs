@@ -256,6 +256,7 @@ impl SessionBinding<'_> {
 
     fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
+        let _pin = self.session.pin_result_body(output.raw_blake3);
         let Some(body) =
             self.answered(|| self.session.side_table_get(&RAW_OUTPUTS, &output.handle))?
         else {
@@ -271,6 +272,7 @@ impl SessionBinding<'_> {
         len: usize,
     ) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
+        let _pin = self.session.pin_result_body(output.raw_blake3);
         self.answered(|| {
             self.session
                 .side_table_read_bytes(&RAW_OUTPUTS, &output.handle, |row| {

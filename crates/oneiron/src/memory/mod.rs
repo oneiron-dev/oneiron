@@ -55,6 +55,7 @@ mod owner_door;
 mod read_lane;
 mod reads;
 mod recall;
+mod report;
 mod room_turn;
 mod structural;
 mod subscriptions;
@@ -94,7 +95,7 @@ pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptVi
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
-pub use export::{ExportOptions, ExportReceipt, MemoryExport};
+pub use export::{EXPORT_TARGET_ARCHIVE, ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
