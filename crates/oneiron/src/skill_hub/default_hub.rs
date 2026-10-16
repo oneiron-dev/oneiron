@@ -16,6 +16,8 @@ use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, tempora
 /// network lookup never changes an opened vault's skill source.
 const HUB_COMMIT: &str = "e1040cbcc1ca2a1eb8404c8fc80956b0e75ae3e5";
 const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
+/// Library data, deliberately not a fifth build-embedded bootstrap skill.
+pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";
 /// The model catalog has no authority of its own. Its rows count once the
 /// fetched bytes carry scan evidence and the pack installs; which bytes are
 /// fetched is the ref's sync policy, vault data rather than an engine constant.
@@ -126,6 +128,18 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         self.import_default_hub_skill_at_commit(subtree, HUB_COMMIT, occurred, learned_at)
+    }
+
+    /// Imports the review explainer through the pinned library/scanner path.
+    /// Activation, governance and optimized forks use the ordinary skill doors.
+    /// The returned entity (or an optimized descendant) is supplied to
+    /// `entity_doc::review_explainer::ReviewExplainerExecution` by its host.
+    pub fn import_review_bundle_explainer_skill(
+        &self,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.import_default_hub_skill(REVIEW_BUNDLE_EXPLAINER_SUBTREE, occurred, learned_at)
     }
 
     /// The model catalog ref's policy: the owner's stored row, else the
