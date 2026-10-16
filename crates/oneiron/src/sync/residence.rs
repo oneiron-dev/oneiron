@@ -4,9 +4,11 @@
 #[cfg(test)]
 mod tests;
 
+mod admission;
 mod discover;
 mod policy;
 mod prune;
+pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
@@ -32,7 +34,8 @@ use super::loro_support::map_insert_bytes;
 use super::loro_support::{map_for_each_value_bytes, map_get_bytes};
 #[cfg(test)]
 use super::schema::create_window_doc;
-use super::selector::{SyncSelector, filtered_window_doc, granted_window_doc};
+use super::selector::{SyncSelector, filtered_window_doc_for, granted_window_doc};
+use super::window::Withhold;
 use super::types::WindowKey;
 
 /// Collect the actor-readable lexical candidates before applying a
@@ -123,9 +126,34 @@ pub fn window_index_projection(
     scope: FederationGrantScope,
     selector: &SyncSelector,
     title_max_chars: usize,
+    readable: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<Vec<WindowIndexEntry>> {
+    window_index_projection_with(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Unknown,
+        title_max_chars,
+        readable,
+    )
+}
+
+/// [`window_index_projection`] for the machine a residence read serves:
+/// `withhold` names the worlds kept off it, at the selector's source.
+#[allow(clippy::too_many_arguments)]
+pub fn window_index_projection_with(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    withhold: Withhold<'_>,
+    title_max_chars: usize,
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<WindowIndexEntry>> {
-    let selected = filtered_window_doc(vault, source, window, scope, selector)?;
+    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
     let mut entries = Vec::new();
     let mut result = Ok(());
     map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
@@ -190,7 +218,20 @@ pub fn selected_item_blob(
     selector: &SyncSelector,
     item: EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    let selected = filtered_window_doc(vault, source, window, scope, selector)?;
+    selected_item_blob_with(vault, source, window, scope, selector, Withhold::Unknown, item)
+}
+
+/// [`selected_item_blob`] for the machine a residence read serves.
+pub fn selected_item_blob_with(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    withhold: Withhold<'_>,
+    item: EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
     Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
 }
 
@@ -290,6 +331,20 @@ pub fn promotion_snapshot(
     window: &WindowKey,
     scope: FederationGrantScope,
     selector: &SyncSelector,
+    readable: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<Option<Vec<u8>>> {
+    promotion_snapshot_with(vault, source, window, scope, selector, Withhold::Unknown, readable)
+}
+
+/// [`promotion_snapshot`] for the machine a residence read serves: a window
+/// is withheld only when it carries a world `withhold` names.
+pub fn promotion_snapshot_with(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    withhold: Withhold<'_>,
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<u8>>> {
     for _ in 0..PROMOTION_WALKS {
@@ -299,7 +354,7 @@ pub fn promotion_snapshot(
             readable(id)
         };
         if !promotion_covers_full_window(vault, source, window, scope, selector, walk)?
-            || super::window::window_withheld(vault, window, source)?
+            || super::window::window_withheld_for(vault, window, source, withhold)?
         {
             return Ok(None);
         }

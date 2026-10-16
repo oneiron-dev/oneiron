@@ -23,7 +23,7 @@ use crate::sync::loro_support::{
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    apply_pending_window_updates, load_window_from_state, reverse_rematerialize_with,
+    Withhold, apply_pending_window_updates, load_window_from_state, reverse_rematerialize_with,
 };
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
@@ -277,7 +277,7 @@ fn authorized_base_edge_endpoints(
     kept: &BTreeSet<EntityId>,
     selector: &SyncSelector,
     position: &Position,
-    withhold_device_only: bool,
+    withhold: Withhold<'_>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -315,15 +315,8 @@ fn authorized_base_edge_endpoints(
                 }
                 Err(error) => return Err(error),
             };
-            reverse_rematerialize_with(vault, &base, &base_key, withhold_device_only)?;
-            let selected = filter_window_doc(
-                vault,
-                &base,
-                &base_key,
-                selector,
-                position,
-                withhold_device_only,
-            )?;
+            reverse_rematerialize_with(vault, &base, &base_key, withhold)?;
+            let selected = filter_window_doc(vault, &base, &base_key, selector, position, withhold)?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -406,15 +399,16 @@ fn machine_history_controls(
     Ok(Some(required))
 }
 
-/// `withhold_device_only` applies this device's device-only flags. Every
-/// export door sets it; promotion authority asks only what the grant covers.
+/// `withhold` names the worlds kept off the machine the export serves. Every
+/// export door withholds; promotion authority asks only what the grant
+/// covers.
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
     selector: &SyncSelector,
     position: &Position,
-    withhold_device_only: bool,
+    withhold: Withhold<'_>,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -422,9 +416,15 @@ pub(super) fn filter_window_doc(
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
     crate::sync::note::refresh(vault, &refreshed, key)?;
+    // The canonical window packs nothing an unknown destination may not
+    // read. A proved machine's export packs, into this detached copy, the
+    // private rows that machine may read.
+    if let Withhold::Worlds(_) = withhold {
+        reverse_rematerialize_with(vault, &refreshed, key, withhold)?;
+    }
     let source = &refreshed;
     let grant_raw = live_federation_grant(vault, &selector.grant_id)?;
-    if withhold_device_only && crate::sync::window::window_is_device_only(vault, key)? {
+    if withhold.withholds_window(vault, key)? {
         let out = create_window_doc("selector", key);
         out.commit();
         return Ok(out);
@@ -442,15 +442,14 @@ pub(super) fn filter_window_doc(
         &source.get_map("entities"),
         &source.get_map("edges"),
     )?;
-    // A device-only world's rows stay here even when packed while portable.
-    if withhold_device_only {
-        claims_withheld.extend(crate::sync::window::device_only_ids(
-            vault,
-            &rtxn,
-            &source.get_map("entities"),
-            &source.get_map("edges"),
-        )?);
-    }
+    // A withheld world's rows stay here even when packed while portable.
+    claims_withheld.extend(crate::sync::window::device_only_ids(
+        vault,
+        &rtxn,
+        withhold,
+        &source.get_map("entities"),
+        &source.get_map("edges"),
+    )?);
     let mut scope_error = None;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
@@ -697,15 +696,7 @@ pub(super) fn filter_window_doc(
     // flag is policy, not authority: promotion authority keeps a NOTE the
     // flag holds here, as it keeps every other row (this corrects #1402's
     // authority-mode NOTE drop).
-    let flagged = if withhold_device_only {
-        crate::settings::device_local_worlds_at(
-            vault,
-            &rtxn,
-            crate::claim::CallerLocality::OffDevice,
-        )?
-    } else {
-        BTreeSet::new()
-    };
+    let flagged = withhold.worlds_in(vault, &rtxn)?;
     let notes_dropped = crate::sync::note::dropped_in(vault, &rtxn, &flagged, source, &kept)?;
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
@@ -758,7 +749,7 @@ pub(super) fn filter_window_doc(
             &kept,
             selector,
             position,
-            withhold_device_only,
+            withhold,
         )?
     } else {
         BTreeSet::new()

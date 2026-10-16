@@ -34,6 +34,53 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+/// Which worlds an export withholds, by the machine it serves.
+#[derive(Clone, Copy, Debug)]
+pub enum Withhold<'a> {
+    /// None: what the grant alone covers. Promotion authority asks this.
+    Nothing,
+    /// A machine no standing proof names: every world this device keeps off
+    /// an unknown destination.
+    Unknown,
+    /// A proved machine: the worlds whose read settings keep them off it,
+    /// judged once per request by the residence read context.
+    Worlds(&'a BTreeSet<EntityId>),
+}
+
+impl Withhold<'_> {
+    /// The withheld worlds, read in `rtxn`.
+    pub(in crate::sync) fn worlds_in(
+        self,
+        vault: &Vault,
+        rtxn: &RoTxn<'_>,
+    ) -> Result<BTreeSet<EntityId>> {
+        match self {
+            Self::Nothing => Ok(BTreeSet::new()),
+            Self::Unknown => crate::settings::device_local_worlds_at(
+                vault,
+                rtxn,
+                crate::claim::CallerLocality::OffDevice,
+            ),
+            Self::Worlds(worlds) => Ok(worlds.clone()),
+        }
+    }
+
+    /// The withheld worlds, read now.
+    pub(in crate::sync) fn worlds(self, vault: &Vault) -> Result<BTreeSet<EntityId>> {
+        let rtxn = vault.store.env.read_txn()?;
+        self.worlds_in(vault, &rtxn)
+    }
+
+    /// Whether `key` is the window of a withheld world.
+    pub(in crate::sync) fn withholds_window(self, vault: &Vault, key: &WindowKey) -> Result<bool> {
+        match self {
+            Self::Nothing => Ok(false),
+            Self::Unknown => window_is_device_only(vault, key),
+            Self::Worlds(worlds) => Ok(key.world().is_some_and(|world| worlds.contains(&world))),
+        }
+    }
+}
+
 /// Whether `key` is a window of a world flagged device-only on this device,
 /// read against the flag as it stands now.
 pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> Result<bool> {
@@ -49,15 +96,16 @@ pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> 
     .contains(&world))
 }
 
-/// Whether a full-window send of `doc` ships nothing now: the window belongs
-/// to a flagged world, or it carries a row a flagged world keeps or an edge
-/// naming one.
-pub(in crate::sync) fn window_withheld(
+/// Whether a full-window send of `doc` to the machine an export serves ships
+/// nothing now: the window belongs to a world `withhold` names, or it carries
+/// a row such a world keeps or an edge naming one.
+pub(in crate::sync) fn window_withheld_for(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
+    withhold: Withhold<'_>,
 ) -> Result<bool> {
-    carries_device_only(vault, &flagged_worlds(vault)?, key, doc)
+    carries_device_only(vault, &withhold.worlds(vault)?, key, doc)
 }
 
 /// What a raw send of window bytes may do, against the flag as it stands now.
@@ -95,10 +143,36 @@ pub fn raw_update_verdict(
     window_key: &str,
     update: &[u8],
 ) -> UpdateVerdict {
+    raw_update_verdict_with(manager, window_key, update, flagged_worlds)
+}
+
+/// [`raw_update_verdict`] for the machine `peer` proved on the socket that
+/// sends the bytes: that machine's own world read settings decide (OF-534
+/// G6). An unproved peer gets the device's unknown-destination verdict.
+pub fn raw_update_verdict_for(
+    manager: &Arc<WindowManager>,
+    window_key: &str,
+    update: &[u8],
+    peer: crate::authority::PeerMachine,
+) -> UpdateVerdict {
+    raw_update_verdict_with(manager, window_key, update, |vault| {
+        match crate::sync::residence::withheld_from_peer(vault, peer)? {
+            Some(withheld) => Ok(withheld),
+            None => flagged_worlds(vault),
+        }
+    })
+}
+
+fn raw_update_verdict_with(
+    manager: &Arc<WindowManager>,
+    window_key: &str,
+    update: &[u8],
+    withheld_now: impl Fn(&Vault) -> Result<BTreeSet<EntityId>>,
+) -> UpdateVerdict {
     let verdict = (|| -> Result<UpdateVerdict> {
         let vault = manager.vault();
         let accepting = vault.device_only_acceptance();
-        let mut flagged = flagged_worlds(vault)?;
+        let mut flagged = withheld_now(vault)?;
         if flagged.is_empty() {
             return Ok(UpdateVerdict::Portable);
         }
@@ -109,7 +183,7 @@ pub fn raw_update_verdict(
                 return Ok(verdict);
             }
             let accepting = vault.device_only_acceptance();
-            let now_flagged = flagged_worlds(vault)?;
+            let now_flagged = withheld_now(vault)?;
             if now_flagged.is_subset(&flagged) {
                 return Ok(UpdateVerdict::Portable);
             }
@@ -204,8 +278,20 @@ pub fn export_withheld(
     doc: &LoroDoc,
     remote: &VersionVector,
 ) -> Result<bool> {
-    Ok(window_withheld(vault, key, doc)?
-        || (!remote.is_empty() && delta_carries_device_only(vault, doc, remote)?))
+    export_withheld_for(vault, key, doc, remote, Withhold::Unknown)
+}
+
+/// [`export_withheld`] for the machine an export serves: the worlds
+/// `withhold` names decide.
+pub fn export_withheld_for(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    remote: &VersionVector,
+    withhold: Withhold<'_>,
+) -> Result<bool> {
+    Ok(window_withheld_for(vault, key, doc, withhold)?
+        || (!remote.is_empty() && delta_carries_device_only_for(vault, doc, remote, withhold)?))
 }
 
 /// Whether the delta of `doc` past `from` inserts a row a flagged world keeps
@@ -216,7 +302,17 @@ pub(super) fn delta_carries_device_only(
     doc: &LoroDoc,
     from: &VersionVector,
 ) -> Result<bool> {
-    let flagged = flagged_worlds(vault)?;
+    delta_carries_device_only_for(vault, doc, from, Withhold::Unknown)
+}
+
+/// [`delta_carries_device_only`] against the worlds `withhold` names.
+pub(super) fn delta_carries_device_only_for(
+    vault: &Vault,
+    doc: &LoroDoc,
+    from: &VersionVector,
+    withhold: Withhold<'_>,
+) -> Result<bool> {
+    let flagged = withhold.worlds(vault)?;
     if flagged.is_empty() {
         return Ok(false);
     }
@@ -317,20 +413,17 @@ pub(super) fn withheld_window_update() -> Result<Vec<u8>> {
 }
 
 /// Ids among `entities` and the endpoints of `edges` (wherever those rows
-/// live) that a device-only world keeps on this device. A CLAIM carrier
-/// naming a flagged world is withheld whatever its key or stored row says.
-/// Read inside the caller's export transaction.
+/// live) that a world `withhold` names keeps off the destination. A CLAIM
+/// carrier naming such a world is withheld whatever its key or stored row
+/// says. Read inside the caller's export transaction.
 pub(in crate::sync) fn device_only_ids(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
+    withhold: Withhold<'_>,
     entities: &LoroMap,
     edges: &LoroMap,
 ) -> Result<HashSet<EntityId>> {
-    let flagged = crate::settings::device_local_worlds_at(
-        vault,
-        rtxn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let flagged = withhold.worlds_in(vault, rtxn)?;
     let mut withheld = HashSet::new();
     if flagged.is_empty() {
         return Ok(withheld);
