@@ -607,6 +607,7 @@ fn mcp_agent_verb_input(
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.waits" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.release_wait" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.review_slides" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.propose_deck" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.propose_output" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.keep" => a.spec.clone().ok_or_else(invalid),
@@ -699,6 +700,15 @@ fn mcp_agent_verb_input(
         "vault.projects.dismiss_card" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.goal.intake" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.join" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
+        "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.goal.revisions" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.goal.dismiss" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.route_tradeoff" => a.spec.clone().ok_or_else(invalid),
@@ -917,6 +927,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.artifacts.release_wait" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.artifacts.review_slides" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.artifacts.propose_deck" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1018,6 +1031,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.projects.goal.intake" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.join" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.rooms.consent" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.projects.goal.revisions" => {
@@ -1689,6 +1711,19 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.artifacts.review_slides" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.artifacts.review_slides", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::blob_artifact::SlideReviewSubmit =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_artifacts_review_slides(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.artifacts.propose_deck" => {
             let input: oneiron::blob_artifact::DeckProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -1913,6 +1948,22 @@ async fn execute_agent_verb_listing(
             let input: oneiron::task_verb::sdk::ProjectRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_projects_goal_intake(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.join" => {
+            let input: oneiron::workspace_roster::JoinRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_join(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.consent" => {
+            let input: oneiron::workspace_roster::ConsentAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_consent(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

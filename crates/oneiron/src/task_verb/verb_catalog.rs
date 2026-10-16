@@ -40,6 +40,7 @@ pub enum AgentVerb {
     VaultArtifactsProposals,
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
+    VaultArtifactsReviewSlides,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -65,6 +66,8 @@ pub enum AgentVerb {
     VaultProjectsDismissCard,
     VaultProjectsConfirm,
     VaultProjectsGoalIntake,
+    VaultRoomsJoin,
+    VaultRoomsConsent,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
     VaultProjectsRouteTradeoff,
@@ -163,6 +166,7 @@ impl AgentVerb {
         Self::VaultArtifactsProposals,
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
+        Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -188,6 +192,8 @@ impl AgentVerb {
         Self::VaultProjectsDismissCard,
         Self::VaultProjectsConfirm,
         Self::VaultProjectsGoalIntake,
+        Self::VaultRoomsJoin,
+        Self::VaultRoomsConsent,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
         Self::VaultProjectsRouteTradeoff,
@@ -289,6 +295,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
+            Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -314,6 +321,8 @@ impl AgentVerb {
             Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
             Self::VaultProjectsConfirm => "vault.projects.confirm",
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
+            Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
@@ -411,6 +420,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -436,6 +446,8 @@ impl AgentVerb {
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
                 | Self::VaultProjectsGoalIntake
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -541,6 +553,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -566,6 +579,8 @@ impl AgentVerb {
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
                 | Self::VaultProjectsGoalIntake
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -708,6 +723,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -733,6 +749,8 @@ impl AgentVerb {
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
                 | Self::VaultProjectsGoalIntake
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -805,6 +823,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -818,6 +837,8 @@ impl AgentVerb {
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -904,6 +925,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -929,6 +951,8 @@ impl AgentVerb {
             Self::VaultProjectsDismissCard => &["spec"],
             Self::VaultProjectsConfirm => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -1028,6 +1052,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -1053,6 +1078,8 @@ impl AgentVerb {
             Self::VaultProjectsDismissCard => &["spec"],
             Self::VaultProjectsConfirm => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],

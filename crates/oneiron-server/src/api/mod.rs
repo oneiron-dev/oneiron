@@ -88,6 +88,8 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+#[cfg(unix)]
+pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 mod off_record_rooms;
 mod org_admin;
 mod pairing;

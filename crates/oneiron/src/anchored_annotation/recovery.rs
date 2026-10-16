@@ -349,6 +349,7 @@ impl Vault {
                 learned_at,
             )
         })
+        .inspect(|_| self.store.notify_attempt_observers())
     }
 
     /// Reattaches by exact stored identity after a restore: `new_version`
@@ -489,6 +490,14 @@ impl Vault {
         )?;
         self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
         UNATTACHED.delete(&self.store, wtxn, &(*artifact_id, thread.thread_id))?;
+        // The task this comment's assignment made waited while it was
+        // unattached; its held attempts resume with the comment (OF-368).
+        // Callers signal attempt observers after the commit.
+        if let Some(brief) =
+            self.annotation_brief_for_thread_in_txn(wtxn, artifact_id, &thread.thread_id)?
+        {
+            self.resume_annotation_held_attempts_in_txn(wtxn, &brief.task_id)?;
+        }
         Ok(thread_from_head(*artifact_id, new_head_id, head))
     }
 }

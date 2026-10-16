@@ -173,6 +173,11 @@ impl Vault {
                 reanchor,
             })
         })
+        .inspect(|outcome| {
+            if !outcome.reanchor.remapped.is_empty() {
+                self.store.notify_attempt_observers();
+            }
+        })
     }
 
     /// Restores an earlier version (ARCH-0078 "Versions and forks"): its bytes
@@ -269,6 +274,11 @@ impl Vault {
                 version: appended,
                 reanchor,
             })
+        })
+        .inspect(|outcome| {
+            if !outcome.reanchor.remapped.is_empty() {
+                self.store.notify_attempt_observers();
+            }
         })
     }
 

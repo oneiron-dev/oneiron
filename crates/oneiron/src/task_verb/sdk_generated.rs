@@ -181,6 +181,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.review_slides",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::SlideReviewSubmit,
+                >(),
+            ),
+            (
                 "vault.artifacts.propose_deck",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::DeckProposeRequest,
@@ -301,6 +307,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.projects.goal.intake",
                 crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
+            ),
+            (
+                "vault.rooms.join",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::JoinRequest>(
+                ),
+            ),
+            (
+                "vault.rooms.consent",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::ConsentAnswer>(
+                ),
             ),
             (
                 "vault.projects.goal.revisions",
@@ -879,6 +895,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.review_slides" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.propose_deck" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1066,6 +1089,24 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.projects.goal.intake" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.join" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
+        "vault.rooms.consent" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1537,6 +1578,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.release_wait" => {
             let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
         }
+        "vault.artifacts.review_slides" => {
+            let _input: crate::blob_artifact::SlideReviewSubmit = decode(value.clone())?;
+        }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
         }
@@ -1611,6 +1655,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.projects.goal.intake" => {
             let _input: ProjectRefRequest = decode(value.clone())?;
+        }
+        "vault.rooms.join" => {
+            let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
+        }
+        "vault.rooms.consent" => {
+            let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
         }
         "vault.projects.goal.revisions" => {
             let _input: ProjectRefRequest = decode(value.clone())?;
@@ -1853,6 +1903,9 @@ pub fn invoke(
         "vault.artifacts.release_wait" => {
             encode(vault_artifacts_release_wait(memory, decode(value)?)?)
         }
+        "vault.artifacts.review_slides" => {
+            encode(vault_artifacts_review_slides(memory, decode(value)?)?)
+        }
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -1884,6 +1937,8 @@ pub fn invoke(
         }
         "vault.projects.confirm" => encode(vault_projects_confirm(memory, decode(value)?)?),
         "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
+        "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
+        "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
         "vault.projects.goal.revisions" => {
             encode(vault_projects_goal_revisions(memory, decode(value)?)?)
         }
@@ -2311,6 +2366,12 @@ pub fn vault_artifacts_release_wait(
 ) -> MemoryResult<crate::blob_artifact::ReleasedWait> {
     memory.artifacts_release_wait(&input)
 }
+pub fn vault_artifacts_review_slides(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::SlideReviewSubmit,
+) -> MemoryResult<crate::blob_artifact::SlideReviewOutcome> {
+    memory.artifacts_review_slides(&input)
+}
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,
     input: crate::blob_artifact::DeckProposeRequest,
@@ -2539,6 +2600,18 @@ pub fn vault_projects_goal_intake(
     input: ProjectRefRequest,
 ) -> MemoryResult<crate::workspace_roster::ProjectGoalInterviewContext> {
     memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)
+}
+pub fn vault_rooms_join(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::JoinRequest,
+) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
+    memory.rooms_join(&input)
+}
+pub fn vault_rooms_consent(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ConsentAnswer,
+) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
+    memory.rooms_consent(&input)
 }
 pub fn vault_projects_goal_revisions(
     memory: &Memory<'_>,

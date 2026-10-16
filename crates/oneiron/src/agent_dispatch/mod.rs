@@ -39,6 +39,7 @@ pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
 mod project_proposal;
 mod resident;
+mod room_join;
 mod spend_calibration;
 mod spend_lease;
 mod spend_record;
@@ -69,9 +70,10 @@ pub use self::launch::{
 pub use self::spend_calibration::{
     AgentSpendCalibration, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, SpendBasis,
 };
+pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
-    ChildSpend, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal,
-    SpendState,
+    ChildSpend, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement,
+    SpendSignal, SpendState,
 };
 
 pub(crate) use self::codec::attempt_task_type_ref;
