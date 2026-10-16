@@ -77,6 +77,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(history_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(super::owner_origin::routes())
+        .merge(super::packs::routes())
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
