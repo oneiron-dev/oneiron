@@ -24249,7 +24249,7 @@
       "const": 1,
       "crate-vis": 8,
       "enum": 2,
-      "fn": 16,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -24340,11 +24340,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MediaGate"
+     ],
+     "path": "src/llm/run_admission/media.rs",
+     "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -24825,7 +24839,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -43627,7 +43641,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44252,7 +44266,7 @@
    },
    "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2653,
+   "source_files": 2654,
    "test_files": 903
   },
   "oneiron-android": {
@@ -50399,9 +50413,31 @@
      "path": "src/lib/image.rs",
      "purpose": "Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned",
      "surface": {
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1,
       "struct": 4,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpenAiMediaBackend",
+      "OpenAiMediaBody",
+      "OpenAiMediaHttpRequest",
+      "OpenAiMediaHttpResponse",
+      "OpenAiMediaMethod",
+      "OpenAiMediaTransport"
+     ],
+     "path": "src/lib/media.rs",
+     "purpose": "OpenAI-compatible media wires for the `ai.*` calls past text: images (`/v1/images/generations`…",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 3,
       "trait": 1,
       "type": 1
      }
@@ -50413,7 +50449,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -50486,7 +50522,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50495,7 +50531,7 @@
    },
    "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
-   "source_files": 7,
+   "source_files": 8,
    "test_files": 1
   },
   "oneiron-llm-own-server": {
@@ -51007,9 +51043,9 @@
      "path": "src/llm/catalog.rs",
      "purpose": "Capability catalog: flags, entries with supports/require, costs, and reasoning effort",
      "surface": {
-      "const": 1,
+      "const": 2,
       "enum": 2,
-      "fn": 5,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -51138,13 +51174,42 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AiMediaDoor",
+      "AiOperation",
+      "ImageMedia",
+      "MediaBackend",
+      "MediaCaps",
+      "MediaJobState",
+      "MediaPart",
+      "MediaRequest",
+      "MediaResponse",
+      "MediaUsage",
+      "Modality",
+      "NativeRate",
+      "NativeUnit"
+     ],
+     "path": "src/llm/media.rs",
+     "purpose": "The `ai.*` call family past text (runtime \"The ai.* call family\"): image, video, speech, transcription and…",
+     "surface": {
+      "const": 1,
+      "enum": 5,
+      "fn": 24,
+      "struct": 6,
+      "trait": 2,
+      "type": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "mod": 3,
+      "mod": 4,
       "re-export": 22
      }
     },
@@ -51269,7 +51334,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51278,7 +51343,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 33,
+   "source_files": 34,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -53548,7 +53613,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 19,
       "re-export": 1,
       "struct": 2
@@ -53663,11 +53728,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/media.rs",
+     "purpose": "The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/mod.rs",
-     "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns and the session hints the Dreamer's…",
+     "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns, the session hints the Dreamer's triggers…",
      "surface": {
       "crate-vis": 2
      }
@@ -56396,6 +56471,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MediaSeatConfig",
+      "MediaSettings"
+     ],
+     "path": "src/config/models/media.rs",
+     "purpose": "`[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -56414,7 +56503,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 2,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 7
      }
     },
@@ -57992,7 +58081,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -58004,7 +58093,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OfferLadder"
@@ -58012,9 +58101,25 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MediaRow",
+      "MediaRuntime",
+      "MediaTicket"
+     ],
+     "path": "src/models/media.rs",
+     "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 9,
+      "struct": 3
      }
     },
     {
@@ -58028,8 +58133,8 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 3,
-      "fn": 12,
-      "re-export": 11,
+      "fn": 13,
+      "re-export": 12,
       "struct": 2
      }
     },
@@ -58042,7 +58147,7 @@
      "path": "src/models/offer.rs",
      "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -58097,7 +58202,7 @@
      "path": "src/models/rerank.rs",
      "purpose": "The rerank transport: the `reranker` role's rungs speak `/v1/rerank`, the indexed-scores protocol…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -59365,7 +59470,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 213,
+     "files": 214,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59407,7 +59512,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59512,9 +59617,9 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out"
     },
@@ -59603,9 +59708,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 14,
+   "over_bar": 15,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 382,
+   "source_files": 385,
    "test_files": 182
   },
   "oneiron-spawn": {
