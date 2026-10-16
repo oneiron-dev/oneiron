@@ -83,8 +83,10 @@ pub struct SyncServer {
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
-    /// Tenant usage ledger over the server vault.
+    /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    /// Stable across served runs and policy refreshes; empty until the host grants.
+    host_account: Arc<oneiron::llm::run_admission::HostAccount>,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
@@ -319,6 +321,7 @@ impl SyncServer {
             retained,
             presence,
             usage_ledger: UsageLedger::new(vault.clone()),
+            host_account: oneiron::llm::run_admission::HostAccount::new(),
             transfers: crate::api::Transfers::new(
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),
@@ -486,6 +489,39 @@ impl SyncServer {
     ) -> Self {
         self.decision_read = Some((door, meter));
         self
+    }
+
+    /// The live allocation shared by all this vault's served runs. The
+    /// trusted host grants newer generations and updates holds on this same
+    /// account; admitted work keeps the allocation it already reserved.
+    #[must_use]
+    pub fn host_account(&self) -> Arc<oneiron::llm::run_admission::HostAccount> {
+        Arc::clone(&self.host_account)
+    }
+
+    /// Enables durable usage facts for the owner the trusted host resolved.
+    /// The vault id comes from the authority log, never an HTTP payload.
+    /// Bind before starting work so every admission has attribution.
+    pub fn with_usage_metering(
+        self,
+        owner: impl Into<String>,
+    ) -> Result<Self, crate::usage::UsageError> {
+        let vault_id = self.vault.authority_fold()?.vault_id.ok_or(
+            crate::usage::UsageError::InvalidField {
+                field: "vaultId",
+                message: "usage metering requires an authority-log genesis",
+            },
+        )?;
+        let vault_id = vault_id.iter().map(|byte| format!("{byte:02x}")).collect();
+        let usage =
+            crate::runtime::VaultUsage::new(self.usage_ledger.clone(), owner.into(), vault_id)?;
+        self.run_receipts.meter(usage);
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn vault_usage(&self) -> Option<Arc<crate::runtime::VaultUsage>> {
+        self.run_receipts.usage()
     }
 
     /// Writes every model call's run receipts to `receipts` instead of the
