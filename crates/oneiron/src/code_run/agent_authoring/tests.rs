@@ -21,6 +21,7 @@ impl JsCodeModeHost for SdkHost<'_> {
         Ok(SelfDispatchResponse {
             outcome: self.0.dispatch(call)?,
             budget: None,
+            view: None,
         })
     }
 }

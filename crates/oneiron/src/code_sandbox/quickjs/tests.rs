@@ -69,6 +69,7 @@ impl JsCodeModeHost for Host {
         Ok(SelfDispatchResponse {
             outcome,
             budget: None,
+            view: None,
         })
     }
 }

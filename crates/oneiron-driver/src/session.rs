@@ -266,13 +266,17 @@ impl<'v> SessionLifecycleDriver<'v> {
         }
 
         match carrier.hint {
-            SessionHint::AppOpen => match self.vault.mint_session_from_hint(key, first)? {
-                SessionMintOutcome::Minted(id) => Ok(SessionHintEffect::Minted(id)),
+            SessionHint::AppOpen => match self.vault.mint_session_from_hint(key, first) {
+                Ok(SessionMintOutcome::Minted(id)) => Ok(SessionHintEffect::Minted(id)),
                 // Presence re-signal on the open sitting counts as activity.
-                SessionMintOutcome::AlreadyOpen(_) => Ok(self
+                Ok(SessionMintOutcome::AlreadyOpen(_)) => Ok(self
                     .vault
                     .record_session_app_open_hint(key, first)?
                     .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped)),
+                // A `host.session.open` hook refused the sitting (ARCH-0080
+                // §5): the hint is spent, and nothing opens.
+                Err(oneiron::Error::VerbHook(_)) => Ok(SessionHintEffect::NoOp),
+                Err(error) => Err(error),
             },
             SessionHint::Activity => {
                 let Some(session) = open else {
