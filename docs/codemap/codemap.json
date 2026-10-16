@@ -15297,14 +15297,14 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/admission/mod.rs",
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 15
+      "fn": 16
      }
     },
     {
@@ -15328,16 +15328,16 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerAuthorityStamp"
      ],
      "path": "src/dreamer_runner/authority.rs",
-     "purpose": "One vault-owned Dreamer principal; job kinds are facets, not new authorities",
+     "purpose": "Two vault-owned base-agent principals on one runner: the Dreamer and the Coach (ARCH-0026 #base-agents)",
      "surface": {
-      "crate-vis": 7,
-      "fn": 3,
+      "crate-vis": 10,
+      "fn": 4,
       "re-export": 1,
       "struct": 1
      }
@@ -15346,12 +15346,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BaseAgent",
       "DreamerAgentBoundary"
      ],
      "path": "src/dreamer_runner/authority/policy.rs",
-     "purpose": "Dreamer job roster and the boundary for minting a separate agent",
+     "purpose": "The runner's job roster, its two base agents, and the boundary for minting a separate agent",
      "surface": {
-      "fn": 2,
+      "enum": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -15361,6 +15363,14 @@
      "notable": [],
      "path": "src/dreamer_runner/authority/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_runner/authority/tests/coach.rs",
+     "purpose": "The Coach, the second base agent (owner ruling 2026-10-16): its own principal row and its own stamp on the…",
      "surface": {}
     },
     {
@@ -15421,7 +15431,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 17,
+      "const": 19,
       "crate-vis": 34
      }
     },
@@ -15492,10 +15502,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/mod.rs",
-     "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority",
+     "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "mod": 2,
       "re-export": 2
@@ -15658,7 +15668,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 14,
       "struct": 1
      }
@@ -16075,6 +16085,14 @@
      "notable": [],
      "path": "src/dreamer_wake/tests/cleanup_lane.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/tests/coach_tune.rs",
+     "purpose": "The Coach's nightly retrieval tune (owner ruling 2026-10-16): a Timer wake runs it on the Dreamer's runner…",
      "surface": {}
     },
     {
@@ -18116,6 +18134,14 @@
      "notable": [],
      "path": "src/failure_ladder/tests.rs",
      "purpose": "ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/failure_ladder/tests/coach_wake.rs",
+     "purpose": "The default policy's Auto escalation wakes the Coach (owner ruling 2026-10-16), not a reserved slot that…",
      "surface": {}
     },
     {
@@ -34592,7 +34618,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/mod.rs",
-     "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…",
+     "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 6,
       "re-export": 9
@@ -35349,7 +35375,7 @@
      "path": "src/store/retrieval_telemetry/blend_tuning.rs",
      "purpose": "Reward-weighted retrieval-blend tuning: weight-table methods, codecs, validators, and gradient math",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -42307,9 +42333,9 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Private Dreamer runner store plus atomic admission"
     },
@@ -42321,7 +42347,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42398,7 +42424,7 @@
      "purpose": "OF-360 extraction-quality evaluation"
     },
     "failure_ladder": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -42983,7 +43009,7 @@
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
-     "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…"
+     "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
      "files": 14,
@@ -43196,10 +43222,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 45,
+   "over_bar": 46,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2599,
-   "test_files": 881
+   "test_files": 884
   },
   "oneiron-android": {
    "files": [
