@@ -1,6 +1,7 @@
 //! AgentDefinition domain types, key/limit consts, and constructors.
 
 use super::optional_memory::OptionalMemoryProfile;
+use super::refusal::RefusalDial;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -26,7 +27,10 @@ use rmpv::Value;
 /// `memory_profile` (RT-05, ONE-1687) and the dreaming mode/model fields
 /// append in that order and are elided when absent, so older bodies re-encode
 /// byte-for-byte. Absent dreaming means inherit, on by default.
-pub const AGENT_DEF_BODY_KEYS: [&str; 26] = [
+///
+/// `refusal` (OF-533) appends last and is elided when absent; absent means
+/// every domain sits at the vault-kind default.
+pub const AGENT_DEF_BODY_KEYS: [&str; 27] = [
     "agentId",
     "desc",
     "version",
@@ -53,6 +57,7 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 26] = [
     "dreaming",
     "dreamingModel",
     "wakeCadence",
+    "refusal",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
@@ -141,6 +146,8 @@ pub(super) const KEY_DREAMING: &str = AGENT_DEF_BODY_KEYS[23];
 
 pub(super) const KEY_DREAMING_MODEL: &str = AGENT_DEF_BODY_KEYS[24];
 pub(super) const KEY_WAKE_CADENCE: &str = AGENT_DEF_BODY_KEYS[25];
+
+pub(super) const KEY_REFUSAL: &str = AGENT_DEF_BODY_KEYS[26];
 
 pub(super) const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
 
@@ -504,6 +511,10 @@ pub struct AgentDefinition {
     pub dreaming_model: Option<ModelTierRef>,
     /// An absent role follows the owner-editable wake-policy absent-role row.
     pub wake_cadence: Option<AgentWakeCadence>,
+    /// Her refusal dial (OF-533). Absent, or a domain left unset, takes the
+    /// vault-kind default; resolve through [`super::resolve_refusal`]. A
+    /// dial, not identity: deliberately NOT in the freeze-set.
+    pub refusal: Option<RefusalDial>,
 }
 
 impl AgentDefinition {
@@ -561,6 +572,7 @@ impl AgentDefinition {
             dreaming: None,
             dreaming_model: None,
             wake_cadence: None,
+            refusal: None,
         }
     }
 
@@ -581,6 +593,14 @@ impl AgentDefinition {
     #[must_use]
     pub fn with_wake_cadence(mut self, cadence: AgentWakeCadence) -> Self {
         self.wake_cadence = Some(cadence);
+        self
+    }
+
+    /// Sets the refusal dial (OF-533); `None` returns every domain to the
+    /// vault-kind default.
+    #[must_use]
+    pub fn with_refusal(mut self, refusal: Option<RefusalDial>) -> Self {
+        self.refusal = refusal;
         self
     }
 

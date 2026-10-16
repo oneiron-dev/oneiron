@@ -156,6 +156,9 @@ pub(super) struct TaskVerbBody {
     pub(super) state: Option<TaskExecutionState>,
     pub(super) provenance: Value,
     pub(super) created_at: u64,
+    /// The assignee's one self-refusal (OF-533), written once by
+    /// `Memory::land_task_refusal`. Absent on every task she did not refuse.
+    pub(super) refusal: Option<super::refusal::TaskRefusalRecord>,
 }
 
 impl TaskVerbBody {

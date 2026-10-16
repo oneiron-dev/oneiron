@@ -20,6 +20,7 @@ use crate::registry::ENTITY_TYPE_TASK;
 use super::consts::{TASK_VERB_BODY_SCHEMA_VERSIONS, TASK_VERB_BODY_SUBKIND};
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
+use super::refusal::TaskRefusalRecord;
 use super::terminal_state::{
     ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord,
 };
@@ -182,6 +183,30 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
             .transpose()?,
         provenance: task_body_field(entries, "provenance")?.clone(),
         created_at,
+        refusal: task_body_optional(entries, "refusal")?
+            .map(decode_task_refusal_record)
+            .transpose()?,
+    })
+}
+
+/// Inverse of `wire_encode::task_refusal_record_value`.
+fn decode_task_refusal_record(value: &Value) -> Result<TaskRefusalRecord> {
+    let invalid = || Error::Record(RecordError::InvalidTaskBody("tasks.body.refusal"));
+    let entries = value.as_map().ok_or_else(invalid)?;
+    Ok(TaskRefusalRecord {
+        by: decode_entity_ref(task_body_field(entries, "by")?, "tasks.body.refusal")?,
+        domain: task_body_field(entries, "domain")?
+            .as_str()
+            .and_then(crate::agent_def::RefusalDomain::parse)
+            .ok_or_else(invalid)?,
+        level: task_body_field(entries, "level")?
+            .as_str()
+            .and_then(crate::agent_def::RefusalLevel::parse)
+            .ok_or_else(invalid)?,
+        reason_ref: decode_consult_payload_ref(task_body_field(entries, "reason_ref")?)?,
+        at: task_body_field(entries, "at")?
+            .as_u64()
+            .ok_or_else(invalid)?,
     })
 }
 

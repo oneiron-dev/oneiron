@@ -16,6 +16,7 @@ mod doors;
 mod id_pin;
 mod manifest;
 mod optional_memory;
+mod refusal;
 mod types;
 mod widening;
 pub mod workflow;
@@ -26,6 +27,10 @@ pub use self::doors::AgentDefinitionPutDisposition;
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
+};
+pub use self::refusal::{
+    REFUSAL_DIAL_KEYS, RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind,
+    resolve_refusal,
 };
 pub use self::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
