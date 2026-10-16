@@ -33,6 +33,7 @@ use crate::federation::Scope;
 use crate::federation::scope_codec::{decode_scope_value, encode_scope_value};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
@@ -56,6 +57,20 @@ pub const CONTACT_DISCLOSURE_REASON_NARROWED: &str = "gate.consent.contact_discl
 
 /// Gate reason code: the owner revoked a contact's clearance.
 pub const CONTACT_DISCLOSURE_REASON_REVOKED: &str = "gate.consent.contact_disclosure.revoked";
+
+/// Gate reason code: the owner pre-cleared a named trusted set.
+pub const CONTACT_DISCLOSURE_REASON_PRECLEARED: &str = "gate.consent.contact_disclosure.precleared";
+
+/// Gate reason code: one covered non-public disclosure reached a cleared
+/// contact (a quiet bound-use receipt, never an authorization).
+pub const CONTACT_DISCLOSURE_REASON_USED: &str = "gate.consent.contact_disclosure.used";
+
+/// Most contacts one trusted-set pre-clearance names.
+const MAX_PRECLEAR_CONTACTS: usize = 256;
+
+/// The owner's disclosure-mode knob: a singleton row, default auto.
+const DISCLOSURE_OFFER_MODE: SideTable<(), DisclosureOfferMode, Raw> =
+    SideTable::new(&side_table::DISCLOSURE_OFFER_MODE);
 
 const ONCE_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.contact_disclosure_once.v1";
 const CLEARANCE_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.contact_clearance.v1";
@@ -250,13 +265,17 @@ pub enum ContactClearanceAct {
     Narrowed,
     /// The owner revoked a standing clearance.
     Revoked,
+    /// The owner pre-cleared this contact as part of a named trusted set.
+    Precleared,
+    /// One covered non-public disclosure reached this cleared contact.
+    Used,
 }
 
 impl ContactClearanceAct {
     const fn gate_outcome(self) -> &'static str {
         match self {
             Self::Revoked => "revoked",
-            Self::Settled(_) | Self::Narrowed => "approved",
+            Self::Settled(_) | Self::Narrowed | Self::Precleared | Self::Used => "approved",
         }
     }
 
@@ -265,7 +284,60 @@ impl ContactClearanceAct {
             Self::Revoked => CONTACT_DISCLOSURE_REASON_REVOKED,
             Self::Narrowed => CONTACT_DISCLOSURE_REASON_NARROWED,
             Self::Settled(_) => CONTACT_DISCLOSURE_REASON_STANDING,
+            Self::Precleared => CONTACT_DISCLOSURE_REASON_PRECLEARED,
+            Self::Used => CONTACT_DISCLOSURE_REASON_USED,
         }
+    }
+}
+
+/// The disclosure-mode knob (ILDF2 consent channel; default auto). No mode
+/// moves the confirm surface: a new clearance still lands only on the
+/// owner's authenticated confirm or the owner's own pre-clearance.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DisclosureOfferMode {
+    /// The companion never offers on its own; the owner starts every new
+    /// clearance.
+    AlwaysAsk,
+    /// The companion may offer a clearance when it reads the room.
+    #[default]
+    Auto,
+    /// The owner clears named trusted sets in advance
+    /// ([`Vault::preclear_contact_disclosure`]); offers stay allowed. Never a
+    /// blanket auto-approve.
+    AlwaysYes,
+}
+
+impl DisclosureOfferMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AlwaysAsk => "always_ask",
+            Self::Auto => "auto",
+            Self::AlwaysYes => "always_yes",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "always_ask" => Some(Self::AlwaysAsk),
+            "auto" => Some(Self::Auto),
+            "always_yes" => Some(Self::AlwaysYes),
+            _ => None,
+        }
+    }
+}
+
+impl RawValue for DisclosureOfferMode {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.as_str().as_bytes().to_vec())
+    }
+
+    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        std::str::from_utf8(raw)
+            .ok()
+            .and_then(Self::parse)
+            .ok_or_else(|| invalid_offer().into())
     }
 }
 
@@ -385,6 +457,15 @@ impl Vault {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
+            if DISCLOSURE_OFFER_MODE
+                .get(&self.store, &*txn, &())?
+                .unwrap_or_default()
+                == DisclosureOfferMode::AlwaysAsk
+            {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "disclosure mode is always ask: only the owner starts a clearance",
+                )));
+            }
             require_active_contact_in_txn(&self.store, &*txn, &offer.contact_ref)?;
             let prior = crate::disclosure::contact_clearance_in_txn(
                 &self.store,
@@ -475,7 +556,7 @@ impl Vault {
                     )?;
                     receipt.after_digest = contact_clearance_digest(Some(&clearance))?;
                     receipt.decision_id =
-                        self.append_contact_clearance_receipt_in_txn(txn, owner, &receipt)?;
+                        self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
                 }
                 ContactDisclosureOutcome::Once => {
                     let digest = proposal.once_digest(proposal_ref)?;
@@ -576,7 +657,7 @@ impl Vault {
                 once_digest: None,
             };
             receipt.decision_id =
-                self.append_contact_clearance_receipt_in_txn(txn, owner, &receipt)?;
+                self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
             Ok(receipt)
         })
     }
@@ -587,10 +668,12 @@ impl Vault {
     fn append_contact_clearance_receipt_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
+        owner: Option<&AuthenticatedOwner>,
         receipt: &DisclosureConfirmationReceipt,
     ) -> Result<GateDecisionId> {
-        let actor = owner.revalidate_in_txn(self, &*txn)?;
+        let actor = owner
+            .map(|owner| owner.revalidate_in_txn(self, &*txn))
+            .transpose()?;
         let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let hex = |digest: &[u8; 32]| crate::entity_id::bytes_to_hex_lower(digest);
         let mut receipt_reasons = vec![
@@ -613,8 +696,8 @@ impl Vault {
             reason_codes: vec![receipt.act.reason_code().into()],
             receipt_reasons,
             system_notices: Vec::new(),
-            actor_class: "human".into(),
-            actor_ref: Some(actor.to_hex()),
+            actor_class: if actor.is_some() { "human" } else { "engine" }.into(),
+            actor_ref: actor.map(|actor| actor.to_hex()),
             content_kind: CONSENT_CONTENT_KIND.into(),
             policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
             claim_id: None,
@@ -625,6 +708,124 @@ impl Vault {
         };
         self.store.append_gate_decision_in_txn(txn, &record)?;
         Ok(decision_id)
+    }
+}
+
+impl Vault {
+    /// The owner's disclosure-mode knob; `auto` when never set.
+    pub fn disclosure_offer_mode(&self) -> Result<DisclosureOfferMode> {
+        let txn = self.store.env.read_txn()?;
+        Ok(DISCLOSURE_OFFER_MODE
+            .get(&self.store, &txn, &())?
+            .unwrap_or_default())
+    }
+
+    /// Sets the disclosure-mode knob. Only the authenticated owner turns it.
+    pub fn set_disclosure_offer_mode(
+        &self,
+        owner: &AuthenticatedOwner,
+        mode: DisclosureOfferMode,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
+            DISCLOSURE_OFFER_MODE.put(&self.store, txn, &(), &mode)?;
+            Ok(())
+        })
+    }
+
+    /// Trusted-set pre-clearance, the honest form of "always yes": the
+    /// owner clears each named contact for `scope` in advance, in one
+    /// transaction, each with its own receipt naming the set. It is real
+    /// standing clearance granted by the owner, replacing each contact's
+    /// current one; nothing per-disclosure is auto-approved for anyone else.
+    pub fn preclear_contact_disclosure(
+        &self,
+        owner: &AuthenticatedOwner,
+        set_name: &str,
+        contacts: &[EntityId],
+        scope: Scope,
+    ) -> Result<Vec<DisclosureConfirmationReceipt>> {
+        let distinct: std::collections::BTreeSet<_> = contacts.iter().collect();
+        if contacts.is_empty()
+            || contacts.len() > MAX_PRECLEAR_CONTACTS
+            || distinct.len() != contacts.len()
+        {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "a trusted set names 1..=256 distinct contacts",
+            )));
+        }
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            let mut receipts = Vec::with_capacity(contacts.len());
+            for contact in contacts {
+                require_active_contact_in_txn(&self.store, &*txn, contact)?;
+                let prior =
+                    crate::disclosure::contact_clearance_in_txn(&self.store, &*txn, contact)?;
+                let created_at = prior
+                    .as_ref()
+                    .filter(|clearance| clearance.status == DisclosureScopeStatus::Active)
+                    .map_or(now, |clearance| clearance.created_at.min(now));
+                let clearance = DisclosureScope {
+                    scope: scope.clone(),
+                    purpose: set_name.to_owned(),
+                    status: DisclosureScopeStatus::Active,
+                    created_at,
+                    updated_at: now,
+                };
+                disclosure_grant_from_disclosure_scope(
+                    &clearance,
+                    &contact.to_hex(),
+                    CONTACT_CLEARANCE_CLASS,
+                )?;
+                self.set_counterparty_disclosure_scope_in_txn(txn, contact, &clearance)?;
+                let mut receipt = DisclosureConfirmationReceipt {
+                    decision_id: GateDecisionId::from_bytes([0; 16]),
+                    act: ContactClearanceAct::Precleared,
+                    contact_ref: *contact,
+                    proposal_ref: None,
+                    ask_ref: None,
+                    before_digest: contact_clearance_digest(prior.as_ref())?,
+                    after_digest: contact_clearance_digest(Some(&clearance))?,
+                    once_digest: None,
+                };
+                receipt.decision_id =
+                    self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
+                receipts.push(receipt);
+            }
+            Ok(receipts)
+        })
+    }
+
+    /// The quiet bound-use receipt: one covered non-public disclosure reached
+    /// `contact_ref` under its active clearance, recorded after the fact on
+    /// the receipt family. It authorizes nothing and widens nothing; a
+    /// contact with no active clearance refuses.
+    pub fn record_contact_clearance_use(
+        &self,
+        contact_ref: &EntityId,
+        disclosure_digest: EffectDigest,
+    ) -> Result<GateDecisionId> {
+        self.with_write_txn_grouped(|txn| {
+            let clearance =
+                crate::disclosure::contact_clearance_in_txn(&self.store, &*txn, contact_ref)?
+                    .ok_or(Error::Gate(GateError::ConsentGrantNotFound))?;
+            if clearance.status != DisclosureScopeStatus::Active {
+                return Err(Error::Gate(GateError::ConsentGrantRevoked));
+            }
+            let digest = contact_clearance_digest(Some(&clearance))?;
+            let receipt = DisclosureConfirmationReceipt {
+                decision_id: GateDecisionId::from_bytes([0; 16]),
+                act: ContactClearanceAct::Used,
+                contact_ref: *contact_ref,
+                proposal_ref: None,
+                ask_ref: Some(disclosure_digest.to_hex()),
+                before_digest: digest,
+                after_digest: digest,
+                once_digest: None,
+            };
+            self.append_contact_clearance_receipt_in_txn(txn, None, &receipt)
+        })
     }
 }
 

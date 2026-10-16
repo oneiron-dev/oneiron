@@ -3907,7 +3907,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/export_diary.rs",
-     "purpose": "OF-490: a vault export is a read of agent diaries",
+     "purpose": "OF-490: a vault export is a read of agent diaries, made through the diary door's [`DiaryReadGate`] with the…",
      "surface": {
       "const": 1,
       "crate-vis": 5
@@ -12846,22 +12846,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ContactClearanceAct",
       "ContactDisclosureOffer",
       "ContactDisclosureOutcome",
       "ContactDisclosureProposal",
-      "DisclosureConfirmationReceipt"
+      "DisclosureConfirmationReceipt",
+      "DisclosureOfferMode"
      ],
      "path": "src/consent/contact_clearance.rs",
      "purpose": "Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the…",
      "surface": {
-      "const": 6,
+      "const": 8,
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 8,
+      "enum": 3,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -24419,6 +24420,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensActivateRequest",
+      "LensDeactivateRequest"
+     ],
+     "path": "src/lens/activation.rs",
+     "purpose": "The owner's selection of a proposed pack lens for its slot, and its clearing (OF-250)",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -24716,6 +24731,7 @@
      "purpose": "Vault-scoped lens intent records and the upgrade regeneration door",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 5,
       "struct": 1
      }
@@ -24846,7 +24862,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 11
+      "re-export": 14
      }
     },
     {
@@ -24858,8 +24874,45 @@
      "path": "src/lens/mount.rs",
      "purpose": "Pack-aware lens mount decision, evaluated against the live vault on each render",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LensListPage",
+      "LensListRequest",
+      "LensListRow",
+      "LensProposalState",
+      "LensProposeRequest",
+      "LensSlot"
+     ],
+     "path": "src/lens/proposal.rs",
+     "purpose": "Pack lens proposals (OF-250): one frozen compiled tree bound to an installed pack's skill, with its authored…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 11,
+      "enum": 1,
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LensDefaultRequest",
+      "LensDossierSource"
+     ],
+     "path": "src/lens/sdk.rs",
+     "purpose": "`vault.lenses.default` (OF-250): the default vault projection over the caller's own read key",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -28158,7 +28211,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -33575,12 +33628,28 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LensActivationReceipt",
+      "LensApproval",
+      "LensProposalReceipt",
+      "LensSlotDecision"
+     ],
+     "path": "src/receipt/lens.rs",
+     "purpose": "The receipts of the pack lens lifecycle (OF-250): a proposal, and the owner's selection or clearing of a…",
+     "surface": {
+      "enum": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 17,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -38398,7 +38467,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 10
      }
     },
@@ -38511,9 +38580,9 @@
      "path": "src/skill_optimize/gate/project_goal.rs",
      "purpose": "The join between a skill's goal and a project's goal record (ARCH-0053 \"The goal record\")",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -42666,7 +42735,18 @@
      "path": "src/task_verb/project_ask.rs",
      "purpose": "Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a proposal on a project's task goes to…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/project_tradeoff.rs",
+     "purpose": "A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks)",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -42810,6 +42890,10 @@
       "EmptyRequest",
       "InboxListRequest",
       "InboxMarkRequest",
+      "ProjectGoalDismissReceipt",
+      "ProjectGoalDismissRequest",
+      "ProjectRefRequest",
+      "ProjectTradeoffRouteRequest",
       "RecallRequest",
       "ReceiptsRequest",
       "RoomClaimRequest",
@@ -42835,7 +42919,7 @@
       "enum": 1,
       "fn": 6,
       "re-export": 5,
-      "struct": 24
+      "struct": 28
      }
     },
     {
@@ -42863,7 +42947,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 110
+      "fn": 118
      }
     },
     {
@@ -47710,7 +47794,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 43,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47976,7 +48060,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48284,7 +48368,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 97,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -48438,9 +48522,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 91,
+   "over_bar": 92,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2919,
+   "source_files": 2924,
    "test_files": 903
   },
   "oneiron-android": {
@@ -55948,7 +56032,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 92
+      "fn": 100
      }
     },
     {
@@ -56947,7 +57031,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 93
+      "fn": 101
      }
     },
     {
@@ -58556,13 +58640,13 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts/host.rs",
-     "purpose": "Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`",
+     "purpose": "Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`, and one app on an origin of…",
      "surface": {
       "crate-vis": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts/route.rs",
@@ -59366,7 +59450,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -60732,13 +60816,37 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 36
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AccountKeyConfig",
+      "AccountKeyError",
+      "AccountKeys",
+      "CentralKeyCheck",
+      "CentralKeyVerdict",
+      "PunchAck",
+      "VerifiedAccountKey"
+     ],
+     "path": "src/auth/account_key.rs",
+     "purpose": "Node-side account API key verification (OF-448, the M4 node path of CROSS-ARCH-0008 section 4, owner pick B…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5,
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -62620,7 +62728,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManagedArgs",
@@ -62661,6 +62769,24 @@
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KeyInvalidation",
+      "KeyInvalidationKind"
+     ],
+     "path": "src/managed/key_sync.rs",
+     "purpose": "Managed-host wiring for the node account-key path (OF-448, the node half of CROSS-ARCH-0008 section 4, owner…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4,
+      "re-export": 1,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -62712,8 +62838,8 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
       "crate-vis": 3,
-      "mod": 2,
-      "re-export": 7
+      "mod": 3,
+      "re-export": 8
      }
     },
     {
@@ -62806,7 +62932,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -62847,7 +62973,7 @@
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -64103,8 +64229,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 15,
-      "fn": 14,
+      "crate-vis": 16,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -64938,9 +65064,9 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "HTTP authentication for log-backed version-two capability slips"
     },
@@ -65085,7 +65211,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65218,9 +65344,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 21,
+   "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 449,
+   "source_files": 451,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -65427,6 +65553,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArtifactHost",
+      "ArtifactHostRead"
+     ],
+     "path": "src/lib/artifact_origin.rs",
+     "purpose": "The artifact origin's naming and forwarding contract (OF-356, ARCH-0078)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "QuotaWindow",
       "Schedule"
      ],
@@ -65599,7 +65741,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 6,
+      "mod": 7,
       "re-export": 7
      }
     },
@@ -65679,7 +65821,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 7,
+      "const": 8,
       "enum": 2,
       "fn": 4
      }
@@ -65704,7 +65846,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65713,7 +65855,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

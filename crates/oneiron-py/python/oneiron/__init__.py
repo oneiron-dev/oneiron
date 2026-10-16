@@ -320,6 +320,9 @@ class Oneiron:
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
         @property
+        def lenses(self) -> "Oneiron._VaultLensesVerbs":
+            return Oneiron._VaultLensesVerbs(self._client)
+        @property
         def hooks(self) -> "Oneiron._VaultHooksVerbs":
             return Oneiron._VaultHooksVerbs(self._client)
         @property
@@ -328,6 +331,9 @@ class Oneiron:
         @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
+        @property
+        def projects(self) -> "Oneiron._VaultProjectsVerbs":
+            return Oneiron._VaultProjectsVerbs(self._client)
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs":
             return Oneiron._VaultConversationsVerbs(self._client)
@@ -424,6 +430,19 @@ class Oneiron:
             self._client = client
         def put(self, spec):
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+    class _VaultLensesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def propose(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
+        def activate(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_activate(json.dumps(spec))))
+        def deactivate(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_deactivate(json.dumps(spec))))
+        def list(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
+        def default(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
     class _VaultHooksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -496,6 +515,21 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
         def sharing(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultProjectsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def goal(self) -> "Oneiron._VaultProjectsGoalVerbs":
+            return Oneiron._VaultProjectsGoalVerbs(self._client)
+        def route_tradeoff(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_route_tradeoff(json.dumps(spec))))
+    class _VaultProjectsGoalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def revisions(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_revisions(json.dumps(spec))))
+        def dismiss(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_projects_goal_dismiss(json.dumps(spec))))
     class _VaultConversationsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
