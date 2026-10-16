@@ -48,6 +48,10 @@ pub(crate) struct HardEraseSweepRun {
     /// is overwritten, the obligation stays. SIBLING of
     /// `windows_deferred_live`; never folded into it.
     pub windows_deferred_raced: u64,
+    /// Windows and documents left as they are because a legal hold names a
+    /// row their compaction would destroy (OF-470); the obligation stays
+    /// until the hold lifts.
+    pub windows_deferred_held: u64,
     pub receipts_finalized: u64,
     pub deadline_breaches: u64,
     pub quarantine_rows_expired: u64,

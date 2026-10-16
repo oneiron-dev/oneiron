@@ -120,6 +120,9 @@ declare const vault: {
     };
   };
   delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
+  disclosure: {
+    offer(input: { ask?: string | null; beneficiary: string; channel: string; contact: string; expires_at: number; owner_ref: string; purpose: string; scope: unknown }): Promise<unknown>;
+  };
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
@@ -167,6 +170,12 @@ declare const vault: {
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
+    setup: {
+      answer(input: { answer?: object | null; card_action?: object | null; pack: string; source?: string | null }): Promise<unknown>;
+      get(input: { pack: string; source?: string | null }): Promise<unknown>;
+      prepare(input: { pack: string; source?: string | null }): Promise<unknown>;
+      verify(input: { connection: string; pack: string; source?: string | null }): Promise<unknown>;
+    };
   };
   people: {
     get(input: { pr: string }): Promise<unknown>;
@@ -189,6 +198,7 @@ declare const vault: {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
   refs: {
+    links(input: { text?: string | null; turn_ref?: string | null }): Promise<unknown>;
     resolve(input: { reference: string }): Promise<unknown>;
   };
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
@@ -219,6 +229,9 @@ declare const vault: {
     propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
     propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
     receipt(input: { receipt_id: string }): Promise<unknown>;
+  };
+  shares: {
+    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
   };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
