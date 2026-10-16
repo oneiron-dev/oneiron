@@ -203,9 +203,45 @@ pub struct TurnTags {
     pub mood: Option<Vad>,
     /// Store-clock seconds of the save.
     pub saved_at: u64,
+    /// How surprising this set is beside the one it replaced, by the model
+    /// families' deterministic gate ([`crate::llm::tagger::delta_surprise`]):
+    /// 1 when the named entities or the coreference moved, else the largest
+    /// mood shift. `None` for a turn's first tag set. The tagger only
+    /// measures it; whether a generative render follows is the reader's
+    /// (ARCH-0036: the reasoner runs only on a surprising delta).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surprise: Option<f32>,
 }
 
 impl TurnTags {
+    /// The gate's surprise of this set beside `before`, the set it replaces.
+    #[must_use]
+    pub fn surprise_since(&self, before: &Self) -> f32 {
+        let identity_changed = self.entities() != before.entities()
+            || self.coreference() != before.coreference();
+        let affect = |tags: &Self| {
+            tags.mood
+                .map_or([0.0; 3], |mood| [mood.valence, mood.arousal, mood.dominance])
+        };
+        crate::llm::tagger::delta_surprise(identity_changed, affect(before), affect(self))
+    }
+
+    /// The coreference as entities rather than span indices: each in-turn
+    /// link as the entities its span names beside those its antecedent
+    /// names. An edit that moves offsets leaves it as it was.
+    fn coreference(&self) -> BTreeSet<(Vec<EntityId>, Vec<EntityId>)> {
+        self.mentions
+            .iter()
+            .filter_map(|mention| {
+                let antecedent = self.mentions.get(mention.antecedent?)?;
+                Some((
+                    mention.link.entities().to_vec(),
+                    antecedent.link.entities().to_vec(),
+                ))
+            })
+            .collect()
+    }
+
     /// Every entity the tag set names, once.
     #[must_use]
     pub fn entities(&self) -> BTreeSet<EntityId> {

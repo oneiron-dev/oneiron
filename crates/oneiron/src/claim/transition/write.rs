@@ -120,9 +120,7 @@ pub(crate) fn stage_machine_claim_transition(
     let prior = trusted_machine_handoff(store, txn, target)?;
     let prior_hash = prior.content_hash().map_err(|_| invalid())?;
     let prior_id = content_id(prior_hash)?;
-    let prior_raw = store
-        .entities
-        .get(txn, prior_id.as_bytes())?
+    let prior_raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &prior_id)?
         .ok_or_else(incomplete)?;
     if EntityMetadataHeader::parse(&prior_raw)
         .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
@@ -204,9 +202,7 @@ pub(crate) fn stage_machine_claim_transition(
     if prior.heads != prior_tips {
         return Err(incomplete());
     }
-    let target_raw = store
-        .entities
-        .get(txn, target.as_bytes())?
+    let target_raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &target)?
         .ok_or_else(incomplete)?;
     if EntityMetadataHeader::parse(&target_raw)
         .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
