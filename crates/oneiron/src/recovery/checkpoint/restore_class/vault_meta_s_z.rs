@@ -117,6 +117,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_EDIT_VERDICT, CONTENT),
     (&t::SKILL_OPTIMIZE_DISPLACED_JUDGE, CONTENT),
     (&t::SKILL_OPTIMIZE_DISPLACED_REVISION, CONTENT),
+    (&t::SKILL_OPTIMIZE_EVAL_CASE, CONTENT),
+    // A restore cannot make a spent cohort fresh: cut, retirement and every
+    // serving stand as the live vault holds them.
+    (&t::SKILL_OPTIMIZE_EVAL_COHORT, LIVE),
+    (&t::SKILL_OPTIMIZE_EVAL_EXPOSURE, LIVE),
+    (&t::SKILL_OPTIMIZE_EVAL_FAMILY, CONTENT),
+    (&t::SKILL_OPTIMIZE_EVAL_LABEL_ASK, CONTENT),
+    (&t::SKILL_OPTIMIZE_EVAL_ROOT, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_ASK, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_LABEL, CONTENT),
     (&t::SKILL_RELIABILITY_AMENDED, CONTENT),
@@ -204,4 +212,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORKSPACE_ROSTER_PRESET, CONTENT),
     // A destroyed world stays destroyed: no image restores its keys.
     (&t::WORLD_KEY_DESTROYED, LIVE),
+    // Sealed copies and their mirrors follow the live vault: an image never brings
+    // back a copy a delete or the 30-day expiry purged.
+    (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
+    (&t::WORLD_KEY_SEALED_RETIRED, LIVE),
+    (&t::WORLD_KEY_SEALED, LIVE),
 ];

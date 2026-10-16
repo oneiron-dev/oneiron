@@ -14,12 +14,12 @@ use super::space::{
     InputKind, embedding_space_in_txn, has_media_vector_in_txn, kind_slot_bindings_in_txn,
     put_media_vector_in_txn,
 };
+use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::Vault;
 
 /// ASSET body field holding the bytes.
 const ASSET_BODY_BYTES: &str = "bytes";
@@ -133,9 +133,8 @@ impl Vault {
                 else {
                     continue;
                 };
-                let Some((media_type, bytes)) = raw
-                    .get(ENTITY_METADATA_HEADER_LEN..)
-                    .and_then(asset_media)
+                let Some((media_type, bytes)) =
+                    raw.get(ENTITY_METADATA_HEADER_LEN..).and_then(asset_media)
                 else {
                     report.no_media += 1;
                     continue;

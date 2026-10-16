@@ -10,14 +10,14 @@ use super::AppError;
 pub(super) fn read_method(method: &str) -> bool {
     matches!(
         method,
-        "recall"
-            | "queryBm25"
-            | "neighbors"
-            | "hydrate"
-            | "pendingWrites"
-            | "receipts"
-            | "claimList"
-            | "claimHistory"
+        "vault.recall"
+            | "vault.search.bm25"
+            | "vault.neighbors"
+            | "vault.hydrate"
+            | "vault.writes.pending"
+            | "vault.receipts"
+            | "vault.claims.list"
+            | "vault.claims.history"
     )
 }
 
@@ -54,7 +54,7 @@ struct History {
 }
 
 // This request shape and default are the released HTTP facade contract;
-// `recall` decodes the facade's own `RecallRequest`.
+// `vault.recall` decodes the facade's own `RecallRequest`.
 #[derive(Deserialize)]
 struct Receipts {
     #[serde(default)]
@@ -75,7 +75,7 @@ pub(super) enum Read {
 impl Read {
     pub(super) fn parse(method: &str, value: Value) -> Result<Self, AppError> {
         Ok(match method {
-            "hydrate" => {
+            "vault.hydrate" => {
                 let p: Hydrate = params(value)?;
                 if p.refs.len() > crate::api::CORE_MAX_LIST_LIMIT {
                     return Err(AppError::bad_request(
@@ -85,36 +85,36 @@ impl Read {
                 }
                 Self::Hydrate(p.refs)
             }
-            "queryBm25" => {
+            "vault.search.bm25" => {
                 let p: Query = params(value)?;
                 Self::Query(p.query, facade_limit(Some(p.limit), p.limit)?)
             }
-            "neighbors" => {
+            "vault.neighbors" => {
                 let mut p: Neighbors = params(value)?;
                 p.opts.limit = facade_limit(Some(p.opts.limit), p.opts.limit)?;
                 Self::Neighbors(p.entity_ref, p.opts)
             }
-            "pendingWrites" => {
+            "vault.writes.pending" => {
                 let p: Limit = params(value)?;
                 Self::PendingWrites(facade_limit(Some(p.limit), p.limit)?)
             }
-            "receipts" => {
+            "vault.receipts" => {
                 let p: Receipts = params(value)?;
                 Self::Receipts(facade_limit(
                     p.limit,
-                    oneiron::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT,
+                    oneiron::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT,
                 )?)
             }
-            "claimList" => {
+            "vault.claims.list" => {
                 let mut filter: ClaimListFilter = params(value)?;
                 filter.limit = facade_limit(Some(filter.limit), filter.limit)?;
                 Self::ClaimList(filter)
             }
-            "claimHistory" => {
+            "vault.claims.history" => {
                 let p: History = params(value)?;
                 Self::ClaimHistory(p.claim_ref)
             }
-            "recall" => {
+            "vault.recall" => {
                 // Recall's door serves a limit past the ceiling at it.
                 let request: RecallRequest = params(value)?;
                 oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;

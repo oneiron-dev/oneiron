@@ -79,8 +79,8 @@ pub(crate) fn fit_state(longest: usize, state: impl Fn(Option<usize>) -> Value) 
     let mut cut = None;
     loop {
         let value = state(cut);
-        let fits = serde_json::to_vec(&value)
-            .is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES);
+        let fits =
+            serde_json::to_vec(&value).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES);
         cut = match cut {
             _ if fits => return value,
             None if longest > 0 => Some(longest / 2),

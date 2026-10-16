@@ -22,8 +22,7 @@
 use std::collections::BTreeMap;
 
 use oneiron_docedit::design_plan::{
-    AssetBinding, Brief, CompileError, Fallback, KeptBrief, MediaType, Outcome,
-    compile_with_fonts,
+    AssetBinding, Brief, CompileError, Fallback, KeptBrief, MediaType, Outcome, compile_with_fonts,
 };
 use oneiron_docedit::emit::{EmitError, EmitInputs, Names, StoredAsset, emit};
 use oneiron_docedit::fonts::{FontBook, FontError};
@@ -85,7 +84,9 @@ pub enum OutlineFreshness {
     /// The note changed after the keep.
     Edited,
     /// Cited evidence moved: these pins, in document order, map differently.
-    EvidenceMoved { pins: Vec<usize> },
+    EvidenceMoved {
+        pins: Vec<usize>,
+    },
 }
 
 /// One design direction: a template and what the kept outline becomes on it.
@@ -192,7 +193,9 @@ pub struct DeckCreateRequest<'a> {
 pub enum DeckCreateOutcome {
     Created(Box<DeckCreationRecord>),
     /// Pages no rung holds; nothing was written.
-    Ask { pages: Vec<String> },
+    Ask {
+        pages: Vec<String>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -304,7 +307,10 @@ impl crate::Vault {
                 template_hash: *blake3::hash(&bytes).as_bytes(),
                 outcome: match outcome {
                     Outcome::Ask(decisions) => DirectionOutcome::Ask {
-                        pages: decisions.into_iter().map(|decision| decision.page).collect(),
+                        pages: decisions
+                            .into_iter()
+                            .map(|decision| decision.page)
+                            .collect(),
                     },
                     Outcome::Plan(plan) => {
                         let estimates = plan.slides().iter().flat_map(|slide| &slide.fit.estimates);
@@ -367,7 +373,10 @@ impl crate::Vault {
         let plan = match compile_with_fonts(&brief, &template, &bindings, &book)? {
             Outcome::Ask(decisions) => {
                 return Ok(DeckCreateOutcome::Ask {
-                    pages: decisions.into_iter().map(|decision| decision.page).collect(),
+                    pages: decisions
+                        .into_iter()
+                        .map(|decision| decision.page)
+                        .collect(),
                 });
             }
             Outcome::Plan(plan) => plan,
@@ -508,7 +517,9 @@ impl crate::Vault {
                 return Err(invalid("the outline changed after its keep; keep it again"));
             }
             OutlineFreshness::EvidenceMoved { .. } => {
-                return Err(invalid("cited evidence moved after the keep; keep it again"));
+                return Err(invalid(
+                    "cited evidence moved after the keep; keep it again",
+                ));
             }
         }
         self.kept_deck_outline(note)?
@@ -574,7 +585,10 @@ impl crate::Vault {
             .collect()
     }
 
-    fn asset_media(&self, at: &ArtifactVersionRef) -> std::result::Result<MediaType, DeckCreateError> {
+    fn asset_media(
+        &self,
+        at: &ArtifactVersionRef,
+    ) -> std::result::Result<MediaType, DeckCreateError> {
         let body = self
             .get_blob_artifact(&at.artifact)?
             .ok_or(Error::EntityNotFound)?;
