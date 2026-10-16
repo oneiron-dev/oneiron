@@ -140,6 +140,8 @@ pub(super) fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
         RetrievalSignal::Temporal => Signal::Temporal,
         RetrievalSignal::Ppr => Signal::Ppr,
         RetrievalSignal::Hyde => Signal::Hyde,
+        // A media space is a vector channel at the pack's signal grain.
+        RetrievalSignal::MediaVector => Signal::Vector,
         RetrievalSignal::HydeRetry => {
             unreachable!("HyDE retry trace markers are not context-pack retrieval channels")
         }

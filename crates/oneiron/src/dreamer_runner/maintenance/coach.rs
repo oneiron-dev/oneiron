@@ -21,8 +21,8 @@ use crate::attempt_queue::AttemptId;
 use crate::llm::decision::{PersonChangedAnswer, PersonThreshold};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_attribution::{
-    AttributionJudge, AttributionSweepReport, ReceiptAttributionSource,
-    run_task_attribution_sweep_with_judge,
+    AttributionDecisions, AttributionSweepReport, ReceiptAttributionSource,
+    run_task_attribution_sweep_with_decisions,
 };
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
@@ -171,16 +171,17 @@ impl Vault {
     }
 
     /// Skill discovery as the Coach: one bounded page of the task-attribution
-    /// sweep under a leased `coach.skill_discovery` attempt.
+    /// sweep under a leased `coach.skill_discovery` attempt, through the host's
+    /// decisions (`None` is the rule tier).
     pub fn run_coach_skill_discovery(
         &self,
         attempt: &DreamerAdmittedAttempt,
         limit: usize,
         source: &dyn ReceiptAttributionSource,
-        judge: &dyn AttributionJudge,
+        decisions: Option<&AttributionDecisions<'_>>,
     ) -> Result<AttributionSweepReport> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISCOVERY_FACET)?;
-        run_task_attribution_sweep_with_judge(self, limit, source, judge)
+        run_task_attribution_sweep_with_decisions(self, limit, source, decisions)
     }
 
     /// Keeps one case where a person changed the ladder's answer (from

@@ -79,23 +79,7 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
             let images = references
                 .into_iter()
                 .enumerate()
-                .map(|(i, reference)| {
-                    let extension = match reference.media_type.as_str() {
-                        "image/png" => "png",
-                        "image/jpeg" => "jpg",
-                        "image/webp" => "webp",
-                        _ => return Err(FatalLlmError::InvalidRequest.into()),
-                    };
-                    if reference.bytes.is_empty() {
-                        return Err(FatalLlmError::InvalidRequest.into());
-                    }
-                    Ok(OpenAiImagePart {
-                        name: "image[]",
-                        filename: format!("reference-{i}.{extension}"),
-                        media_type: reference.media_type,
-                        bytes: reference.bytes,
-                    })
-                })
+                .map(|(i, reference)| reference_part("image[]", i, reference))
                 .collect::<LlmResult<Vec<_>>>()?;
             let (model, fields) = fields(&intent)?;
             let request = OpenAiImageHttpRequest {
@@ -111,7 +95,30 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
     }
 }
 
-fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<String, Value>)> {
+/// One ordered reference image as the multipart file part `name`.
+pub(super) fn reference_part(
+    name: &'static str,
+    index: usize,
+    reference: ImageBytes,
+) -> LlmResult<OpenAiImagePart> {
+    let extension = match reference.media_type.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        _ => return Err(FatalLlmError::InvalidRequest.into()),
+    };
+    if reference.bytes.is_empty() {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
+    Ok(OpenAiImagePart {
+        name,
+        filename: format!("reference-{index}.{extension}"),
+        media_type: reference.media_type,
+        bytes: reference.bytes,
+    })
+}
+
+pub(super) fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<String, Value>)> {
     if intent.instruction.trim().is_empty() || intent.width == 0 || intent.height == 0 {
         return Err(FatalLlmError::InvalidRequest.into());
     }
@@ -142,7 +149,7 @@ fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<String, Value>)>
     Ok((intent.model.clone(), fields))
 }
 
-fn form_fields(fields: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+pub(super) fn form_fields(fields: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
     fields
         .iter()
         .map(|(key, value)| {
@@ -171,7 +178,7 @@ fn decoded_len(encoded: &str) -> usize {
     (encoded.len() / 4 * 3).saturating_sub(padding)
 }
 
-fn decode_response(
+pub(super) fn decode_response(
     response: OpenAiImageHttpResponse,
     model: ModelId,
     fields: &BTreeMap<String, Value>,
