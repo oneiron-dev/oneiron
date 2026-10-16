@@ -65,6 +65,7 @@ mod folds;
 mod gate;
 pub mod output;
 mod stored_epoch;
+mod withdrawn;
 
 pub use folds::{
     FoldCompactAsk, FoldCompactInput, FoldLedger, FoldMark, FoldMarkInput, FoldRecord,
@@ -94,6 +95,7 @@ pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
+pub(crate) use withdrawn::{WithdrawnKeyframe, scrub_withdrawn_epoch_in_txn};
 
 use crate::entity_id::EntityId;
 use crate::error::{CompactionPacketError, Result};
